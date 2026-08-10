@@ -103,6 +103,17 @@ perdía**:
 | Macro | 141 | 3 de 6 | Los otros 3 estaban en las reglas de ruido: **descartados sin rastro** |
 | **Santander** | **0** | **0 de 7** | **No estaban en ningún lado** |
 
+> ⚠️ **Esos números son el ANTES.** El estado medido hoy contra los archivos reales es Galicia **29**
+> (9 de 9 anexos), Santander **5** (7 de 7), Macro **0** (6 de 6). La caída de Galicia está **enteramente
+> explicada**: cada anexo ocupa **dos** filas —literal y período+importe— y 9 × 2 = 18, o sea 47 − 18 = 29.
+> Cero líneas sin justificar, que es la forma de leer una diferencia de residuo: si la resta no cierra, la
+> diferencia **es** el hallazgo.
+>
+> 🔴 Y el residuo **sigue sin ser comparable entre bancos**, porque los 29 de Galicia significan *"lo que el
+> autómata del cuerpo no consumió"* —incluidas la fila del CBU y la del número de cuenta, **cuyo dato sí se
+> lee**— mientras que en Santander significan *"esto no lo entendí"*. Es la deuda §2.1 de
+> `10-deuda-declarada.md`.
+
 Santander sacaba 0 porque su adaptador decidía que *"lo que cae fuera de la región de tabla no se reporta"*.
 **"Fuera de la región" es una ubicación, no un destino.**
 

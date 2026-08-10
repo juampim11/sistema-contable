@@ -6,6 +6,99 @@
 
 ---
 
+## 2026-08-10 (16) — 🔴 Roster técnico completo, y la auditoría que encontró lo que el gate verde no veía
+
+**Herramienta:** Claude Code. **Estado:** `pnpm verificar` verde — **673 tests + 7 todo = 680** (venía de
+638). **Sin commits ni push** (pedido explícito). Todo queda en el working tree.
+
+> **Lo que hay que leer antes de retomar:** `docs/diseno/10-deuda-declarada.md` (nuevo) — lo que las tres
+> auditorías encontraron y **no** se corrigió, con el motivo de cada postergación. Tiene tres ítems que
+> hay que cerrar **antes de escribir el cuarto banco**.
+
+### 1. El roster pasó de 11 a 23 personas
+
+Se dieron de alta las **12 técnicas** que faltaban: `product-owner`, `analista-funcional`,
+`arquitecto-software`, `tech-lead`, `ux-designer`, `backend-dev`, `frontend-dev`, `dba-data`, `devops`,
+`qa-funcional`, `qa-automation`, `security-engineer`. Cada una con su persona, su wrapper y su copia en
+`.claude/agents/`. Las 11 anteriores conservan su contenido intacto: **solo se reescribió el campo
+`description`** para que sirva de regla de ruteo.
+
+🔴 **`security-engineer` y `seguridad-datos-financieros` NO se solapan y ante datos de clientes se
+convocan LOS DOS.** El primero pregunta *"¿por dónde se entra y por dónde sale?"*; el segundo, *"¿qué
+dato es sensible en ESTE negocio?"*. Un control impecable sobre el nivel de clasificación equivocado no
+sirve, y una clasificación correcta sin control tampoco.
+
+**La delegación quedó escrita como regla, no como sugerencia:** `CLAUDE.md` §3.1 tiene la matriz
+`tipo de tarea → agentes que se convocan SIEMPRE`, más las cinco reglas de cómo se convoca (incluida:
+🔴 **`privado/` está prohibido para todo agente**). `agents/README.md` y `AGENTS.md` sincronizados.
+
+### 2. Por qué la regla está escrita así: la auditoría del Módulo 1
+
+El Módulo 1 se construyó **sin este roster**. Al darlo de alta y auditar lo ya hecho —punto por punto
+contra ADR-0001 §5 y ADR-0002— con el gate en verde, apareció esto:
+
+| Hallazgo | Severidad | Dónde quedó |
+|---|---|---|
+| **Ambigüedad PERMANENTE de cuenta**: nada impedía dos identificadores vigentes, y a partir de ahí todo extracto caía en `cuenta_ambigua` sin nada que lo deshiciera | 🔴 bug funcional | migración **`0009`** |
+| **Un test que CONSAGRABA ese bug** como estado esperado | 🔴 | `inv6-resolucion.test.ts`, reescrito en los dos sentidos |
+| El tipo del logger **había divergido de su fuente**: ~32 claves que el redactor tapa nunca estuvieron en el tipo, y **toda columna multi-palabra compilaba en camelCase** — la grafía real del código | 🔴 R27 no valía | `ClaveProhibida = ClaveSensible`, derivado del registro |
+| Seis claves sensibles en **ninguna** de las dos listas | 🔴 | `clasificacion-campos.ts` |
+| **`pnpm db:migrate` no arrancaba en máquina nueva**: `core.autocrlf` reescribe los `.sql` y el guardián de hash lo lee como "migración editada" | 🔴 falso positivo | `.gitattributes` + hash normalizado en `migrar.ts` |
+| La puerta del literal de anexo **no era espejo** del `check`: **4 de 7 casos medidos divergían**, y cada uno voltea el lote entero | 🔴 | `persistir.ts` + `galicia.ts` + test |
+| Índice de resolución con el orden equivocado contra la consulta real | 🔴 | `0009` |
+| **Tres comentarios del repo afirmaban que existía un test que no existía** | 🟠 | test parametrizado de **10 pares** + `0010` |
+| El encabezado del toolkit afirmaba *"Santander los ejercita"* de cuatro funciones que **ningún adaptador importa** | 🟠 | `toolkit.ts` |
+| El índice del residuo de Galicia era el contador de movimientos: las 8 líneas informaban `indice: 0` | 🟠 | `galicia.ts` + test por mutación |
+
+**Nada de esto lo detectó el gate.** Es la tercera vez que este repo confirma lo mismo.
+
+### 3. Test de aislamiento del Módulo 1 — **verde, y demostrado que discrimina**
+
+`packages/ingesta/tests/aislamiento-modulo-1.test.ts`, **16 tests**. Clientes A y B cargados **por el
+pipeline real** (`persistirCuenta` / `persistirAnexos`, incluidos anexos), barrido de **las 10 tablas con
+`cliente_id`** derivado del catálogo, en **las dos direcciones**, más escritura cruzada y lectura por uuid
+ajeno.
+
+🔴 **La verificación del verificador está hecha por mutación, no por argumento:** abriendo la policy
+(`using (true)`) el contador de A pasó a ver **exactamente 7** movimientos de B. O sea que el 0 significa
+RLS, y no "no cargamos nada".
+
+**Y destapó un hecho contraintuitivo que hay que saber:** en el camino de escritura cruzada **no actúa la
+`with check` de la policy, sino el trigger** `app.exigir_nodo_cliente()` — los `BEFORE ROW` corren antes
+de que Postgres evalúe la `with check`. Los dos fallan cerrado y son equivalentes, pero un test que
+afirmara *"lo frena la policy"* estaría afirmando algo falso y seguiría verde el día que alguien saque el
+trigger.
+
+### 4. Consistencia entre los tres adaptadores
+
+Diagnóstico de `tech-lead`: **no divergen en el criterio, divergen en la edad.** Galicia es el primero y
+no recibió ninguna de las tres lecciones que los otros dos pagaron.
+
+🔴 **Lo peligroso para los cinco bancos que faltan no es la divergencia de estilo: es que hoy no hay un
+archivo del que copiar.** Quien escriba el cuarto va a heredar lo que a ése le falte.
+
+Los **menores de riesgo nulo** se aplicaron (residuo, espejo del check, encabezado falso). Los **nueve
+mayores** están en `10-deuda-declarada.md` §2 con su medición, porque cada uno mueve un número medido o
+cambia un contrato. Tres se cierran **antes del cuarto banco**: el contrato de entrada/salida con su regla
+de código, el vocabulario de destinos en el toolkit, y la plantilla del esqueleto.
+
+### 5. Pendiente para quien retome
+
+- ✅ **`pnpm probar --banco galicia` corrido contra el archivo real: `VEREDICTO: cuadra`.** Todo lo
+  congelado se mantiene (326 · 116/210 · 14 negativos · 21 referencias · **9 anexos** · conceptoBanco 326 ·
+  32 conceptos · 0 rupturas · carátula completa · INV-13 y INV-14 en 0 · 326/326 hashes únicos). El espejo
+  del `check` era el cambio con riesgo real —es más estricto que la puerta anterior— y **no rechazó ninguno
+  de los 9 literales**. Residuo **29**, que es 47 − 18 (los 9 anexos × 2 filas): la resta cierra sin una
+  sola línea sin explicar.
+- 🔴 **Nada está commiteado.** Por el punto 3 del encargo original corresponde rama + merge `--no-ff`, sin
+  reescribir historia ya mergeada.
+- `packages/data/tests/ayuda.ts` omite `anexo_extracto` de su `truncate` explícito. Funciona por `cascade`,
+  pero ese archivo nombra las tablas una por una **precisamente** para que una tabla nueva olvidada se note.
+- Las decisiones de `10-deuda-declarada.md` §1.5 (rotación de pepper → `cuenta_ambigua`) y §1.2 (enmienda
+  a ADR-0001 §5 antes de dropear los 11 índices redundantes).
+
+---
+
 ## 2026-08-10 (15) — 🔴 **`09-lecciones-aprendidas.md`**: el procedimiento para los cinco bancos que faltan
 
 **Herramienta:** Claude Code. **Estado:** `pnpm verificar` verde — **638 tests + 7 todo**. **Sin commits.**
