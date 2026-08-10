@@ -11,8 +11,13 @@
  * |---|---|---|
  * | `valorPorEtiqueta` | Galicia (alta de cuenta), Santander (`CBU:`, `CUIT:`, `Acuerdo:`) | **queda** |
  * | `extraerPeriodo` | Galicia, Macro (anclado en la etiqueta) | **queda** |
- * | `clasificarRuido` / `particionar` / `agruparEnFilas` / `residuoDeParticion` | Santander los ejercita | quedan |
+ * | `clasificarRuido` / `particionar` / `agruparEnFilas` / `residuoDeParticion` / `RUIDO_COMUN` | **CERO en los tres bancos.** Santander las **nombra** en dos comentarios y no importa ninguna | **se deciden con el cuarto** |
  * | **`inferirCortes` / `cortarEnColumnas`** | **CERO en los tres bancos** | **se borran con el cuarto** |
+ *
+ * 🔴 La primera fila decía *"Santander los ejercita"* y era **falso**: los tres adaptadores construyen su
+ * autómata a mano. Queda escrito porque es el error que sostiene una abstracción muerta durante cinco
+ * bancos más — y porque **esta tabla es el documento con el que se toma esa decisión**. Un encabezado
+ * equivocado acá no es un comentario desactualizado: es el criterio de borrado apuntando al lado que no es.
  *
  * `inferirCortes` asume **columnas de ancho fijo en caracteres**, y los tres bancos medidos coinciden en que
  * eso no existe: `pdf.js` emite **un solo espacio por hueco**, sin importar que el hueco mida 5 pt o 236 pt.

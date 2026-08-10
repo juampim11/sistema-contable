@@ -19,7 +19,28 @@ import {
   type NombreTabla,
 } from '@sistema-contable/shared/seguridad';
 import { ACCIONES } from '../src/db/auditoria.ts';
+import { AMBIENTES_CREDENCIAL } from '../src/credenciales.ts';
+import { TIPOS_CUENTA_ALTA } from '../src/ingesta/escrituras.ts';
 import { LECTORES_AUDITADOS, tablasSinLectorAuditado } from '../src/db/lectores-auditados.ts';
+/**
+ * ⚠️ Import **relativo a `packages/ingesta`**, y es deliberado.
+ *
+ * `packages/data` no puede depender de `packages/ingesta` (ciclo prohibido, verificado en
+ * `reglas-de-codigo.test.ts`), pero esa misma regla **exime explícitamente a los tests**: *"un test puede
+ * armar el escenario completo"*. Y este test tiene que ver las dos puntas de cada par —el check de la base,
+ * que es de `data`, y la constante de TypeScript, que en siete de diez casos es de `ingesta`—, así que no
+ * hay lugar del que pueda correr sin cruzar el límite. Se cruza acá, en un `.test.ts`, y no en `src/`.
+ */
+import {
+  ATRIBUCIONES_ANEXO,
+  ESTADOS_LOTE,
+  ESTADOS_VERIFICACION,
+  ESTRATEGIAS_CONCEPTO,
+  ORIGENES_LOTE,
+  PERIODOS_ANEXO,
+  RELACIONES_ANEXO,
+  TIPOS_CUENTA,
+} from '../../ingesta/src/esquema.ts';
 import { clienteDuenio } from './ayuda.ts';
 
 let db: Client;
@@ -548,27 +569,274 @@ describe('punto 4 — chequeo de rol en LECTURA para N2R/N3', () => {
 });
 
 // -----------------------------------------------------------------------------
-describe('el dominio de `accion` no puede divergir entre el código y la base', () => {
-  /**
-   * Dos listas del mismo dominio en dos lenguajes distintos divergen: es cuestión de tiempo. Y la
-   * divergencia no da un error legible — da un `check constraint violation` en el insert, meses después,
-   * en el camino que menos se ejercita.
-   *
-   * Ya pasó al escribir la migración 0004: el check omitía `uso_credencial`, que `ACCIONES` sí emite.
-   * Todo registro de uso de una credencial fiscal habría fallado el día que se integrara AFIP.
-   */
-  it('el check constraint de la base tiene EXACTAMENTE los valores de ACCIONES', async () => {
-    const { rows } = await db.query<{ definicion: string }>(
-      `select pg_get_constraintdef(oid) as definicion
-         from pg_constraint where conname = 'acceso_auditoria_accion_chk'`,
-    );
-    const definicion = rows[0]?.definicion;
-    expect(definicion, 'falta el check constraint de accion').toBeDefined();
+// DOMINIOS CERRADOS — una lista en SQL, la misma lista en TypeScript
+// -----------------------------------------------------------------------------
+/**
+ * Dos listas del mismo dominio en dos lenguajes distintos divergen: es cuestión de tiempo. Y la divergencia
+ * no da un error legible — da un `check constraint violation` en el insert, meses después, en el camino que
+ * menos se ejercita.
+ *
+ * **Ya pasó dos veces en este repo**: el check de `acceso_auditoria.accion` (0004) omitía `uso_credencial`,
+ * que `ACCIONES` sí emite —todo registro de uso de una credencial fiscal habría fallado el día que se
+ * integrara AFIP—; y el de `tipo_cuenta` (0004) tenía un `cuenta_unica` **inventado en la migración**, que
+ * no existía en el dominio del código y que aplastaba a `otra` los cinco tipos reales.
+ *
+ * ## Por qué esto es una tabla y no diez tests copiados
+ *
+ * Hasta hoy había **un** test de este tipo, el de `ACCIONES`, y los otros nueve checks no tenían ninguno.
+ * Peor: tres lugares del repo afirmaban **por escrito** que el test existía para los suyos —0007 §5, 0008 y
+ * `ESTRATEGIAS_CONCEPTO` en `esquema.ts`— y era falso. Una afirmación falsa sobre un control es peor que la
+ * ausencia del control, porque desactiva la pregunta: nadie vuelve a mirar un check del que ya leyó que
+ * está testeado.
+ *
+ * Con el molde parametrizado, cubrir un dominio nuevo cuesta **una fila**. Y el test de cobertura de más
+ * abajo hace que no cubrirlo cueste el gate: no depende de que alguien se acuerde de agregar la fila.
+ */
+type DominioCerrado = {
+  /** El `check` de la base. */
+  readonly check: string;
+  /** Tabla y columna que restringe. Verificar esto atrapa el check correcto sobre la columna equivocada. */
+  readonly tabla: string;
+  readonly columna: string;
+  /** Nombre de la constante de TypeScript, tal como se lee en el código y en el comentario del check. */
+  readonly constante: string;
+  readonly valores: readonly string[];
+  readonly migracion: string;
+};
 
-    const enLaBase = [...(definicion ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]).sort();
-    expect(enLaBase, 'el check de la base y la constante ACCIONES divergen').toEqual(
-      [...ACCIONES].sort(),
-    );
+/**
+ * Los diez pares. Cada fila es un dominio que existe **dos veces** y tiene que decir lo mismo.
+ *
+ * `cuenta_ident_tipo_chk` aparece **dos veces a propósito**: su lista está copiada a mano en dos constantes
+ * de TypeScript (`TIPOS_CUENTA` en el dominio y `TIPOS_CUENTA_ALTA` en el alta de cuenta), y ninguna puede
+ * derivarse de la otra sin crear el ciclo `data → ingesta`, que está prohibido. Comparar **las dos** contra
+ * el mismo check las obliga a ser iguales entre sí por transitividad, con la base de árbitro. El motivo
+ * completo está en el comentario de `TIPOS_CUENTA_ALTA`.
+ */
+const DOMINIOS_CERRADOS: DominioCerrado[] = [
+  {
+    check: 'acceso_auditoria_accion_chk',
+    tabla: 'acceso_auditoria',
+    columna: 'accion',
+    constante: 'ACCIONES',
+    valores: ACCIONES,
+    migracion: '0004',
+  },
+  {
+    check: 'credencial_fiscal_ambiente_chk',
+    tabla: 'credencial_fiscal',
+    columna: 'ambiente',
+    constante: 'AMBIENTES_CREDENCIAL',
+    valores: AMBIENTES_CREDENCIAL,
+    migracion: '0002',
+  },
+  {
+    check: 'cuenta_ident_tipo_chk',
+    tabla: 'cuenta_bancaria_identificador',
+    columna: 'tipo_cuenta',
+    constante: 'TIPOS_CUENTA',
+    valores: TIPOS_CUENTA,
+    migracion: '0006',
+  },
+  {
+    check: 'cuenta_ident_tipo_chk',
+    tabla: 'cuenta_bancaria_identificador',
+    columna: 'tipo_cuenta',
+    constante: 'TIPOS_CUENTA_ALTA',
+    valores: TIPOS_CUENTA_ALTA,
+    migracion: '0006',
+  },
+  {
+    check: 'lote_ingesta_estado_chk',
+    tabla: 'lote_ingesta',
+    columna: 'estado',
+    constante: 'ESTADOS_LOTE',
+    valores: ESTADOS_LOTE,
+    migracion: '0004',
+  },
+  {
+    check: 'lote_ingesta_origen_chk',
+    tabla: 'lote_ingesta',
+    columna: 'origen',
+    constante: 'ORIGENES_LOTE',
+    valores: ORIGENES_LOTE,
+    migracion: '0004',
+  },
+  {
+    check: 'lote_cuenta_verif_chk',
+    tabla: 'lote_ingesta_cuenta',
+    columna: 'verificacion_estado',
+    constante: 'ESTADOS_VERIFICACION',
+    valores: ESTADOS_VERIFICACION,
+    migracion: '0004',
+  },
+  {
+    check: 'mov_crudo_concepto_estrategia_chk',
+    tabla: 'movimiento_bancario_crudo',
+    columna: 'concepto_banco_estrategia',
+    constante: 'ESTRATEGIAS_CONCEPTO',
+    valores: ESTRATEGIAS_CONCEPTO,
+    migracion: '0007',
+  },
+  {
+    check: 'anexo_atribucion_chk',
+    tabla: 'anexo_extracto',
+    columna: 'atribucion_cuenta',
+    constante: 'ATRIBUCIONES_ANEXO',
+    valores: ATRIBUCIONES_ANEXO,
+    migracion: '0008',
+  },
+  {
+    check: 'anexo_periodo_dato_chk',
+    tabla: 'anexo_extracto',
+    columna: 'periodo_dato',
+    constante: 'PERIODOS_ANEXO',
+    valores: PERIODOS_ANEXO,
+    migracion: '0008',
+  },
+  {
+    check: 'anexo_relacion_chk',
+    tabla: 'anexo_extracto',
+    columna: 'relacion_con_movimientos',
+    constante: 'RELACIONES_ANEXO',
+    valores: RELACIONES_ANEXO,
+    migracion: '0008',
+  },
+];
+
+/**
+ * La **forma** que Postgres le da a un `check (col in ('a', 'b', …))` sobre una columna `text`.
+ *
+ * Se exige la forma exacta y no un "buscá comillas simples por ahí" —que es lo que hacía el molde original,
+ * con `/'([a-z_]+)'/g`— por dos motivos. Primero, ese regex **pierde en silencio** cualquier valor con un
+ * dígito o una mayúscula: el conjunto sale incompleto y la comparación falla por el motivo equivocado, o
+ * peor, coincide por casualidad. Segundo, anclar la forma completa hace que un check que deje de ser un
+ * dominio cerrado —porque alguien lo convirtió en una expresión compuesta— rompa **acá**, con un mensaje
+ * que dice qué pasó, en vez de degradarse a una comparación que ya no significa nada.
+ *
+ * Un check de *coherencia* (`(a is null) = (b in (…))`) NO matchea, y está bien: ese `in` referencia un
+ * **subconjunto** del dominio, no el dominio.
+ */
+const FORMA_DOMINIO_CERRADO = /^CHECK \(\((\w+) = ANY \(ARRAY\[(.+)\]\)\)\)$/;
+
+/** Los literales del `ARRAY[...]`, en el orden en que los guardó Postgres. */
+function valoresDelArray(cuerpo: string): string[] {
+  // `''` es la forma en que Postgres escapa una comilla adentro de un literal; ninguno de estos dominios
+  // tiene una, pero desescaparla cuesta nada y evita un falso rojo el día que aparezca.
+  return [...cuerpo.matchAll(/'((?:[^']|'')*)'::text/g)].map((m) => (m[1] ?? '').replaceAll("''", "'"));
+}
+
+type CheckDeLaBase = { conname: string; tabla: string; definicion: string; comentario: string | null };
+
+/** Todos los `check` del esquema `public`, con su tabla y su comentario. */
+async function checksDelEsquema(): Promise<CheckDeLaBase[]> {
+  const { rows } = await db.query<CheckDeLaBase>(
+    `select conname,
+            conrelid::regclass::text as tabla,
+            pg_get_constraintdef(oid) as definicion,
+            obj_description(oid, 'pg_constraint') as comentario
+       from pg_constraint
+      where contype = 'c' and connamespace = 'public'::regnamespace
+      order by conname`,
+  );
+  return rows;
+}
+
+describe('los dominios cerrados no pueden divergir entre el código y la base', () => {
+  it.each(DOMINIOS_CERRADOS)(
+    '$constante == $check ($migracion)',
+    async (d) => {
+      const encontrados = (await checksDelEsquema()).filter((c) => c.conname === d.check);
+
+      expect(
+        encontrados.length,
+        `${d.check}: tiene que existir exactamente un check con ese nombre en el esquema. ` +
+          'Cero significa que se renombró o se dropeó y la constante quedó sin árbitro.',
+      ).toBe(1);
+
+      const check = encontrados[0] as CheckDeLaBase;
+      expect(check.tabla, `${d.check} no está sobre la tabla que declara la tabla de pares`).toBe(
+        d.tabla,
+      );
+
+      const forma = FORMA_DOMINIO_CERRADO.exec(check.definicion);
+      expect(
+        forma,
+        `${d.check} ya no tiene la forma de un dominio cerrado (\`col = ANY (ARRAY[…])\`). ` +
+          `Definición actual: ${check.definicion}`,
+      ).not.toBeNull();
+
+      const [, columna, cuerpo] = forma as RegExpExecArray;
+      expect(
+        columna,
+        `${d.check} restringe otra columna: un check correcto sobre la columna equivocada no protege nada`,
+      ).toBe(d.columna);
+
+      const enLaBase = valoresDelArray(cuerpo ?? '').sort();
+      const enElCodigo = [...d.valores].sort();
+
+      // Aserción de CONJUNTO: el orden de la lista no es parte del contrato, la pertenencia sí.
+      expect(
+        enLaBase,
+        `el check ${d.check} y la constante ${d.constante} divergen. Lo que sobra en la base rechaza ` +
+          `inserts que el código cree válidos; lo que falta en la base los deja pasar sin control.`,
+      ).toEqual(enElCodigo);
+
+      // Y una lista vacía no puede dar verde por vacío en ninguno de los dos lados.
+      expect(enLaBase.length, `${d.check}: un dominio cerrado sin valores no es un dominio`).toBeGreaterThan(1);
+    },
+  );
+
+  /**
+   * 🔴 LA REGLA QUE HACE QUE ESTO NO DEPENDA DE QUE ALGUIEN SE ACUERDE.
+   *
+   * Los diez pares de arriba se cubren porque alguien los escribió. Un check de dominio cerrado **nuevo**,
+   * agregado en la migración 0011 por otra persona, no estaría en la tabla y nadie lo notaría — que es
+   * exactamente cómo llegamos a tener nueve sin test y tres afirmaciones falsas de que sí lo tenían.
+   *
+   * Esta regla invierte la carga: la base se lee entera, y todo check con forma de dominio cerrado tiene
+   * que estar en la tabla de pares. Agregar el dominio sin su constante deja el gate rojo.
+   */
+  it('todo check con forma de dominio cerrado está en la tabla de pares', async () => {
+    const enLaBase = (await checksDelEsquema())
+      .filter((c) => FORMA_DOMINIO_CERRADO.test(c.definicion))
+      .map((c) => c.conname);
+
+    expect(enLaBase.length, 'el barrido no encontró ningún dominio cerrado: no está viendo el esquema')
+      .toBeGreaterThanOrEqual(DOMINIOS_CERRADOS.length - 1);
+
+    const cubiertos = new Set(DOMINIOS_CERRADOS.map((d) => d.check));
+    expect(
+      [...new Set(enLaBase)].filter((c) => !cubiertos.has(c)).sort(),
+      'checks de dominio cerrado sin constante de TypeScript que los espeje. Declarala y agregá la fila ' +
+        'en DOMINIOS_CERRADOS: si no, la lista de la base es la única y el código escribe a ciegas.',
+    ).toEqual([]);
+  });
+
+  /**
+   * La documentación también se verifica, y este test es la respuesta directa al hallazgo.
+   *
+   * Tres lugares del repo afirmaban que este test existía cuando no existía. La lección no es "escribir
+   * mejores comentarios": es que **una afirmación sobre un control tiene que estar bajo el mismo gate que
+   * el control**. El comentario de cada check vive en `pg_description` (migración 0010) y tiene que nombrar
+   * a la constante contra la que se compara. Un comentario que promete otra cosa se pone rojo acá.
+   */
+  it('el comentario de cada check nombra a su constante de TypeScript', async () => {
+    const porNombre = new Map((await checksDelEsquema()).map((c) => [c.conname, c.comentario]));
+
+    const mudos: string[] = [];
+    for (const d of DOMINIOS_CERRADOS) {
+      const comentario = porNombre.get(d.check);
+      if (comentario === null || comentario === undefined || !comentario.includes(d.constante)) {
+        mudos.push(`${d.check} no menciona ${d.constante}`);
+      }
+    }
+
+    expect(
+      mudos,
+      'checks cuyo comentario no dice contra qué constante se comparan. El comentario es lo que lee quien ' +
+        'abre la tabla con \\d+, y si no nombra la fuente, la próxima copia se hace a ojo.',
+    ).toEqual([]);
   });
 });
 

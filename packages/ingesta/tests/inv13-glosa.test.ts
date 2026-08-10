@@ -152,3 +152,68 @@ describe('sobre el extracto sintético completo, fila por fila', () => {
     expect(revisadas, 'no se revisó ninguna fila').toBeGreaterThan(50);
   });
 });
+
+// -----------------------------------------------------------------------------
+/**
+ * INV-14 en el anexo — **la app y la base tienen que rechazar el MISMO conjunto**.
+ *
+ * `anexo_literal_sin_identificador_chk` (migración 0008) es `concepto_literal !~ '[0-9]{7}'`: una corrida
+ * de 7 dígitos y afuera, sin lookarounds ni excepciones. La app verifica lo mismo **antes** del insert
+ * para que el operador reciba un código de dominio en vez de una violación de constraint.
+ *
+ * 🔴 Y ahí estaba el agujero, que encontró la pasada de coherencia entre los tres adaptadores: la puerta
+ * de la app era `contieneIdentificador`, que **no es el espejo**. Sus patrones llevan lookarounds que
+ * excluyen `[\d\-.,]`, así que un literal con la corrida pegada a una coma, a un guion o a un punto
+ * **pasaba la puerta y la base lo rechazaba igual**. El desenlace es exactamente el que la puerta existe
+ * para evitar: la transacción del lote entero —hasta 1346 movimientos— volteada por un renglón de anexo.
+ *
+ * Medido antes de corregir: **4 de estos 7 casos divergían**. Este test es lo que impide que vuelvan.
+ */
+describe('INV-14 en el anexo: la puerta de la app es el espejo del check de la base', () => {
+  /** El `check` de 0008, literal. Si la migración cambia, esto tiene que cambiar con ella. */
+  const rechazaLaBase = (literal: string): boolean => /[0-9]{7}/.test(literal);
+
+  /**
+   * La puerta de la app, tal como quedó en `persistirAnexos`: el espejo **más** el detector de dominio.
+   * Se escriben los dos porque `contieneIdentificador` es más estricto en otras direcciones (un CUIT con
+   * guiones), así que suman en vez de reemplazarse.
+   */
+  const rechazaLaApp = (literal: string): boolean =>
+    /\d{7}/.test(literal) || contieneIdentificador(literal);
+
+  /**
+   * Los cuatro primeros son los que **divergían**: la corrida pegada a un separador. Los tres últimos
+   * son literales de anexo reales por su forma (totalizadores impositivos), que tienen que seguir
+   * pasando — si el espejo los rechazara, se rompería el anexo de los tres bancos.
+   */
+  const CASOS: readonly { readonly literal: string; readonly esperado: boolean }[] = [
+    { literal: 'RES. 1234567-2018', esperado: true },
+    { literal: '1234567,89', esperado: true },
+    { literal: '-1234567', esperado: true },
+    { literal: 'PERC IIBB 1234567.00', esperado: true },
+    { literal: 'TOTAL IMPUESTO I.V.A. SOBRE DEBITOS', esperado: false },
+    { literal: 'TOTAL 25.413', esperado: false },
+    { literal: 'D. 409/2018', esperado: false },
+  ];
+
+  it('la app nunca deja pasar algo que la base rechaza', () => {
+    for (const c of CASOS) {
+      expect(rechazaLaBase(c.literal), `base: ${c.literal}`).toBe(c.esperado);
+      expect(rechazaLaApp(c.literal), `app: ${c.literal}`).toBe(c.esperado);
+    }
+  });
+
+  /**
+   * La verificación del verificador: **demuestra que los casos elegidos no son decorativos.**
+   *
+   * Sin esta aserción, alguien podría reemplazar los 7 casos por 7 triviales y el test de arriba seguiría
+   * verde sin probar nada. Acá se afirma el hecho concreto: hay literales que el detector de dominio
+   * **solo** deja pasar, y son exactamente los que la base rechaza.
+   */
+  it('el detector de dominio SOLO no alcanza: hay 4 casos que se le escapan', () => {
+    const seLeEscapan = CASOS.filter((c) => c.esperado && !contieneIdentificador(c.literal));
+    expect(seLeEscapan).toHaveLength(4);
+    // Y todos ellos los rechaza la base, que es el motivo por el que la divergencia costaba un lote.
+    for (const c of seLeEscapan) expect(rechazaLaBase(c.literal)).toBe(true);
+  });
+});

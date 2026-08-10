@@ -15,7 +15,7 @@
  */
 
 import { redactar } from '../seguridad/redactar.ts';
-import type { ColumnaSensible } from '../seguridad/clasificacion-campos.ts';
+import type { ClaveSensible } from '../seguridad/clasificacion-campos.ts';
 
 export const NIVELES_LOG = ['debug', 'info', 'warn', 'error'] as const;
 export type NivelLog = (typeof NIVELES_LOG)[number];
@@ -24,42 +24,26 @@ export type NivelLog = (typeof NIVELES_LOG)[number];
 export type ValorLoggeable = string | number | boolean | null | undefined | readonly string[];
 
 /**
- * Claves prohibidas en un log. Se componen de dos fuentes, y las dos se derivan, no se repiten:
- *   - `ColumnaSensible`: toda columna ≥ N2 del registro de clasificación.
- *   - la lista literal de abajo: formas en que un dato sensible llega disfrazado desde afuera
- *     (un payload, un CSV, una respuesta de webservice) sin ser una columna nuestra.
+ * Claves prohibidas en un log. **Una sola fuente, derivada — nunca una lista escrita acá.**
+ *
+ * `ClaveSensible` sale de `clasificacion-campos.ts` y cubre las cuatro combinaciones: toda columna
+ * >= N2 del registro y toda clave externa, **cada una en snake_case y en camelCase**.
+ *
+ * ## Por qué se borró la lista que vivía en este archivo
+ *
+ * Era una unión escrita a mano que **ya había divergido de su propia fuente**: ~32 claves que el
+ * redactor tapa en runtime nunca estuvieron en el tipo, ni siquiera en snake_case — `credito`,
+ * `debito`, `saldo_final`, `titular`, `cotizacion`, `dni`, `contraparte_nombre` y otras. Y encima
+ * **toda columna multi-palabra compilaba en camelCase**, que es la grafía de los nombres reales del
+ * código: `saldoFinalDeclarado`, `filaOrigen`, `cbuUltimos4`.
+ *
+ * El redactor las tapaba en runtime, o sea que no hubo fuga. Lo que no valía era **R27** —*"el logger
+ * no compila si le pasás una clave >= N2"*—, que es la **defensa**; el redactor es la **red**.
+ *
+ * Lo encontró la auditoría de `security-engineer` sobre el Módulo 1. Derivar en vez de mantener dos
+ * listas es la lección que este repo ya aplicó tres veces con los enums del dominio contra sus `check`.
  */
-type ClaveExternaProhibida =
-  | 'cuit' | 'cuil' | 'cbu' | 'alias' | 'numero_cuenta' | 'nro_cuenta'
-  | 'importe' | 'monto' | 'saldo' | 'descripcion' | 'glosa' | 'concepto'
-  | 'razon_social' | 'domicilio' | 'password' | 'contrasena' | 'clave'
-  | 'token' | 'authorization' | 'secret' | 'private_key' | 'clave_privada'
-  | 'certificado' | 'dsn' | 'database_url' | 'remuneracion' | 'sueldo'
-  /**
-   * ⚠️ **Las variantes camelCase, y por qué hacen falta.**
-   *
-   * `ClaveProhibida` es una unión de **literales exactos**, y esta lista está escrita solo en snake_case —
-   * que son los nombres de las **columnas**. Pero los nombres que existen en el código TypeScript son
-   * camelCase, así que `logger.info('x', { conceptoBanco: … })` **compilaba**.
-   *
-   * El redactor lo tapa en runtime, o sea que no había fuga. Lo que se perdía es R27: *"el logger no
-   * compila si le pasás una clave ≥ N2"*. R27 es la defensa; el redactor es la red — y una red sin defensa
-   * es la mitad del control.
-   *
-   * 🔴 **Esto es un parche, no el arreglo.** Con la misma forma **también compilan** hoy `filaOrigen`,
-   * `filaHash`, `saldoFinal`, `razonSocial`, `contraparteNombre`, `numeroCuenta` y `descripcionLineas`. El
-   * arreglo estructural es **derivar** la variante camelCase a nivel de tipo, para que nadie mantenga dos
-   * listas — que es la lección que este repo ya aplicó tres veces con los enums del dominio contra sus
-   * `check`. Queda anotado en el plan como hallazgo aparte.
-   */
-  | 'concepto_banco' | 'conceptoBanco'
-  // El saldo consolidado por moneda (N2) y el importe del anexo. Ver la nota de
-  // `CLAVES_SENSIBLES_EXTERNAS`: viajan en forma canónica, que ningún detector del redactor tapa.
-  | 'consolidado' | 'consolidado_por_moneda' | 'consolidadosPorMoneda'
-  | 'saldo_consolidado' | 'saldoConsolidado'
-  | 'importe_declarado' | 'importeDeclarado';
-
-export type ClaveProhibida = ColumnaSensible | ClaveExternaProhibida;
+export type ClaveProhibida = ClaveSensible;
 
 /**
  * El truco del `never`: cualquier clave prohibida solo admite el tipo `never`, así que pasarla con un

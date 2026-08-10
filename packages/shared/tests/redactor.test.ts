@@ -13,9 +13,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   CLASIFICACION,
+  CLAVES_SENSIBLES_EXTERNAS,
   COLUMNAS_SENSIBLES,
   contieneDatoSensible,
   cuitParcial,
+  esClaveSensible,
   MARCA,
   redactar,
   redactarTexto,
@@ -304,5 +306,67 @@ describe('LÍMITE CONOCIDO del redactor (encontrado corriendo INV-8)', () => {
 
     // @ts-expect-error — un objeto de dominio completo tampoco entra: ValorLoggeable no admite objetos.
     logger.info('prueba.tipo', { movimiento: { importe: '100', cbu: '0170' } });
+  });
+});
+
+// -----------------------------------------------------------------------------
+/**
+ * LA DERIVACIÓN DE `ClaveProhibida` — el agujero que encontró la auditoría de `security-engineer`.
+ *
+ * `ClaveProhibida` comparaba **literales exactos** contra una lista escrita a mano en el logger, y esa
+ * lista **ya había divergido de su propia fuente**: ~32 claves que el redactor tapa en runtime nunca
+ * estuvieron en el tipo, ni siquiera en snake_case. Y encima **toda columna multi-palabra compilaba en
+ * camelCase**, que es justamente la grafía de los nombres reales del código.
+ *
+ * No hubo fuga —el redactor las tapaba— pero **R27 no valía**: *"el logger no compila si le pasás una
+ * clave ≥ N2"*. R27 es la defensa; el redactor es la red.
+ *
+ * Ahora `ClaveProhibida = ClaveSensible`, derivado del registro. Estos tests son la verificación del
+ * verificador: si alguien vuelve a poner una lista a mano, se caen.
+ */
+describe('el tipo y el redactor bloquean el MISMO conjunto, en las dos grafías', () => {
+  const aCamel = (s: string): string => s.replace(/_(.)/g, (_, c: string) => c.toUpperCase());
+
+  it('toda clave sensible se detecta en snake_case Y en camelCase', () => {
+    const todas = [...COLUMNAS_SENSIBLES, ...CLAVES_SENSIBLES_EXTERNAS];
+    expect(todas.length).toBeGreaterThan(40);
+    for (const c of todas) {
+      expect(esClaveSensible(c), `snake: ${c}`).toBe(true);
+      expect(esClaveSensible(aCamel(c)), `camel: ${aCamel(c)}`).toBe(true);
+    }
+  });
+
+  /**
+   * Las cuatro combinaciones que la derivación tiene que cubrir. Si alguna compilara, el
+   * `@ts-expect-error` sobra y el test falla — que es exactamente lo que queremos.
+   */
+  it('el TIPO rechaza las cuatro combinaciones', () => {
+    // @ts-expect-error — columna ≥ N2, snake_case.
+    logger.info('t', { saldo_final_declarado: '1.00' });
+    // @ts-expect-error — la MISMA columna en camelCase, que es el nombre real en el código.
+    logger.info('t', { saldoFinalDeclarado: '1.00' });
+    // @ts-expect-error — clave externa, snake_case.
+    logger.info('t', { titular_documento: '20123456789' });
+    // @ts-expect-error — la misma en camelCase. Es la peor: no hay detector de DNI en el redactor.
+    logger.info('t', { titularDocumento: '20123456789' });
+    // @ts-expect-error — la única columna N3 del registro, en camelCase.
+    logger.info('t', { materialCifrado: 'x' });
+  });
+
+  /**
+   * La contracara: si la derivación ensanchara de más, el logger dejaría de aceptar los campos de
+   * diagnóstico y el pipeline se quedaría sin observabilidad. Estos SÍ tienen que compilar.
+   */
+  it('los campos de diagnóstico siguen permitidos', () => {
+    logger.info('t', {
+      cliente_id: 'uuid',
+      lote_id: 'uuid',
+      banco_codigo: 'galicia',
+      motivo_codigo: 'sin_movimientos',
+      filas_leidas: 326,
+      archivo_bytes: 1234,
+      verificacion_estado: 'cuadra',
+    });
+    expect(true).toBe(true);
   });
 });

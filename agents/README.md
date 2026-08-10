@@ -60,6 +60,36 @@ agents/
 > Estos 3 vienen del template y se mantienen. `PROXIMO-PROYECTO-barrios.md` queda como ejemplo del
 > patrón, **no** como roster de este producto.
 
+## Roster técnico de ingeniería
+
+Se dio de alta **despues** de construir el Módulo 1, y esa demora tuvo un costo medible: el módulo se
+escribió sin `security-engineer` ni `dba-data`, y la primera pasada de los dos —punto por punto contra
+ADR-0001 §5 y ADR-0002— encontró un bug funcional que ningún test veía (dos identificadores vigentes
+para la misma cuenta dejaban el extracto en `cuenta_ambigua` **de forma permanente**) y un tipo del
+logger que había divergido de su propia fuente. Vale escrito acá porque es el argumento de por qué el
+roster se convoca **antes** y no como revisión final.
+
+| Persona (nombre único) | Qué hace | Cuándo convocar |
+|---|---|---|
+| `product-owner` | Prioriza, define el valor y el criterio de aceptación de negocio; dueño del backlog y del alcance. | Al abrir una etapa, al discutir alcance, o cuando hay que elegir qué NO se hace. |
+| `analista-funcional` | Traduce la necesidad a requisitos verificables: flujos, reglas, casos borde, datos de entrada y salida. | Antes de diseñar, cuando el pedido está en lenguaje de negocio y no en condiciones. |
+| `arquitecto-software` | Estructura del sistema, límites entre paquetes, y **todo lo que toca un ADR**. Custodia la portabilidad. | Ante un cambio estructural, una dependencia nueva, o algo que contradiga un ADR. |
+| `tech-lead` | Coherencia del código entre piezas que hacen lo mismo, deuda técnica, orden de ejecución. | Cuando hay ≥2 implementaciones del mismo patrón (adaptadores, lectores), o antes de escalar una. |
+| `ux-designer` | Flujo de la interfaz y del CLI: qué ve el operador, en qué orden, y qué hace ante un error. | Al definir una salida que lee una persona — incluidos los mensajes de error del CLI. |
+| `backend-dev` | Implementa servicios, casos de uso y persistencia respetando los puntos de entrada obligatorios. | En toda construcción de servidor. |
+| `frontend-dev` | Implementa la interfaz. | Cuando exista interfaz. |
+| `dba-data` | Modelo de datos, migraciones, índices con una consulta real detrás, y los siete renglones de tenancy. | **Obligatorio** ante cualquier migración, tabla o columna nueva. |
+| `devops` | Entornos, CI, hooks, secretos, despliegue y runbook. | Ante cambios de infraestructura, pipeline o arranque. |
+| `qa-funcional` | Verifica contra el criterio de aceptación **del negocio**: ¿esto sirve para lo que se pidió? | Antes de dar por cerrada una entrega que alguien va a usar. |
+| `qa-automation` | Diseña la suite y el gate, y verifica que **cada test discrimine** (prueba por mutación). | Al agregar cobertura, al elegir nivel de test, y **cuando el gate está verde e igual apareció un bug**. |
+| `security-engineer` | Superficie técnica: autenticación, autorización, entradas, secretos, dependencias, logs. | Ante cualquier cambio que toque credenciales, permisos, entrada externa o salida de datos. |
+
+> 🔴 **`security-engineer` y `seguridad-datos-financieros` se convocan JUNTOS, no en lugar del otro.**
+> No se solapan: el primero pregunta *"¿por dónde se entra y por dónde sale?"* y el segundo *"¿qué dato
+> es sensible en ESTE negocio y por qué?"*. Un revisor de seguridad genérico no sabe que la
+> `descripcion` de un movimiento bancario puede contener el CUIT de un tercero que no es cliente del
+> estudio — y esa es exactamente la clase de fuga que importa acá.
+
 ## Personas de dominio — producto para estudios contables
 
 Ocho perfiles **super-senior**, dados de alta antes de escribir código. Cada uno tiene su rol completo en
@@ -111,18 +141,25 @@ reproducible).
 | **Datos de clientes, dinero, permisos, aislamiento** | `seguridad-datos-financieros` — **obligatorio** |
 | Cualquier decisión con implicancia fiscal **y** contable | panel: `contador-dominio` + el fiscal que corresponda |
 | Antes de mergear un cambio no trivial | `code-reviewer`; `tester` antes del "Done"; `documentador` al cerrar |
+| **Una migración, una tabla o una columna nueva** | `dba-data` + `security-engineer` + `seguridad-datos-financieros` — **los tres, obligatorio** |
+| Un cambio estructural o algo que roce un ADR | `arquitecto-software` (+ `tech-lead`) |
+| ≥2 implementaciones del mismo patrón, o antes de escalar una | `tech-lead` |
+| Cobertura nueva, o el gate verde con un bug adentro | `qa-automation` |
+| Un mensaje o una salida que lee una persona | `ux-designer` |
+| Alcance, prioridad, o qué NO se hace | `product-owner` (+ `analista-funcional` para las condiciones) |
+
+> La matriz completa por **tipo de tarea**, con el orden de convocatoria y las reglas de cómo se
+> convoca, vive en **`CLAUDE.md` §3.1**. Esta tabla es el índice; aquélla es el procedimiento.
 
 ## Pendiente de dar de alta
 
-- **Roster técnico de ingeniería** (arquitecto, backend, frontend, dba/data, devops, qa): se da de alta
-  cuando arranque la construcción. Hoy este repo tiene **solo dominio**, a propósito.
-- **Ingesta bancaria** y **tenancy**: etapa siguiente. Los agentes ya escritos delimitan qué **no**
-  deciden todavía sobre esos dos temas.
+Nada del roster. Lo que sigue pendiente es **contenido**, no personas: la ingesta bancaria de los cinco
+bancos que faltan y la carga de `knowledge/`.
 
 ## Activación
 
 1. **Claude Code:** copiá `agents/wrappers-claude/*.md` a **`.claude/agents/`** (Claude Code
-   auto-descubre esa carpeta). **Ya está hecho** para los 11 actuales; repetir al agregar o editar uno:
+   auto-descubre esa carpeta). **Ya está hecho** para los 23 actuales; repetir al agregar o editar uno:
    `cp agents/wrappers-claude/*.md .claude/agents/`.
 2. **Codex:** nada que copiar — `AGENTS.md` ya instruye adoptar personas desde `agents/personas/`.
 3. `CLAUDE.md` §3 y este archivo tienen que listar **las mismas** personas (ver checklist abajo).

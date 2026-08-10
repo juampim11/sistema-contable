@@ -556,7 +556,7 @@ export const COLUMNAS_SENSIBLES: ReadonlySet<string> = new Set(
  * fuente (un payload externo, un CSV, una respuesta de webservice). Se agregan a mano porque no son
  * columnas nuestras: son formas en las que un dato sensible llega disfrazado.
  */
-export const CLAVES_SENSIBLES_EXTERNAS: readonly string[] = [
+export const CLAVES_SENSIBLES_EXTERNAS = [
   'cuit',
   'cuil',
   'cbu',
@@ -653,7 +653,59 @@ export const CLAVES_SENSIBLES_EXTERNAS: readonly string[] = [
   'documento',
   'dni',
   'cotizacion',
-] as const;
+  /**
+   * 🔴 Agregadas por la auditoría de `security-engineer` (2026-08-10). **No estaban en NINGUNA de las
+   * dos listas**, así que no las tapaba ni el tipo ni el redactor en runtime.
+   *
+   * La peor es `titular_documento`: el detector de CUIT exige prefijo 20/23/…/34 con 11 dígitos, y
+   * **no hay ningún detector de DNI** — 7 u 8 dígitos pelados pasan los tres patrones. O sea que
+   * `logger.info('x', { titularDocumento: … })` compilaba, pasaba el filtro de clave y pasaba todos
+   * los detectores. Lo mismo con el `valor` de un `candidatoIdentificacion` de tipo `dni`.
+   */
+  'titular_documento',
+  'titular_condicion_iva',
+  'contraparte_banco',
+  'glosa_original',
+  'candidatos_identificacion',
+  'identificadores',
+] as const satisfies readonly string[];
+
+/**
+ * `snake_case` → `camelCase` **a nivel de tipo**. Es lo que hace que la lista sea UNA.
+ *
+ * ## El agujero que cierra
+ *
+ * `ClaveProhibida` compara **literales exactos**, y las dos listas de claves están escritas en
+ * snake_case —que son los nombres de las **columnas**—. Pero los nombres que existen en el código
+ * TypeScript son camelCase, así que `logger.info('x', { saldoFinalDeclarado: … })` **compilaba**.
+ *
+ * El redactor lo tapaba en runtime (`normalizarClave` saca los `_`), o sea que no había fuga. Lo que
+ * se perdía es **R27**: *"el logger no compila si le pasás una clave ≥ N2"*. R27 es la defensa; el
+ * redactor es la red — y una red sin defensa es la mitad del control.
+ *
+ * Y el agujero era peor de lo que parecía: la lista del logger **también había divergido en
+ * snake_case**, con ~32 claves que el redactor tapa y el tipo nunca conoció. La ironía que lo
+ * dimensiona está en `packages/data/src/ingesta/escrituras.ts`, que celebra que *"el tipo del logger
+ * rechazó `cbu_ultimos4`"*: cierto, pero el campo se llama **`cbuUltimos4`** y en esa grafía compilaba.
+ *
+ * **Derivar en vez de mantener dos listas** es la misma lección que este repo ya aplicó tres veces con
+ * los enums del dominio contra sus `check`.
+ */
+export type ACamel<S extends string> = S extends `${infer Cabeza}_${infer Resto}`
+  ? `${Cabeza}${Capitalize<ACamel<Resto>>}`
+  : S;
+
+type ClaveExterna = (typeof CLAVES_SENSIBLES_EXTERNAS)[number];
+
+/**
+ * **Toda** clave sensible, en las dos grafías. Es la única fuente: el logger la importa y no mantiene
+ * ninguna lista propia.
+ */
+export type ClaveSensible =
+  | ColumnaSensible
+  | ACamel<ColumnaSensible>
+  | ClaveExterna
+  | ACamel<ClaveExterna>;
 
 export function nivelDe(tabla: NombreTabla, columna: string): NivelDato | undefined {
   const campos: Record<string, ClasificacionCampo> = CLASIFICACION[tabla].campos;

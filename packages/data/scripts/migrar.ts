@@ -15,6 +15,14 @@
  * siendo este, que son 60 líneas y solo necesita un `DATABASE_URL` (o sea, igual de portable).
  *
  * NUNCA se edita una migración ya aplicada: el hash cambia y el script lo detecta y aborta.
+ *
+ * 🔴 EL HASH SE CALCULA SOBRE EL CONTENIDO NORMALIZADO A LF, y eso no es un detalle de estilo.
+ * Con `core.autocrlf=true` (el default de Git for Windows) el checkout reescribe cada `.sql` a
+ * CRLF y el sha256 cambia **sin que nadie haya editado nada**: el script abortaba con "ya fue
+ * aplicada con otro contenido" en un repo intacto, y el mismo repo daba distinto en Windows y en
+ * Linux. Un control que se dispara cuando no pasó nada es un control que alguien desactiva — y
+ * este guarda algo que sí importa. `.gitattributes` ataca la otra mitad del problema (el working
+ * tree); esto lo hace independiente de la plataforma incluso en una copia ya clonada.
  */
 
 import { createHash } from 'node:crypto';
@@ -36,7 +44,13 @@ function leerMigraciones(): Migracion[] {
     .sort()
     .map((nombre) => {
       const sql = readFileSync(join(DIRECTORIO, nombre), 'utf8');
-      return { nombre, sql, hash: createHash('sha256').update(sql).digest('hex').slice(0, 16) };
+      // El hash va sobre el contenido, no sobre cómo lo codificó el checkout. Ver el encabezado.
+      const normalizado = sql.replaceAll('\r\n', '\n');
+      return {
+        nombre,
+        sql,
+        hash: createHash('sha256').update(normalizado).digest('hex').slice(0, 16),
+      };
     });
 }
 

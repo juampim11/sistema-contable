@@ -21,10 +21,23 @@
 import type { ContextoAuditado } from './db/auditoria.ts';
 import type { Tx } from './db/conexion.ts';
 
+/**
+ * El dominio cerrado de `credencial_fiscal.ambiente` (`credencial_fiscal_ambiente_chk`, migración `0002`).
+ *
+ * Estaba escrito como unión literal **dos veces en este mismo archivo** y en ningún lado como lista, así que
+ * el test de catálogo de dominios cerrados no tenía contra qué comparar el check. Es la misma clase de
+ * duplicación que `ESTADOS_LOTE` y `ORIGENES_LOTE`, y se cierra igual: una sola lista, y la base de árbitro.
+ *
+ * La distinción **no es cosmética**: firmar contra producción con una credencial de homologación —o al
+ * revés— es un error que solo se ve cuando AFIP contesta.
+ */
+export const AMBIENTES_CREDENCIAL = ['homologacion', 'produccion'] as const;
+export type AmbienteCredencial = (typeof AMBIENTES_CREDENCIAL)[number];
+
 export type MetadatosCredencial = {
   readonly id: string;
   readonly servicio: string;
-  readonly ambiente: 'homologacion' | 'produccion';
+  readonly ambiente: AmbienteCredencial;
   readonly kekId: string;
   readonly alg: string;
   /** Huella del certificado PÚBLICO: identifica la credencial sin descifrar nada. */
@@ -41,7 +54,7 @@ export async function leerMetadatosCredencial(
   const filas = await tx.consultar<{
     id: string;
     servicio: string;
-    ambiente: 'homologacion' | 'produccion';
+    ambiente: AmbienteCredencial;
     kek_id: string;
     alg: string;
     fingerprint_sha256: string;

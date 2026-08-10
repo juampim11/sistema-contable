@@ -35,7 +35,7 @@
 import { conErroresTraducidos, type Tx } from '@sistema-contable/data';
 import { logger } from '@sistema-contable/shared/observabilidad';
 import { contieneIdentificador, depurarGlosa } from './glosa.ts';
-import type { CuentaConMovimientos, Verificacion } from './esquema.ts';
+import type { CuentaConMovimientos, EstadoLotePersistido, Verificacion } from './esquema.ts';
 
 export type PedidoDePersistencia = {
   readonly clienteId: string;
@@ -50,7 +50,8 @@ export type PedidoDePersistencia = {
 export type ResultadoPersistencia =
   | {
       readonly persistido: true;
-      readonly estado: 'procesado' | 'procesado_con_observaciones';
+      /** Del vocabulario cerrado de `lote_ingesta.estado`. Ver `ESTADOS_LOTE_PERSISTIDO`. */
+      readonly estado: EstadoLotePersistido;
       readonly filas: number;
     }
   | { readonly persistido: false; readonly motivoCodigo: string };
@@ -77,7 +78,7 @@ export function estadoSegunVerificacion(
   } = {},
 ): { readonly persistir: false; readonly motivoCodigo: string } | {
   readonly persistir: true;
-  readonly estado: 'procesado' | 'procesado_con_observaciones';
+  readonly estado: EstadoLotePersistido;
 } {
   // "0 movimientos" NUNCA es éxito **para el archivo**. Un extracto sin movimientos existe (una cuenta sin
   // actividad), pero es indistinguible de un parser que no encontró nada — y las dos cosas necesitan que
@@ -378,6 +379,12 @@ export async function persistirCuenta(
 }
 
 /**
+ * Espejo literal de `anexo_literal_sin_identificador_chk` (migración 0008). Ver el porqué en la puerta de
+ * admisión de `persistirAnexos`: sin él, la app y la base no rechazan el mismo conjunto.
+ */
+const RE_LITERAL_CON_IDENTIFICADOR = /\d{7}/;
+
+/**
  * Inserta los anexos de esta cuenta. Devuelve cuántos.
  *
  * ## El ordinal es del LOTE, no de la cuenta, y por eso se resuelve acá
@@ -410,8 +417,18 @@ async function persistirAnexos(tx: Tx, pedido: PedidoDePersistencia): Promise<nu
      *
      * Se verifica acá **antes** del insert para que el operador reciba un código de dominio y no una
      * violación de constraint traducida.
+     *
+     * 🔴 **Y por eso la puerta tiene que ser el ESPEJO EXACTO del `check`, no "algo parecido".**
+     * `contieneIdentificador` **no lo es**: sus patrones llevan lookarounds que excluyen `[\d\-.,]`, así
+     * que `RES. 1234567-2018` o `1234567,89` **pasan esta puerta y la base los rechaza igual**. El
+     * resultado es justo lo que la puerta existe para evitar: una violación de constraint que voltea la
+     * transacción del lote entero —1346 movimientos— por un renglón de anexo.
+     *
+     * El `check` es `[0-9]{7}` a secas. El espejo tiene que ser el mismo regex, y va **primero**.
+     * `contieneIdentificador` se conserva porque es más estricto en otras direcciones (un CUIT con
+     * guiones): los dos suman, ninguno reemplaza al otro.
      */
-    if (contieneIdentificador(a.conceptoLiteral)) {
+    if (RE_LITERAL_CON_IDENTIFICADOR.test(a.conceptoLiteral) || contieneIdentificador(a.conceptoLiteral)) {
       logger.warn('persistencia.rechazada', {
         cliente_id: pedido.clienteId,
         lote_id: pedido.loteId,

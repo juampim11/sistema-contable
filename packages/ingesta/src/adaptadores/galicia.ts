@@ -165,6 +165,15 @@ type EnConstruccion = {
   lineas: string[];
   origen: string[];
   paginaPdf: number;
+  /**
+   * Índice de la **fila del documento** que abrió el bloque.
+   *
+   * Existe porque el residuo se reportaba con `filaNumero`, que es el **contador de movimientos
+   * emitidos**, no una posición: las 8 líneas de carátula están antes del primer movimiento, así que las
+   * ocho informaban `indice: 0`. El campo cuya razón de ser es *"dónde falló algo"* apuntaba siempre al
+   * mismo lugar. Los otros dos bancos ya usan el índice de fila.
+   */
+  indiceFila: number;
   /** El par `(importe, saldo)`. `null` mientras no apareció: un bloque sin par es un bloque incompleto. */
   par: ParDeFila | null;
   /**
@@ -229,7 +238,7 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
         codigo: 'fila_sin_importe',
         forma: formaParaLog(abierto.lineas.join(' '), 60),
         paginaPdf: abierto.paginaPdf,
-        indice: filaNumero,
+        indice: abierto.indiceFila,
       });
     }
     abierto = null;
@@ -262,7 +271,7 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
           codigo: 'fecha_ilegible',
           forma: formaParaLog(texto, 60),
           paginaPdf: fila.pagina,
-          indice: filaNumero,
+          indice,
         });
         continue;
       }
@@ -272,6 +281,7 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
         lineas: [],
         origen: [],
         paginaPdf: fila.pagina,
+        indiceFila: indice,
         par: null,
         // El concepto se corta SOLO de la fila que trae la fecha: es la única donde el banco lo empieza.
         concepto: conceptoDeLaFilaDeFecha(fila),
@@ -298,7 +308,7 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
       codigo: 'linea_fuera_de_zona',
       forma: formaParaLog(texto, 60),
       paginaPdf: fila.pagina,
-      indice: filaNumero,
+      indice,
     });
   }
 
@@ -770,6 +780,22 @@ const RE_PERIODO_DEL_ANEXO =
  * Lo que no matchea es `no_determinada`, que el esquema trata como `resume_…`: **fail-closed, no registrar
  * de más**.
  */
+/**
+ * 🔴 **Espejo exacto de `anexo_literal_sin_identificador_chk`** (migración 0008): el `check` de la base
+ * rechaza toda corrida de 7 o más dígitos en `concepto_literal`. Se verifica **acá** para que un renglón
+ * sospechoso quede en el residuo en vez de reventar la transacción del lote entero — 1346 movimientos
+ * perdidos por un anexo.
+ *
+ * **No alcanza con `contieneIdentificador`, y la diferencia no es teórica:** sus patrones llevan
+ * lookarounds que excluyen `[\d\-.,]`, así que `1234567,89` pasa ese filtro y la base lo rechaza igual.
+ * El `check` es `[0-9]{7}` a secas, sin lookarounds: el espejo tiene que ser el mismo regex. Los otros
+ * dos bancos del roster ya lo escriben así.
+ *
+ * Se conservan los dos controles: `contieneIdentificador` es más estricto en otras direcciones (un CUIT
+ * con guiones), y fail-closed es la dirección correcta para esto.
+ */
+const RE_LITERAL_CON_IDENTIFICADOR = /\d{7}/;
+
 const RELACION_POR_LITERAL: readonly {
   readonly patron: RegExp;
   readonly relacion: RelacionAnexo;
@@ -972,6 +998,7 @@ function esLiteralDeAnexo(fila: FilaGeometrica, texto: string): boolean {
   if (RE_PERIODO_DEL_ANEXO.test(texto)) return false;
   if (RUIDO_GALICIA.some((r) => r.patron.test(texto))) return false;
   if (fragmentoEnVentanaDerecha(fila, COLUMNAS.saldo.desde, COLUMNAS.saldo.hasta)) return false;
+  if (RE_LITERAL_CON_IDENTIFICADOR.test(texto)) return false;
   if (contieneIdentificador(texto)) return false;
   return true;
 }
