@@ -760,6 +760,30 @@ describe('el anexo: los 9 renglones que se estaban perdiendo enteros', () => {
     expect(salida.lineasNoInterpretadas.map((l) => l.forma)).toContain('#{22}');
   });
 
+  /**
+   * 🔴 `indice` tiene que ser la posición de la fila **en el documento**, no el contador de movimientos.
+   *
+   * Este test existe por un bug encontrado en la pasada de coherencia entre los tres bancos: los tres
+   * `push` al residuo escribían `indice: filaNumero`, que es el contador de **movimientos emitidos**. Como
+   * las 8 líneas de carátula están **antes** del primer movimiento, las ocho informaban `indice: 0`. O
+   * sea: el campo cuya razón de ser es *"dónde falló algo"* apuntaba siempre al mismo lugar, y el residuo
+   * dejaba de ser localizable justo en el banco que más residuo tiene.
+   *
+   * La prueba por mutación es directa: si se vuelve a `filaNumero`, este test se cae por las dos
+   * aserciones — todos los índices serían `0`, o sea ni distintos ni crecientes.
+   */
+  it('el índice del residuo es la posición de la fila, no el contador de movimientos', () => {
+    const indices = leerGalicia(documentoBase()).lineasNoInterpretadas.map((l) => l.indice);
+
+    // Distintos: ocho filas distintas del documento no pueden compartir posición.
+    expect(new Set(indices).size).toBe(indices.length);
+    // Y crecientes, porque se recorren en orden de lectura.
+    expect([...indices].sort((a, b) => a - b)).toEqual(indices);
+    // La carátula abre el documento: la primera línea reportada tiene que caer en las primeras filas,
+    // no en la posición del primer movimiento.
+    expect(indices[0]).toBeLessThan(8);
+  });
+
   it('sin línea de totales no hay anexo: no se sale a buscarlo por el documento entero', () => {
     const sinTotales = documento([
       ...caratula(),
