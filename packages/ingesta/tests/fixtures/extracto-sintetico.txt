@@ -1,0 +1,164 @@
+BANCO SINTETICO S.A.  -  RESUMEN DE CUENTA
+Periodo: 01/06/202630/06/2026                        Pagina 1
+Fecha     Concepto                                      Importe        Saldo
+-------------------------------------------------------------------------------
+Cuenta Nº 0112-100000/0          CBU: 9990000090000000000001
+Titular: EMPRESA DE PRUEBA 07 SRL          CUIT: 20-12345678-9
+Saldo Anterior al 01/06/2026: 10.000,00
+02/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                 4.785,12       14.785,12
+03/06/26  ACREDITACION DE HABERES SIMULADA                   7.209,48-        7.575,64
+04/06/26  PAGO A PROVEEDOR SINTETICO CBU 9990000090000     -$ 2.486,50        5.089,14
+    ORIGEN EMPRESA DE PRUEBA 07 SRL
+05/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                 7.157,98       12.247,12
+    REF OPERACION 000123456 SUCURSAL 0112
+05/06/26  ACREDITACION DE HABERES SIMULADA                   -7.646,24        4.600,88
+06/06/26  COMISION MANTENIMIENTO DE CUENTA                    4.357,87        8.958,75
+07/06/26  PAGO A PROVEEDOR SINTETICO CBU 9990000090000        5.271,20       14.229,95
+    ORIGEN EMPRESA DE PRUEBA 07 SRL
+07/06/26  IMPUESTO LEY 25413 DEBITOS                          4.045,06       18.275,01
+    ORIGEN EMPRESA DE PRUEBA 07 SRL
+07/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9          -8.431,57        9.843,44
+07/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9          8.151,12-        1.692,32
+    ORIGEN EMPRESA DE PRUEBA 07 SRL
+
+BANCO SINTETICO S.A.  -  RESUMEN DE CUENTA
+Periodo: 01/06/202630/06/2026                        Pagina 2
+Fecha     Concepto                                      Importe        Saldo
+-------------------------------------------------------------------------------
+08/06/26  RETENCION IIBB JURISDICCION 901                  -$ 6.823,33       5.131,01-
+08/06/26  COMISION MANTENIMIENTO DE CUENTA                  (1.910,11)       7.041,12-
+09/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                 1.271,26       5.769,86-
+    ORIGEN EMPRESA DE PRUEBA 07 SRL
+09/06/26  COMISION MANTENIMIENTO DE CUENTA                   2.566,16-       8.336,02-
+09/06/26  DEPOSITO EN EFECTIVO VENTANILLA                     5.550,47       2.785,55-
+10/06/26  DEPOSITO EN EFECTIVO VENTANILLA                     2.776,11           9,44-
+11/06/26  COMISION MANTENIMIENTO DE CUENTA                   -6.174,70       6.184,14-
+    DETALLE ADICIONAL DE LA OPERACION
+12/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                5.799,40-      11.983,54-
+    ORIGEN EMPRESA DE PRUEBA 07 SRL
+13/06/26  COMISION MANTENIMIENTO DE CUENTA                    3.559,76       8.423,78-
+13/06/26  ACREDITACION DE HABERES SIMULADA                    (504,16)       8.927,94-
+13/06/26  IMPUESTO LEY 25413 DEBITOS                          3.416,34       5.511,60-
+    DETALLE ADICIONAL DE LA OPERACION
+*** IMPORTANTE: este documento es una SIMULACION sin valor legal ***
+    Ante cualquier consulta comuniquese con su sucursal
+14/06/26  ACREDITACION DE HABERES SIMULADA                   4.474,53-       9.986,13-
+
+BANCO SINTETICO S.A.  -  RESUMEN DE CUENTA
+Periodo: 01/06/202630/06/2026                        Pagina 3
+Fecha     Concepto                                      Importe        Saldo
+-------------------------------------------------------------------------------
+14/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9             685,21       9.300,92-
+    DETALLE ADICIONAL DE LA OPERACION
+14/06/26  ACREDITACION DE HABERES SIMULADA                  (8.580,67)      17.881,59-
+14/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                -7.155,02      25.036,61-
+    REF OPERACION 000123456 SUCURSAL 0112
+15/06/26  ACREDITACION DE HABERES SIMULADA                    4.170,57      20.866,04-
+16/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                 3.220,74      17.645,30-
+16/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9           8.806,52       8.838,78-
+16/06/26  IMPUESTO LEY 25413 DEBITOS                           -348,41       9.187,19-
+    REF OPERACION 000123456 SUCURSAL 0112
+17/06/26  ACREDITACION DE HABERES SIMULADA                     951,70-      10.138,89-
+    REF OPERACION 000123456 SUCURSAL 0112
+17/06/26  PAGO A PROVEEDOR SINTETICO CBU 9990000090000     -$ 4.820,57      14.959,46-
+18/06/26  COMISION MANTENIMIENTO DE CUENTA                    4.479,04      10.480,42-
+    REF OPERACION 000123456 SUCURSAL 0112
+18/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9             600,39       9.880,03-
+19/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9           8.658,48       1.221,55-
+20/06/26  COMISION MANTENIMIENTO DE CUENTA                    6.927,10        5.705,55
+
+BANCO SINTETICO S.A.  -  RESUMEN DE CUENTA
+Periodo: 01/06/202630/06/2026                        Pagina 4
+Fecha     Concepto                                      Importe        Saldo
+-------------------------------------------------------------------------------
+21/06/26  IMPUESTO LEY 25413 DEBITOS                          7.297,98       13.003,53
+22/06/26  RETENCION IIBB JURISDICCION 901                    -6.942,08        6.061,45
+22/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9          1.732,87-        4.328,58
+22/06/26  IMPUESTO LEY 25413 DEBITOS                       -$ 6.848,90       2.520,32-
+22/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9         (1.595,10)       4.115,42-
+    ORIGEN EMPRESA DE PRUEBA 07 SRL
+-------------------------------------------------------------------------------
+Total Creditos:        87.037,20
+Total Debitos:       -101.152,62
+Saldo Final al 30/06/2026: 4.115,42-
+
+BANCO SINTETICO S.A.  -  RESUMEN DE CUENTA
+Periodo: 01/06/202630/06/2026                        Pagina 5
+Fecha     Concepto                                      Importe        Saldo
+-------------------------------------------------------------------------------
+Cuenta Nº 0112-100001/1          CBU: 9990000090000000000002
+Titular: EMPRESA DE PRUEBA 07 SRL          CUIT: 20-12345678-9
+Saldo Anterior al 01/06/2026: 15.000,00
+01/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                -5.083,95        9.916,05
+    ORIGEN EMPRESA DE PRUEBA 07 SRL
+01/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                   976,77       10.892,82
+    REF OPERACION 000123456 SUCURSAL 0112
+01/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO              -$ 1.773,13        9.119,69
+    ORIGEN EMPRESA DE PRUEBA 07 SRL
+01/06/26  PAGO A PROVEEDOR SINTETICO CBU 9990000090000      (5.113,62)        4.006,07
+    REF OPERACION 000123456 SUCURSAL 0112
+01/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                 1.274,40        5.280,47
+    ORIGEN EMPRESA DE PRUEBA 07 SRL
+01/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                  101,89-        5.178,58
+02/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO              -$ 6.982,26       1.803,68-
+    REF OPERACION 000123456 SUCURSAL 0112
+03/06/26  IMPUESTO LEY 25413 DEBITOS                        (4.255,88)       6.059,56-
+04/06/26  COMISION MANTENIMIENTO DE CUENTA                   -3.750,41       9.809,97-
+
+BANCO SINTETICO S.A.  -  RESUMEN DE CUENTA
+Periodo: 01/06/202630/06/2026                        Pagina 6
+Fecha     Concepto                                      Importe        Saldo
+-------------------------------------------------------------------------------
+04/06/26  IMPUESTO LEY 25413 DEBITOS                          8.285,17       1.524,80-
+05/06/26  COMISION MANTENIMIENTO DE CUENTA                 -$ 2.787,44       4.312,24-
+06/06/26  PAGO A PROVEEDOR SINTETICO CBU 9990000090000        (555,47)       4.867,71-
+    DETALLE ADICIONAL DE LA OPERACION
+06/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                -3.850,03       8.717,74-
+06/06/26  RETENCION IIBB JURISDICCION 901                       836,39       7.881,35-
+07/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9        -$ 5.506,80      13.388,15-
+08/06/26  PAGO A PROVEEDOR SINTETICO CBU 9990000090000      (8.042,89)      21.431,04-
+09/06/26  DEPOSITO EN EFECTIVO VENTANILLA                    -2.696,00      24.127,04-
+09/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9          2.157,60-      26.284,64-
+10/06/26  IMPUESTO LEY 25413 DEBITOS                          8.737,46      17.547,18-
+11/06/26  ACREDITACION DE HABERES SIMULADA                    5.150,40      12.396,78-
+12/06/26  RETENCION IIBB JURISDICCION 901                    -2.596,86      14.993,64-
+*** IMPORTANTE: este documento es una SIMULACION sin valor legal ***
+    Ante cualquier consulta comuniquese con su sucursal
+13/06/26  IMPUESTO LEY 25413 DEBITOS                          1.091,85      13.901,79-
+13/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9        -$ 6.611,69      20.513,48-
+    REF OPERACION 000123456 SUCURSAL 0112
+
+BANCO SINTETICO S.A.  -  RESUMEN DE CUENTA
+Periodo: 01/06/202630/06/2026                        Pagina 7
+Fecha     Concepto                                      Importe        Saldo
+-------------------------------------------------------------------------------
+14/06/26  DEPOSITO EN EFECTIVO VENTANILLA                     4.283,62      16.229,86-
+14/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                 5.655,00      10.574,86-
+15/06/26  ACREDITACION DE HABERES SIMULADA                    6.650,24       3.924,62-
+16/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO              -$ 2.897,13       6.821,75-
+17/06/26  COMISION MANTENIMIENTO DE CUENTA                  (7.288,64)      14.110,39-
+18/06/26  PAGO A PROVEEDOR SINTETICO CBU 9990000090000       -7.751,59      21.861,98-
+19/06/26  IMPUESTO LEY 25413 DEBITOS                          6.075,73      15.786,25-
+19/06/26  RETENCION IIBB JURISDICCION 901                  -$ 1.396,52      17.182,77-
+    DETALLE ADICIONAL DE LA OPERACION
+20/06/26  COMISION MANTENIMIENTO DE CUENTA                  (4.843,90)      22.026,67-
+20/06/26  TRANSFERENCIA RECIBIDA CUIT 20-12345678-9           2.245,56      19.781,11-
+20/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                  334,92-      20.116,03-
+20/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                   952,99      19.163,04-
+20/06/26  DEBITO AUTOMATICO SERVICIO SIMULADO                 4.527,05      14.635,99-
+20/06/26  DEPOSITO EN EFECTIVO VENTANILLA                    -8.098,31      22.734,30-
+20/06/26  IMPUESTO LEY 25413 DEBITOS                          3.888,07      18.846,23-
+    DETALLE ADICIONAL DE LA OPERACION
+21/06/26  DEPOSITO EN EFECTIVO VENTANILLA                     5.705,17      13.141,06-
+
+BANCO SINTETICO S.A.  -  RESUMEN DE CUENTA
+Periodo: 01/06/202630/06/2026                        Pagina 8
+Fecha     Concepto                                      Importe        Saldo
+-------------------------------------------------------------------------------
+    REF OPERACION 000123456 SUCURSAL 0112
+21/06/26  COMISION MANTENIMIENTO DE CUENTA                    2.575,70      10.565,36-
+    DETALLE ADICIONAL DE LA OPERACION
+-------------------------------------------------------------------------------
+Total Creditos:        68.911,57
+Total Debitos:        -94.476,93
+Saldo Final al 30/06/2026: 10.565,36-

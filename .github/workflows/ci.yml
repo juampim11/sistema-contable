@@ -1,0 +1,129 @@
+name: CI
+
+# Gate de calidad. Los tests de catálogo de ADR-0002 §B son BLOQUEANTES: una tabla nueva sin RLS
+# forzada, una policy con predicado abierto o una FK de dominio sin la columna de tenant ponen esto en
+# rojo. Es lo que hace que las reglas no dependan de que alguien las recuerde en la revisión.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Un PR que se actualiza cancela la corrida anterior: no tiene sentido pagar dos.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Se usa el MISMO docker-compose que en local, no un `services:` de Actions.
+      # Motivo concreto: el compose fija los parámetros de log de Postgres que exige ADR-0002 R29
+      # (log_statement=none, log_parameter_max_length=0). Con `services:` no se pueden pasar, el test
+      # de R29 fallaría, y la tentación sería saltearlo — o sea, verificar en CI algo distinto de lo
+      # que corre en desarrollo.
+      - name: Infraestructura local (Postgres + MinIO)
+        run: |
+          cp .env.example .env
+          docker compose up -d postgres minio minio-init
+          for i in $(seq 1 30); do
+            if docker compose exec -T postgres pg_isready -U sistema_contable -d sistema_contable; then
+              break
+            fi
+            sleep 2
+          done
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Migraciones (dueño del esquema)
+        run: pnpm db:migrate
+
+      - name: Roles de aplicación
+        run: pnpm db:setup
+
+      - name: Typecheck (TypeScript estricto)
+        run: pnpm typecheck
+
+      # Incluye los tests de catálogo (R1–R15), los de aislamiento a través de conUsuario/conJob, y
+      # el barrido INV-8 sobre los tres caminos dorados de logging.
+      - name: Tests
+        run: pnpm test
+
+      # Los invariantes escritos en SQL, que corren con las TRES credenciales distintas — cada pasada
+      # con el rol que le corresponde. Esa separación es parte de lo que se verifica: si una sola
+      # credencial pudiera hacer las tres, el diseño estaría mal.
+      - name: Invariantes de aislamiento en SQL (tres pasadas, tres roles)
+        run: |
+          set -e
+          docker compose exec -T postgres \
+            psql -U sistema_contable -d sistema_contable -v ON_ERROR_STOP=1 -v ddl=1 \
+            < packages/data/sql/tests/0001_aislamiento.test.sql
+          docker compose exec -T -e PGPASSWORD=app_job_dev postgres \
+            psql -h 127.0.0.1 -U app_job -d sistema_contable -v ON_ERROR_STOP=1 \
+            < packages/data/sql/tests/0001_aislamiento.test.sql
+          docker compose exec -T -e PGPASSWORD=app_request_dev postgres \
+            psql -h 127.0.0.1 -U app_request_dev -d sistema_contable -v ON_ERROR_STOP=1 \
+            < packages/data/sql/tests/0001_aislamiento.test.sql
+
+      # Barrido de fuga sobre el REPO, no sobre los logs. Cierra el agujero que ningún otro control
+      # miraba: un importe o un CUIT de un cliente copiado a un comentario o a un doc.
+      #
+      # Acá corre en modo CI, porque `privado/` no existe en el runner: compara cada candidato contra la
+      # allowlist de huellas commiteada. Un candidato nuevo pone esto en rojo, y para aceptarlo hay que
+      # correr `pnpm barrido --aceptar` en la máquina que sí tiene el material real y que sí puede
+      # cruzarlo. Así CI no puede quedar verde con un valor que nadie verificó.
+      - name: Barrido de fuga sobre el repo (condición de salida nº 4)
+        run: pnpm barrido
+
+      # Gate de fixtures (condición de salida nº 10). Corre ANTES de los tests a propósito: si el fixture
+      # tiene un valor real, un identificador con verificador válido o perdió los rasgos del formato, no
+      # tiene sentido correr los tests que se apoyan en él.
+      #
+      # Acá el chequeo 1 (cruce contra el material real) queda declarado como NO ejecutado, porque
+      # `privado/` no existe en el runner. El que vale corre en la máquina que tiene el material, en
+      # pre-commit. CI cubre los otros seis, incluido `git check-ignore` — que es precisamente el que
+      # detecta un fixture que existe local y no existe acá.
+      - name: Gate de fixtures (condición de salida nº 10)
+        run: pnpm fixtures:verificar
+
+      # El fixture es DETERMINÍSTICO: misma semilla, mismo archivo byte a byte. Si regenerarlo produce un
+      # diff, el fixture commiteado no corresponde a la especificación que dice generarlo — y entonces
+      # nadie sabe de dónde salieron esos bytes.
+      - name: El fixture commiteado corresponde a su especificación
+        run: |
+          pnpm fixtures:generar
+          if ! git diff --exit-code -- packages/ingesta/tests/fixtures/; then
+            echo "ERROR: regenerar el fixture produce un diff."
+            echo "El archivo commiteado no salió de la especificación actual. Corré pnpm fixtures:generar."
+            exit 1
+          fi
+          echo "OK: el fixture es reproducible desde su especificación."
+
+      # Un secreto commiteado se considera público para siempre (ADR-0002 §E.4.8): se rota, no se
+      # limpia el historial. Este paso existe para no llegar a esa conversación.
+      - name: No hay secretos en el repo (R33)
+        run: |
+          if git ls-files --error-unmatch .env 2>/dev/null; then
+            echo "ERROR: .env está trackeado. Solo .env.example va al repo."
+            exit 1
+          fi
+          if git grep -nE -- '-----BEGIN [A-Z ]*PRIVATE KEY' -- . ':!*.md'; then
+            echo "ERROR: hay material de clave privada en el repo."
+            exit 1
+          fi
+          echo "OK: sin .env trackeado ni claves privadas."
+
+      - name: Logs del motor sin datos (diagnóstico si algo falló)
+        if: failure()
+        run: docker compose logs postgres | tail -50

@@ -1,0 +1,14 @@
+{
+  "name": "@sistema-contable/data",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@sistema-contable/shared": "workspace:*",
+    "pg": "^8.16.3",
+    "zod": "^4.1.13"
+  }
+}

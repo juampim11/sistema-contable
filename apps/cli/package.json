@@ -1,0 +1,16 @@
+{
+  "name": "@sistema-contable/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@sistema-contable/shared": "workspace:*",
+    "@sistema-contable/data": "workspace:*",
+    "@sistema-contable/ingesta": "workspace:*",
+    "@sistema-contable/almacenamiento": "workspace:*",
+    "zod": "^4.1.13"
+  }
+}

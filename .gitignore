@@ -1,0 +1,79 @@
+# --- Secretos: lo primero, porque es lo que no se puede deshacer -------------
+# Un secreto commiteado se considera público para siempre: se ROTA, no se limpia
+# el historial y listo (ADR-0002 §E.4.8). Esta lista existe para no llegar a eso.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+# Certificados y credenciales fiscales NUNCA van al repo, ni ignorados: van al
+# almacén de secretos del proveedor (ADR-0002 §E.2).
+
+# --- Datos de clientes -------------------------------------------------------
+# Ningún extracto, DDJJ, comprobante ni transcript real entra al repo, ni siquiera
+# para reproducir un bug (ADR-0002 §F.2 y §F.3).
+#
+# `privado/` es la carpeta de material real de trabajo: extractos de prueba de los
+# bancos, transcripts de entrevistas, cualquier cosa con datos de una persona o de
+# un cliente. Se usa para CONSTRUIR y VERIFICAR; al repo entran solo fixtures
+# sintéticos derivados del formato (ADR-0002 §F.1).
+# ANCLADO con `/`: `privado/` sin anclar matchea a cualquier profundidad y hace desaparecer
+# directorios legítimos en silencio. Pasó con `extractos/`: un fixture en
+# `packages/ingesta/tests/fixtures/extractos/` quedaba ignorado, los tests pasaban en local y en CI
+# el archivo no estaba — y el arreglo natural es `git add -f` en una carpeta que significa
+# "extractos reales". Hallazgo G-2 del agente seguridad-datos-financieros.
+/privado/
+
+# NO HAY NEGACIONES PARA `fixtures/`, y es deliberado. Una regla `!**/fixtures/**/*.pdf` es el único
+# camino por el que un extracto real puede entrar al repo con un `git add -A` normal — y `fixtures/`
+# es exactamente donde alguien apurado copia el archivo real "para probar con algo de verdad".
+# Los fixtures se GENERAN desde una especificación en TypeScript (ADR-0002 §F.1): no hace falta
+# ningún binario versionado, así que el camino se cierra sin costo.
+*.pdf
+*.xlsx
+*.xls
+*.ods
+*.csv          # el entregable del Módulo 1 es un CSV de movimientos: N2R
+*.eml
+*.msg          # el extracto llega por correo (origen='casilla')
+*.png
+*.jpg
+*.jpeg
+*.webp         # una captura de un extracto es una filtración con otro nombre
+*.zip
+*.7z
+*.rar
+*.m4a
+*.mp3
+*.wav
+*.srt
+*.vtt
+# Volcados de base. `*.sql` NO se ignora: las migraciones son .sql y tienen que viajar.
+*.dump
+*.backup
+*.bak
+*.sql.gz
+/dumps/
+/salida/       # destino convenido para lo que escribe el CLI, para que nadie improvise uno
+
+# --- Node / build ------------------------------------------------------------
+node_modules/
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+coverage/
+.turbo/
+
+# --- Sistema operativo y editores -------------------------------------------
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json

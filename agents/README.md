@@ -31,14 +31,23 @@ adopta Codex **son el mismo** (= el filename en `agents/personas/`).
 agents/
 ├── README.md                 ← este archivo (roster + cómo funciona + activación)
 ├── personas/                 ← FUENTE DE VERDAD (neutral, se lee en las dos herramientas)
-│   ├── code-reviewer.md
-│   ├── documentador.md
-│   └── tester.md
-└── wrappers-claude/          ← wrappers finos; copiar a .claude/agents/ para activar en Claude Code
-    ├── code-reviewer.md
-    ├── documentador.md
-    └── tester.md
+│   ├── code-reviewer.md              ┐
+│   ├── documentador.md               ├ genéricos (del template)
+│   ├── tester.md                     ┘
+│   ├── contador-dominio.md                              ┐
+│   ├── fiscal-nacional-iva-ganancias.md                 │
+│   ├── fiscal-ingresos-brutos-convenio-multilateral.md  │
+│   ├── integraciones-afip.md                            ├ dominio (este producto)
+│   ├── motor-conciliacion-contable.md                   │
+│   ├── plan-cuentas-multicliente.md                     │
+│   ├── balances-normas-tecnicas.md                      │
+│   └── seguridad-datos-financieros.md                   ┘
+└── wrappers-claude/          ← wrappers finos; se copian a .claude/agents/ (ya copiados)
+    └── … un archivo por persona, con el MISMO nombre
 ```
+
+**Estado de activación:** `.claude/agents/` ya existe con los **11** wrappers copiados (3 genéricos +
+8 de dominio). Al agregar o editar un wrapper, volver a copiar (ver §Activación).
 
 ## Roster base (propósito general)
 
@@ -48,20 +57,92 @@ agents/
 | `documentador` | Mantiene docs, README, CHANGELOG y la bitácora sincronizados con el código. | Al cerrar una feature o decisión; cuando la doc quedó atrás. |
 | `tester` | Diseña y ejercita pruebas; intenta **romper** el cambio antes del "Done". | Antes de cerrar toda tarea sensible, aunque el gate esté verde. |
 
-> Estos 3 son la base. Agregá **personas de dominio** propias de tu proyecto (ver
-> `PROXIMO-PROYECTO-barrios.md` como ejemplo de sub-agentes específicos).
+> Estos 3 vienen del template y se mantienen. `PROXIMO-PROYECTO-barrios.md` queda como ejemplo del
+> patrón, **no** como roster de este producto.
 
-## Activación en un proyecto nuevo
+## Personas de dominio — producto para estudios contables
+
+Ocho perfiles **super-senior**, dados de alta antes de escribir código. Cada uno tiene su rol completo en
+`agents/personas/<nombre>.md`.
+
+| Persona (nombre único) | Qué hace | Cuándo convocar |
+|---|---|---|
+| `contador-dominio` | Práctica contable argentina: **plan de cuentas**, criterios de asientos e imputación, **cierre de balance**, RT de FACPCE aplicables. Define **cómo se registra**. | Al diseñar el plan de cuentas, decidir qué asiento corresponde a un hecho, o el proceso de cierre. |
+| `fiscal-nacional-iva-ganancias` | **IVA** (débito/crédito, prorrateo, retenciones y percepciones) y **Ganancias** (personas humanas y sociedades), incluido **SIRE**. | Ante cualquier consulta de tributación nacional o al diseñar un cálculo impositivo nacional. |
+| `fiscal-ingresos-brutos-convenio-multilateral` | **IIBB unilateral** y **Convenio Multilateral**: coeficiente unificado, atribución de ingresos y gastos, regímenes especiales, **SIFERE**, retenciones por jurisdicción. | Ante cualquier consulta de IIBB o de reparto interjurisdiccional. |
+| `integraciones-afip` | Rieles técnicos de **AFIP/ARCA**: webservices, certificados y credenciales, SIRE, padrón, homologación vs. producción; y **seguimiento de cambios normativos** con impacto técnico. | Al diseñar o revisar cualquier integración con el organismo recaudador. |
+| `motor-conciliacion-contable` | Diseña el motor que clasifica **movimientos bancarios** contra el plan de cuentas y **PROPONE asientos** a revisión del contador. Adapta el motor de matching de `trazabilidad-obra-gas`. | Al diseñar reglas de clasificación, umbrales, evidencia de la propuesta, o el reuso del motor del gas. |
+| `plan-cuentas-multicliente` | Versiona por cliente los atributos que cambian su tratamiento: condición ante IVA, forma societaria, **jurisdicciones de IIBB activas**, plan de cuentas propio. | Al modelar el cliente o cualquier cálculo que dependa de un atributo con vigencia. |
+| `balances-normas-tecnicas` | Estados contables según **RT de FACPCE**, incluida la variante **RT 41** para PyMEs: estados, rubros, notas, ajuste por inflación. Define **cómo se presenta**. | Al definir la exposición, el mapeo plan de cuentas → rubro, o el encuadre del ente. |
+| `seguridad-datos-financieros` | Especialización de un security-engineer para **secreto fiscal** y datos bancarios/tributarios de terceros: aislamiento entre clientes, roles, credenciales, logs, datos de prueba, trazabilidad. | **Obligatorio** ante cambios que toquen datos de clientes, dinero, permisos o aislamiento. |
+
+### Guardrails de los agentes fiscales y contables (no negociables)
+
+`contador-dominio`, `fiscal-nacional-iva-ganancias`,
+`fiscal-ingresos-brutos-convenio-multilateral`, `integraciones-afip`, `balances-normas-tecnicas` y
+—en lo normativo— `seguridad-datos-financieros`:
+
+1. Responden **solo** con base en `knowledge/`. Si falta la fuente: **"no tengo esa fuente cargada"**.
+2. **Citan la fuente** en cada afirmación (norma o RT + artículo/inciso + **archivo** de origen).
+3. **Nunca inventan un número de norma**, de resolución, de RT ni de artículo.
+4. **Marcan vigencia y fecha de verificación** de cada dato fiscal — topes y alícuotas cambian seguido.
+5. **Cierran con "Validar con profesional matriculado"** cuando el output tenga implicancia legal, fiscal
+   o contable.
+
+Ver `knowledge/README.md` (convenciones), `knowledge/JURISDICCIONES-ACTIVAS.md` (un cliente puede tener
+**varias** jurisdicciones a la vez) y `docs/agents/guia-carga-conocimiento.md` (qué cargar primero).
+
+Los dos agentes de diseño (`motor-conciliacion-contable`, `plan-cuentas-multicliente`) no son
+normativos; sus reglas duras propias son **"asistido, no automático"** (toda salida es una propuesta a
+revisión del contador) y **"todo atributo versionado por vigencia"** (un recálculo histórico es
+reproducible).
+
+## Matriz de convocatoria
+
+| Si la necesidad toca… | Convocar |
+|---|---|
+| Plan de cuentas, asientos, cierre de ejercicio | `contador-dominio` |
+| IVA, Ganancias, retenciones nacionales, SIRE | `fiscal-nacional-iva-ganancias` |
+| IIBB, coeficientes, jurisdicciones, SIFERE | `fiscal-ingresos-brutos-convenio-multilateral` |
+| Webservices, certificados, padrón, cambio normativo con impacto técnico | `integraciones-afip` |
+| Clasificar movimientos bancarios / proponer asientos | `motor-conciliacion-contable` (+ `contador-dominio`) |
+| Modelo del cliente, atributos con vigencia, plan propio | `plan-cuentas-multicliente` (+ el agente de dominio que define el tratamiento) |
+| Estados contables, exposición, RT, ajuste por inflación | `balances-normas-tecnicas` |
+| **Datos de clientes, dinero, permisos, aislamiento** | `seguridad-datos-financieros` — **obligatorio** |
+| Cualquier decisión con implicancia fiscal **y** contable | panel: `contador-dominio` + el fiscal que corresponda |
+| Antes de mergear un cambio no trivial | `code-reviewer`; `tester` antes del "Done"; `documentador` al cerrar |
+
+## Pendiente de dar de alta
+
+- **Roster técnico de ingeniería** (arquitecto, backend, frontend, dba/data, devops, qa): se da de alta
+  cuando arranque la construcción. Hoy este repo tiene **solo dominio**, a propósito.
+- **Ingesta bancaria** y **tenancy**: etapa siguiente. Los agentes ya escritos delimitan qué **no**
+  deciden todavía sobre esos dos temas.
+
+## Activación
 
 1. **Claude Code:** copiá `agents/wrappers-claude/*.md` a **`.claude/agents/`** (Claude Code
-   auto-descubre esa carpeta). Los wrappers ya apuntan a `agents/personas/<persona>.md`.
+   auto-descubre esa carpeta). **Ya está hecho** para los 11 actuales; repetir al agregar o editar uno:
+   `cp agents/wrappers-claude/*.md .claude/agents/`.
 2. **Codex:** nada que copiar — `AGENTS.md` ya instruye adoptar personas desde `agents/personas/`.
-3. Ajustá `CLAUDE.md` y `AGENTS.md` con el nombre y las reglas de tu proyecto (`<ASI>`).
+3. `CLAUDE.md` §3 y este archivo tienen que listar **las mismas** personas (ver checklist abajo).
 
 ## Checklist de sincronía (al agregar o renombrar una persona)
 
-- [ ] `agents/personas/<nombre>.md` — el rol (fuente de verdad).
-- [ ] `agents/wrappers-claude/<nombre>.md` — wrapper con **el mismo nombre** (y, si ya activaste,
-      copialo también a `.claude/agents/`).
-- [ ] Esta tabla de roster (arriba).
-- [ ] Si cambia **cuándo se la convoca**: la matriz/proceso de tu equipo.
+Los **tres archivos por agente** + los **tres lugares donde se lista**:
+
+- [ ] `agents/personas/<nombre>.md` — el rol completo (fuente de verdad).
+- [ ] `agents/wrappers-claude/<nombre>.md` — wrapper con **el mismo nombre**, frontmatter
+      `name: <nombre>` (igual al filename) + `description`.
+- [ ] `.claude/agents/<nombre>.md` — copia del wrapper (`cp agents/wrappers-claude/*.md .claude/agents/`).
+- [ ] La tabla de roster de **este archivo** (arriba) y la **matriz de convocatoria**.
+- [ ] La tabla de `CLAUDE.md` §3.
+- [ ] `AGENTS.md` §3 — no lista personas (apunta acá), pero verificar que el puntero siga siendo correcto.
+
+Verificación rápida de que las tres capas están sincronizadas:
+
+```bash
+# mismos nombres en las tres carpetas, y frontmatter name == filename
+ls agents/personas/ agents/wrappers-claude/ .claude/agents/
+grep -H '^name:' .claude/agents/*.md
+```

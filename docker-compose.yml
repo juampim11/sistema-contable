@@ -1,0 +1,133 @@
+## Infraestructura local — ver docs/arquitectura/ADR-0000-stack-infra.md §4.
+##
+## Levanta SOLO Postgres + almacenamiento S3-compatible. Sin nube, sin cuenta en ningún proveedor,
+## sin nada decidido: es exactamente el punto del ADR-0000.
+##
+##   cp .env.example .env
+##   docker compose up -d postgres minio minio-init
+##
+## El CLI del Módulo 1 corre en el HOST contra estos dos contenedores. No hay servicio de app todavía
+## (no existe apps/web) ni de auth (no existe el modelo de usuarios). Cuando exista la web, entra acá
+## como un servicio con `profiles: ["web"]` y su propio Dockerfile.dev.
+##
+## REGLA QUE ESTE ARCHIVO HACE CUMPLIR (ADR-0002):
+## cada proceso recibe SOLO las credenciales del rol que le corresponde. Por eso ningún servicio que
+## corra código nuestro usa `env_file`: enumera sus variables una por una, y ese diff es el control.
+## El dueño del esquema solo migra; el rol de request está sujeto a RLS; el de jobs la saltea.
+##
+## Los puertos se publican en 127.0.0.1 y no en todas las interfaces: una base de desarrollo con
+## contraseña de desarrollo, alcanzable desde la red donde estés, es una base de desarrollo pública.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sistema-contable-postgres
+    restart: unless-stopped
+    # ADR-0002 R29 — el log del motor NO puede ser una vía de filtración.
+    #   log_statement=none                     : no loguea las sentencias
+    #   log_parameter_max_length=0             : no loguea el VALOR de los parámetros ligados
+    #   log_parameter_max_length_on_error=0    : tampoco cuando la sentencia falla
+    # El tercero es el que importa de verdad: sin él, una violación de unicidad deja el CBU o el CUIT
+    # escrito en el log del motor, fuera del alcance de la RLS y del redactor de la aplicación.
+    # Verificado por `packages/data/tests/catalogo.test.ts` contra pg_settings.
+    command:
+      - postgres
+      - -c
+      - log_statement=none
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - log_min_duration_statement=1000
+    environment:
+      # Este es el DUEÑO DEL ESQUEMA. Corre migraciones y scripts. Ningún proceso que atienda
+      # pedidos lo usa. Los roles app_request / app_job los crea la migración 0001_tenancy.sql.
+      POSTGRES_DB: ${POSTGRES_DB:-sistema_contable}
+      POSTGRES_USER: ${POSTGRES_USER:-sistema_contable}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sistema_contable_dev}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sistema_contable} -d ${POSTGRES_DB:-sistema_contable}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: sistema-contable-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      # Cuenta de ADMINISTRACIÓN del storage: puede borrar buckets enteros. Ninguna aplicación la
+      # recibe — para eso están las dos cuentas de servicio que crea minio-init.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sistema_contable}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-sistema_contable_dev}
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Contenedor de un solo uso: crea el bucket y dos cuentas de servicio, y sale.
+  #
+  # Dos cuentas y no la de root, por el mismo motivo por el que hay tres roles de base: el proceso
+  # que solo necesita LEER (firmar una URL de descarga del extracto original) no tiene por qué poder
+  # escribir ni borrar. Local esto es un espejo barato de lo que en la nube son dos políticas de IAM.
+  #
+  # Las credenciales van por `environment` y no interpoladas en el comando: así no quedan a la vista
+  # en `docker inspect` ni en la lista de procesos del host.
+  minio-init:
+    image: minio/mc:latest
+    container_name: sistema-contable-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MC_HOST_local: http://${MINIO_ROOT_USER:-sistema_contable}:${MINIO_ROOT_PASSWORD:-sistema_contable_dev}@minio:9000
+      BUCKET: ${S3_BUCKET:-sistema-contable}
+      LECTURA_KEY: ${S3_LECTURA_ACCESS_KEY_ID:-app_lectura_dev}
+      LECTURA_SECRET: ${S3_LECTURA_SECRET_ACCESS_KEY:-app_lectura_dev_secret}
+      ESCRITURA_KEY: ${S3_ESCRITURA_ACCESS_KEY_ID:-app_escritura_dev}
+      ESCRITURA_SECRET: ${S3_ESCRITURA_SECRET_ACCESS_KEY:-app_escritura_dev_secret}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc mb --ignore-existing "local/$$BUCKET"
+        echo "Bucket listo: $$BUCKET"
+
+        # Las cuentas de servicio son comodidad local: si esta parte falla (una versión de `mc` con
+        # otra sintaxis), el bucket ya está creado y el aviso queda visible.
+        crear_cuentas() {
+          cat > /tmp/lectura.json <<FIN
+        { "Version": "2012-10-17", "Statement": [
+          { "Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::$$BUCKET/*"] },
+          { "Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": ["arn:aws:s3:::$$BUCKET"] } ] }
+        FIN
+          cat > /tmp/escritura.json <<FIN
+        { "Version": "2012-10-17", "Statement": [
+          { "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": ["arn:aws:s3:::$$BUCKET/*"] },
+          { "Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": ["arn:aws:s3:::$$BUCKET"] } ] }
+        FIN
+          mc admin policy create local sc-lectura /tmp/lectura.json 2>/dev/null || true
+          mc admin policy create local sc-escritura /tmp/escritura.json 2>/dev/null || true
+          mc admin user add local "$$LECTURA_KEY" "$$LECTURA_SECRET"
+          mc admin user add local "$$ESCRITURA_KEY" "$$ESCRITURA_SECRET"
+          mc admin policy attach local sc-lectura   --user "$$LECTURA_KEY" 2>/dev/null || true
+          mc admin policy attach local sc-escritura --user "$$ESCRITURA_KEY" 2>/dev/null || true
+          echo "Cuentas de storage listas: $$LECTURA_KEY (lectura) y $$ESCRITURA_KEY (lectura+escritura)."
+        }
+        crear_cuentas || echo "AVISO: no se crearon las cuentas de storage; quedó solo el bucket."
+
+volumes:
+  postgres_data:
+  minio_data:

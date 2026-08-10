@@ -1,0 +1,16 @@
+{
+  "name": "@sistema-contable/almacenamiento",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@sistema-contable/shared": "workspace:*",
+    "@sistema-contable/data": "workspace:*",
+    "@aws-sdk/client-s3": "^3.699.0",
+    "@aws-sdk/s3-request-presigner": "^3.699.0",
+    "zod": "^4.1.13"
+  }
+}

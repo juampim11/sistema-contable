@@ -1,0 +1,7 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+allowBuilds:
+  # esbuild es dependencia de Vitest y necesita su script de post-instalación para bajar el binario.
+  esbuild: true
+
