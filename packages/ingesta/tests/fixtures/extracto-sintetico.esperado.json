@@ -1,0 +1,22 @@
+{
+  "cuentas": [
+    {
+      "numero": "0112-100000/0",
+      "cbu": "9990000090000000000001",
+      "saldoInicial": "10000.00",
+      "saldoFinal": "-4115.42",
+      "totalCreditos": "87037.20",
+      "totalDebitos": "101152.62",
+      "movimientos": 40
+    },
+    {
+      "numero": "0112-100001/1",
+      "cbu": "9990000090000000000002",
+      "saldoInicial": "15000.00",
+      "saldoFinal": "-10565.36",
+      "totalCreditos": "68911.57",
+      "totalDebitos": "94476.93",
+      "movimientos": 40
+    }
+  ]
+}

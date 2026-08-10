@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    // TypeScript ESTRICTO de punta a punta (ADR-0000 §2). Nada de `any` implícito ni índices sueltos.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    // Los paquetes se publican como TS FUENTE, sin paso de build (ADR-0000 §2): los imports llevan
+    // extensión `.ts` explícita y los resuelven igual Node (type-stripping nativo) y Vitest.
+    // VERIFICADO en esta máquina con Node v24.14.0.
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2023",
+    "lib": ["es2023"],
+    "types": ["node"],
+
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true
+  },
+  // `apps/` NO estaba, y el agujero era real: todo el cableado del CLI —el pipeline de once pasos, INV-6,
+  // INV-multicuenta— nunca pasaba por `tsc`. Vitest corre `apps/*/tests` pero no typechequea, así que el
+  // gate en verde no significaba lo que parecía. Lo encontró el panel; al agregarlo aparecieron dos errores
+  // reales, uno de ellos un `string | undefined` que producía un rechazo con el motivo equivocado.
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/tests/**/*.ts",
+    "packages/*/scripts/**/*.ts",
+    "apps/*/src/**/*.ts",
+    "apps/*/tests/**/*.ts",
+    "tools/**/*.ts"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@sistema-contable/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./seguridad": "./src/seguridad/index.ts",
+    "./observabilidad": "./src/observabilidad/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.1.13"
+  }
+}

@@ -8,6 +8,41 @@
 
 ---
 
+## 0.bis 🔴 ESTADO HOY: un solo entorno, y es una DEMO
+
+> **Decisión del titular, 2026-08-10.** Lo de abajo es la guía a la que se va; **esto es lo que hay**, y
+> mientras diga esto, manda esto.
+
+**Hoy existe un solo entorno: la máquina de desarrollo.** No hay prod, ni staging, ni testing desplegado.
+Lo que hay es una base local en Docker (`sistema_contable`, la de los tests) y otra base local separada
+(`sistema_contable_piloto`, con material real). **Eso es a propósito y no es deuda oculta: es una demo.**
+
+**El compromiso que esto lleva, y que hay que cumplir:**
+
+1. **Lo que está cargado hoy NO viaja a producción.** Cuando el producto pase a prod, **todo lo cargado se
+   borra**, o —preferido— **se levanta un entorno limpio desde cero**. Producción arranca **vacía** y procesa
+   la información **desde cero**, con altas hechas en producción.
+2. **Ninguna base de la demo se "promueve".** No se hace `pg_dump` del piloto a prod, no se migra el tenant,
+   no se copia el bucket. El camino de la demo a prod es **esquema + código**, nunca datos.
+3. **Los identificadores de la demo no sobreviven.** Los `uuid` de cliente, los lotes, las claves de objeto
+   y el `pepper` del piloto son de la demo. En prod se genera un pepper nuevo — y eso **por sí solo** vuelve
+   irreproducibles los `cbu_hmac` de la demo, que es exactamente lo que se quiere.
+4. **Prod-staging-testing-dev llega después.** Está bien que hoy no exista; lo que no está bien es que nadie
+   lo haya escrito. Queda escrito: es la etapa siguiente a la demo, y el resto de este documento es el
+   destino.
+
+**Por qué importa que esté acá y no en la cabeza de alguien:** el día que el producto funcione, el atajo
+tentador va a ser *"ya está todo cargado, subamos esta base"*. Esa base tiene material real de **varios
+titulares** que se cargó bajo una excepción de construcción (`docs/seguridad/registro-excepciones.md`, E-1),
+con identidades provisorias y sin las altas hechas por nadie del estudio. Promoverla convertiría una
+excepción temporal en el estado permanente de producción, y ya nadie podría decir de dónde salió cada fila.
+
+**Y el corolario que cierra E-1:** la columna "se destruye" de esa excepción decía *"sin fecha definida"*.
+Ahora tiene criterio, aunque no tenga fecha: **el material y todo lo derivado de él se destruyen al pasar a
+producción**, porque producción arranca de cero.
+
+---
+
 ## 0. Por qué dos entornos (el problema que evita)
 
 Con **un solo mundo** (una base y un hosting), desarrollar y probar en tu máquina se conecta a la

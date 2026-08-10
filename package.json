@@ -1,0 +1,40 @@
+{
+  "name": "sistema-contable",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "db:up": "docker compose up -d postgres minio minio-init",
+    "db:down": "docker compose down",
+    "db:migrate": "node packages/data/scripts/migrar.ts",
+    "db:setup": "node packages/data/scripts/setup-roles.ts",
+    "db:seed": "node packages/data/scripts/sembrar.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "verificar": "pnpm typecheck && pnpm barrido && pnpm fixtures:verificar && pnpm test",
+    "barrido": "node tools/barrido-fuga.ts",
+    "barrido:aceptar": "node tools/barrido-fuga.ts --aceptar",
+    "hooks:instalar": "git config core.hooksPath .githooks",
+    "fixtures:generar": "node tools/generar-fixtures.ts",
+    "fixtures:verificar": "node tools/verificar-fixtures.ts",
+    "probar": "node packages/ingesta/scripts/probar-adaptador.ts",
+    "ingesta": "node apps/cli/src/ingestar.ts",
+    "alta:cuenta": "node apps/cli/src/alta-cuenta.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/pg": "^8.15.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "pg": "^8.16.3",
+    "zod": "^4.1.13",
+    "@sistema-contable/shared": "workspace:*",
+    "@sistema-contable/ingesta": "workspace:*"
+  }
+}

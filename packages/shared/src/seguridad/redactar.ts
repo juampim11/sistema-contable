@@ -1,0 +1,179 @@
+/**
+ * REDACTOR — ADR-0002 §D.
+ *
+ * Deriva del registro de clasificación (`clasificacion-campos.ts`): no hay una segunda lista.
+ * Dos capas, porque un dato sensible llega de dos formas distintas:
+ *
+ *   1. **Por nombre de clave**: `{ cbu: '01701234...' }`. Se tapa la clave.
+ *   2. **Por forma del valor**: un CUIT o un CBU dentro de un texto libre, un PEM, un base64 largo.
+ *      Se tapa el fragmento. Esta capa es la que atrapa el caso real: el mensaje de error del driver
+ *      de Postgres (`Key (cbu)=(0170...) already exists`), donde el dato viene DENTRO de un string.
+ *
+ * No reemplaza a las reglas: el logger **rechaza en tiempo de compilación** las claves sensibles
+ * (R27). Esto es la red para lo que llega por texto y para lo que se serializa desde afuera.
+ */
+
+import { CLAVES_SENSIBLES_EXTERNAS, COLUMNAS_SENSIBLES } from './clasificacion-campos.ts';
+
+export const MARCA = '[REDACTADO]';
+
+const CLAVES_A_TAPAR: ReadonlySet<string> = new Set([
+  ...COLUMNAS_SENSIBLES,
+  ...CLAVES_SENSIBLES_EXTERNAS,
+]);
+
+/** Se comparan sin `_`, sin `-` y en minúsculas: `razonSocial`, `razon_social` y `RAZON-SOCIAL` son la misma. */
+function normalizarClave(clave: string): string {
+  return clave.toLowerCase().replace(/[_\-\s]/g, '');
+}
+
+const CLAVES_NORMALIZADAS: ReadonlySet<string> = new Set(
+  [...CLAVES_A_TAPAR].map(normalizarClave),
+);
+
+export function esClaveSensible(clave: string): boolean {
+  return CLAVES_NORMALIZADAS.has(normalizarClave(clave));
+}
+
+/**
+ * Detectores por forma del valor. Cada uno con su motivo, para que un hallazgo se pueda explicar.
+ *
+ * Ojo con el orden: los más específicos primero. El CBU (22 dígitos) tiene que taparse antes de que
+ * un detector de "número largo" lo parta.
+ */
+export const DETECTORES: readonly { nombre: string; patron: RegExp; motivo: string }[] = [
+  {
+    nombre: 'clave_privada_pem',
+    patron: /-----BEGIN[\s\S]*?-----END[^-]*-----/g,
+    motivo: 'Material criptográfico en claro (N3).',
+  },
+  {
+    nombre: 'clave_privada_pem_parcial',
+    patron: /-----BEGIN [A-Z ]+-----/g,
+    motivo: 'Encabezado de clave privada: aunque esté truncada, no se loguea.',
+  },
+  {
+    nombre: 'cbu',
+    patron: /\b\d{22}\b/g,
+    motivo: 'CBU (22 dígitos) — N2R.',
+  },
+  {
+    nombre: 'cuenta_con_separadores',
+    // Un número de cuenta escrito con guiones o espacios (`0170-1234-5678901234`) NO matchea el
+    // patrón de 22 dígitos. Salió de correr INV-8: venía dentro del nombre de un archivo.
+    //
+    // Los lookarounds NO son decorativos: sin ellos el patrón matchea la cola de un UUID
+    // (`…-0000-0000-000000000001`) y el redactor tapa los identificadores internos, que son
+    // justamente lo que SÍ tiene que quedar para poder depurar. Pasó al correr el test.
+    patron: /(?<![\da-fA-F-])\d{3,4}[-\s]\d{3,5}[-\s]\d{6,14}(?![\da-fA-F-])/g,
+    motivo: 'Número de cuenta con separadores — N2R.',
+  },
+  {
+    nombre: 'cuit',
+    patron: /\b(20|23|24|25|26|27|30|33|34)-?\d{8}-?\d\b/g,
+    motivo: 'CUIT/CUIL — N2R.',
+  },
+  {
+    nombre: 'jwt',
+    patron: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+    motivo: 'Token de sesión o de webservice — N3.',
+  },
+  {
+    nombre: 'dsn_con_credencial',
+    patron: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:[^\s@]+@[^\s]+/gi,
+    motivo: 'DSN o URL con usuario y contraseña — N3.',
+  },
+  {
+    nombre: 'base64_largo',
+    patron: /\b[A-Za-z0-9+/]{120,}={0,2}\b/g,
+    motivo: 'Blob base64 largo: puede ser un certificado, un archivo o un dump.',
+  },
+  {
+    nombre: 'importe_ar',
+    // Importe en formato argentino: separador de miles con punto y dos decimales con coma.
+    //
+    // No existía, y era la mitad del agujero H-C: un saldo o un importe dentro de un texto libre
+    // —el `detail` de un error, un mensaje armado a mano— pasaba el redactor entero. Se limita al
+    // formato LOCAL a propósito: un detector de la forma canónica (`-?\d+\.\d{2}`) matchearía
+    // duraciones (`1830.00`) y conteos, y un redactor que tapa los conteos deja de servir para
+    // depurar, que es la otra forma de fallar.
+    patron: /(?<![\d,.])-?\d{1,3}(?:\.\d{3})+,\d{2}(?![\d,.])/g,
+    motivo: 'Importe en formato argentino — N2.',
+  },
+];
+
+/** Tapa en un texto todo lo que matchee un detector. Devuelve el texto y qué detectores saltaron. */
+export function redactarTexto(texto: string): { texto: string; detectores: string[] } {
+  let resultado = texto;
+  const saltaron: string[] = [];
+  for (const { nombre, patron } of DETECTORES) {
+    // `patron` es global: se re-crea el lastIndex en cada uso para no arrastrar estado entre llamadas.
+    const re = new RegExp(patron.source, patron.flags);
+    if (re.test(resultado)) {
+      saltaron.push(nombre);
+      resultado = resultado.replace(new RegExp(patron.source, patron.flags), MARCA);
+    }
+  }
+  return { texto: resultado, detectores: saltaron };
+}
+
+/** ¿Este texto contiene algo que no debería salir? Es el corazón del test INV-8. */
+export function contieneDatoSensible(texto: string): boolean {
+  return redactarTexto(texto).detectores.length > 0;
+}
+
+const PROFUNDIDAD_MAXIMA = 8;
+
+/**
+ * Redacta una estructura completa: tapa las claves sensibles por nombre y los valores por forma.
+ *
+ * Un `Error` se reduce a nombre + mensaje redactado. **La `stack` no se conserva**: suele traer
+ * variables locales, y el `detail`/`where` del driver de Postgres viene con valores de fila —
+ * exactamente la fuga de ADR-0002 R28.
+ */
+export function redactar(valor: unknown, profundidad = 0): unknown {
+  if (valor === null || valor === undefined) return valor;
+  if (profundidad > PROFUNDIDAD_MAXIMA) return '[PROFUNDIDAD_MAXIMA]';
+
+  if (typeof valor === 'string') return redactarTexto(valor).texto;
+  if (typeof valor === 'number' || typeof valor === 'boolean' || typeof valor === 'bigint') return valor;
+  if (valor instanceof Date) return valor.toISOString();
+
+  if (valor instanceof Error) {
+    return {
+      nombre: valor.name,
+      mensaje: redactarTexto(valor.message).texto,
+      // Sin stack, sin `detail`, sin `where`, sin los parámetros ligados de la query.
+    };
+  }
+
+  if (Array.isArray(valor)) {
+    return valor.map((v) => redactar(v, profundidad + 1));
+  }
+
+  if (typeof valor === 'object') {
+    const salida: Record<string, unknown> = {};
+    for (const [clave, v] of Object.entries(valor as Record<string, unknown>)) {
+      salida[clave] = esClaveSensible(clave) ? MARCA : redactar(v, profundidad + 1);
+    }
+    return salida;
+  }
+
+  // Funciones, símbolos y lo que no sepamos serializar: no se loguean.
+  return '[NO_SERIALIZABLE]';
+}
+
+/** Enmascarados para mostrar en pantalla cuando el rol puede ver el dato pero no hace falta completo. */
+export function ultimos4(valor: string): string {
+  const limpio = valor.replace(/\D/g, '');
+  return limpio.length <= 4 ? '••••' : `••••${limpio.slice(-4)}`;
+}
+
+export function cuitParcial(cuit: string): string {
+  const d = cuit.replace(/\D/g, '');
+  return d.length === 11 ? `${d.slice(0, 2)}-•••••••-${d.slice(10)}` : '••-•••••••-•';
+}
+
+export function huella(sha256: string): string {
+  return sha256.length <= 8 ? sha256 : `${sha256.slice(0, 8)}…`;
+}
