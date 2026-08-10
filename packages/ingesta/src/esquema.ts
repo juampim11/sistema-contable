@@ -123,6 +123,16 @@ export type CapacidadesAdaptador = z.infer<typeof capacidadesAdaptadorSchema>;
 // Cuenta detectada
 // -----------------------------------------------------------------------------
 
+/**
+ * El tipo de cuenta. **Esta lista existe TRES veces** y las tres tienen que decir lo mismo: acá, en el check
+ * `cuenta_ident_tipo_chk` (migración `0006`) y en `TIPOS_CUENTA_ALTA` (`packages/data/src/ingesta/
+ * escrituras.ts`). No se pueden derivar entre sí sin el ciclo `data → ingesta`, que está prohibido, así que
+ * el árbitro es el check: el test parametrizado de dominios cerrados compara **las dos** constantes contra
+ * él, y por transitividad quedan iguales entre sí.
+ *
+ * Divergieron una vez: el check original de `0004` traía un `cuenta_unica` **inventado en la migración**, y
+ * aplastaba a `otra` los cinco tipos reales.
+ */
 export const TIPOS_CUENTA = [
   'cuenta_corriente',
   'cuenta_corriente_especial',
@@ -185,8 +195,14 @@ export const TIPOS_FILA = [
  * "esta fila es anterior a la migración 0007", "el banco no publica concepto para esta fila" y "el concepto
  * vino de una columna propia del Excel".
  *
- * El `check` de la base tiene esta misma lista. Dos listas del mismo dominio en dos lenguajes ya divergieron
- * dos veces en este repo, así que hay un test de catálogo que las compara.
+ * El `check` `mov_crudo_concepto_estrategia_chk` (migración `0007`) tiene esta misma lista. Dos listas del
+ * mismo dominio en dos lenguajes ya divergieron dos veces en este repo, así que el test parametrizado de
+ * dominios cerrados (`packages/data/tests/catalogo.test.ts`) lee los valores del `check` desde
+ * `pg_constraint` y los compara **como conjunto** contra esta constante.
+ *
+ * ⚠️ Esa afirmación era **falsa hasta que el test se escribió**: durante varias migraciones este comentario
+ * prometía una comparación que no existía. Ahora existe y cubre los diez dominios cerrados del esquema —
+ * incluido uno de cobertura que se pone rojo si alguien agrega un `check` de este tipo sin su constante.
  */
 export const ESTRATEGIAS_CONCEPTO = [
   /** Fila anterior a la migración `0007`. **Ningún adaptador lo emite**: es el valor del backfill. */
@@ -716,3 +732,48 @@ export const extractoParseadoSchema = z.object({
   lineasNoInterpretadas: z.array(lineaNoInterpretadaSchema),
 });
 export type ExtractoParseado = z.infer<typeof extractoParseadoSchema>;
+
+// -----------------------------------------------------------------------------
+// El lote — el vocabulario cerrado de la tabla `lote_ingesta`
+// -----------------------------------------------------------------------------
+
+/**
+ * Los dos estados con los que un lote queda **con filas adentro**.
+ *
+ * Va separado de `ESTADOS_LOTE` porque es el tipo de retorno de `estadoSegunVerificacion`: la persistencia
+ * **no puede** devolver `recibido` (todavía no leyó nada) ni `con_errores` (ese camino no persiste ninguna
+ * fila). Antes era una unión literal repetida a mano en tres firmas de `persistir.ts` más una variable del
+ * CLI — la misma clase de duplicación que este bloque existe para cerrar, un nivel más abajo.
+ */
+export const ESTADOS_LOTE_PERSISTIDO = ['procesado', 'procesado_con_observaciones'] as const;
+export type EstadoLotePersistido = (typeof ESTADOS_LOTE_PERSISTIDO)[number];
+
+/**
+ * Los cuatro estados de `lote_ingesta.estado` (`lote_ingesta_estado_chk`, migración `0004`).
+ *
+ * **Esta constante no existía.** Era una de las dos listas cerradas del Módulo 1 sin contraparte en
+ * TypeScript: los cuatro valores vivían como literales sueltos en `apps/cli/src/ingestar.ts` y en las firmas
+ * de `packages/ingesta/src/persistir.ts`. Sin una lista contra la cual comparar, el test de catálogo no
+ * tenía **nada** que verificar del check que más se escribe del módulo — el que toca todos los lotes, dos
+ * veces cada uno.
+ *
+ * La composición con el spread de `ESTADOS_LOTE_PERSISTIDO` es deliberada: si los dos estados persistidos se
+ * repitieran acá a mano, la lista de cuatro y la de dos podrían divergir **entre sí**, que es exactamente el
+ * problema que se está resolviendo contra la base.
+ *
+ * `rechazado` **no** es uno de ellos: un lote rechazado queda `con_errores` con su `motivo_codigo`, y el
+ * rechazo se asienta además en `acceso_auditoria` con `accion = 'rechazo'`.
+ */
+export const ESTADOS_LOTE = ['recibido', ...ESTADOS_LOTE_PERSISTIDO, 'con_errores'] as const;
+export type EstadoLote = (typeof ESTADOS_LOTE)[number];
+
+/**
+ * De dónde entró el archivo (`lote_ingesta.origen`, `lote_ingesta_origen_chk` de la migración `0004`).
+ *
+ * También faltaba. Hoy el único emisor es el CLI y siempre escribe `archivo`; los otros dos valores están en
+ * la base desde `0004` porque el plan los contempla. Declararlos acá es lo que hace que el día que exista la
+ * casilla, el valor salga de un tipo y no de una cadena escrita adentro de un `insert` — donde ni el
+ * typecheck ni el check de la base avisan hasta que el insert corre.
+ */
+export const ORIGENES_LOTE = ['archivo', 'casilla', 'api'] as const;
+export type OrigenLote = (typeof ORIGENES_LOTE)[number];

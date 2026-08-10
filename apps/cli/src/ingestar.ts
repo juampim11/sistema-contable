@@ -56,6 +56,9 @@ import {
   verificarAritmetica,
   verificarConsolidadoPorMoneda,
   verificarConteoDeCuentas,
+  type EstadoLote,
+  type EstadoLotePersistido,
+  type OrigenLote,
 } from '@sistema-contable/ingesta';
 
 import { logger } from '@sistema-contable/shared/observabilidad';
@@ -141,6 +144,20 @@ export const MOTIVOS_TECNICOS = [
 ] as const;
 
 const EXTENSIONES_ACEPTADAS = new Set(['.pdf', '.xlsx', '.xls', '.csv']);
+
+/**
+ * Los tres valores de `lote_ingesta` que este CLI escribe, **tipados contra el vocabulario cerrado** de
+ * `@sistema-contable/ingesta` (`ORIGENES_LOTE` / `ESTADOS_LOTE`).
+ *
+ * Estaban embebidos como literales adentro del texto de los `insert`/`update`, donde no los mira nadie: ni
+ * el typecheck (para `tsc` son parte de una cadena) ni el check de la base hasta que la sentencia corre. Un
+ * `'recibdo'` de un dedo se manifestaba como un error de constraint en producción, en el paso 4 del
+ * pipeline, con el archivo ya leído. Declarados acá con su tipo, ese error **no compila** — y además le dan
+ * al test de catálogo una lista con la cual comparar el check.
+ */
+const ORIGEN_DEL_CLI: OrigenLote = 'archivo';
+const ESTADO_AL_CREAR: EstadoLote = 'recibido';
+const ESTADO_AL_RECHAZAR: EstadoLote = 'con_errores';
 
 export function parsearArgumentos(argv: readonly string[]): Argumentos {
   const mapa = new Map<string, string>();
@@ -238,10 +255,17 @@ export async function ingestar(
     const creado = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
          (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por)
-       values ($1, $2, $3, 'archivo', $4, 'recibido', app.current_user_id())
+       values ($1, $2, $3, $4, $5, $6, app.current_user_id())
        returning id::text as id`,
       // La versión definitiva se escribe al cerrar el lote, con la del adaptador que de verdad lo leyó.
-      [args.cliente, args.banco, `${args.banco}@pendiente`, archivoHash],
+      [
+        args.cliente,
+        args.banco,
+        `${args.banco}@pendiente`,
+        ORIGEN_DEL_CLI,
+        archivoHash,
+        ESTADO_AL_CREAR,
+      ],
     );
     const loteId = creado[0]?.id;
     if (!loteId) throw new Error('No se pudo crear el lote de ingesta.');
@@ -383,7 +407,7 @@ export async function ingestar(
      * estuviera acá, la primera corrida multi-cuenta lo resolvería por accidente en la dirección contraria.
      */
     let filasTotales = 0;
-    let estadoPeor: 'procesado' | 'procesado_con_observaciones' = 'procesado';
+    let estadoPeor: EstadoLotePersistido = 'procesado';
 
     for (const cuentaLeida of leido.cuentas) {
       /**
@@ -530,9 +554,9 @@ async function rechazar(
   args: { readonly clienteId: string; readonly loteId: string; readonly motivoCodigo: string },
 ): Promise<void> {
   await tx.consultar(
-    `update lote_ingesta set estado = 'con_errores', motivo_codigo = $2
+    `update lote_ingesta set estado = $4, motivo_codigo = $2
       where id = $1 and cliente_id = $3`,
-    [args.loteId, args.motivoCodigo, args.clienteId],
+    [args.loteId, args.motivoCodigo, args.clienteId, ESTADO_AL_RECHAZAR],
   );
 
   await registrarAcceso(tx, {

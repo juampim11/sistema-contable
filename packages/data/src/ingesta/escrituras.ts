@@ -25,6 +25,23 @@ import type { ContextoAuditado } from '../db/auditoria.ts';
 import type { Tx } from '../db/conexion.ts';
 import { conErroresTraducidos } from '../db/errores-pg.ts';
 
+/**
+ * Los tipos de cuenta que acepta el alta. **Es la TERCERA copia a mano de la misma lista** —las otras dos
+ * son `TIPOS_CUENTA` (`packages/ingesta/src/esquema.ts`) y el check `cuenta_ident_tipo_chk` (migración
+ * `0006`)— y queda así **a propósito**. La decisión y su motivo:
+ *
+ * **No se puede derivar de `TIPOS_CUENTA`.** Eso obligaría a `packages/data` a importar
+ * `packages/ingesta`, que es el ciclo `data → ingesta → data` **prohibido** y verificado en
+ * `packages/data/tests/reglas-de-codigo.test.ts`. La alternativa —mudar `TIPOS_CUENTA` a
+ * `packages/shared`— metería un vocabulario de dominio de la ingesta en el paquete base solo para
+ * esquivar el ciclo, y `shared` es justamente donde nada de dominio debería estar.
+ *
+ * **Se cubre con el test, que da la misma garantía.** El test de catálogo de dominios cerrados compara
+ * **las dos** constantes de TypeScript contra el **mismo** check de la base. Si las dos tienen que ser
+ * iguales al check, son iguales entre sí: la base es el árbitro y la transitividad hace el resto. Es más
+ * barato que mover un módulo, y el modo de falla que importa —que una de las tres listas se mueva sola—
+ * queda cerrado igual, con el mismo mensaje de error.
+ */
 export const TIPOS_CUENTA_ALTA = [
   'cuenta_corriente',
   'cuenta_corriente_especial',
