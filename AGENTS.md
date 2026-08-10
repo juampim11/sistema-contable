@@ -75,11 +75,24 @@ dominio sin la columna de tenant.
 para Codex y Claude Code — no se re-lista acá para que no diverjan). El nombre de cada persona es el
 mismo en las dos herramientas (= filename en `agents/personas/`).
 
-Hoy el roster son **3 genéricos** (`code-reviewer`, `documentador`, `tester`) + **8 de dominio**
-(`contador-dominio`, `fiscal-nacional-iva-ganancias`,
+Hoy el roster son **23 personas**: 3 genéricas (`code-reviewer`, `documentador`, `tester`), 8 de
+dominio (`contador-dominio`, `fiscal-nacional-iva-ganancias`,
 `fiscal-ingresos-brutos-convenio-multilateral`, `integraciones-afip`, `motor-conciliacion-contable`,
-`plan-cuentas-multicliente`, `balances-normas-tecnicas`, `seguridad-datos-financieros`). El roster
-técnico de ingeniería está **pendiente**, igual que la ingesta bancaria y la tenancy (etapa siguiente).
+`plan-cuentas-multicliente`, `balances-normas-tecnicas`, `seguridad-datos-financieros`) y 12 técnicas
+(`product-owner`, `analista-funcional`, `arquitecto-software`, `tech-lead`, `ux-designer`,
+`backend-dev`, `frontend-dev`, `dba-data`, `devops`, `qa-funcional`, `qa-automation`,
+`security-engineer`).
+
+🔴 **La delegación no es opcional: es la forma de trabajo por defecto del repo.** La matriz de
+`tipo de tarea → agentes que se convocan SIEMPRE` está en **`CLAUDE.md` §3.1**, y vale igual acá — es
+el mismo procedimiento para las dos herramientas. Dos puntos que se cobran caro si se saltean:
+
+- **Toda migración, tabla o columna nueva** convoca a `dba-data` + `security-engineer` +
+  `seguridad-datos-financieros`. Los tres.
+- **`security-engineer` y `seguridad-datos-financieros` van juntos**, no uno en lugar del otro: el
+  primero mira la superficie técnica, el segundo trae el criterio de qué dato es sensible en este
+  negocio. El Módulo 1 se construyó sin ninguno de los dos y la auditoría posterior encontró un bug
+  funcional que ningún test veía.
 
 **Base de conocimiento:** los agentes fiscales y contables leen **exclusivamente** de `knowledge/`.
 Convenciones en `knowledge/README.md`; qué cargar primero y de dónde en

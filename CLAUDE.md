@@ -111,12 +111,78 @@ mismo (= filename en `agents/personas/`).
 | `balances-normas-tecnicas` | Estados contables según RT de FACPCE, incluida la variante RT 41 para PyMEs — define **cómo se presenta** |
 | `seguridad-datos-financieros` | Secreto fiscal y datos bancarios/tributarios de terceros: aislamiento entre clientes, roles, credenciales, trazabilidad — **obligatorio** ante datos de clientes, dinero, permisos o aislamiento |
 
+**Técnicos (roster de ingeniería):**
+
+| Sub-agente | Para qué |
+|---|---|
+| `product-owner` | Alcance y prioridad: qué se construye, qué se posterga, qué traba de verdad |
+| `analista-funcional` | Convierte lo que dice la contadora en especificación **verificable**, con sus casos borde y su medición |
+| `arquitecto-software` | Límites entre módulos, decisiones caras de revertir, ADR |
+| `tech-lead` | Coherencia **entre** implementaciones del mismo patrón (los ocho adaptadores) |
+| `backend-dev` | Dominio, servicios, acceso a datos, CLI, jobs, adaptadores |
+| `frontend-dev` | `apps/web` cuando exista: cola de revisión del contador |
+| `ux-designer` | Flujo y formato del entregable para quien hoy hace el trabajo a mano |
+| `dba-data` | Esquema, migraciones, índices, RLS **como mecanismo de la base** |
+| `devops` | Entornos, CI, migraciones en el pipeline, secretos, el gate |
+| `qa-funcional` | Cobertura del **negocio**: que los casos de todos los meses estén cubiertos |
+| `qa-automation` | La suite y el gate: que **cada test discrimine** (prueba por mutación) |
+| `security-engineer` | Superficie técnica: authN/authZ, secretos, dependencias, configuración |
+
+> **`security-engineer` y `seguridad-datos-financieros` NO se solapan y ante datos de clientes se
+> convocan LOS DOS.** El primero pregunta *"¿por dónde se entra y por dónde sale?"* — dice si el control
+> está **bien construido**. El segundo pregunta *"¿qué dato es sensible en este negocio?"* — dice si el
+> control **protege lo que hay que proteger**. Un control impecable sobre el nivel de clasificación
+> equivocado no sirve, y una clasificación correcta sin control tampoco.
+
 **Matriz de convocatoria y guardrails detallados: `agents/README.md`.** Los agentes fiscales y contables
 leen **exclusivamente** de `knowledge/` (regla dura §1.6). Qué cargar primero y de dónde:
 `docs/agents/guia-carga-conocimiento.md`.
 
-> **Pendiente:** el roster técnico de ingeniería (arquitecto, backend, frontend, dba/data, devops, qa) se
-> da de alta cuando arranque la construcción. **Ingesta bancaria** y **tenancy** son la etapa siguiente.
+---
+
+## 3.1. Reglas de delegación (**no es opcional: es la forma de trabajar por defecto**)
+
+**No se desarrolla solo.** Quien conduce **orquesta**: por cada tarea, convoca a los agentes de la tabla
+y recién después integra, verifica y decide. Los agentes **reportan**; quien conduce **aplica**.
+
+> **Por qué está escrito como regla y no como sugerencia.** El Módulo 1 se construyó sin este roster. Al
+> convocar al panel después, con `pnpm verificar` en verde, aparecieron **seis bloqueantes** — uno
+> persistía una cuenta cuya verificación decía `no_cuadra`, y otro dejaba `apps/` fuera del typecheck.
+> **El gate verde no sustituye al panel.**
+
+| Si la tarea toca… | Convocar **siempre** |
+|---|---|
+| **Migración, tabla o columna nueva, cambio de RLS** | `dba-data` + `security-engineer` + `seguridad-datos-financieros` |
+| **Código nuevo o modificado** (no trivial) | `code-reviewer` antes de cerrar; `backend-dev` o `frontend-dev` para escribirlo |
+| **Decisiones de alcance y prioridad** | `product-owner` |
+| **Una regla de negocio, un criterio de aceptación, material nuevo del estudio** | `analista-funcional` (+ el agente de dominio que corresponda) |
+| **Testing** | `qa-funcional` (cobertura del negocio) y `qa-automation` (la suite y el gate); `tester` para el intento adversarial antes del "Done" |
+| **Dos o más implementaciones del mismo patrón** | `tech-lead` |
+| **Límites entre módulos, dependencias, ADR** | `arquitecto-software` |
+| **Entornos, CI, gate, secretos, despliegue** | `devops` |
+| **Pantallas y flujo de usuario** | `ux-designer` + `frontend-dev` + `seguridad-datos-financieros` |
+| **Datos de clientes, dinero, permisos, aislamiento** | `seguridad-datos-financieros` — **obligatorio**, + `security-engineer` |
+| **Plan de cuentas, asientos, cierre** | `contador-dominio` |
+| **IVA, Ganancias, retenciones nacionales, SIRE** | `fiscal-nacional-iva-ganancias` |
+| **IIBB, coeficientes, jurisdicciones, SIFERE** | `fiscal-ingresos-brutos-convenio-multilateral` |
+| **Webservices, certificados, padrón** | `integraciones-afip` |
+| **Clasificar movimientos / proponer asientos** | `motor-conciliacion-contable` + `contador-dominio` |
+| **Modelo del cliente, atributos con vigencia, alta de tenant** | `plan-cuentas-multicliente` |
+| **Estados contables, exposición, RT** | `balances-normas-tecnicas` |
+| **Cerrar una feature o una decisión** | `documentador` (y escribir la entrada en `HANDOFF.md`) |
+
+**Cómo se convoca, en concreto:**
+
+1. **En paralelo cuando el trabajo es independiente** — un agente por archivo o por área. Si dos van a
+   tocar lo mismo, se secuencian o se les prohíbe explícitamente el archivo compartido.
+2. **Se les dice qué NO tocar.** Los archivos compartidos los toca quien conduce; el agente **reporta el
+   diff** que necesita.
+3. 🔴 **`privado/` está prohibido para todo agente**, siempre y sin excepción.
+4. **Si `.claude/agents/` no está registrado en la sesión** (`Agent type '...' not found`), se usa el
+   mecanismo portable del propio repo: un agente genérico que **adopte la persona** leyendo
+   `agents/personas/<nombre>.md` completo. Es el mismo protocolo que usa Codex (`AGENTS.md`).
+5. **Lo que el agente afirma se verifica** antes de aplicarlo. Ya pasó que un agente reportara mal, y
+   también que uno corrigiera a quien conducía: las dos cosas se resuelven mirando el código.
 
 ## 4. Handoff
 
