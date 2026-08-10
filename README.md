@@ -1,3 +1,42 @@
+# sistema-contable
+
+> ⚠️ **De acá para abajo, este README todavía es el del template genérico** con el que nació el repo.
+> Sirve para entender la estructura, pero **no describe este producto**. El punto de entrada real es
+> `HANDOFF.md` (entrada más reciente) y `docs/diseno/08-plan-de-construccion.md`.
+
+## Arranque en una máquina nueva
+
+```bash
+pnpm install
+pnpm hooks:instalar                              # ← NO se hereda al clonar. Ver abajo.
+pnpm db:up && pnpm db:migrate && pnpm db:setup   # infra + esquema + roles
+pnpm db:seed                                     # datos SINTÉTICOS (solo en local, con guard)
+pnpm verificar                                   # typecheck + barrido + gate de fixtures + tests
+```
+
+### 🔴 `pnpm hooks:instalar` no es opcional, y clonar no lo trae
+
+`pnpm hooks:instalar` hace `git config core.hooksPath .githooks`, y **`core.hooksPath` es configuración
+de la copia local**: vive en `.git/config`, que **no se versiona**. Git tampoco activa hooks
+automáticamente al clonar, a propósito — un repo que ejecutara scripts al clonarse sería un vector de
+ataque.
+
+**Consecuencia concreta:** en una máquina recién clonada el hook `pre-commit` **no corre**, y ese hook
+es el que ejecuta el **barrido de fuga en modo estricto** — el que cruza cada candidato del repo contra
+el material real de `privado/` antes de que un valor entre al historial. Y ese cruce **solo se puede
+hacer en una máquina que tenga el material**: CI no lo tiene, así que CI compara contra una allowlist de
+huellas y no puede detectar una fuga nueva.
+
+O sea: **sin ese comando, el único control que detecta una fuga real no corre en ningún lado.** Y por
+ADR-0002 §E.4.8, lo que ya está commiteado se considera público para siempre: se rota, no se limpia el
+historial.
+
+Verificalo con `git config core.hooksPath` — tiene que responder `.githooks`.
+
+Runbook completo en ADR-0000 §4.1; entornos en `docs/devops/01-entornos.md`.
+
+---
+
 # Template de proyecto — arranque optimizado y multi-agente
 
 > **Qué es esto.** Un punto de partida **listo para usar** para arrancar un proyecto de software

@@ -1,0 +1,45 @@
+# =============================================================================
+# .gitattributes — dónde el fin de línea NO es cosmético
+#
+# Este archivo se agregó por un incidente concreto, no por prolijidad: con `core.autocrlf=true`
+# (el default de Git for Windows) el checkout reescribió a CRLF **las ocho migraciones ya
+# aplicadas**, y `pnpm db:migrate` se negó a arrancar con
+#
+#     0001_tenancy.sql ya fue aplicada con otro contenido (hash … -> …)
+#
+# Nadie las había editado: el hash del ledger se calculó sobre el contenido en LF y el archivo en
+# disco pasó a CRLF. Un control que se dispara cuando no pasó nada es un control que alguien
+# termina desactivando — y ese guarda algo que sí importa (una migración editada después de
+# aplicada es corrupción silenciosa del esquema).
+#
+# Se arregla en los dos lados: acá, para que el working tree deje de depender de la plataforma, y
+# en `packages/data/scripts/migrar.ts`, que normaliza antes de hashear. Con uno solo no alcanza:
+# el `.gitattributes` no arregla las copias ya clonadas, y la normalización sola deja el hook con
+# CRLF.
+#
+# **No** se pone `* text=auto` a propósito: renormalizaría el repo entero de una y ensuciaría un
+# historial en el que hoy se puede leer qué cambió. Se listan los archivos donde el fin de línea
+# es **semántico**.
+# =============================================================================
+
+# Se hashean: el ledger de migraciones compara el sha256 del archivo contra el registrado al
+# aplicarlo. En CRLF es otro archivo.
+*.sql text eol=lf
+
+# Se ejecutan con `sh`: un shebang `#!/bin/sh\r` hace que el intérprete busque un binario con el
+# `\r` en el nombre. Y `pre-commit` es el que corre el barrido estricto — el único control que
+# detecta una fuga real (ver README, "Arranque en una máquina nueva").
+.githooks/* text eol=lf
+*.sh        text eol=lf
+
+# Fixtures y material de referencia: se comparan carácter a carácter contra la geometría medida
+# del documento. Un CRLF corre los offsets.
+*.txt  text eol=lf
+*.json text eol=lf
+
+# Binarios: que Git no toque un byte.
+*.pdf  binary
+*.xlsx binary
+*.xls  binary
+*.png  binary
+*.jpg  binary
