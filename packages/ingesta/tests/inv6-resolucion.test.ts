@@ -248,9 +248,67 @@ describe('los otros tres finales de la resolución', () => {
     expect(r.estado).toBe('sin_identificador_en_caratula');
   });
 
-  it('dos identificadores vigentes a la vez para el mismo cliente: cuenta_ambigua', async () => {
-    // Es un problema de datos, no del archivo. Elegir "la primera" asigna los movimientos a una cuenta al
-    // azar, y eso aparece en el balance meses después.
+  /**
+   * 🔴 ESTE TEST CAMBIÓ DE SIGNO, Y ESE CAMBIO ES EL HALLAZGO.
+   *
+   * Antes afirmaba: *"dos identificadores vigentes a la vez dan `cuenta_ambigua`"* — o sea, trataba el
+   * estado como un dato de entrada legítimo que el resolver reporta bien. **Y el resolver lo reportaba
+   * bien.** El problema estaba un nivel más abajo: **nada impedía crearlo.**
+   *
+   * `alta-cuenta` toma `vigenteDesde` del período del resumen con el que se lo corrió, así que dos altas
+   * con resúmenes de meses distintos daban dos filas legítimas para `uq_cuenta_ident_cbu_cliente`, las dos
+   * con `vigente_hasta is null`. A partir de ahí **todo** extracto de esa cuenta caía en `cuenta_ambigua`,
+   * y nada lo deshacía solo: la migración 0006 ya describía ese desenlace con la palabra *"para siempre"*,
+   * y el esquema no lo impedía. Lo encontró la auditoría de `dba-data`, no la suite — que estaba verde y
+   * con este test **consagrando el estado roto como esperado**.
+   *
+   * La migración 0009 agrega `uq_cuenta_ident_cbu_vigente`, y ahora el segundo alta falla con `23505` en
+   * vez de crear la ambigüedad. Esto es el test de regresión de esa garantía: si el índice desaparece, el
+   * insert deja de tirar y esto se cae.
+   */
+  it('la base IMPIDE dos identificadores vigentes con el mismo CBU (0009)', async () => {
+    const alta = conUsuario(USUARIOS.socio, async (tx) => {
+      const c = await tx.consultar<{ id: string }>(
+        `insert into cuenta_bancaria (cliente_id, banco_codigo, moneda)
+         values ($1, 'banco_inv6', 'ARS') returning id::text as id`,
+        [s.clienteA],
+      );
+      await tx.consultar(
+        `insert into cuenta_bancaria_identificador
+           (cliente_id, cuenta_bancaria_id, tipo_cuenta, numero, cbu_hmac, cbu_ultimos4, vigente_desde)
+         values ($1, $2, 'caja_ahorro', $3, $4, $5, '2026-02-01')`,
+        // El mismo CBU de A, con `numero` distinto: es exactamente el segundo alta corrido con el resumen
+        // de otro mes. El `numero` va distinto para aislar la garantía del CBU de la del número.
+        [
+          s.clienteA,
+          c[0]?.id ?? '',
+          numeroDeCuenta(CBU_DE_A).replace('0112', '0113'),
+          hmacIdentificador(CBU_DE_A),
+          ultimos4ParaGuardar(CBU_DE_A),
+        ],
+      );
+    });
+
+    // La transacción entera revienta, así que la cuenta tampoco queda: el rollback es la limpieza.
+    await expect(alta).rejects.toThrow(/uq_cuenta_ident_cbu_vigente/);
+  });
+
+  /**
+   * `cuenta_ambigua` NO quedó muerto, y su único camino vivo es **la rotación de pepper**.
+   *
+   * `uq_cuenta_ident_cbu_vigente` lleva `pepper_id` adentro **a propósito**: la rotación incremental de la
+   * 0006 necesita insertar la fila re-hasheada con el pepper nuevo al lado de la vieja, y un índice sin
+   * `pepper_id` la bloquearía. O sea que durante una rotación **sí** hay dos filas vigentes con el mismo
+   * CBU, y el resolver —que no filtra por `pepper_id`— ve dos candidatas.
+   *
+   * ⚠️ **Consecuencia que hay que decidir, anotada en `10-deuda-declarada.md`:** mientras dure una rotación
+   * incremental, toda cuenta con las dos filas resuelve `cuenta_ambigua`. Es la premisa que la 0006 dejó
+   * escrita —*"el índice de resolución lleva la versión"*— y que el resolver nunca implementó. Es un
+   * frenazo, no una fuga: el sistema no imputa nada al azar. Pero es un frenazo total.
+   *
+   * Este test deja el hecho medido en vez de descubierto en producción.
+   */
+  it('cuenta_ambigua sigue vivo por la vía de la rotación de pepper', async () => {
     const otraCuenta = await conUsuario(USUARIOS.socio, async (tx) => {
       const c = await tx.consultar<{ id: string }>(
         `insert into cuenta_bancaria (cliente_id, banco_codigo, moneda)
@@ -260,10 +318,9 @@ describe('los otros tres finales de la resolución', () => {
       const id = c[0]?.id ?? '';
       await tx.consultar(
         `insert into cuenta_bancaria_identificador
-           (cliente_id, cuenta_bancaria_id, tipo_cuenta, numero, cbu_hmac, cbu_ultimos4, vigente_desde)
-         values ($1, $2, 'caja_ahorro', $3, $4, $5, '2026-02-01')`,
-        // Mismo CBU (para provocar la ambigüedad) pero `numero` distinto y NO el CBU: el check
-        // `cuenta_ident_numero_no_es_cbu` de la 0006 rechaza los 22 dígitos.
+           (cliente_id, cuenta_bancaria_id, tipo_cuenta, numero, cbu_hmac, cbu_ultimos4, vigente_desde,
+            pepper_id)
+         values ($1, $2, 'caja_ahorro', $3, $4, $5, '2026-02-01', 'v2')`,
         [
           s.clienteA,
           id,
@@ -282,6 +339,8 @@ describe('los otros tres finales de la resolución', () => {
         alFecha: PERIODO,
       }),
     );
+    // Es un problema de datos, no del archivo. Elegir "la primera" asigna los movimientos a una cuenta al
+    // azar, y eso aparece en el balance meses después.
     expect(r.estado).toBe('cuenta_ambigua');
 
     // Limpieza: el resto de la suite espera una sola cuenta por CBU.
