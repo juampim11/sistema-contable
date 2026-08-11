@@ -6,6 +6,42 @@
 
 ---
 
+## 2026-08-11 (31) — A2 contra archivo real: Galicia confirmado, Santander con residuo=5 a clasificar
+
+**Corrido por el usuario**, dato real, solo las formas (sin dígitos/texto real) llegan a este contexto.
+
+### Galicia — confirmado exacto contra la predicción (HANDOFF 22)
+
+`sinDestino=0`, `fueraDelCuerpo=29`, `residuo=0`, 326 movimientos, 9 anexos, `INV-destinos:
+diferencias=0`, `VEREDICTO DEL LOTE: cuadra`, hashes únicos 326/326. Sin hallazgos de A2 — instrumentación
+de Galicia (C4) confirmada contra archivo real.
+
+### Santander — corrida, con `residuo=5` (`EST_LINEA_NO_INTERPRETADA`), pendiente de clasificar
+
+Las **formas** de las 5 líneas sin interpretar (`a`=minúscula, `A`=inicial mayúscula de palabra,
+`#`=dígito — nunca el texto ni los dígitos reales, mismo criterio que imprime `pnpm probar`):
+
+```
+×1  Aaaaaaa aa a{9} a{8} aaa ##### aaa ##-##-#### aa ##-##-####
+×1  Aaaaaaa a{11} aa aaa a{9} aaaaaa aaaaa a{8} aaa ##-##-#### …
+×1  Aa{8} Aa{8}
+×1  Aaaaa Aaaa Aaaaaa Aaaaaa Aa{10} AAA AAA AAAAA Aaaaaaa aaaaa…
+×1  aaaaa aaaaa
+```
+
+**Pendiente de responder:** ¿se pueden clasificar en el vocabulario de `DESTINOS_BASE`, o hace falta el
+camino de contingencia (`observación` + seguimiento, ya previsto en el plan A2 — HANDOFF 22, punto 5)?
+¿Esto bloquea 6.3 (ingesta real de Santander), o el residuo puede quedar declarado como deuda conocida
+mientras se procede?
+
+### Math.sumPrecise — confirmado benigno, con el dato de Santander
+
+El warning apareció también en Santander (8 veces) pese a `traeTotalesDeclarados: false` — descarta la
+hipótesis de que correlacionaba con el camino V2 de verificación de totales. Documentado completo en
+`docs/diseno/10-deuda-declarada.md` §2.10.
+
+---
+
 ## 2026-08-11 (30) — A2 confirmado contra archivo real: Macro (1 de 3)
 
 **Corrido por el usuario** (`pnpm probar --banco macro --archivo <ruta real, 11-2025 cta cte
