@@ -27,7 +27,6 @@ import {
   adaptadorSantander,
   CAPACIDADES_SANTANDER,
   leerSantander,
-  leerSantanderConDestinos,
   reconoceSantander,
 } from '../src/adaptadores/santander.ts';
 import {
@@ -623,6 +622,8 @@ describe('capacidades declaradas: cada una es la entrada del verificador', () =>
       traeMovimientosFueraDelPeriodo: false,
       // §2.1: el consolidado de la carátula es ilegible por fila y mezcla las dos monedas.
       traeConsolidadoPorMoneda: false,
+      // A2: Santander ya tenía la disciplina completa de destinos antes de generalizarse al toolkit.
+      declaraDestinos: true,
     });
   });
 });
@@ -1563,7 +1564,7 @@ describe('§9 — los renglones del anexo dejan de ser invisibles', () => {
 
 // -----------------------------------------------------------------------------
 describe('toda fila tiene un DESTINO declarado, y la partición se cuenta', () => {
-  const { destinos } = leerSantanderConDestinos(DOCUMENTO);
+  const { destinos } = leerSantander(DOCUMENTO);
 
   /**
    * 🔴 `"fuera de la región de tabla"` no es un destino, es una ubicación — y mientras se usó como destino,
@@ -1644,12 +1645,13 @@ const filaDeRotulo = (texto: string): readonly FragmentoDePrueba[] => [{ texto, 
 
 describe('§9 — un rótulo cuyo importe está en una fila posterior', () => {
   it('el rótulo y el importe de abajo se aparean en UN renglón, y no queda residuo', () => {
-    const { salida, destinos } = leerSantanderConDestinos(
+    const salida = leerSantander(
       documentoConAnexo([
         filaDeRotulo('Renglon sintetico con el importe abajo'),
         filaDeImporteSuelto('$ 1.111,11'),
       ]),
     );
+    const { destinos } = salida;
     const anexos = salida.cuentas[0]?.anexos ?? [];
     expect(anexos).toHaveLength(1);
     expect(anexos[0]?.conceptoLiteral).toBe('Renglon sintetico con el importe abajo');
@@ -1791,12 +1793,13 @@ describe('§9 — la otra forma de envolver: la cláusula del período en su pro
   });
 
   it('la cláusula sola se pega al rótulo de arriba y el renglón sale `periodo_de_emision`', () => {
-    const { salida, destinos } = leerSantanderConDestinos(
+    const salida = leerSantander(
       documentoConAnexo([
         [{ texto: SIRCREB, x: X.fecha }, enBordeDerecho('$ 8.888,88', R.anexoImpositivo)],
         filaDeRotulo('en el período de emisión'),
       ]),
     );
+    const { destinos } = salida;
     const anexos = salida.cuentas[0]?.anexos ?? [];
     expect(anexos).toHaveLength(1);
     expect(anexos[0]?.periodoDato).toBe('periodo_de_emision');
@@ -1831,7 +1834,7 @@ describe('§9 — el importe tapado por otro fragmento de la MISMA fila', () => 
    */
   it('el importe se busca por lo que PARSEA, no por ser el primero de la ventana', () => {
     const rotuloQueTapa = 'Renglon sintetico largo que termina en la ventana del importe';
-    const { salida, destinos } = leerSantanderConDestinos(
+    const salida = leerSantander(
       documentoConAnexo([
         [
           // Borde derecho 530.0: adentro de `[524, 532]`, y antes del importe por su `x`.
@@ -1840,6 +1843,7 @@ describe('§9 — el importe tapado por otro fragmento de la MISMA fila', () => 
         ],
       ]),
     );
+    const { destinos } = salida;
     const anexos = salida.cuentas[0]?.anexos ?? [];
     expect(anexos).toHaveLength(1);
     expect(anexos[0]?.conceptoLiteral).toBe(rotuloQueTapa);

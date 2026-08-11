@@ -36,6 +36,7 @@ import {
   verificarAritmetica,
   verificarConsolidadoPorMoneda,
   verificarConteoDeCuentas,
+  verificarDestinos,
 } from '../src/verificacion/invariantes.ts';
 import { contieneIdentificador, depurarGlosa } from '../src/glosa.ts';
 import { extractoParseadoSchema, type CapacidadesAdaptador } from '../src/esquema.ts';
@@ -195,6 +196,15 @@ for (const d of consolidado.diferencias) p(`    ${d.severidad}: ${d.codigo} camp
 const conteo = verificarConteoDeCuentas(salida.cuentas.length, salida.cuentasDeclaradas);
 p(`  INV-conteo de cuentas: diferencias=${conteo.length}`);
 for (const d of conteo) p(`    ${d.severidad}: ${d.codigo}`);
+
+// A2 (C5): el gate de residuo. `salida.destinos` no existe hasta que el adaptador declare
+// `declaraDestinos: true` — ver `verificarDestinos`.
+const destinos = verificarDestinos(salida.destinos, capacidades.declaraDestinos);
+p(
+  `  INV-destinos: sinDestino=${salida.destinos?.sinDestino ?? 'sin dato'} ` +
+    `fueraDelCuerpo=${salida.destinos?.fueraDelCuerpo ?? 'sin dato'} diferencias=${destinos.length}`,
+);
+for (const d of destinos) p(`    ${d.severidad}: ${d.codigo}`);
 
 // -----------------------------------------------------------------------------
 // POR CUENTA — la verificación aritmética es por cuenta, siempre.

@@ -47,6 +47,7 @@ import type {
   MovimientoBancarioCrudo,
   Verificacion,
 } from '../esquema.ts';
+import type { ConteoDeDestinos, DestinoBase } from '../adaptadores/toolkit.ts';
 
 export type ContextoVerificacion = {
   readonly capacidades: CapacidadesAdaptador;
@@ -540,4 +541,57 @@ export function verificarConteoDeCuentas(
   // Sin `campo`: el código ya lo dice todo, y los dos números **no** se publican — decir "leí 2 de 3"
   // no agrega nada que el operador no vea abriendo el archivo, y el diagnóstico no es canal de fuga.
   return [dif('EST_CUENTAS_NO_COINCIDEN', 'error')];
+}
+
+// -----------------------------------------------------------------------------
+// A2 (C5) — el gate de residuo: la partición de destinos cierra, o el lote no cuadra
+// -----------------------------------------------------------------------------
+
+/**
+ * A2 (C5) — el único commit de la serie de destinos que cambia un veredicto de producción. C1-C4 fueron
+ * instrumentación pura: el adaptador contaba y publicaba, nadie todavía miraba el número.
+ *
+ * ## Los cinco casos, y por qué son cinco y no tres
+ *
+ * | Caso | Resultado |
+ * |---|---|
+ * | `destinos === undefined`, no declara | `[]` — "no aplica todavía", no "cuadra": mismo precedente que `traeConsolidadoPorMoneda` |
+ * | `destinos === undefined`, sí declara | `EST_DESTINOS_NO_DECLARADOS` — el adaptador prometió el conteo y no llegó |
+ * | `sinDestino > 0` | `EST_DESTINOS_SIN_CLASIFICAR` — la partición de `contarDestinos` no cerró |
+ * | `residuo > 0` | `EST_LINEA_NO_INTERPRETADA` (código existente, sin `campo`) — hay líneas del cuerpo sin interpretar |
+ * | `fueraDelCuerpo > 0` | **nada.** Es la distinción entera del diseño: se cuenta, no pone el lote en rojo |
+ *
+ * Los dos chequeos del medio son **independientes**, no un `if`/`else if`: una fila sin clasificar y un
+ * residuo son hechos distintos del documento, y si los dos ocurren a la vez las dos diferencias tienen
+ * que quedar escritas — degradar a "la primera que matchee" esconde la mitad del problema.
+ *
+ * `fueraDelCuerpo` no participa de ningún chequeo acá a propósito: no hay condición que lo lea, porque
+ * "no hacer nada" es la respuesta correcta y no un caso que se pueda omitir por accidente.
+ *
+ * `destinos` se tipa directo contra `DestinoBase` (no genérico en `D`): `SalidaDeAdaptador.destinos` es
+ * siempre `ConteoDeDestinos<DestinoBase> | undefined` en todo el repo, y no hay ningún caller con otro
+ * `D` — un genérico acá solo obligaría a un cast para leer `residuo`, y ese cast no fallaría si algún
+ * día un `D` sin `residuo` se colara: el chequeo se saltearía en silencio (`código-reviewer`, revisión
+ * de C5). Más simple y más seguro sin perder ningún caso de uso real.
+ */
+export function verificarDestinos(
+  destinos: ConteoDeDestinos<DestinoBase> | undefined,
+  declaraDestinos: boolean,
+): readonly Diferencia[] {
+  // Camino de contingencia previsto por el plan: bajar de `error` a `observacion` es cambiar esta línea.
+  const severidad: Diferencia['severidad'] = 'error';
+
+  if (destinos === undefined) {
+    if (!declaraDestinos) return [];
+    return [dif('EST_DESTINOS_NO_DECLARADOS', severidad)];
+  }
+
+  const diferencias: Diferencia[] = [];
+  if (destinos.sinDestino > 0) {
+    diferencias.push(dif('EST_DESTINOS_SIN_CLASIFICAR', severidad));
+  }
+  if (destinos.residuo > 0) {
+    diferencias.push(dif('EST_LINEA_NO_INTERPRETADA', severidad));
+  }
+  return diferencias;
 }

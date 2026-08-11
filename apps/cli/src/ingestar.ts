@@ -56,6 +56,7 @@ import {
   verificarAritmetica,
   verificarConsolidadoPorMoneda,
   verificarConteoDeCuentas,
+  verificarDestinos,
   type EstadoLote,
   type EstadoLotePersistido,
   type OrigenLote,
@@ -141,6 +142,12 @@ export const MOTIVOS_TECNICOS = [
    * parseo de la carátula.
    */
   'cuenta_sin_periodo',
+  /**
+   * A2 (C5): la partición de destinos no cerró — el adaptador declaró destinos y no llegó
+   * (`EST_DESTINOS_NO_DECLARADOS`), quedó una fila sin clasificar (`EST_DESTINOS_SIN_CLASIFICAR`), o hay
+   * residuo del cuerpo sin interpretar (`EST_LINEA_NO_INTERPRETADA`, reusado). Ver `verificarDestinos`.
+   */
+  'destinos_no_cuadran',
 ] as const;
 
 const EXTENSIONES_ACEPTADAS = new Set(['.pdf', '.xlsx', '.xls', '.csv']);
@@ -365,15 +372,31 @@ export async function ingestar(
      * cerrada o vaciada en el período, que es un caso real— no mueve la suma del consolidado, no rompe
      * ninguna cadena, y desaparece del sistema con el lote en verde. Ver `verificarConteoDeCuentas`.
      */
+    /**
+     * A2 (C5) — el gate de residuo, tercer control del lote: la partición de destinos declarada por el
+     * adaptador (`DESTINOS_BASE`, `toolkit.ts`) tiene que cerrar. Es el único de los tres commits de A2
+     * que cambia un veredicto de producción — C1-C4 solo instrumentaron. Ver `verificarDestinos`.
+     */
+    const capacidadesAdaptador = cual.adaptador.capacidades as CapacidadesAdaptador;
     const diferenciasDeLote = [
       ...consolidado.diferencias,
       ...verificarConteoDeCuentas(leido.cuentas.length, leido.cuentasDeclaradas),
+      ...verificarDestinos(leido.destinos, capacidadesAdaptador.declaraDestinos),
     ];
 
     if (diferenciasDeLote.length > 0) {
+      // Vocabulario cerrado de `CODIGOS_DIFERENCIA`: los tres códigos de la izquierda son los únicos que
+      // puede empujar `verificarDestinos`.
+      const codigosDestinos = new Set([
+        'EST_DESTINOS_NO_DECLARADOS',
+        'EST_DESTINOS_SIN_CLASIFICAR',
+        'EST_LINEA_NO_INTERPRETADA',
+      ]);
       const motivo = diferenciasDeLote.some((d) => d.codigo === 'EST_CUENTAS_NO_COINCIDEN')
         ? 'cuentas_no_coinciden'
-        : 'consolidado_no_cuadra';
+        : diferenciasDeLote.some((d) => codigosDestinos.has(d.codigo))
+          ? 'destinos_no_cuadran'
+          : 'consolidado_no_cuadra';
       logger.warn('ingesta.lote_no_cuadra', {
         lote_id: loteId,
         cuentas_detectadas: leido.cuentas.length,

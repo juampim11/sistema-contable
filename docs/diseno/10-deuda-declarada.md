@@ -169,6 +169,21 @@ pasan, y por eso ahí *parece* un gate.
    N ≠ 0, esas N líneas son un hallazgo real"*.
 3. Recién ahí decidir si el CLI alimenta el conteo y el residuo pasa a ser gate.
 
+**Avance (A2, 2026-08-11):** pasos 1 y 2 cerrados — `DESTINOS_BASE`/`ConteoDeDestinos<D>`/`contarDestinos<D>`
+en `toolkit.ts`; Santander migrado, Macro instrumentado (residuo se mantuvo en 0 contra el fixture,
+`fueraDelCuerpo=0` como predecía la tabla), Galicia instrumentado (residuo bajó de 8 a 0 contra el
+fixture sintético, con las 8 filas de carátula pasando a `fueraDelCuerpo` — confirmado, no forzado).
+**Paso 3 (el gate) sigue pendiente: C5.** La verificación contra archivo real (`pnpm probar`, 3
+sittings) queda como checkpoint del usuario, no se corrió en esta tanda.
+
+🔴 **Caso borde encontrado y documentado, no resuelto (`code-reviewer`, revisión de C4):** en
+`leerAnexo` (`galicia.ts`), un candidato de renglón de anexo (literal o período/importe) que **no
+llega a aparearse** cae clasificado como `fueraDelCuerpo` en vez de `residuo` — porque distinguirlo
+exigiría que `leerAnexo` devuelva un tercer conjunto de índices al bucle principal, infraestructura que
+A2/C4 no pedía construir. No está ejercitado por ningún fixture ni por el archivo real medido hasta
+ahora (los 9 renglones aparean completos en los dos). Revisar antes de implementar `verificarDestinos`
+(C5) si esto necesita resolverse, porque ahí sí habría un gate consumiendo el número.
+
 ### 2.2 🔴 `traeSaldoInicialDeclarado` significa dos cosas, y en Galicia vuelve V3 una tautología
 
 - Santander y Macro: `true` porque **hay etiqueta impresa**.

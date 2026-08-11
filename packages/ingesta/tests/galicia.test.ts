@@ -36,6 +36,7 @@ import { cuentaConMovimientosSchema, type CuentaConMovimientos } from '../src/es
 import { verificarAritmetica } from '../src/verificacion/invariantes.ts';
 import { depurarGlosa } from '../src/glosa.ts';
 import type { FilaGeometrica } from '../src/texto-pdf.ts';
+import { DESTINOS_BASE } from '../src/adaptadores/toolkit.ts';
 
 // -----------------------------------------------------------------------------
 // Las coordenadas, LITERALES de la especificación (§4)
@@ -833,50 +834,71 @@ describe('el anexo: los 9 renglones que se estaban perdiendo enteros', () => {
 
   /**
    * El anexo no puede contarse dos veces: una fila que se volvió un renglón de anexo **no** puede además
-   * aparecer en `lineasNoInterpretadas`. El residuo queda con la carátula, que es lo que el adaptador
-   * todavía no interpreta — y eso se reporta, no se descarta.
+   * aparecer en `lineasNoInterpretadas`.
+   *
+   * 🔴 **Reescrito para A2 (C4).** Antes de instrumentar destinos, las 8 filas de carátula (CBU y número
+   * de cuenta incluidos, aunque las dos ya estén leídas por etiqueta) caían en `lineasNoInterpretadas`
+   * con el código genérico `linea_fuera_de_zona`, indistinguibles de un renglón que de verdad no se
+   * entendió. Con la partición por destino, esa misma rama del autómata (`!abierto`: antes del primer
+   * movimiento o después de `Total`) se cuenta en `destinos.fueraDelCuerpo` — el residuo baja de 8 a 0
+   * contra este fixture, que es la primicia que A2 busca, no una regresión (predicción del plan, ya
+   * confirmada contra el archivo real por auditar).
    */
-  /**
-   * Las 8 son de la carátula, y eso incluye la fila del CBU y la del número de cuenta **aunque las dos ya
-   * estén leídas**: el residuo es lo que el autómata del **cuerpo** no consumió, no "lo que nadie leyó". Un
-   * dato de carátula figura en los dos lados y está bien que así sea.
-   */
-  it('las filas del anexo salen del residuo', () => {
+  it('las filas de carátula quedan en fueraDelCuerpo, no en el residuo', () => {
     const salida = leerGalicia(documentoBase());
-    expect(salida.lineasNoInterpretadas).toHaveLength(8);
-    for (const l of salida.lineasNoInterpretadas) {
-      expect(l.codigo).toBe('linea_fuera_de_zona');
-      // La FORMA, nunca la línea: dígitos a `#`, mayúsculas a `A`, minúsculas a `a`.
-      expect(l.forma).not.toContain('30-12345678-9');
-      // 🔴 Y el CBU tampoco: la fila entra al residuo como `#{22}`, que es exactamente lo que se ve en el
-      // informe del archivo real. El valor no sale ni por acá.
-      expect(l.forma).not.toContain(CBU_SINTETICO);
-    }
-    expect(salida.lineasNoInterpretadas.map((l) => l.forma)).toContain('#{22}');
+    expect(salida.lineasNoInterpretadas).toEqual([]);
+    expect(salida.destinos.fueraDelCuerpo).toBe(8);
   });
 
   /**
    * 🔴 `indice` tiene que ser la posición de la fila **en el documento**, no el contador de movimientos.
    *
-   * Este test existe por un bug encontrado en la pasada de coherencia entre los tres bancos: los tres
-   * `push` al residuo escribían `indice: filaNumero`, que es el contador de **movimientos emitidos**. Como
-   * las 8 líneas de carátula están **antes** del primer movimiento, las ocho informaban `indice: 0`. O
-   * sea: el campo cuya razón de ser es *"dónde falló algo"* apuntaba siempre al mismo lugar, y el residuo
-   * dejaba de ser localizable justo en el banco que más residuo tiene.
-   *
-   * La prueba por mutación es directa: si se vuelve a `filaNumero`, este test se cae por las dos
-   * aserciones — todos los índices serían `0`, o sea ni distintos ni crecientes.
+   * Este test existe por un bug encontrado en la pasada de coherencia entre los tres bancos: los `push` al
+   * residuo escribían `indice: filaNumero`, que es el contador de **movimientos emitidos**. Con la
+   * carátula reclasificada a `fueraDelCuerpo` (arriba), ya no produce residuo con el que ejercitar esto —
+   * así que el fixture pasa a un residuo **genuino** dentro del cuerpo: una fecha ilegible y un bloque que
+   * nunca completa su par, ninguno de los dos precedido por un movimiento que cierre con éxito. Si el bug
+   * volviera —cualquiera de los dos `push` usando `filaNumero` en vez de la posición real— `filaNumero`
+   * queda en `0` los dos casos (nunca se emite un movimiento en este documento) y las dos aserciones caen:
+   * ni distintos ni crecientes.
    */
   it('el índice del residuo es la posición de la fila, no el contador de movimientos', () => {
-    const indices = leerGalicia(documentoBase()).lineasNoInterpretadas.map((l) => l.indice);
+    const conResiduoGenuino = documento([
+      fila([{ texto: 'Resumen de Cuenta Corriente en Pesos', x: 200 }]),
+      fila([{ texto: 'Fecha Descripción Origen Crédito Débito Saldo', x: X_FECHA }], 2),
+      // Fecha con la FORMA del cuerpo pero inválida como fecha: `parsearFecha` la rechaza.
+      fila(
+        [
+          { texto: '99/99/99', x: X_FECHA, ancho: 34.1 },
+          { texto: 'FECHA INVALIDA', x: X_DESCRIPCION, ancho: 60 },
+        ],
+        2,
+      ),
+      // Abre un bloque válido que nunca trae su par: cierra como `fila_sin_importe` al llegar `Total`.
+      fila(
+        [
+          { texto: '01/06/26', x: X_FECHA, ancho: 34.1 },
+          { texto: 'SIN IMPORTE', x: X_DESCRIPCION, ancho: 60 },
+        ],
+        2,
+      ),
+      lineaDeTotales(),
+      ...pie(2, 2),
+    ]);
 
-    // Distintos: ocho filas distintas del documento no pueden compartir posición.
+    const salida = leerGalicia(conResiduoGenuino);
+    expect(salida.lineasNoInterpretadas.map((l) => l.codigo)).toEqual([
+      'fecha_ilegible',
+      'fila_sin_importe',
+    ]);
+    const indices = salida.lineasNoInterpretadas.map((l) => l.indice);
+
+    // Distintos: dos filas distintas del documento no pueden compartir posición.
     expect(new Set(indices).size).toBe(indices.length);
     // Y crecientes, porque se recorren en orden de lectura.
     expect([...indices].sort((a, b) => a - b)).toEqual(indices);
-    // La carátula abre el documento: la primera línea reportada tiene que caer en las primeras filas,
-    // no en la posición del primer movimiento.
-    expect(indices[0]).toBeLessThan(8);
+    // Cero movimientos emitidos: si cualquiera de los dos `push` usara `filaNumero`, los dos darían `0`.
+    expect(salida.destinos.movimiento).toBe(0);
   });
 
   it('sin línea de totales no hay anexo: no se sale a buscarlo por el documento entero', () => {
@@ -959,5 +981,56 @@ describe('la salida entera valida contra el esquema', () => {
     expect(r.success ? [] : r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`)).toEqual(
       [],
     );
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('toda fila tiene un DESTINO declarado, y la partición se cuenta (A2, C4)', () => {
+  const salida = leerGalicia(documentoBase());
+  const { destinos } = salida;
+
+  /**
+   * 🔴 `"fuera de la región de tabla"` no es un destino, es una ubicación — y mientras Galicia no lo
+   * distinguía, la carátula entera se iba a `lineasNoInterpretadas` sin diferenciar "es carátula" de "es
+   * un renglón que no se entendió". `sinDestino` en 0 es lo que convierte *"toda fila está explicada"* en
+   * un hecho medido, igual que en `santander.ts`.
+   */
+  it('la partición cierra: ninguna fila queda sin destino', () => {
+    expect(destinos.total).toBe(documentoBase().length);
+    expect(destinos.sinDestino).toBe(0);
+    // La suma se calcula con `DESTINOS_BASE.reduce`, no a mano: así un octavo destino futuro no rompe
+    // silenciosamente este test en un archivo y no en otro (lección de la quinta cara).
+    const suma = DESTINOS_BASE.reduce((acc, d) => acc + destinos[d], 0);
+    expect(suma).toBe(documentoBase().length);
+  });
+
+  it('cada recuento coincide con lo que el lector devolvió: no es una declaración aparte', () => {
+    const cuenta = laCuenta(salida);
+    expect(destinos.movimiento).toBe(cuenta.movimientos.length);
+    expect(destinos.anexo).toBe(cuenta.anexos.length);
+    expect(destinos.residuo).toBe(salida.lineasNoInterpretadas.length);
+    // La línea `Total`: el único renglón rotulado de la verificación en este banco (§10).
+    expect(destinos.saldoDeclarado).toBe(1);
+  });
+
+  /**
+   * `fueraDelCuerpo` es la carátula: las 8 filas que antes de A2 caían en `lineasNoInterpretadas` con
+   * código `linea_fuera_de_zona` (ver el test de arriba, ahora reescrito) — el hallazgo que el plan
+   * predecía: **residuo baja de 8 a 0 contra este fixture**, y las 8 quedan contadas, no perdidas ni
+   * confundidas con un renglón que no se entendió.
+   */
+  it('la carátula queda contada, no desaparecida ni confundida con residuo', () => {
+    // El recuento entero, exacto. Cualquier fila que cambie de destino se ve acá y no en un promedio.
+    expect(destinos).toEqual({
+      movimiento: 3,
+      continuacion: 11,
+      saldoDeclarado: 1,
+      ruido: 9,
+      anexo: 9,
+      fueraDelCuerpo: 8,
+      residuo: 0,
+      sinDestino: 0,
+      total: documentoBase().length,
+    });
   });
 });

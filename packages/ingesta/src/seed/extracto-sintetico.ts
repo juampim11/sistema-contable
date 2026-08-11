@@ -80,6 +80,8 @@ export const CAPACIDADES_SINTETICAS: CapacidadesAdaptador = {
   traeMovimientosFueraDelPeriodo: false,
   // El generador produce UNA cuenta: no hay consolidado por moneda.
   traeConsolidadoPorMoneda: false,
+  // El fixture sintético no instrumenta destinos: no hay adaptador real detrás de este generador.
+  declaraDestinos: false,
 };
 
 /**

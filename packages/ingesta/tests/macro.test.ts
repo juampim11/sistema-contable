@@ -29,6 +29,7 @@ import {
   reconoceMacro,
 } from '../src/adaptadores/macro.ts';
 import { ErrorDeAdaptador } from '../src/adaptadores/contrato.ts';
+import { DESTINOS_BASE } from '../src/adaptadores/toolkit.ts';
 import { hashesDeCuenta, type ClaveCuenta } from '../src/hash.ts';
 import { normalizar } from '../src/parseo-ar.ts';
 import {
@@ -1452,5 +1453,57 @@ describe('el contrato: nada se descarta en silencio, y nada del documento se esc
     expect(deAnexo).toHaveLength(8);
     const reportados = new Set(leido.lineasNoInterpretadas.map((l) => l.indice));
     for (const i of deAnexo) expect(reportados.has(i)).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// A2 (C3) — destinos: toda fila del documento cae en uno de los siete `DESTINOS_BASE`
+// -----------------------------------------------------------------------------
+
+/**
+ * Mismo criterio que `santander.test.ts`: `"fuera de la región de tabla"` no es un destino, es una
+ * ubicación. `sinDestino` en 0 es lo que convierte *"toda fila está explicada"* en un hecho medido, no
+ * una afirmación del adaptador — mismo razonamiento que `residuoDeParticion` en el toolkit.
+ */
+describe('toda fila tiene un DESTINO declarado, y la partición se cuenta', () => {
+  const DOCUMENTO = documento();
+  const { destinos } = leido;
+
+  it('la partición cierra: ninguna fila queda sin destino', () => {
+    expect(destinos.total).toBe(DOCUMENTO.length);
+    expect(destinos.sinDestino).toBe(0);
+    // La suma se calcula con `DESTINOS_BASE.reduce`, no a mano: así un octavo destino futuro no rompe
+    // silenciosamente este test en un archivo y no en otro (lección de la quinta cara).
+    const suma = DESTINOS_BASE.reduce((acc, d) => acc + destinos[d], 0);
+    expect(suma).toBe(DOCUMENTO.length);
+  });
+
+  it('cada recuento coincide con lo que el lector devolvió: no es una declaración aparte', () => {
+    expect(destinos.movimiento).toBe(leido.cuentas.flatMap((c) => c.movimientos).length);
+    expect(destinos.anexo).toBe(leido.cuentas.flatMap((c) => c.anexos).length);
+    expect(destinos.residuo).toBe(leido.lineasNoInterpretadas.length);
+  });
+
+  /**
+   * El recuento entero, exacto. Contado a mano contra `documento()`: 7 llamadas a `movimiento()` (1 en
+   * la cuenta especial + 6 en la bancaria), 6 renglones de anexo (3 `TOTAL COBRADO` + 3 `D. 409/2018`),
+   * 2 colas `(S.E.U.O.)` consumidas como `continuacion`, 6 saldos rotulados (`SALDO ULTIMO`/`SALDO FINAL`
+   * ×3 cuentas) y 1 residuo (`FILA SINTETICA QUE NINGUNA REGLA EXPLICA`, ya cubierto arriba). `ruido` es
+   * el resto de las 72 filas del fixture — la carátula ×2 páginas, los cuatro encabezados de cuenta, los
+   * separadores, la tabla de cuentas de la p1 y las leyendas del anexo — y no se cuenta a mano fila por
+   * fila: se audita cruzando `total - (los otros seis)`, que es exactamente lo que hace la partición.
+   */
+  it('el recuento completo', () => {
+    expect(destinos).toEqual({
+      movimiento: 7,
+      continuacion: 2,
+      saldoDeclarado: 6,
+      ruido: 50,
+      anexo: 6,
+      fueraDelCuerpo: 0,
+      residuo: 1,
+      sinDestino: 0,
+      total: 72,
+    });
   });
 });
