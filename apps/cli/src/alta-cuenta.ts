@@ -476,6 +476,19 @@ export async function pedirCbuConfirmado(
       '  No lo copies ni lo pegues de ningún chat, ticket, captura ni asistente de IA — tipealo directo.' +
         SALTO,
     );
+    /**
+     * 🟡 Aclaración agregada tras un caso real (HANDOFF (37)): sin esto, un operador que tipea el CBU
+     * y no ve NADA reaccionar en pantalla — a propósito, ni un asterisco — no tiene forma de distinguir
+     * "está funcionando, seguí tipeando" de "se colgó". Confirmado con dos diagnósticos que el mecanismo
+     * SÍ funciona (Ctrl+C real interceptado con el mensaje propio, y un test aislado de `stdin` recibiendo
+     * cada tecla) — el problema era enteramente de expectativa, no de código. Esta línea no cambia nada de
+     * seguridad: sigue sin haber eco, solo avisa que la ausencia de eco es así a propósito.
+     */
+    salida.write(
+      '  No vas a ver NADA en pantalla mientras tipeás — ni un asterisco, a propósito. Escribí los 22 ' +
+        'dígitos igual y apretá Enter; después va a aparecer un segundo pedido para confirmarlo.' +
+        SALTO,
+    );
     salida.write(SALTO);
 
     const primero = await pedirValorOculto('  CBU (22 dígitos): ', entrada, salida);
