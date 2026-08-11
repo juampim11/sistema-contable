@@ -6,6 +6,136 @@
 
 ---
 
+## 2026-08-11 (40) — Plan: atomicidad real de `ingestar.ts` (CLAUDE.md §3.2)
+
+**Herramienta:** Claude Code. Dispara modo plan por (a)/(c) — toca la transacción que escribe datos
+financieros reales de un cliente y modifica un script que ya corre contra el piloto. Convocatoria
+completa (`tech-lead`, `dba-data`, `security-engineer`, `seguridad-datos-financieros`) ya corrida en
+paralelo, cada uno verificando el diagnóstico contra el código real, no solo mi resumen.
+
+**El bug, confirmado contra la base real del piloto (no hipotético).** `ingestar()`
+(`apps/cli/src/ingestar.ts:210-590`) procesa todas las cuentas de un archivo en un loop, dentro de UNA
+transacción (`conUsuario`, que comitea en cualquier `return` normal del callback y solo revierte si
+lanza — `packages/data/src/db/conexion.ts:246-255`). Los ~8 caminos de rechazo (`archivo_ilegible`,
+`requiere_ocr`, los tres motivos de banco, `sin_movimientos`, `consolidado_no_cuadra`/similares, y
+dentro del loop: `cuenta_sin_periodo`, resolución fallida, persistencia fallida) llaman a `rechazar(tx,
+...)` y hacen `return` — nunca `throw`. Si una cuenta anterior en el loop ya se persistió con éxito
+cuando una posterior falla, todo se comitea junto: la cuenta buena queda con sus filas reales, colgada
+de un lote marcado `con_errores`. Confirmado con una consulta de solo-conteo contra el piloto: **158
+filas reales en `movimiento_bancario_crudo`**, `verificacion=cuadra`, con su `lote_ingesta` en
+`estado=con_errores`, `motivo_codigo=cuenta_no_pertenece_al_cliente` — el archivo real de Santander
+tiene 2 cuentas (ARS ya dada de alta, USD deliberadamente sin registrar todavía), y el loop persistió
+ARS antes de fallar en USD.
+
+**Por qué `cuenta_no_pertenece_al_cliente` y no un bug de lógica separada** (se descartó la hipótesis
+del usuario con evidencia): `resolverCuentaDelExtracto` (`packages/ingesta/src/resolver-cuenta.ts`) es
+la única función de resolución, sin duplicación. Distingue sus dos motivos de fracaso preguntando
+"¿este cliente tiene ALGUNA cuenta registrada?" (no "¿tiene ESTA?") — como la ARS ya está de alta, la
+falta de la USD se reporta como "no pertenece", no como "no registrada". Correcto según el diseño de la
+función, engañoso en este escenario específico (1 de 2 cuentas reales registrada, no un archivo ajeno).
+Queda declarado como hallazgo, no se toca en este fix — el usuario priorizó la causa raíz.
+
+**Diseño final, incorporando los cuatro hallazgos de la convocatoria:**
+1. `SAVEPOINT despues_del_lote` justo después de crear `loteId` (después del `set_config` de tenant
+   que hace `conUsuario` antes de invocar el callback — confirmado por `security-engineer`, `dba-data` y
+   `tech-lead` de forma independiente que un `ROLLBACK TO SAVEPOINT` posterior no puede tocar ese
+   contexto).
+2. 🔴 **`ROLLBACK TO SAVEPOINT despues_del_lote` va DENTRO de `rechazar()`, como primera línea — no
+   repetido en los 8 call sites** (`dba-data`: "la garantía depende de un solo lugar, no de que nueve
+   personas se acuerden de hacer las dos cosas en el orden correcto"). Los 8 sitios existentes no
+   cambian una sola línea de su propia lógica.
+3. Los caminos que **lanzan** (un `23505` traducido, el `throw` explícito de `persistirAnexos` por un
+   literal con identificador) quedan intactos — siguen revirtiendo TODA la transacción, incluido el
+   lote. Es correcto para un error técnico inesperado y está fuera del alcance de este fix.
+4. Corrige, de yapa, un segundo caso no pedido explícitamente: persistencia PARCIAL de la cuenta
+   ACTUAL (`persistir.ts:276`, `concepto_banco_no_es_prefijo`, un `return false` después de haber
+   insertado ya algunas filas de esa misma cuenta) — mismo mecanismo, mismo `ROLLBACK TO SAVEPOINT` lo
+   cubre (`tech-lead`).
+
+**SAVEPOINT en vez de partir en 2-3 transacciones separadas** (`dba-data` + `tech-lead`, coincidieron
+de forma independiente): la alternativa abre una ventana de crash entre transacciones donde el lote
+queda `estado=recibido`, durable, sin nadie que lo vaya a rechazar nunca — un lote fantasma que
+necesitaría un job de limpieza nuevo que hoy no existe. Con SAVEPOINT, si el proceso muere en cualquier
+punto, la transacción completa nunca se comitea: no hay estado intermedio observable.
+
+**No cierra `docs/diseno/10-deuda-declarada.md` §1.1** (`tech-lead`, hallazgo que cambia el marco de la
+tarea): esa entrada describe el problema **inverso** — un `throw` real (no un `return`) hace perder
+hasta el propio lote-ancla, sin `motivo_codigo` ni rastro de auditoría, peor en otro sentido que el bug
+de acá. §1.1 ya proponía SAVEPOINT como remedio, para el caso contrario. Queda **declarado, no
+cerrado** — probablemente una segunda tarea simétrica (envolver también el `catch` de errores técnicos
+con `ROLLBACK TO SAVEPOINT` + `rechazar` en vez de perder todo), a decidir después.
+
+**Comentarios a corregir** (`ingestar.ts:435`, `:448`, `:509-510`; `persistir.ts:154`) — confirmado por
+`tech-lead`: tres de ellos vuelven a ser ciertos solos en cuanto el fix esté (no hace falta reescribirlos
+con una idea distinta); el de `persistir.ts:154` necesita una frase aclarando que la garantía es del
+**llamador** (vía el nuevo `rechazar()`), no de `persistirCuenta` en sí misma. `ingestar.ts:561` (el
+`throw` del storage) queda igual — ya es correcto hoy.
+
+**Macro tiene el mismo bug, confirmado por lectura de código** (`tech-lead`, sin tocar `macro.ts` ni
+datos reales de Macro): `CAPACIDADES_MACRO.multiCuenta: true`, `leerMacro` arma un elemento de `cuentas`
+por cada sección detectada, y el loop de `ingestar.ts` es agnóstico del banco. El fix, al vivir
+enteramente en `ingestar.ts`, corrige la exposición de Macro **sin tocar `macro.ts`** — no hace falta
+una tarea separada para Macro.
+
+**Remediación de las 158 filas — recomendación documentada, NO implementada en este fix** (el usuario
+lo pidió explícitamente separado de la causa raíz):
+- Confirmado en dos capas independientes por `seguridad-datos-financieros` y `dba-data`: borrar está
+  estructuralmente bloqueado. `movimiento_origen_crudo` no tiene grant de `delete` para nadie, y aunque
+  lo tuviera, tiene `force row level security` sin ninguna policy de `delete` — deniega por defecto
+  incluso al dueño del esquema, salvo `BYPASSRLS` real (lo que el usuario pidió explícitamente no
+  proponer).
+- Recomendación: **"completar" el lote existente**, nunca borrar y rehacer — de hecho "rehacer" ni
+  siquiera tiene sentido acá: USD nunca se persistió (falló en resolución, antes de `persistirCuenta`),
+  así que lo único que hay en la base son las 158 filas de ARS, que son las **correctas**. Una función
+  nueva (fuera de este fix) que: inserte `lote_ingesta_cuenta` + movimientos de USD contra el MISMO
+  `loteId` (el `unique(cliente_id, lote_ingesta_id, cuenta_bancaria_id)` ya protege contra duplicar
+  ARS por error), recalcule y escriba los contadores agregados del lote completo (`filas_leidas`,
+  `filas_aceptadas`, `filas_rechazadas`, `estado`) — **hallazgo adicional**: hoy `lote_ingesta.filas_
+  aceptadas=0` pese a las 158 filas reales, porque `rechazar()` nunca los toca — y deje rastro en
+  `acceso_auditoria` (`accion='escritura'`, `motivo` encadenando el `motivo_codigo` del rechazo
+  original, mismo patrón que ya usa `alta-cuenta.ts` para sus sufijos). Runner: **`conUsuario`, nunca
+  `conJob`** — es una corrección financiera con intención humana, y `'ingesta_bancaria'` está
+  deliberadamente fuera de los motivos de `conJob`.
+- No hace falta ningún cambio de esquema para esto (`dba-data`: el `unique` ya protege, no hay máquina
+  de estados que lo bloquee — aunque esa AUSENCIA de máquina de estados es en sí un hueco a tener en
+  cuenta cuando se escriba esa función). No hace falta un valor nuevo de `acceso_auditoria.accion`
+  (`'escritura'` alcanza).
+- Los datos de las 158 filas **no están expuestos de forma incorrecta hoy**: la policy de lectura de
+  `movimiento_bancario_crudo` no depende del `estado` del lote — es un problema de completitud de
+  cualquier vista que filtre por `estado='procesado'`, no de aislamiento ni de secreto fiscal
+  (`seguridad-datos-financieros`, severidad baja-media, correctamente detrás de la causa raíz).
+
+1. **Qué cambia y qué no.** Cambia: `rechazar()` gana el `ROLLBACK TO SAVEPOINT` como primera línea;
+   `ingestar()` agrega el `SAVEPOINT` después de crear el lote; los 5 comentarios de atomicidad. **No
+   cambia:** ningún camino que hoy lanza (queda para §1.1, declarado); `macro.ts` (el fix lo cubre sin
+   tocarlo); las 158 filas ya comiteadas (remediación es una tarea futura separada, con su propio plan
+   — necesita criterio de aceptación de `analista-funcional`/`contador-dominio` antes de escribirse,
+   por la ausencia de máquina de estados que señaló `dba-data`).
+2. **Qué se mide.** Test nuevo en `apps/cli/tests/ingestar.test.ts`: dos cuentas falsas, la primera
+   resuelve/verifica/persiste con éxito, la segunda falla resolución — afirma (a) CERO filas en
+   `movimiento_bancario_crudo` para ese lote (no solo para la cuenta 2, que nunca se persistió — para
+   TODO el lote, incluida la 1), (b) `lote_ingesta.estado='con_errores'` con el `motivo_codigo`
+   correcto, y (c) el `rechazo` queda auditado (`security-engineer`: verificar por evidencia, no solo
+   que el gate esté verde — es el mismo test que exige que el rechazo sobreviva al rollback parcial).
+   Un segundo test para el caso de `tech-lead` (persistencia parcial de la cuenta actual). `pnpm
+   verificar` en verde.
+3. **Predicción falsable.** El usuario reintenta la ingesta de Santander (con la cuenta USD **todavía
+   sin registrar**, a propósito, para probar el camino de rechazo limpio) y tiene que ver: el lote
+   rechazado con el mismo `motivo_codigo` de siempre, pero esta vez **CERO filas nuevas** en
+   `movimiento_bancario_crudo` para ese lote — nunca más una cuenta buena comiteada bajo un rechazo. Si
+   aparece cualquier fila nueva en un lote rechazado, es un hallazgo — no se reintenta sin confirmarlo
+   conmigo primero. (Las 158 filas viejas del intento anterior siguen ahí — esa es la remediación
+   pendiente, no algo que este fix toque.)
+4. **Agentes.** Ya convocados en paralelo: `tech-lead`, `dba-data`, `security-engineer`,
+   `seguridad-datos-financieros` — los cuatro con hallazgos incorporados arriba.
+5. **Paso revertible más chico.** Un commit único: el `SAVEPOINT` y el `ROLLBACK TO SAVEPOINT` dentro
+   de `rechazar()` son la misma pieza, no tiene sentido separarlos. Revertible con `git revert`, sin
+   efecto en las 158 filas ya existentes (no las toca).
+
+---
+
+---
+
 ## 2026-08-11 (39) — Cierre: `leerCaratula` para Macro, implementado, verificado, en verde
 
 **Herramienta:** Claude Code. Cierra la tarea planificada en (38).
