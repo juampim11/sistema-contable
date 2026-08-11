@@ -6,6 +6,55 @@
 
 ---
 
+## 2026-08-11 (28) — 6.2 cerrado. Sesión autónoma en pausa: lo que sigue necesita al usuario
+
+**Herramienta:** Claude Code. Mergeado a `main` (`feat/alta-cliente-cli`, `--no-ff`). `pnpm alta:cliente`
+existe y está probado con RLS real (8 tests, incluida la prueba por mutación del guard de tipo y el test
+que fija el comportamiento del `RETURNING`).
+
+**Estado del plan D → A1 → A2 → 6, de punta a punta, todo mergeado a `main` salvo lo marcado abajo:**
+
+| Parte | Estado |
+|---|---|
+| D — modo plan obligatorio | ✅ cerrado (CLAUDE.md §3.2, AGENTS.md §6) |
+| A1 — contrato unificado | ✅ cerrado |
+| A2 — destinos (C1-C5) | ✅ cerrado **en código**. 🔴 **sin confirmar contra archivo real** (ver HANDOFF 23) |
+| 6.1 — catálogo de bancos | ✅ cerrado |
+| 6.2 — `alta:cliente` | ✅ cerrado (esta entrada) |
+| 6.3 — ingesta real | ⏸️ **no arrancada** — depende de A2 confirmado y necesita al usuario |
+
+### Por qué la sesión autónoma se detiene acá, y no sigue con 6.3
+
+El propio plan (`cheerful-gathering-feather.md` §6.3) reserva explícitamente la verificación contra
+archivo real como checkpoint del usuario ("avisame cuándo necesités que corra `pnpm probar`"), y 6.3
+además:
+1. **Depende de que A2 esté confirmado contra Santander y Macro reales** — hoy solo está confirmado
+   contra fixtures sintéticos (HANDOFF 23).
+2. Necesita el **CUIT de los extractos reales** para determinar si Santander y Macro comparten titular
+   — con la regla dura de que ese dato nunca puede pasar por el contexto de un agente ni quedar en un
+   log (ADR-0002 §F.2.5, ya citada en el plan). Es exactamente la clase de operación que corresponde
+   correr con el usuario presente, no en una sesión desatendida.
+3. Es ingesta **real** contra la base del piloto — no un fixture, no un `pnpm test`.
+
+**Nada de esto es una decisión que se pueda posponer con una convocatoria de agentes**: son archivos que
+no están en el repo y una operación con datos reales de terceros. Se frena acá, con todo lo anterior
+verificado, mergeado y documentado.
+
+### Qué hace falta para retomar
+
+1. **Confirmar A2 contra archivo real**: `pnpm probar --banco macro --archivo <ruta>` y
+   `--banco galicia --archivo <ruta>` (las predicciones falsables completas están en HANDOFF 22), y la
+   primera medición de `sinDestino` de Santander contra archivo real (nunca antes se corrió).
+2. **6.1 real**: la migración `0011` corrió contra desarrollo, no contra el piloto — falta aplicarla ahí
+   antes de 6.3.
+3. **6.3**, los tres pasos del plan (`cheerful-gathering-feather.md` §6.3): determinar titularidad
+   compartida (script descartable, solo booleano) → `alta-cuenta.ts` con el extracto más viejo de cada
+   cuenta → `ingestar.ts` real contra el piloto → comparar conteos reales contra los medidos.
+
+**Bancor sigue en pausa total, sin tocar.**
+
+---
+
 ## 2026-08-11 (27) — 6.2, diseño ajustado tras la convocatoria (antes de implementar)
 
 Los cuatro agentes convocados (HANDOFF 26) convergieron, independientemente, en que el plan original de
