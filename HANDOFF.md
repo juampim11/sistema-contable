@@ -6,6 +6,51 @@
 
 ---
 
+## 2026-08-11 (35) — Cierre: `leerCaratula` multi-cuenta implementado, revisado y en verde
+
+**Herramienta:** Claude Code. Cierra la tarea planificada en (34) y su enmienda.
+
+**Qué se hizo, sobre el alcance final de la enmienda (no el original):**
+- `apps/cli/src/alta-cuenta.ts`: `leerCaratula(texto, moneda, cbuManual)` ahora detecta el formato
+  Santander (cabeceras `Cuenta Corriente...Nº`, regex duplicadas de `santander.ts` con el mismo escape
+  `º`), filtra el número de cuenta por moneda con dedupe por valor distinto, cruza contra la otra
+  moneda para detectar un filtro que no discrimine, deriva `tipoCuenta` de la cabecera matcheada, y trata
+  el CBU como no atribuible cuando el documento tiene más de una cuenta (mismo criterio que
+  `santander.ts:817-832`) — exige `--cbu <22 dígitos>` explícito en ese caso, nuevo argumento opcional.
+  El camino Galicia (una sola cuenta, sin esas cabeceras) queda sin cambios de comportamiento.
+  `leerCaratula`/`argumentos`/`clasificarTipo` pasan a `export function` con guard `esEjecucionDirecta`
+  (mismo patrón que `ingestar.ts`), y la salida imprime qué sección se usó (texto de código, nunca la
+  línea real del documento).
+- `apps/cli/tests/alta-cuenta.test.ts` (nuevo, 19 tests): Galicia sin cambios, Santander una-cuenta,
+  multi-cuenta con y sin `--cbu`, 0/`&gt;1` números distintos, cross-check de colisión, cabecera repetida
+  por página (no es error), idempotencia cruzada (el guard corta antes de tocar la base), y un guardrail
+  que corre la misma cadena literal contra `leerCaratula` y contra `reconoceSantander` (exportado de
+  `santander.ts`) para detectar divergencia futura entre las dos copias de regex.
+- `docs/diseno/10-deuda-declarada.md` §2.11 (nuevo): declara que el guardrail cruzado solo cubre
+  `RE_CABECERA_CUENTA` vía `reconoceSantander` — `RE_NUMERO_CUENTA_EN_CABECERA` y `RE_ES_DOLARES` quedan
+  sin cross-check automatizado (verificadas a mano, carácter por carácter, hoy). No bloqueante.
+
+**Convocatoria (§3.1, tareas #25-28) y `code-reviewer` (diff completo):** los cuatro agentes de la
+enmienda están documentados en (34). `code-reviewer`, sobre el diff final, no encontró bugs de
+correctitud activos — confirmó dedupe, cross-check, guard de CBU y camino Galicia correctos — y señaló
+el hallazgo que quedó como §2.11 más un `º` sin escapar (corregido antes de este commit).
+
+**Medido:** `pnpm typecheck` limpio, `pnpm test` 767/767 (27 archivos, 0 fallos — incluida
+`verificar-fixtures.test.ts`, que había dado timeout una vez por contención de recursos mientras corrían
+los cuatro agentes en paralelo, y corrió limpio en 24.7 s en la corrida en serie), `pnpm barrido` limpio.
+
+**Predicción falsable (punto 3 del plan), NO verificada todavía:** falta que el usuario corra
+`pnpm alta:cuenta --banco santander --moneda ARS --cbu &lt;el CBU real de la cuenta en pesos&gt; --archivo
+&lt;el PDF&gt; --cliente &lt;uuid&gt; --usuario &lt;uuid&gt;` con `ENV_FILE=.env.piloto`. Nota importante para esa
+corrida: como el documento es multi-cuenta (trae también la sección USD), **hace falta `--cbu` explícito**
+— sin él, el script va a fallar con el mensaje "no se puede atribuir a una sola moneda", que es el
+comportamiento correcto y esperado, no un bug nuevo.
+
+**Rama:** `fix/alta-cuenta-caratula-multicuenta`, un commit único (más este de cierre), lista para
+mergear a `main` con `--no-ff`.
+
+---
+
 ## 2026-08-11 (34) — Plan: `leerCaratula` multi-cuenta (CLAUDE.md §3.2)
 
 **Herramienta:** Claude Code. Dispara modo plan por (b) y (c) — atribución de identificadores reales
