@@ -6,6 +6,33 @@
 
 ---
 
+## 2026-08-11 (29) — Plan 6.3, primer paso (CLAUDE.md §3.2, escrito antes del primer `Edit`)
+
+**Herramienta:** Claude Code, sesión autónoma, con confirmación explícita del usuario para este paso
+puntual (no para el resto de 6.3). Dispara modo plan por (b) — maneja CUIT real, aunque sea solo en
+memoria y nunca lo emita.
+
+1. **Qué cambia y qué no.** Un script **descartable, sin commit de código** (el plan lo marca así
+   explícitamente): lee los dos PDF reales (Santander y Macro) con `resolverAdaptador`/`leer()` — el
+   mismo camino que `probar-adaptador.ts` — y compara `cuenta.titularDocumento` (el CUIT que cada
+   adaptador ya extrae de la carátula, campo `CuentaDetectada.titularDocumento`) de las dos cuentas.
+   Devuelve por stdout **únicamente** `mismo_titular: true` o `mismo_titular: false`. El CUIT completo
+   nunca se imprime, nunca se loguea, nunca queda en una variable que sobreviva a la función que lo lee.
+   **No toca la base ni el storage** (mismo criterio que `probar-adaptador.ts`). **No cambia:** ningún
+   adaptador, ningún archivo del pipeline de ingesta real.
+2. **Qué se mide.** El script corre limpio contra los dos PDF y termina con exactamente una línea de
+   salida útil (el booleano) más las líneas de diagnóstico sin datos (cuántas páginas, si cada adaptador
+   pudo leer el documento) — mismo estilo que `probar-adaptador.ts`.
+3. **Predicción falsable.** No aplica en el sentido numérico de A2 — es un booleano, no un conteo. La
+   predicción es de *comportamiento*: si alguno de los dos extractos no publica `titularDocumento`
+   (`undefined`), el script tiene que fallar con código explícito (`documento_no_publicado` o similar),
+   nunca asumir `mismo_titular: false` por comparar `undefined !== undefined` en falso silencioso.
+4. **Agentes.** `seguridad-datos-financieros` — obligatorio por CLAUDE.md §3.1 (dato de cliente).
+5. **Paso revertible más chico.** El script entero, al no comitearse, no deja rastro en el árbol de
+   `main` — es la unidad más chica posible: se corre, se lee el resultado, se borra.
+
+---
+
 ## 2026-08-11 (28) — 6.2 cerrado. Sesión autónoma en pausa: lo que sigue necesita al usuario
 
 **Herramienta:** Claude Code. Mergeado a `main` (`feat/alta-cliente-cli`, `--no-ff`). `pnpm alta:cliente`
