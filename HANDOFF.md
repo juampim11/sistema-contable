@@ -6,6 +6,99 @@
 
 ---
 
+## 2026-08-11 (38) — Plan: `leerCaratula` para Macro, tres cuentas y dos ejes (CLAUDE.md §3.2)
+
+**Herramienta:** Claude Code. Dispara modo plan por (a)/(c) — atribución de identificador real de cuenta
+(número/CBU, N2-R) y modifica el mismo script que ya corre contra datos reales. Convocatoria completa
+(`tech-lead`, `dba-data`, `security-engineer`, `seguridad-datos-financieros`) ya corrida en paralelo,
+cada uno leyendo `macro.ts` de forma independiente, no solo mi resumen.
+
+**El caso.** Macro tiene 3 cuentas en un mismo PDF: 1 USD (0 movimientos, se deja para después) y 2 en
+ARS de tipo distinto (`cuenta_corriente_especial`, 11 movimientos; `cuenta_corriente`, 1335
+movimientos). El fix de Santander asumía que `--moneda` alcanza porque ahí hay a lo sumo una cuenta por
+moneda; acá no alcanza — hacen falta dos ejes.
+
+**Investigación previa (confirmada de forma independiente por los 4 agentes, no solo por mí):**
+- El formato de Macro es **estructuralmente distinto** al de Santander, no una variante. Cada cuenta
+  abre con `CUENTA <TIPO...> NRO.: <número>` (`RE_SECCION`, `macro.ts:238`), que se repite una vez por
+  página (47 veces para 3 cuentas reales) — el número (grupo 2) es la clave, el título (grupo 1) nunca.
+- A diferencia de Santander, **el CBU sí es atribuible por cuenta**: cada sección tiene su propia línea
+  `Clave Bancaria Uniforme para Debito Directo: <CBU>` (`RE_CBU`, `macro.ts:239`), leída **dentro** del
+  rango de índices de esa sección (`macro.ts:1127-1153`, `cbu ??= cbuLeido` adentro del loop `for (const
+  i of seccion.indices)`). No hace falta ningún prompt manual para este caso.
+- Ya existe infraestructura **compartida y exportada** para partir el documento en secciones con
+  reapertura por clave: `seccionesPorClave(textos, claveDeEncabezado)` (`toolkit.ts:816`, re-exportada
+  desde `@sistema-contable/ingesta` vía `export *` — no es vocabulario privado de un adaptador, a
+  diferencia de las regex de Santander). `leerCaratula` la importa directo, no la duplica.
+- `--tipo` como argumento CLI nuevo es seguro (a diferencia de `--cbu`): ya se imprime hoy en claro
+  (`alta-cuenta.ts`, forma de salida), no es un identificador, no resuelve nada en
+  `resolverCuentaDelExtracto` (confirmado por `dba-data`), y es clasificación N1 (confirmado contra
+  `clasificacion-campos.ts`).
+
+**Hallazgo crítico de la convocatoria — cambia el diseño original:** con `--tipo` mal elegido por el
+operador, a diferencia de Santander, **no hay ninguna señal de error**. Las dos cuentas ARS tienen CBU
+reales y distintos, así que el alta con `--tipo` equivocado da éxito limpio sobre la cuenta incorrecta
+— sin excepción, sin choque de idempotencia (`seguridad-datos-financieros`, severidad crítica). Mitigación
+exigida: el error de ambigüedad tiene que mostrar, de las secciones candidatas, tipo **y cantidad de
+movimientos** — no solo el tipo (que es un eco circular: confirma lo que el operador ya tipeó, no una
+evidencia independiente). `security-engineer` había marcado el conteo de movimientos como dato a evitar
+en un mensaje de error (dato operacional derivado de actividad real); dado que la clasificación de qué
+dato es sensible en este negocio es la autoridad de `seguridad-datos-financieros` por diseño del propio
+roster (`agents/README.md`: security-engineer audita el control, seguridad-datos-financieros decide qué
+proteger), se sigue su recomendación — documentado acá para que quede la tensión, no escondida.
+
+**Hallazgos técnicos de `tech-lead`, incorporados al diseño:**
+- El guardrail cruzado automatizado de Santander (contra `reconoceSantander`) **no transfiere igual**:
+  `reconoceMacro` no ejercita `RE_SECCION`/`RE_CBU`. Se acepta como deuda declarada (mismo criterio que
+  ya usa `10-deuda-declarada.md` §2.11 para las otras dos regex de Santander), no bloqueante.
+- El branch de Macro **no necesita** el cross-check manual de números distintos que sí necesita
+  Santander: `seccionesPorClave` ya agrupa por clave en un `Map` — dos secciones con el mismo número son,
+  por construcción, la misma sección reabierta, nunca dos secciones distintas coincidiendo.
+- 🔴 **El CBU real de Macro trae guiones** (`#######-#-#############-#`, confirmado contra
+  `packages/ingesta/tests/macro.test.ts:364` — mismos valores sintéticos que ya usa esa suite,
+  `'2850000-1-0000000000003-1'`), a diferencia de Galicia/Santander que siempre entregan 22 dígitos
+  limpios. El branch de Macro tiene que limpiar (`.replace(/\D/g, '')`) y validar `/^\d{22}$/` antes de
+  aceptarlo, con el mismo error explícito que ya usa el resto del archivo — el HMAC saldría bien igual
+  (`normalizarIdentificador` ya limpia antes de hashear) pero aceptar una forma sin validar rompe el
+  patrón que el archivo ya sigue en cada otro punto.
+- **Verificación empírica pendiente, no bloqueante para escribir el código pero sí para darlo por
+  cerrado**: `macro.ts` usa `aFilas()` en producción, no `aLineas()` — pero por una razón ajena a las
+  cabeceras de sección (el signo de los movimientos, que `leerCaratula` nunca lee). El propio documento
+  de diseño (`07-formato-macro.md` §1) mide que las líneas de este archivo específico sobreviven
+  `aLineas()` intactas, a diferencia de Galicia — pero esa medición es sobre movimientos, no
+  específicamente sobre la línea de cabecera de sección ni la de CBU. Antes de dar el fix por cerrado
+  hace falta una corrida real (o un diagnóstico de solo-conteo, nunca contenido) contra el PDF de
+  `privado/` que confirme que `RE_SECCION`/`RE_CBU` matchean sobre `aLineas()` tal como se espera.
+- Menor, documentado en el código: `monedaDelTitulo` (duplicada) cae a `ARS` por default cuando el
+  título no nombra la moneda — es el caso real de "CUENTA CORRIENTE BANCARIA" (sin "PESOS" ni
+  "DOLARES"). El adaptador real lo sostiene con una invariante de todo el documento que `leerCaratula`
+  no reconstruye (solo lee carátula). Riesgo aceptado, mismo perfil que el resto de la función.
+
+1. **Qué cambia y qué no.** `leerCaratula` gana una tercera rama (formato Macro: detectada por
+   `seccionesPorClave` encontrando ≥1 sección), con su propio filtro de dos ejes (`moneda` + `--tipo`
+   nuevo, opcional, solo obligatorio cuando `moneda` sola no alcanza). **No cambia:** el branch de
+   Santander ni el de Galicia, `macro.ts` (el adaptador real, sin tocar), ni el prompt oculto de CBU de
+   (36) — Macro no lo necesita.
+2. **Qué se mide.** Tests nuevos con los valores sintéticos YA usados en `macro.test.ts` (mismos
+   `NRO_USD`/`NRO_ESPECIAL`/`NRO_BANCARIA`, mismos CBU con guión): 0/1/`>2` secciones por moneda+tipo,
+   limpieza de CBU con guiones, mensaje de ambigüedad con tipo+conteo de movimientos (nunca número ni
+   CBU), motivo de auditoría con sufijo cuando hubo selección entre variantes. `pnpm verificar` en verde.
+   Antes de cerrar: corrida real (o diagnóstico de solo-conteo) contra el PDF de `privado/` confirmando
+   que las cabeceras de sección sobreviven `aLineas()`.
+3. **Predicción falsable.** El usuario corre `pnpm alta:cuenta --banco macro --moneda ARS --tipo
+   cuenta_corriente --archivo <el PDF real> --cliente <uuid> --usuario <uuid>` (con
+   `ENV_FILE=.env.piloto`) y tiene que imprimir la forma del número/CBU de la cuenta de 1335 movimientos,
+   sin error. Sin `--tipo` (con las dos ARS presentes), tiene que fallar explícito listando los dos tipos
+   candidatos con su conteo de movimientos. Si imprime la cuenta equivocada o vuelve a fallar, es un
+   hallazgo — no se reintenta sin confirmarlo conmigo primero.
+4. **Agentes.** Ya convocados en paralelo: `tech-lead`, `dba-data`, `security-engineer`,
+   `seguridad-datos-financieros` — los cuatro con hallazgos incorporados arriba.
+5. **Paso revertible más chico.** Un commit único: la rama de Macro, la limpieza de CBU, y `--tipo` son
+   el mismo problema (desambiguar tres cuentas de un documento) y separarlos dejaría el fix a medias.
+   Revertible con `git revert`, sin efecto en filas ya persistidas.
+
+---
+
 ## 2026-08-11 (37) — Investigación: "el prompt de CBU no acepta nada" — no era un bug
 
 **Herramienta:** Claude Code. El usuario reportó, antes de correr nada más, que el prompt oculto de (36)
