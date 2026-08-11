@@ -51,9 +51,13 @@ import {
 import type { EntradaDeAdaptador, SalidaDeAdaptador } from './registro.ts';
 import {
   buscarIgnorandoAcentos,
+  contarDestinos,
+  DESTINOS_BASE,
   extraerPeriodo,
   parDeColumnas,
   valorPorEtiqueta,
+  type ConteoDeDestinos,
+  type DestinoBase,
   type ParDeFila,
 } from './toolkit.ts';
 
@@ -87,8 +91,8 @@ export const CAPACIDADES_GALICIA: CapacidadesAdaptador = {
   traeMovimientosFueraDelPeriodo: false,
   // Una sola cuenta en el archivo: no hay consolidado por moneda que publicar (spec §3).
   traeConsolidadoPorMoneda: false,
-  // A2 (C4): todavía no instrumentado. Pasa a `true` cuando `leerGalicia` empiece a devolver `destinos`.
-  declaraDestinos: false,
+  // A2 (C4): `leerGalicia` clasifica cada fila en uno de los `DESTINOS_BASE` y devuelve el recuento.
+  declaraDestinos: true,
 };
 
 /**
@@ -156,10 +160,13 @@ const RUIDO_GALICIA: readonly { readonly patron: RegExp; readonly motivo: string
 ];
 
 /**
- * Galicia no promete nada que el contrato compartido no tenga: alias sin campos propios.
- * Ver `registro.ts` para las tres formas posibles (uso directo, alias, intersection) y cuándo va cada una.
+ * A2 (C4): Galicia ahora promete `destinos` siempre (`CAPACIDADES_GALICIA.declaraDestinos: true`), así
+ * que deja de ser el alias puro que era en A1 — pasa a intersection, mismo patrón que `SalidaMacro` y
+ * `SalidaSantander`. Ver `registro.ts` para las tres formas posibles y cuándo va cada una.
  */
-export type SalidaGalicia = SalidaDeAdaptador;
+export type SalidaGalicia = SalidaDeAdaptador & {
+  readonly destinos: ConteoDeDestinos<DestinoBase>;
+};
 
 export function reconoceGalicia(filas: readonly FilaGeometrica[]): boolean {
   const textos = filas.slice(0, 80).map(textoDeFila);
@@ -222,6 +229,16 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
   const periodo = leerPeriodo(filas);
 
   /**
+   * A2 (C4): índice de fila → destino. Se crea ANTES de leer el anexo, porque esa pasada ya clasifica sus
+   * propias filas (literal → `anexo`, período+importe → `continuacion`) antes de que arranque el autómata
+   * del cuerpo. Mismo patrón que `macro.ts`/`santander.ts`: `marcar` pisa una marca ya puesta.
+   */
+  const destinoDeFila = new Map<number, DestinoBase>();
+  const marcar = (i: number, destino: DestinoBase): void => {
+    destinoDeFila.set(i, destino);
+  };
+
+  /**
    * El anexo se resuelve **antes** del cuerpo y no dentro del autómata.
    *
    * Motivo: vive entero después de la línea `Total` (spec §10), o sea fuera de la región de tabla, y sus
@@ -231,7 +248,7 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
    * `consumidasPorElAnexo` es lo que impide el doble reporte: una fila que se volvió un anexo **no** puede
    * además figurar en `lineasNoInterpretadas`, o el mismo renglón se contaría dos veces con dos destinos.
    */
-  const { anexos, consumidas: consumidasPorElAnexo } = leerAnexo(filas);
+  const { anexos, consumidas: consumidasPorElAnexo } = leerAnexo(filas, marcar);
 
   let abierto: EnConstruccion | null = null;
   let filaNumero = 0;
@@ -244,6 +261,9 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
       filaNumero += 1;
       movimientos.push(armarMovimiento(abierto, abierto.par, filaNumero));
     } else {
+      // La fila se había marcado `movimiento` al abrirse; el bloque no se completó y el destino se revisa
+      // — es el único lugar donde una marca ya puesta se pisa (mismo patrón que `santander.ts`).
+      marcar(abierto.indiceFila, 'residuo');
       noInterpretadas.push({
         codigo: 'fila_sin_importe',
         forma: formaParaLog(abierto.lineas.join(' '), 60),
@@ -258,13 +278,20 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
     if (consumidasPorElAnexo.has(indice)) continue;
 
     const texto = textoDeFila(fila);
-    if (texto === '') continue;
+    if (texto === '') {
+      // Defensivo, no medido: `aFilas()` no produce filas sin fragmentos en ningún archivo del roster.
+      // Si algún día ocurre, es geometría vacía, no un dato del documento — mismo criterio de
+      // `santander.ts` para su propia fila en blanco.
+      marcar(indice, 'ruido');
+      continue;
+    }
 
     // La línea de totales se lee ANTES de descartarla como ruido: es el dato de la verificación (spec §10).
     const t = leerTotales(texto);
     if (t) {
       cerrar();
       totales = t;
+      marcar(indice, 'saldoDeclarado');
       continue;
     }
 
@@ -277,6 +304,7 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
 
       const fecha = parsearFecha(fechaFrag.texto, periodo ?? undefined);
       if (fecha === null) {
+        marcar(indice, 'residuo');
         noInterpretadas.push({
           codigo: 'fecha_ilegible',
           forma: formaParaLog(texto, 60),
@@ -286,6 +314,8 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
         continue;
       }
 
+      // Provisional: si el bloque no llega a completar su par, `cerrar` la revisa a `residuo`.
+      marcar(indice, 'movimiento');
       abierto = {
         fecha,
         lineas: [],
@@ -302,24 +332,33 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
 
     // Ruido estructural: **no cierra el movimiento**. El encabezado de una página aparece en medio de un
     // bloque cuando la glosa cruza el corte de página, y cerrar ahí dejaría la continuación huérfana.
-    if (RUIDO_GALICIA.some((r) => r.patron.test(texto))) continue;
+    if (RUIDO_GALICIA.some((r) => r.patron.test(texto))) {
+      marcar(indice, 'ruido');
+      continue;
+    }
 
     if (abierto) {
       absorber(abierto, fila);
+      marcar(indice, 'continuacion');
       continue;
     }
 
     /**
      * Fuera de todo bloque. Acá caen la carátula y las leyendas legales, que están **antes** del primer
-     * movimiento — y eso es correcto: se reportan en vez de descartarse en silencio, que es la regla del
-     * contrato. El llamador decide si le importan.
+     * movimiento o **después** de `Total` — el único momento en que esta rama es alcanzable: `abierto` no
+     * vuelve a `null` por ningún otro motivo (ni el ruido estructural ni una fila sin fecha lo cierran).
+     * Es el destino `fueraDelCuerpo` de A2 (`docs/diseno/10-deuda-declarada.md` §2.1): se **cuenta** y no
+     * empuja a `lineasNoInterpretadas` — mismo patrón que usa `santander.ts` para su propio
+     * `fueraDelCuerpo`. El llamador decide si le importa.
+     *
+     * 🔴 Incluye, si el archivo lo tuviera, un candidato de anexo (literal o período) que `leerAnexo`
+     * identificó pero no pudo aparear (su límite 3: "un período sin literal libre no se emite"). El
+     * criterio `!abierto` no distingue ese caso de la carátula, y separarlo exigiría que `leerAnexo` le
+     * devolviera al bucle principal un tercer conjunto de índices — infraestructura nueva que el criterio
+     * posicional de A2 no pide. No medido contra ningún archivo real ni fixture: los 9 renglones del anexo
+     * aparean completos en los dos.
      */
-    noInterpretadas.push({
-      codigo: 'linea_fuera_de_zona',
-      forma: formaParaLog(texto, 60),
-      paginaPdf: fila.pagina,
-      indice,
-    });
+    marcar(indice, 'fueraDelCuerpo');
   }
 
   cerrar();
@@ -329,6 +368,8 @@ export function leerGalicia(filas: readonly FilaGeometrica[]): SalidaGalicia {
     cuentas: cuenta ? [cuenta] : [],
     lineasNoInterpretadas: noInterpretadas,
     paginasDeclaradas: leerPaginasDeclaradas(filas),
+    // A2 (C4): la partición completa, contada — no autocertificada por ninguna rama del lector.
+    destinos: contarDestinos(DESTINOS_BASE, destinoDeFila, filas.length),
   };
 }
 
@@ -969,10 +1010,16 @@ type RenglonDeAnexo =
  * 2. **Todo en la página del primer renglón de período.** La página siguiente es texto legal (§2), y una
  *    leyenda no puede volverse el literal de un renglón impositivo.
  * 3. **Un período sin literal libre no se emite.** `conceptoLiteral` no tiene default posible —el rótulo es
- *    del banco— y fabricar uno sería inventar el hecho. La fila queda en `lineasNoInterpretadas` con su
- *    forma, que es donde se ve que faltó algo.
+ *    del banco— y fabricar uno sería inventar el hecho. La fila no entra a `consumidas`, así que el bucle
+ *    principal la ve: con la instrumentación de destinos de A2 (C4) cae en `fueraDelCuerpo` —el criterio
+ *    posicional (`!abierto`) no distingue "candidato de anexo sin pareja" de carátula—, así que deja de
+ *    aparecer en `lineasNoInterpretadas` como pasaba antes de A2. Ver la nota 🔴 en `leerGalicia`, junto a
+ *    la marca `fueraDelCuerpo`, para el porqué de no separar ese caso sin medirlo contra un archivo real.
  */
-function leerAnexo(filas: readonly FilaGeometrica[]): {
+function leerAnexo(
+  filas: readonly FilaGeometrica[],
+  marcar: (i: number, destino: DestinoBase) => void,
+): {
   readonly anexos: readonly AnexoExtracto[];
   readonly consumidas: ReadonlySet<number>;
 } {
@@ -1023,6 +1070,14 @@ function leerAnexo(filas: readonly FilaGeometrica[]): {
     literalesUsados.add(elegido.pos);
     consumidas.add(r.indice);
     consumidas.add(elegido.renglon.indice);
+
+    /**
+     * A2 (C4): el literal ABRE el renglón (`anexo`); el período+importe es su continuación
+     * (`continuacion`) — misma distinción que usa `santander.ts` (`RE_COLA_PERIODO_DE_EMISION`) y que
+     * `macro.ts` aplica para la cola de su propio renglón partido.
+     */
+    marcar(elegido.renglon.indice, 'anexo');
+    marcar(r.indice, 'continuacion');
 
     anexos.push({
       tipoFila: 'anexo',
