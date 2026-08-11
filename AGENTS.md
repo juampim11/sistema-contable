@@ -119,3 +119,23 @@ Codex **no auto-descubre** los sub-agentes de `.claude/agents/`. Para trabajar c
 🔴 **El banner `=== [Persona] ===` es la convocatoria estructural de Codex** — el equivalente a la
 tarea bloqueante `addBlockedBy` de `CLAUDE.md` §3.1 punto 6. Si el banner no aparece en la transcripción
 **antes** del cambio de código, la convocatoria no ocurrió, sin importar qué diga el resumen final.
+
+## 6. Modo plan obligatorio (protocolo)
+
+Mismo disparador y mismos cinco puntos que `CLAUDE.md` §3.2 — no se repiten acá. La diferencia es
+**cómo se aplica**: Claude Code tiene un modo de planificación que bloquea `Edit`/`Write` hasta que el
+usuario aprueba el plan (`ExitPlanMode`). Codex no tiene ese bloqueo de herramienta — el equivalente
+estructural es escribir el plan **antes**, en un lugar que quede afuera de la propia respuesta:
+
+1. **Antes** del primer `apply_patch`/`Edit`/`Write` sobre un archivo afectado, agregá el plan (los
+   cinco puntos de `CLAUDE.md` §3.2) a `HANDOFF.md` — como entrada nueva o como sección "Plan" de la
+   entrada en curso.
+2. Recién después de esa escritura arrancá el primer cambio de código.
+3. Al cerrar el DoD, actualizá la misma entrada con el resultado contra la predicción del punto 3 — el
+   mismo hábito que ya usa `docs/diseno/09-lecciones-aprendidas.md` §5 con las corridas de los bancos.
+
+🔴 **Narrar el plan dentro de la respuesta, sin escribirlo antes en `HANDOFF.md`, no satisface esto** —
+es el mismo problema que el punto 6 de `CLAUDE.md` §3.1: la intención dicha no ejecuta sola. Es
+**inspeccionable** sin depender de que quien conduce lo recuerde: la entrada de `HANDOFF.md` con el plan
+tiene que **preceder** al primer diff sobre los archivos afectados — no compartir el mismo momento que
+él, y mucho menos venir después a modo de resumen.
