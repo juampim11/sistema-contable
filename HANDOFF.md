@@ -6,6 +6,32 @@
 
 ---
 
+## 2026-08-11 (32) — Plan: fix de los 2 regex + contingencia de C5 (CLAUDE.md §3.2)
+
+**Herramienta:** Claude Code. Dispara modo plan por (c) — modifica `santander.ts`, adaptador que ya
+corre contra datos reales. Decisión ya tomada por el usuario (HANDOFF 31, este mensaje) — el plan
+documenta la ejecución, no abre la decisión.
+
+1. **Qué cambia y qué no.** `RE_ANEXO_RESUMEN` y `RE_ANEXO_COMPUTABLE` (`santander.ts`) ganan la flag
+   `i`: son case-sensitive contra un literal en mayúsculas que el documento real no imprime así (formas
+   1 y 2 del residuo=5 medido, HANDOFF 31). `verificarDestinos` (`invariantes.ts`): el caso `residuo>0`
+   pasa a severidad `observación` en vez de `error` — contingencia ya prevista en el diseño de C5
+   (HANDOFF 22 punto 5), aislada para poder revertirse en una línea. **No cambia:** `sinDestino>0` ni
+   `destinos===undefined && declaraDestinos` — esos dos siguen en `error`, no están cubiertos por esta
+   contingencia (son violaciones más estructurales: partición que no cierra, o promesa incumplida).
+2. **Qué se mide.** `pnpm verificar` en verde. El usuario corre `pnpm probar --banco santander` contra
+   el mismo archivo real después del fix de regex — eso, no un test, es lo que confirma si el residuo
+   bajó.
+3. **Predicción falsable.** Si las formas 1 y 2 eran de verdad `RE_ANEXO_RESUMEN`/`RE_ANEXO_COMPUTABLE`
+   sin matchear por case, el residuo baja de 5 a **exactamente 3** (las formas 3, 4 y 5 sin explicar).
+   Si baja a otro número, la hipótesis estaba incompleta — hay que revisar cuál regex explica qué.
+4. **Agentes.** `code-reviewer` sobre el diff antes de cerrar — cambio chico pero toca un adaptador con
+   datos reales y el gate de producción.
+5. **Paso revertible más chico.** Los dos regex, un commit. La contingencia de severidad, otro commit
+   separado — son independientes y cada uno se puede revertir solo.
+
+---
+
 ## 2026-08-11 (31) — A2 contra archivo real: Galicia confirmado, Santander con residuo=5 a clasificar
 
 **Corrido por el usuario**, dato real, solo las formas (sin dígitos/texto real) llegan a este contexto.
