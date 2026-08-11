@@ -43,7 +43,9 @@ import {
   aLineas,
   extraerPeriodo,
   extraerTexto,
+  seccionesPorClave,
   valorPorEtiqueta,
+  type SeccionDetectada,
   type TextoDelPdf,
 } from '@sistema-contable/ingesta';
 import { forma } from '@sistema-contable/shared/observabilidad';
@@ -62,12 +64,36 @@ cargarEnv();
 const SALTO = String.fromCharCode(10);
 const RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Los tipos que `--tipo` acepta — el subconjunto de `TipoCuentaAlta` que Macro realmente distingue en
+ * su carátula (`dba-data`, HANDOFF (38)). `cuenta_inversion`/`tarjeta_corporativa`/`no_determinado`
+ * quedan afuera a propósito: no aplican a este flujo de lectura y ofrecerlos como respuesta a una
+ * ambigüedad de carátula sería confuso.
+ *
+ * `as const satisfies readonly TipoCuentaAlta[]` en vez de filtrar `TIPOS_CUENTA_ALTA` en tiempo de
+ * ejecución: así `z.enum(...)` conserva el tipo literal (lo que un `.filter()` sobre el array pierde,
+ * `z.enum` infiere `string` a secas) y a la vez el compilador rechaza este archivo si algún día alguno
+ * de estos tres strings dejara de ser un `TipoCuentaAlta` válido — no es una cuarta lista libre.
+ */
+const TIPOS_PARA_DESAMBIGUAR = [
+  'cuenta_corriente',
+  'cuenta_corriente_especial',
+  'caja_ahorro',
+] as const satisfies readonly TipoCuentaAlta[];
+
 const esquema = z.object({
   cliente: z.string().regex(RE_UUID),
   usuario: z.string().regex(RE_UUID),
   banco: z.string().regex(/^[a-z0-9_]{2,32}$/),
   archivo: z.string().min(1),
   moneda: z.enum(['ARS', 'USD']).default('ARS'),
+  /**
+   * Solo hace falta cuando la carátula tiene más de una cuenta en la misma moneda (caso real: Macro,
+   * dos cuentas en ARS de tipo distinto) y `--moneda` sola no alcanza para elegir. No es sensible —
+   * a diferencia del CBU, ya se imprime hoy en claro en la salida — así que pasarlo por argumento no
+   * reintroduce el problema de (36)/(37).
+   */
+  tipo: z.enum(TIPOS_PARA_DESAMBIGUAR).optional(),
   /** Etiqueta humana. **Nunca** la razón social. */
   alias: z.string().max(60).optional(),
 });
@@ -119,12 +145,75 @@ export function argumentos(argv: readonly string[] = process.argv.slice(2)): Arg
     throw new Error(
       `Argumentos inválidos: ${r.error.issues.map((i) => `--${String(i.path[0])}`).join(', ')}.${SALTO}${SALTO}` +
         `  node apps/cli/src/alta-cuenta.ts --cliente <uuid> --usuario <uuid> \\${SALTO}` +
-        `    --banco <codigo> --archivo <ruta al PDF> [--moneda ARS] [--alias "cuenta operativa"]${SALTO}${SALTO}` +
+        `    --banco <codigo> --archivo <ruta al PDF> [--moneda ARS] [--tipo <tipo>] ` +
+        `[--alias "cuenta operativa"]${SALTO}${SALTO}` +
         `El CBU NO se pasa por argumento, nunca: se lee del archivo, o si la carátula tiene más de una ` +
-        `cuenta, se pide con un prompt interactivo oculto en el momento.`,
+        `cuenta, se pide con un prompt interactivo oculto en el momento.${SALTO}` +
+        `--tipo (${TIPOS_PARA_DESAMBIGUAR.join('|')}) solo hace falta cuando --moneda sola encuentra más ` +
+        `de una cuenta candidata (caso Macro: dos cuentas en la misma moneda, de tipo distinto).`,
     );
   }
   return r.data;
+}
+
+/**
+ * Cabecera de sección de Macro, cuando la carátula trae más de una cuenta (HANDOFF (38)). **Duplicada a
+ * propósito** de `packages/ingesta/src/adaptadores/macro.ts` (líneas 238-239) — mismo motivo que las
+ * de Santander más abajo: `packages/ingesta/src/index.ts` prohíbe exponer vocabulario interno de un
+ * adaptador.
+ *
+ * **El particionado en secciones NO se duplica** — `seccionesPorClave` (importada de
+ * `@sistema-contable/ingesta`) es infraestructura **compartida** de `toolkit.ts`, no vocabulario privado
+ * de este banco: ya tiene dos usuarios reales (`macro.ts` y este archivo), y resuelve el caso medido de
+ * que el encabezado se repite una vez por página y a veces se reabre fuera de orden — reinventar esa
+ * lógica acá sería la clase de duplicación que el proyecto NO quiere (`tech-lead`, HANDOFF (38)).
+ *
+ * 🟡 **El guardrail cruzado de test que sí existe para las regex de Santander (vía `reconoceSantander`)
+ * no tiene equivalente acá**: `reconoceMacro` no ejercita `RE_SECCION_MACRO` ni `RE_CBU_MACRO`. Se
+ * acepta como deuda declarada, mismo criterio que ya cubre `docs/diseno/10-deuda-declarada.md` §2.11
+ * para las otras dos regex de Santander — verificadas carácter por carácter contra el original en vez
+ * de con cross-check automatizado (`tech-lead`, HANDOFF (38)).
+ *
+ * 🔴 **El CBU real de Macro trae guiones** (`#######-#-#############-#`, no 22 dígitos limpios como
+ * Galicia/Santander) — se limpia y se valida antes de aceptarlo, ver más abajo en `leerCaratula`.
+ */
+const RE_SECCION_MACRO = /^(CUENTA(?: [A-ZÁÉÍÓÚÑ.]+)+) NRO\.:\s*(\d-\d{3}-\d{10}-\d)$/;
+const RE_CBU_MACRO = /^Clave Bancaria Uniforme para Debito Directo:\s*(\S+)/;
+
+function claveDeSeccionMacro(texto: string): string | null {
+  return RE_SECCION_MACRO.exec(texto)?.[2] ?? null;
+}
+
+/** Mismo criterio que `macro.ts:1325-1328` — duplicado, no importado (vocabulario interno del adaptador). */
+function tipoDeCuentaDelTituloMacro(titulo: string): TipoCuentaAlta {
+  if (/ESPECIAL/i.test(titulo)) return 'cuenta_corriente_especial';
+  if (/CORRIENTE/i.test(titulo)) return 'cuenta_corriente';
+  if (/AHORRO/i.test(titulo)) return 'caja_ahorro';
+  return 'no_determinado';
+}
+
+/**
+ * Mismo criterio que `macro.ts:1320-1321` — duplicado, no importado.
+ *
+ * 🟡 Default a ARS cuando el título no nombra la moneda — es el caso real de "CUENTA CORRIENTE
+ * BANCARIA" (sin "PESOS" ni "DOLARES"). El adaptador real sostiene ese default con una invariante de
+ * todo el documento (la suma de movimientos contra "Saldo Cuentas en <moneda>") que esta función NO
+ * reconstruye — `leerCaratula` solo lee carátula, nunca el cuerpo. Riesgo aceptado, mismo perfil que el
+ * resto de esta función (`tech-lead`, HANDOFF (38)).
+ */
+function monedaDelTituloMacro(titulo: string): 'ARS' | 'USD' {
+  return /D[OÓ]LAR/i.test(titulo) ? 'USD' : 'ARS';
+}
+
+/**
+ * Conteo **aproximado** de renglones de movimiento dentro de una sección — nunca el conteo canónico
+ * (ese lo hace `macro.ts` con la vista geométrica completa). Alcanza para que un mensaje de ambigüedad
+ * le muestre al operador una diferencia bien distinguible entre dos cuentas candidatas (11 vs. 1335, el
+ * caso real) sin depender de que confirme por el nombre exacto del tipo — que es circular si ya se
+ * equivocó de tipo (`seguridad-datos-financieros`, HANDOFF (38)). Nunca se persiste, es solo de consola.
+ */
+function contarMovimientosMacro(seccion: SeccionDetectada, lineas: readonly string[]): number {
+  return seccion.indices.filter((i) => /^\d{2}\/\d{2}\/\d{2}\b/.test(lineas[i] ?? '')).length;
 }
 
 /**
@@ -174,11 +263,25 @@ const RE_ES_DOLARES = /especial\s+U\$S/i;
  * la de pesos, con el mismo CBU (mal) leído y el mismo período, no fallaría ni crearía nada nuevo —
  * devolvería en silencio los ids de la cuenta en pesos ya cargada, y el CLI imprimiría "Alta OK" como si
  * hubiera registrado la cuenta en dólares.
+ *
+ * **Multi-cuenta (Macro), tres cuentas y DOS ejes (HANDOFF (38)).** Distinto de Santander: acá el CBU SÍ
+ * está atado a una sección (cada una imprime la suya, `RE_CBU_MACRO`), así que no hace falta ningún
+ * prompt manual. Pero `moneda` sola no siempre alcanza para elegir sección — el caso real tiene DOS
+ * cuentas en ARS de tipo distinto. `tipoManual` (el `--tipo` de la CLI) es el segundo eje, obligatorio
+ * solo cuando `moneda` sola encuentra más de una candidata.
+ *
+ * 🔴 **Acá el riesgo es más silencioso que en Santander.** Con dos CBU reales y distintos por sección,
+ * un `--tipo` equivocado no choca contra nada — el alta sale "OK" sobre la cuenta incorrecta, sin
+ * excepción ni conflicto de idempotencia (`seguridad-datos-financieros`, HANDOFF (38), severidad
+ * crítica). Por eso el mensaje de ambigüedad muestra tipo **y cantidad de movimientos** de cada
+ * candidata — nunca solo el tipo, que es un eco circular si el operador ya tiene el mapeo mental
+ * equivocado de qué tipo corresponde a qué cuenta real.
  */
 export function leerCaratula(
   texto: TextoDelPdf,
   moneda: 'ARS' | 'USD',
   cbuManual: string | undefined,
+  tipoManual: TipoCuentaAlta | undefined = undefined,
 ): {
   readonly cbu: string;
   readonly numero: string;
@@ -187,6 +290,7 @@ export function leerCaratula(
   readonly seccionUsada: string;
 } {
   const lineas = aLineas(texto).map((l) => l.texto);
+  const seccionadoMacro = seccionesPorClave(lineas, claveDeSeccionMacro);
   const cabecerasCuenta = lineas.filter((l) => RE_CABECERA_CUENTA.test(l));
 
   let numero: string;
@@ -194,7 +298,81 @@ export function leerCaratula(
   let seccionUsada: string;
   let cbuAtribuido: string | undefined;
 
-  if (cabecerasCuenta.length > 0) {
+  if (seccionadoMacro.secciones.length > 0) {
+    const infoSecciones = seccionadoMacro.secciones.map((seccion) => {
+      const titulo = RE_SECCION_MACRO.exec(lineas[seccion.indiceApertura] ?? '')?.[1] ?? 'CUENTA';
+      return {
+        seccion,
+        tipo: tipoDeCuentaDelTituloMacro(titulo),
+        moneda: monedaDelTituloMacro(titulo),
+      };
+    });
+
+    const candidatasPorMoneda = infoSecciones.filter((s) => s.moneda === moneda);
+    if (candidatasPorMoneda.length === 0) {
+      throw new Error(
+        `No encontré ninguna cuenta en ${moneda} en la carátula (formato Macro, ` +
+          `${infoSecciones.length} cuenta(s) en el documento en total). Verificá --moneda.`,
+      );
+    }
+
+    const candidatas =
+      tipoManual === undefined
+        ? candidatasPorMoneda
+        : candidatasPorMoneda.filter((s) => s.tipo === tipoManual);
+
+    if (candidatas.length === 0) {
+      // tipoManual no matcheó ninguna de las candidatas por moneda — listar lo que sí hay, mismo criterio
+      // de evidencia no circular que el caso de abajo (seguridad-datos-financieros, HANDOFF (38)).
+      const detalle = candidatasPorMoneda
+        .map((c) => `${c.tipo} (${contarMovimientosMacro(c.seccion, lineas)} movimiento(s))`)
+        .join(', ');
+      throw new Error(
+        `No encontré ninguna cuenta en ${moneda} de tipo ${tipoManual} en la carátula. Las cuentas en ` +
+          `${moneda} que sí hay: ${detalle}.`,
+      );
+    }
+
+    if (candidatas.length > 1) {
+      /**
+       * 🔴 Tipo y cantidad de movimientos, nunca solo el tipo (`seguridad-datos-financieros`, HANDOFF
+       * (38)): el tipo solo es un eco circular si el operador ya tiene el mapeo mental equivocado de
+       * cuál tipo corresponde a cuál cuenta real. El conteo es evidencia independiente, contrastable
+       * contra lo que el operador ya sabe del extracto — y no es un identificador ni un dato sensible.
+       */
+      const detalle = candidatas
+        .map((c) => `${c.tipo} (${contarMovimientosMacro(c.seccion, lineas)} movimiento(s))`)
+        .join(', ');
+      throw new Error(
+        `Encontré ${candidatas.length} cuentas en ${moneda}` +
+          (tipoManual === undefined ? '' : ` de tipo ${tipoManual}`) +
+          ` en la carátula: ${detalle}. Pasá --tipo <${TIPOS_PARA_DESAMBIGUAR.join('|')}> para elegir.`,
+      );
+    }
+
+    // Sano por construcción: los dos throws de arriba ya descartaron 0 y >1 elementos.
+    const elegida = candidatas[0] as (typeof candidatas)[number];
+
+    /**
+     * 🔴 El CBU real de Macro trae guiones (`#######-#-#############-#`) — se limpia y se valida acá,
+     * antes de aceptarlo, con el mismo criterio de "fallar ruidoso ante una forma sin validar" que ya
+     * aplica el resto del archivo (`tech-lead`, HANDOFF (38)).
+     */
+    const cbuCrudo = elegida.seccion.indices
+      .map((i) => RE_CBU_MACRO.exec(lineas[i] ?? '')?.[1])
+      .find((v): v is string => v !== undefined);
+    const cbuLimpio = cbuCrudo?.replace(/\D/g, '');
+    if (cbuLimpio === undefined || !/^\d{22}$/.test(cbuLimpio)) {
+      throw new Error(
+        'No encontré un CBU válido (22 dígitos) en la sección elegida de la carátula (formato Macro).',
+      );
+    }
+
+    numero = elegida.seccion.clave;
+    tipoCuenta = elegida.tipo;
+    cbuAtribuido = cbuLimpio;
+    seccionUsada = `Macro — ${elegida.tipo} en ${moneda}`;
+  } else if (cabecerasCuenta.length > 0) {
     const esUsdPedido = moneda === 'USD';
     const cabecerasDeLaMoneda = cabecerasCuenta.filter((l) => RE_ES_DOLARES.test(l) === esUsdPedido);
     const cabecerasDeLaOtraMoneda = cabecerasCuenta.filter((l) => RE_ES_DOLARES.test(l) !== esUsdPedido);
@@ -541,14 +719,14 @@ if (esEjecucionDirecta) {
   let caratula: ReturnType<typeof leerCaratula>;
   let cbuFueManual = false;
   try {
-    caratula = leerCaratula(texto, args.moneda, undefined);
+    caratula = leerCaratula(texto, args.moneda, undefined, args.tipo);
   } catch (error) {
     const esAmbiguedadDeCbu =
       error instanceof Error && error.message.includes('no se puede atribuir a una sola moneda');
     if (!esAmbiguedadDeCbu) throw error;
     try {
       const cbuManual = await pedirCbuConfirmado();
-      caratula = leerCaratula(texto, args.moneda, cbuManual);
+      caratula = leerCaratula(texto, args.moneda, cbuManual, args.tipo);
       cbuFueManual = true;
     } catch (errorDePrompt) {
       const mensaje = errorDePrompt instanceof Error ? errorDePrompt.message : 'error desconocido';
@@ -587,14 +765,20 @@ if (esEjecucionDirecta) {
           accion: 'escritura',
           recurso: 'cuenta_bancaria_identificador',
           /**
-           * El sufijo de procedencia lo agrega la CLI, nunca el operador — así la pregunta "¿este CBU se
-           * leyó del extracto o lo tipeó alguien?" es contestable desde `acceso_auditoria` sin depender de
-           * que quien lo dio de alta se haya acordado de anotarlo (`seguridad-datos-financieros`, HANDOFF
-           * (36)). Nunca lleva el valor del CBU, solo la procedencia.
+           * Los dos sufijos los agrega la CLI, nunca el operador — así "¿este CBU se leyó del extracto o
+           * lo tipeó alguien?" y "¿esta cuenta se leyó sin ambigüedad, o dependió de que el operador
+           * eligiera entre variantes reales?" quedan contestables desde `acceso_auditoria` sin depender
+           * de que quien dio de alta se haya acordado de anotrarlo (`seguridad-datos-financieros`,
+           * HANDOFF (36) para el primero, HANDOFF (38) para el segundo). Ninguno lleva el CBU ni el
+           * número de cuenta — el primero solo dice procedencia, el segundo solo el tipo elegido (N1, no
+           * sensible).
            */
           motivo:
             `alta de cuenta ${args.banco} desde la caratula del resumen, piloto Modulo 1` +
-            (cbuFueManual ? ' — CBU ingresado manualmente por el operador, no leido del documento' : ''),
+            (cbuFueManual ? ' — CBU ingresado manualmente por el operador, no leido del documento' : '') +
+            (args.tipo === undefined
+              ? ''
+              : ` — el operador especifico --tipo=${args.tipo} para elegir la seccion (formato Macro)`),
         },
         (ctx) =>
           altaDeCuentaBancaria(tx, ctx, {

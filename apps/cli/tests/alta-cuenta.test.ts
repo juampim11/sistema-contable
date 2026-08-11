@@ -28,6 +28,42 @@ function textoDe(...lineas: readonly string[]): TextoDelPdf {
   return { paginas: [lineas.join('\n')], paginasSinTexto: [], requiereOcr: false };
 }
 
+/**
+ * Mismos valores sintéticos que ya usa `packages/ingesta/tests/macro.test.ts` (`NRO_USD`/`NRO_ESPECIAL`/
+ * `NRO_BANCARIA`, mismos CBU con guión) — no se inventa un formato nuevo, HANDOFF (38).
+ */
+const NRO_USD_MACRO = '2-000-0000000003-0';
+const NRO_ESPECIAL_MACRO = '1-000-0000000001-0';
+const NRO_BANCARIA_MACRO = '3-000-0000000002-0';
+const CBU_USD_MACRO = '2850000-1-0000000000003-1';
+const CBU_ESPECIAL_MACRO = '2850000-1-0000000000001-1';
+const CBU_BANCARIA_MACRO = '2850000-1-0000000000002-1';
+
+/** Una sección Macro: cabecera + N renglones con forma de movimiento (`dd/mm/aa ...`) + CBU de la sección. */
+function seccionMacro(
+  titulo: string,
+  numero: string,
+  cbu: string,
+  cantidadMovimientos: number,
+): readonly string[] {
+  const movimientos = Array.from(
+    { length: cantidadMovimientos },
+    (_, i) => `01/06/26 Movimiento sintetico ${i}`,
+  );
+  return [
+    `${titulo} NRO.: ${numero}`,
+    ...movimientos,
+    `Clave Bancaria Uniforme para Debito Directo: ${cbu}`,
+  ];
+}
+
+const CARATULA_MACRO_TRES_CUENTAS = [
+  PERIODO,
+  ...seccionMacro('CUENTA CORRIENTE ESPECIAL EN DOLARES', NRO_USD_MACRO, CBU_USD_MACRO, 0),
+  ...seccionMacro('CUENTA CORRIENTE ESPECIAL EN PESOS', NRO_ESPECIAL_MACRO, CBU_ESPECIAL_MACRO, 3),
+  ...seccionMacro('CUENTA CORRIENTE BANCARIA', NRO_BANCARIA_MACRO, CBU_BANCARIA_MACRO, 7),
+];
+
 const CARATULA_MULTICUENTA = [
   `CBU: ${CBU_SINTETICO}`,
   PERIODO,
@@ -479,5 +515,109 @@ describe('pedirValorOculto() — lectura de stdin en modo raw, sin eco (security
         expect(process.listenerCount('exit')).toBe(antes);
       },
     );
+  });
+});
+
+describe('leerCaratula() — Macro multi-cuenta, tres cuentas y dos ejes (HANDOFF (38))', () => {
+  it('USD (una sola candidata): no exige --tipo, atribuye número y CBU limpio de guiones', () => {
+    const r = leerCaratula(textoDe(...CARATULA_MACRO_TRES_CUENTAS), 'USD', undefined, undefined);
+    expect(r.numero).toBe(NRO_USD_MACRO);
+    expect(r.cbu).toBe('2850000100000000000031'); // CBU_USD_MACRO sin guiones, 22 dígitos
+    expect(r.cbu).toMatch(/^\d{22}$/);
+    expect(r.tipoCuenta).toBe('cuenta_corriente_especial');
+    expect(r.seccionUsada).toMatch(/Macro/);
+  });
+
+  it('ARS sin --tipo: dos candidatas, falla explícito listando tipo + conteo de movimientos de las DOS', () => {
+    expect(() =>
+      leerCaratula(textoDe(...CARATULA_MACRO_TRES_CUENTAS), 'ARS', undefined, undefined),
+    ).toThrow(
+      /Encontré 2 cuentas en ARS.*cuenta_corriente_especial \(3 movimiento\(s\)\).*cuenta_corriente \(7 movimiento\(s\)\)/s,
+    );
+  });
+
+  it('el mensaje de ambigüedad nunca incluye el número de cuenta ni el CBU', () => {
+    let mensaje = '';
+    try {
+      leerCaratula(textoDe(...CARATULA_MACRO_TRES_CUENTAS), 'ARS', undefined, undefined);
+    } catch (error) {
+      mensaje = error instanceof Error ? error.message : '';
+    }
+    expect(mensaje).not.toContain(NRO_ESPECIAL_MACRO);
+    expect(mensaje).not.toContain(NRO_BANCARIA_MACRO);
+    expect(mensaje).not.toContain(CBU_ESPECIAL_MACRO.replace(/\D/g, ''));
+    expect(mensaje).not.toContain(CBU_BANCARIA_MACRO.replace(/\D/g, ''));
+  });
+
+  it('ARS con --tipo cuenta_corriente_especial: elige la cuenta de 11→3 movimientos, no la de 1335→7', () => {
+    const r = leerCaratula(
+      textoDe(...CARATULA_MACRO_TRES_CUENTAS),
+      'ARS',
+      undefined,
+      'cuenta_corriente_especial',
+    );
+    expect(r.numero).toBe(NRO_ESPECIAL_MACRO);
+    expect(r.numero).not.toBe(NRO_BANCARIA_MACRO);
+    expect(r.cbu).toBe('2850000100000000000011');
+    expect(r.tipoCuenta).toBe('cuenta_corriente_especial');
+  });
+
+  it('ARS con --tipo cuenta_corriente: elige la otra cuenta, nunca la especial', () => {
+    const r = leerCaratula(
+      textoDe(...CARATULA_MACRO_TRES_CUENTAS),
+      'ARS',
+      undefined,
+      'cuenta_corriente',
+    );
+    expect(r.numero).toBe(NRO_BANCARIA_MACRO);
+    expect(r.numero).not.toBe(NRO_ESPECIAL_MACRO);
+    expect(r.cbu).toBe('2850000100000000000021');
+    expect(r.tipoCuenta).toBe('cuenta_corriente');
+  });
+
+  it(
+    '--tipo se aplica SIEMPRE que está presente, aunque moneda sola ya alcanzara ' +
+      '(security-engineer, HANDOFF (38) — nunca "ignorar tipo porque no hacía falta")',
+    () => {
+      // USD tiene una sola candidata (especial). Pedir --tipo cuenta_corriente (que no es el de USD)
+      // tiene que fallar, no "aceptar igual porque moneda sola ya alcanzaba".
+      expect(() =>
+        leerCaratula(textoDe(...CARATULA_MACRO_TRES_CUENTAS), 'USD', undefined, 'cuenta_corriente'),
+      ).toThrow(/No encontré ninguna cuenta en USD de tipo cuenta_corriente/);
+    },
+  );
+
+  it('--tipo que no matchea ninguna candidata de la moneda: falla listando lo que sí hay', () => {
+    expect(() =>
+      leerCaratula(textoDe(...CARATULA_MACRO_TRES_CUENTAS), 'ARS', undefined, 'caja_ahorro'),
+    ).toThrow(/cuenta_corriente_especial \(3 movimiento\(s\)\)/);
+  });
+
+  it('moneda sin ninguna sección en el documento (formato Macro): falla explícito', () => {
+    const soloDolares = [PERIODO, ...seccionMacro('CUENTA CORRIENTE ESPECIAL EN DOLARES', NRO_USD_MACRO, CBU_USD_MACRO, 0)];
+    expect(() => leerCaratula(textoDe(...soloDolares), 'ARS', undefined, undefined)).toThrow(
+      /No encontré ninguna cuenta en ARS en la carátula \(formato Macro/,
+    );
+  });
+
+  it('CBU inválido tras limpiar guiones (no da 22 dígitos): falla explícito, no lo acepta a medias', () => {
+    const conCbuRoto = [
+      PERIODO,
+      ...seccionMacro('CUENTA CORRIENTE ESPECIAL EN DOLARES', NRO_USD_MACRO, '123-45', 0),
+    ];
+    expect(() => leerCaratula(textoDe(...conCbuRoto), 'USD', undefined, undefined)).toThrow(
+      /No encontré un CBU válido \(22 dígitos\)/,
+    );
+  });
+
+  it('formato Galicia/Santander no dispara la rama Macro (0 secciones detectadas, sin falso positivo)', () => {
+    // Regresión: confirma que seccionesPorClave no confunde el formato Galicia con el de Macro.
+    const r = leerCaratula(
+      textoDe(`CBU: ${CBU_SINTETICO}`, PERIODO, 'Número de cuenta', '00001234567890', 'Tipo de cuenta', 'Cuenta Corriente'),
+      'ARS',
+      undefined,
+      undefined,
+    );
+    expect(r.seccionUsada).toMatch(/etiqueta genérica/);
   });
 });
