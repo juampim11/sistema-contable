@@ -6,6 +6,107 @@
 
 ---
 
+## 2026-08-11 (33) — 🔴 CIERRE DE SESIÓN. Punto de entrada si retomás sin este chat.
+
+**Herramienta:** Claude Code, sesión larga y autónoma (el usuario se ausentó después de dar la
+confirmación inicial; volvió para correr los tres `pnpm probar` reales y para las decisiones de
+6.3). Todo lo de abajo está mergeado a `main`, sin ramas pendientes.
+
+### Qué se cerró, de punta a punta
+
+| Parte | Estado | Commit de merge |
+|---|---|---|
+| Registro de los 23 sub-agentes | ✅ resuelto (bug de YAML sin comillar, no un bug de Claude Code) | `b228f10` |
+| D — modo plan obligatorio | ✅ `CLAUDE.md` §3.2, `AGENTS.md` §6 | `72294c0` |
+| A1 — contrato unificado de adaptadores | ✅ | `71df9f2` |
+| A2 — destinos (C1-C5) | ✅ en código | `67a3adc` |
+| 6.1 — catálogo de bancos | ✅ (migración `0011`, aplicada a dev) | `00cfda0` |
+| 6.2 — `pnpm alta:cliente` | ✅ | `e2bbabe` |
+| **A2 confirmado contra archivo real** | ✅ Macro y Galicia exactos; Santander con residuo=5 sin explicar, contingencia aplicada | commit `9cee789` |
+
+Cada parte tuvo su convocatoria real (`TaskCreate`/`addBlockedBy`, nunca solo declarada) y su
+`code-reviewer` sobre el diff final antes de mergear. `pnpm verificar`: **747 tests + 7 todo** (era
+680 al arrancar D). Tres hallazgos de seguridad reales aparecieron y se corrigieron en el camino (ver
+`docs/diseno/10-deuda-declarada.md` §1.7 y §2.1) — ninguno se sabía de antemano, los encontró la
+convocatoria.
+
+### A2 contra los tres archivos reales — el resultado que importa
+
+- **Macro**: exacto contra la predicción (HANDOFF 22). `sinDestino=0`, `residuo=0`,
+  `fueraDelCuerpo=0`, 1346/6/3. `INV-destinos: diferencias=0`.
+- **Galicia**: exacto contra la predicción. `sinDestino=0`, `fueraDelCuerpo=29`, `residuo=0`, 326/9.
+  `INV-destinos: diferencias=0`.
+- **Santander**: `residuo=5` — primera vez que se mide contra archivo real, sin predicción numérica
+  previa. Las 5 formas están guardadas en HANDOFF (31). Se investigaron dos regex
+  (`RE_ANEXO_RESUMEN`/`RE_ANEXO_COMPUTABLE`) como causa — **descartado**, siguiendo la cadena de
+  llamadas completa hasta el final (ya reciben texto normalizado a mayúsculas). Quedan **tres
+  candidatos reales sin confirmar**, documentados en `docs/diseno/10-deuda-declarada.md` §2.1 con la
+  línea exacta de código de cada uno. **Falta correr `pnpm probar --banco santander --archivo <ruta>
+  --caratula <n>`** contra los índices de esas 5 líneas — es el próximo paso, y es del usuario, no de
+  un agente (dato real).
+
+### La contingencia aplicada, y el bug que casi la vuelve inútil
+
+`verificarDestinos` (`invariantes.ts`) baja `residuo>0` de `error` a `observación` — el residuo de
+Santander no bloquea 6.3 mientras se investiga. `sinDestino>0` y `destinos_no_declarados` siguen en
+`error`, sin tocar. **`code-reviewer` encontró que esto no tenía efecto real**: `ingestar.ts`
+rechazaba por *presencia* de diferencias (`.length > 0`), no por severidad — el mismo patrón que
+`persistir.ts` ya usaba (`primeraDiferencia`, filtra por `error`) nunca se replicó en el gate de
+lote. **Corregido en el mismo commit** (`9cee789`), con test nuevo que agarra específicamente esa
+clase de regresión. Restaurar `residuo` a `error` cuando se confirme la causa: una línea
+(`severidadResiduo` en `invariantes.ts`, comentario 🔴 en el propio código).
+
+### `Math.sumPrecise` — explicado y documentado, no bloqueante
+
+Warning benigno de `unpdf` (copia de `pdf.js` que usa una API de V8 muy nueva sin comprobar si
+existe, en código de escritura de fuentes/formularios — nunca en el camino de lectura de texto que
+este repo usa). Confirmado con datos reales que no correlaciona con `traeTotalesDeclarados` (Santander
+lo tiene en `false` y el warning apareció igual). Documentado en `docs/diseno/10-deuda-declarada.md`
+§2.10. Candidato a cerrar actualizando `unpdf`, sin urgencia.
+
+### 6.3 — dónde quedó, específicamente
+
+**Script descartable de titularidad: construido y con smoke test, sin correr contra archivos
+reales.** `packages/ingesta/scripts/comparar-titularidad.ts` — **sin commitear a propósito** (así lo
+pidió el plan; la traza es esta bitácora, no el árbol de git). Diseño revisado por
+`seguridad-datos-financieros` antes de escribirse: el CUIT nunca sale de una única función
+(`compararTitulares`), normaliza antes de comparar, `undefined` en cualquiera de los dos →
+`no_publicado` (nunca un falso "distintos" silencioso), un solo `try/catch` que nunca imprime
+`error.message`. Comando:
+
+```bash
+node packages/ingesta/scripts/comparar-titularidad.ts \
+  --archivo1 <ruta al PDF real de Santander> --banco1 santander \
+  --archivo2 <ruta al PDF real de Macro> --banco2 macro
+```
+
+Imprime únicamente `mismo_titular: true|false` (más un par de líneas de diagnóstico sin datos). **Si
+la sesión se reinicia, este es el primer comando a correr para 6.3** — nada de lo que sigue puede
+arrancar sin su resultado.
+
+**Nada más de 6.3 arrancó.** `pnpm alta:cliente`, `alta-cuenta.ts`, `ingestar.ts` real contra el
+piloto: **todavía no se tocó nada**, esperando el booleano de titularidad y, antes que eso, la
+confirmación de Santander contra archivo real (o la decisión de proceder igual con el residuo como
+deuda conocida — ya es una opción viable, la contingencia está aplicada y funcionando).
+
+**Bancor sigue en pausa total, sin tocar, como en toda la sesión.**
+
+### Para retomar sin este chat, en orden
+
+1. Si todavía no se corrió: `pnpm probar --banco santander --archivo <ruta> --caratula <n>` contra
+   los índices de las 5 líneas de residuo (HANDOFF 31) — decide entre los 3 candidatos de
+   `10-deuda-declarada.md` §2.1, o confirma que hace falta seguir investigando.
+2. Correr `comparar-titularidad.ts` (comando arriba) — el usuario, en su terminal, nunca en el
+   contexto de un agente.
+3. Con el booleano: decidir 1 o 2 llamadas a `pnpm alta:cliente` (`--estudio`, `--nombre`, `--usuario`
+   — los tres obligatorios, ver HANDOFF 26/27).
+4. `alta-cuenta.ts` para cada cuenta, con el extracto **más viejo** de cada una (no el que ya se usó
+   para probar A2).
+5. `ingestar.ts` real contra el piloto, para los dos bancos.
+6. Comparar los conteos reales contra los medidos por `pnpm probar` — tienen que coincidir exacto.
+
+---
+
 ## 2026-08-11 (32) — Plan: fix de los 2 regex + contingencia de C5 (CLAUDE.md §3.2)
 
 **Herramienta:** Claude Code. Dispara modo plan por (c) — modifica `santander.ts`, adaptador que ya
