@@ -6,6 +6,45 @@
 
 ---
 
+## 2026-08-11 (27) — 6.2, diseño ajustado tras la convocatoria (antes de implementar)
+
+Los cuatro agentes convocados (HANDOFF 26) convergieron, independientemente, en que el plan original de
+3 argumentos (`--estudio`, `--nombre`) **no alcanza contra el esquema real**. Ajustes al diseño, todos
+con más de una fuente coincidiendo:
+
+1. **Falta `--usuario <uuid>`** (arquitecto-software + security-engineer + dba-data, los tres). La
+   policy `tenant_node_wr` exige `has_role_on(parent_id, [socio, admin_plataforma])` evaluado contra
+   `app.current_user_id()` — sin un socio actuante bajo `conUsuario`, el insert no tiene cómo pasar RLS,
+   y la salida fácil (`conJob`) saltearía el único control de autorización que existe para esta
+   operación. Mismo patrón que `alta-cuenta.ts`.
+2. **`escribirConAuditoria` no se puede usar tal cual**: el `cliente_id` a auditar no existe antes del
+   insert que lo crea, y el trigger `exigir_nodo_cliente` lo exige preexistente. Resolución (propuesta
+   por `arquitecto-software`, mismo criterio en `security-engineer`/`dba-data`): función nueva en
+   `packages/data/src/tenancy/escrituras.ts` que hace el insert y **después**, misma transacción, llama
+   `registrarAcceso` directo (no `escribirConAuditoria`) con el uuid recién creado — excepción
+   documentada al orden "auditoría antes que escritura", con el motivo escrito en el código: acá el
+   sujeto de auditoría no existe antes de la operación que lo crea.
+3. **🔴 Hallazgo de `seguridad-datos-financieros`: nada en el esquema impide que un `cliente` cuelgue de
+   otro `cliente`** (el `check` de `tenant_node` solo exige que el padre no sea null, no que sea
+   `tipo='estudio'`). Confirmado por `security-engineer` y `dba-data` independientemente. **Alcance de
+   esta tarea:** guard de aplicación (`select tipo, deleted_at from tenant_node where id=$estudio`,
+   rechazar si no es `'estudio'` o está borrado) — no se toca la migración `0001` de tenancy, que está
+   fuera del alcance declarado del plan (punto 1: "no cambia el modelo de tenancy en sí"). El trigger de
+   esquema que lo cerraría de raíz (para cualquier vía de inserción futura, no solo este script) queda
+   como deuda declarada — ver `docs/diseno/10-deuda-declarada.md`.
+4. **`--nombre`**: Zod rechaza si matchea `RE_CUIT` (detector ya existente y auditado), largo máximo 60
+   (mismo criterio que `alias` de `alta-cuenta.ts`). No cierra el vector del todo (nadie puede impedir
+   que el operador tipee un nombre real igual) pero cubre el error más probable sin costo.
+5. **Sin `unique(parent_id, nombre)`**: `nombre` no es clave de dominio (es la etiqueta provisoria que
+   HANDOFF 11 ya dijo que se renombra sin tocar la fila). Un test confirma, en cambio, que dos altas con
+   el mismo nombre producen dos uuid distintos — a propósito, no un bug.
+6. Falta el servicio de escritura en `packages/data/src` (no existe ningún alta de `tenant_node` fuera
+   de la siembra de tests, que bypassa RLS a propósito). Se crea `packages/data/src/tenancy/escrituras.ts`.
+
+**Implementa `backend-dev`, con este diseño ya cerrado — no rediseña.**
+
+---
+
 ## 2026-08-11 (26) — Plan 6.2 (CLAUDE.md §3.2, escrito antes del primer `Edit`)
 
 **Herramienta:** Claude Code, sesión autónoma. Dispara modo plan por (a)/(b) — toca el modelo de
