@@ -6,6 +6,50 @@
 
 ---
 
+## 2026-08-11 (22) — Plan A2 (CLAUDE.md §3.2, escrito antes del primer `Edit`)
+
+**Herramienta:** Claude Code, sesión autónoma. Dispara modo plan por (c) y (d). Diseño **ya integrado**
+en el plan externo `cheerful-gathering-feather.md` §A2 — no se rediseña, se ejecuta.
+
+1. **Qué cambia y qué no.** `ConteoDeDestinos<D>` genérico (tupla `as const`) en `toolkit.ts`, con
+   `DESTINOS_BASE` (unión común de 7, la de Santander). Campo opcional `destinos` en
+   `SalidaDeAdaptador` + `declaraDestinos: boolean` en `CapacidadesAdaptador`. `leerSantanderConDestinos`
+   se borra: `leerSantander` devuelve el conteo en la salida. Migra **Macro primero** (instrumentación
+   pura, residuo ya en 0, sin decisiones nuevas), **Galicia después** (mueve números, con el criterio
+   posicional del plan). Gate de residuo como función nueva de lote. **No cambia:** el criterio de
+   `absorber` en Galicia (§2.6, movería el mismo número y volvería la predicción no falsable — queda
+   fuera de esta tanda). **No se persiste** el conteo esta tanda: llega al gate y al log, sin migración.
+2. **Qué se mide.** `pnpm verificar` en verde con el conteo de tests que corresponda a cada commit.
+   Contra archivo real: los conteos de línea de base ya escritos abajo, número por número — el criterio
+   es la lista de conteos, no `VEREDICTO: cuadra`.
+3. **Predicción falsable — ya escrita en el plan, se transcribe:**
+   - **Macro** (`pnpm probar --banco macro`): esperado `sinDestino=0`, `residuo=0`,
+     Σdestinos=filas.length, 1346/6/3 sin cambios. `sinDestino>0` = hallazgo real. `fueraDelCuerpo>0` =
+     mapeo mal hecho (en Macro toda la carátula tiene regla escrita). `residuo>0` o los conteos de
+     mov/anexos se mueven = la instrumentación cambió comportamiento, revertir.
+   - **Galicia** (`pnpm probar --banco galicia`): esperado `residuo=0`, `fueraDelCuerpo=29`,
+     `sinDestino=0`, 326/9 sin cambios (las 29 eran carátula y legales). `residuo=N>0` con
+     `fueraDelCuerpo=29−N` = hallazgo real, N filas sin explicar. `residuo+fueraDelCuerpo≠29` = el total
+     se movió, la diferencia es el hallazgo.
+   - Línea de base completa (no se puede mover sin explicación): Galicia 326 mov / 9-9 anexos / residuo
+     29 (hoy, antes de instrumentar). Santander 158 / 7-7 / residuo 5 — primera vez que se mide
+     `sinDestino` de Santander contra archivo real. Macro 1346 / 6-6 / residuo 0. INV-13=0, INV-14=0,
+     hashes únicos = total, en los tres.
+4. **Agentes.** `tech-lead` (conduce) + `backend-dev` + `qa-automation` + `qa-funcional`.
+5. **Paso revertible más chico.** C1+C2 (vocabulario + contrato + borrar `leerSantanderConDestinos`)
+   es el commit más chico que ya vale la pena: deja todo listo sin mover un número, 100% revertible.
+   C3 (Macro) y C4 (Galicia) son aditivos y mutuamente independientes (el campo es opcional) — cada uno
+   su propio commit dentro de la misma rama. C5 (gate) es el único que cambia veredictos de producción;
+   revertirlo vuelve exactamente al estado de hoy.
+
+**Checkpoint que necesita al usuario, no una convocatoria de agente:** C3 y C4 se verifican contra
+archivo real con `pnpm probar` — 3 sittings, 6 comandos (el plan lo marca explícitamente: *"avisame
+cuándo necesités que corra `pnpm probar`"*). Se implementa y se verifica con `pnpm test`/`pnpm verificar`
+(fixtures sintéticos) hasta ese punto; la corrida contra el archivo real queda señalada para el usuario,
+no se ejecuta sola.
+
+---
+
 ## 2026-08-11 (21) — A1 cerrado: contrato unificado de adaptadores
 
 **Herramienta:** Claude Code. **Estado:** mergeado a `main` (`fix/contrato-unificado-adaptadores`,
