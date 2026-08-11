@@ -661,9 +661,15 @@ describe('verificarDestinos — el gate de residuo (A2, C5)', () => {
     expect(verificarDestinos(destinosDe({ sinDestino: 0 }), true)).toEqual([]);
   });
 
-  it('caso D: residuo > 0 → reusa EST_LINEA_NO_INTERPRETADA, código exacto', () => {
+  /**
+   * Severidad `observacion`, no `error`: contingencia aplicada (2026-08-11, confirmación con el
+   * usuario contra archivo real de Santander — ver el comentario en `verificarDestinos`). El residuo
+   * sigue reportado (código exacto, se sigue viendo en el log), pero no rechaza el lote mientras se
+   * termina de investigar (`docs/diseno/10-deuda-declarada.md`).
+   */
+  it('caso D: residuo > 0 → reusa EST_LINEA_NO_INTERPRETADA, severidad observación (contingencia)', () => {
     const r = verificarDestinos(destinosDe({ residuo: 1 }), true);
-    expect(r).toEqual([{ codigo: 'EST_LINEA_NO_INTERPRETADA', severidad: 'error' }]);
+    expect(r).toEqual([{ codigo: 'EST_LINEA_NO_INTERPRETADA', severidad: 'observacion' }]);
   });
 
   it('caso E: fueraDelCuerpo > 0 (resto en 0) → NINGUNA diferencia — es la distinción entera del diseño', () => {
@@ -671,11 +677,11 @@ describe('verificarDestinos — el gate de residuo (A2, C5)', () => {
     expect(r).toEqual([]);
   });
 
-  it('caso F: sinDestino Y residuo a la vez → las DOS diferencias, checks independientes', () => {
+  it('caso F: sinDestino Y residuo a la vez → las DOS diferencias, cada una con su propia severidad', () => {
     const r = verificarDestinos(destinosDe({ sinDestino: 1, residuo: 1 }), true);
     expect(r).toEqual([
       { codigo: 'EST_DESTINOS_SIN_CLASIFICAR', severidad: 'error' },
-      { codigo: 'EST_LINEA_NO_INTERPRETADA', severidad: 'error' },
+      { codigo: 'EST_LINEA_NO_INTERPRETADA', severidad: 'observacion' },
     ]);
   });
 });

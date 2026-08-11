@@ -223,6 +223,67 @@ A2/C4 no pedía construir. No está ejercitado por ningún fixture ni por el arc
 ahora (los 9 renglones aparean completos en los dos). Revisar antes de implementar `verificarDestinos`
 (C5) si esto necesita resolverse, porque ahí sí habría un gate consumiendo el número.
 
+🔴 **C5 confirmado contra archivo real, con un hallazgo pendiente de investigar (Santander,
+2026-08-11).** `pnpm probar` contra los tres archivos reales: Macro y Galicia coinciden exacto con la
+predicción del punto anterior (`fueraDelCuerpo`/`residuo` como se esperaba, `INV-destinos:
+diferencias=0` en los dos). **Santander mide `residuo=5`** — la primera vez que se mide contra archivo
+real (antes solo contra el fixture sintético); no había una predicción numérica escrita para
+compararlo, a diferencia de Macro/Galicia.
+
+Formas de las 5 líneas (`a`=minúscula, `A`=inicial mayúscula, `#`=dígito — nunca el texto real, mismo
+criterio del propio `pnpm probar`; guardadas en `HANDOFF.md` 2026-08-11 (31) para que sobrevivan un
+resumen de contexto):
+
+```
+×1  Aaaaaaa aa a{9} a{8} aaa ##### aaa ##-##-#### aa ##-##-####
+×1  Aaaaaaa a{11} aa aaa a{9} aaaaaa aaaaa a{8} aaa ##-##-#### …
+×1  Aa{8} Aa{8}
+×1  Aaaaa Aaaa Aaaaaa Aaaaaa Aa{10} AAA AAA AAAAA Aaaaaaa aaaaa…
+×1  aaaaa aaaaa
+```
+
+**Hipótesis descartada, con la traza completa que la refuta:** el primer intento sospechó de
+`RE_ANEXO_RESUMEN`/`RE_ANEXO_COMPUTABLE` (`santander.ts`) por case-sensitivity, contra las palabras
+"Sircreb"/"Importe susceptible..." que las formas 1 y 2 parecían sugerir por longitud de palabra. **Es
+incorrecto**: los dos regex se llaman una sola vez cada uno, siempre contra `normalizar(literal)`
+(`parseo-ar.ts:312`, que ya hace `.toUpperCase()`) — agregarles la flag `i` no cambia nada, porque el
+texto ya llega en mayúsculas. Además, `relacionDelRenglon` (donde viven esos regex) no decide si una
+fila cae en residuo: solo clasifica una fila que **ya se emitió** como anexo. La lección para la
+próxima vez: coincidencia de longitud de palabra en una `forma()` no es una traza de código — hay que
+seguir la cadena de llamadas hasta el punto real donde se decide el destino.
+
+**Los tres candidatos reales**, siguiendo la cadena completa del bucle de armado
+(`santander.ts`, función que arma `anexos` a partir de `clasificarBloque`, ~línea 1150-1190), en el
+orden en que se evalúan:
+
+1. `RE_CORRIDA_DE_IDENTIFICADOR.test(conceptoLiteral)` (línea ~1162) — una corrida de 7+ dígitos
+   seguidos → residuo `desconocido`. Las formas no muestran ninguna corrida de 7+ (el `#####` de la
+   forma 1 son 5), así que es el candidato menos probable, pero no descartado sin ver el literal
+   completo (podría haber más dígitos fuera de la ventana capturada por `formaParaLog`, que trunca a
+   120 caracteres).
+2. `periodoDelRenglon(conceptoLiteral)` devuelve `null` (línea ~1166-1170) — rango de fechas invertido
+   (`hasta < desde`) o no parseable → residuo `fecha_ilegible`. Las formas 1 y 2 tienen las dos un
+   `del ##-##-#### al ##-##-####`: **es el candidato más plausible** para esas dos, pero hay que
+   confirmar si las fechas parsean y en qué orden vienen.
+3. Sin importe emparejado (línea ~1188-1191) → residuo `fila_sin_importe`. Aplica a cualquiera de las
+   5, en particular a las formas 3 y 5 (más cortas, sin patrón de fecha visible) — un rótulo cuyo
+   importe suelto esperado no aparece donde el apareo lo busca.
+
+**Qué hace falta para cerrar esto — le toca al usuario, no a un agente** (dato real, `--caratula` lee
+la carátula/cuerpo fragmento por fragmento con su `x`, sigue sin imprimir un valor pero hay que
+correrlo contra el archivo real): `pnpm probar --banco santander --archivo <ruta> --caratula <n>` con
+`n` lo bastante grande para cubrir los índices de las 5 líneas de residuo (que el mismo `pnpm probar`
+imprime en `no interpretadas=`), comparar la forma completa (sin el truncado a 120) contra los tres
+candidatos de arriba, y decidir código por código cuál aplica.
+
+**Contingencia aplicada mientras tanto** (`verificarDestinos`, `packages/ingesta/src/verificacion/
+invariantes.ts`): `residuo > 0` bajó de severidad `error` a `observación` — **el residuo se sigue
+viendo en el log, pero no rechaza el lote**. `sinDestino > 0` y `destinos===undefined &&
+declaraDestinos` NO están cubiertos por esta contingencia, siguen en `error` (son violaciones más
+estructurales, no el mismo tipo de hallazgo). Restaurar a `error` es cambiar una línea
+(`severidadResiduo`, comentario 🔴 en el propio código) cuando el residuo de Santander se explique o
+baje a 0.
+
 ### 2.2 🔴 `traeSaldoInicialDeclarado` significa dos cosas, y en Galicia vuelve V3 una tautología
 
 - Santander y Macro: `true` porque **hay etiqueta impresa**.

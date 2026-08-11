@@ -20,6 +20,7 @@ import {
   CAPACIDADES_SINTETICAS,
   extractoSintetico,
   registrarAdaptador,
+  textoDeFila,
   type Adaptador,
   type CapacidadesAdaptador,
 } from '@sistema-contable/ingesta';
@@ -116,7 +117,10 @@ function adaptadorFalsoConResiduo(): Adaptador {
     bancoCodigo: 'banco_cli',
     version: 1,
     capacidades,
-    reconoce: () => true,
+    // Específico al PDF de este test, no `() => true`: con el adaptador de la contingencia de residuo
+    // (más abajo en este archivo) también registrado, dos `() => true` en el mismo registro global
+    // harían que `resolverAdaptador` devuelva `ambiguo` para cualquier archivo.
+    reconoce: (e) => e.filas.some((f) => textoDeFila(f).includes('GATE DE DESTINOS A2 C5')),
     leer: () => ({
       cuentas: [cuenta],
       lineasNoInterpretadas: [],
@@ -438,6 +442,108 @@ describe('A2 (C5) — el gate de residuo rechaza el lote entero, antes de persis
     }
 
     // El lote se rechaza ANTES del bucle por cuenta: ni el objeto ni ninguna cuenta llegan a persistirse.
+    expect(escrituras).toEqual([]);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('contingencia de residuo (2026-08-11): observación NO rechaza, a diferencia de error', () => {
+  /**
+   * El hueco de cobertura que `code-reviewer` señaló al revisar la contingencia: existía un test para
+   * `sinDestino>0` (severidad `error`, rechaza) pero ninguno para `residuo>0` con `sinDestino=0`
+   * (severidad `observación` desde la contingencia). Sin este test, `ingestar.ts` decidiendo por
+   * `diferenciasDeLote.length > 0` en vez de por severidad se hubiera colado sin que nada lo agarrara.
+   *
+   * **Por qué el test no verifica `estado === 'procesado'`.** Llegar a persistir de verdad exige una
+   * `cuenta_bancaria` ya registrada para `s.clienteA` que resuelva contra el número/CBU del extracto
+   * (`resolverCuentaDelExtracto`, INV-6) — infraestructura de test desproporcionada para este fix
+   * puntual. En cambio, el adaptador de prueba **omite** `numero`/`cbu` de la carátula a propósito: eso
+   * fuerza un rechazo DETERMINÍSTICO y conocido en el paso siguiente
+   * (`sin_identificador_en_caratula`), sin ningún dato con el que armar una cuenta. La prueba que
+   * importa es que el rechazo **no sea por destinos**: si `verificarDestinos` siguiera rechazando por
+   * `residuo` (el bug que este test existe para agarrar), el `motivoCodigo` sería `destinos_no_cuadran`
+   * y el código nunca llegaría a intentar resolver la cuenta.
+   */
+  function adaptadorFalsoConResiduoObservacion(): Adaptador {
+    const capacidades: CapacidadesAdaptador = { ...CAPACIDADES_SINTETICAS, declaraDestinos: true };
+    const sintetica = extractoSintetico({
+      semilla: 92,
+      cantidadMovimientos: 3,
+      saldoInicialCentavos: 10_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+    });
+    // Sin `numero` ni `cbu`: `resolverCuentaDelExtracto` no tiene contra qué resolver, y rechaza con
+    // `sin_identificador_en_caratula` — determinístico, sin depender de una cuenta pre-registrada.
+    const { numero: _numero, cbu: _cbu, ...caratulaSinIdentificador } = sintetica.cuenta;
+    const cuenta = { ...sintetica, cuenta: caratulaSinIdentificador };
+    return {
+      bancoCodigo: 'banco_cli_residuo_obs',
+      version: 1,
+      capacidades,
+      // Específico al PDF de ESTE test, no `() => true`: la suite ya registra otro adaptador falso
+      // (`adaptadorFalsoConResiduo`, describe de arriba) con `reconoce: () => true` — dos así en el
+      // mismo registro global hacen que `resolverAdaptador` devuelva `ambiguo` para cualquier archivo.
+      reconoce: (e) => e.filas.some((f) => textoDeFila(f).includes('CONTINGENCIA DE RESIDUO')),
+      leer: () => ({
+        cuentas: [cuenta],
+        lineasNoInterpretadas: [],
+        paginasDeclaradas: undefined,
+        destinos: {
+          movimiento: 3,
+          continuacion: 0,
+          saldoDeclarado: 0,
+          ruido: 0,
+          anexo: 0,
+          fueraDelCuerpo: 0,
+          residuo: 1,
+          sinDestino: 0,
+          total: 4,
+        },
+      }),
+    };
+  }
+
+  beforeAll(async () => {
+    const duenio = await clienteDuenio();
+    try {
+      await duenio.query(
+        `insert into banco (codigo, nombre) values ('banco_cli_residuo_obs', 'BANCO DE PRUEBA — RESIDUO OBSERVACION')
+         on conflict (codigo) do nothing`,
+      );
+    } finally {
+      await duenio.end();
+    }
+    registrarAdaptador(adaptadorFalsoConResiduoObservacion());
+  });
+
+  it('residuo > 0 con sinDestino = 0 no rechaza por destinos — el rechazo, si lo hay, es por otra causa', async () => {
+    const { storage, escrituras } = storageEspia();
+    const ruta = join(dirTemporal, 'extracto-residuo-observacion.pdf');
+    writeFileSync(
+      ruta,
+      pdfMinimoConTexto([
+        'DOCUMENTO SINTETICO PARA LA CONTINGENCIA DE RESIDUO EN OBSERVACION',
+        'SEGUNDA LINEA SOLO PARA SUPERAR EL UMBRAL DE CARACTERES MINIMOS',
+      ]),
+    );
+
+    const r = await ingestar(
+      { cliente: s.clienteA, archivo: ruta, banco: 'banco_cli_residuo_obs', usuario: USUARIOS.socio },
+      storage,
+    );
+
+    // El gate de destinos (A2, C5) no puede haber rechazado esto: `residuo=1` con `sinDestino=0` es
+    // severidad `observación`, no `error`. Si el bug que este test agarra volviera, el motivo sería
+    // `destinos_no_cuadran` y nada llegaría al paso de resolución de cuenta.
+    expect(r.estado).toBe('rechazado');
+    if (r.estado === 'rechazado') {
+      expect(r.motivoCodigo).not.toBe('destinos_no_cuadran');
+      expect(r.motivoCodigo).toBe('sin_identificador_en_caratula');
+    }
+
+    // Rechazado por la causa esperada (sin identificador), no por destinos: no llegó a persistir nada,
+    // pero tampoco por el bug que este test existe para agarrar.
     expect(escrituras).toEqual([]);
   });
 });

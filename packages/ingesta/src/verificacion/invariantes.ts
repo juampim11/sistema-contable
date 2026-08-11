@@ -556,9 +556,10 @@ export function verificarConteoDeCuentas(
  * | Caso | Resultado |
  * |---|---|
  * | `destinos === undefined`, no declara | `[]` — "no aplica todavía", no "cuadra": mismo precedente que `traeConsolidadoPorMoneda` |
- * | `destinos === undefined`, sí declara | `EST_DESTINOS_NO_DECLARADOS` — el adaptador prometió el conteo y no llegó |
- * | `sinDestino > 0` | `EST_DESTINOS_SIN_CLASIFICAR` — la partición de `contarDestinos` no cerró |
- * | `residuo > 0` | `EST_LINEA_NO_INTERPRETADA` (código existente, sin `campo`) — hay líneas del cuerpo sin interpretar |
+ * | `destinos === undefined`, sí declara | `EST_DESTINOS_NO_DECLARADOS`, **error** — el adaptador prometió el conteo y no llegó |
+ * | `sinDestino > 0` | `EST_DESTINOS_SIN_CLASIFICAR`, **error** — la partición de `contarDestinos` no cerró |
+ * | `residuo > 0` | `EST_LINEA_NO_INTERPRETADA` (código existente, sin `campo`), **observación** — contingencia
+ *   aplicada, ver el comentario dentro de la función |
  * | `fueraDelCuerpo > 0` | **nada.** Es la distinción entera del diseño: se cuenta, no pone el lote en rojo |
  *
  * Los dos chequeos del medio son **independientes**, no un `if`/`else if`: una fila sin clasificar y un
@@ -578,20 +579,38 @@ export function verificarDestinos(
   destinos: ConteoDeDestinos<DestinoBase> | undefined,
   declaraDestinos: boolean,
 ): readonly Diferencia[] {
-  // Camino de contingencia previsto por el plan: bajar de `error` a `observacion` es cambiar esta línea.
-  const severidad: Diferencia['severidad'] = 'error';
+  // `sinDestino>0` y `destinos===undefined && declaraDestinos` son violaciones estructurales (la
+  // partición no cierra, o el adaptador prometió el conteo y no llegó) — se quedan en `error`, la
+  // contingencia de abajo no las toca.
+  const severidadEstructural: Diferencia['severidad'] = 'error';
+
+  /**
+   * 🔴 CONTINGENCIA APLICADA (2026-08-11, HANDOFF, confirmación con el usuario contra archivo real).
+   *
+   * `residuo>0` de Santander midió 5 contra el archivo real, con 3 causas candidatas sin confirmar
+   * (`docs/diseno/10-deuda-declarada.md`, nueva entrada — `RE_CORRIDA_DE_IDENTIFICADOR`,
+   * `periodoDelRenglon`/fechas invertidas, `fila_sin_importe`; ninguna es case-sensitivity, esa
+   * hipótesis se descartó siguiendo la cadena de llamadas completa). Bajar a `observación` para que
+   * 6.3 no dependa de terminar esa investigación: el residuo sigue viéndose en el log
+   * (`INV-destinos` de `probar-adaptador.ts`), pero no rechaza el lote.
+   *
+   * **Restaurar a `error` es cambiar esta única línea** — `severidadResiduo = 'error'` — cuando
+   * `docs/diseno/10-deuda-declarada.md` confirme las 3 causas (o las corrija) y el residuo baje a 0
+   * contra los tres bancos, tal como preveía el diseño original de C5.
+   */
+  const severidadResiduo: Diferencia['severidad'] = 'observacion';
 
   if (destinos === undefined) {
     if (!declaraDestinos) return [];
-    return [dif('EST_DESTINOS_NO_DECLARADOS', severidad)];
+    return [dif('EST_DESTINOS_NO_DECLARADOS', severidadEstructural)];
   }
 
   const diferencias: Diferencia[] = [];
   if (destinos.sinDestino > 0) {
-    diferencias.push(dif('EST_DESTINOS_SIN_CLASIFICAR', severidad));
+    diferencias.push(dif('EST_DESTINOS_SIN_CLASIFICAR', severidadEstructural));
   }
   if (destinos.residuo > 0) {
-    diferencias.push(dif('EST_LINEA_NO_INTERPRETADA', severidad));
+    diferencias.push(dif('EST_LINEA_NO_INTERPRETADA', severidadResiduo));
   }
   return diferencias;
 }

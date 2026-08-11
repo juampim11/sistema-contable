@@ -384,7 +384,17 @@ export async function ingestar(
       ...verificarDestinos(leido.destinos, capacidadesAdaptador.declaraDestinos),
     ];
 
-    if (diferenciasDeLote.length > 0) {
+    /**
+     * 🔴 Se rechaza por `severidad === 'error'`, NO por presencia. Antes de la contingencia de
+     * `residuo` (`verificarDestinos`, A2 C5, 2026-08-11) las tres funciones de arriba solo emitían
+     * `error`, así que `diferenciasDeLote.length > 0` y "hay al menos un error" eran la misma
+     * condición — y lo dejaron de ser en cuanto `verificarDestinos` empezó a poder devolver una
+     * `Diferencia` de severidad `observación`. Mismo criterio que ya usa `persistir.ts`
+     * (`primeraDiferencia`): una lista con solo observaciones no rechaza el lote.
+     */
+    const erroresDeLote = diferenciasDeLote.filter((d) => d.severidad === 'error');
+
+    if (erroresDeLote.length > 0) {
       // Vocabulario cerrado de `CODIGOS_DIFERENCIA`: los tres códigos de la izquierda son los únicos que
       // puede empujar `verificarDestinos`.
       const codigosDestinos = new Set([
@@ -392,19 +402,33 @@ export async function ingestar(
         'EST_DESTINOS_SIN_CLASIFICAR',
         'EST_LINEA_NO_INTERPRETADA',
       ]);
-      const motivo = diferenciasDeLote.some((d) => d.codigo === 'EST_CUENTAS_NO_COINCIDEN')
+      const motivo = erroresDeLote.some((d) => d.codigo === 'EST_CUENTAS_NO_COINCIDEN')
         ? 'cuentas_no_coinciden'
-        : diferenciasDeLote.some((d) => codigosDestinos.has(d.codigo))
+        : erroresDeLote.some((d) => codigosDestinos.has(d.codigo))
           ? 'destinos_no_cuadran'
           : 'consolidado_no_cuadra';
       logger.warn('ingesta.lote_no_cuadra', {
         lote_id: loteId,
         cuentas_detectadas: leido.cuentas.length,
         // Códigos y campos de un vocabulario CERRADO (`CAMPOS_DIFERENCIA`). Nunca un valor.
-        codigos_diferencia: diferenciasDeLote.map((d) => d.campo ?? d.codigo).join(','),
+        codigos_diferencia: erroresDeLote.map((d) => d.campo ?? d.codigo).join(','),
       });
       await rechazar(tx, { clienteId: args.cliente, loteId, motivoCodigo: motivo });
       return { estado: 'rechazado' as const, loteId, motivoCodigo: motivo };
+    }
+
+    /**
+     * Diferencias de severidad `observación` (hoy: solo `residuo>0` con la contingencia activa) no
+     * rechazan, pero tampoco desaparecen del log — la contingencia baja la severidad, no el nivel de
+     * atención. Ver `docs/diseno/10-deuda-declarada.md` §2.1.
+     */
+    const observacionesDeLote = diferenciasDeLote.filter((d) => d.severidad === 'observacion');
+    if (observacionesDeLote.length > 0) {
+      logger.warn('ingesta.lote_con_observaciones', {
+        lote_id: loteId,
+        cuentas_detectadas: leido.cuentas.length,
+        codigos_diferencia: observacionesDeLote.map((d) => d.campo ?? d.codigo).join(','),
+      });
     }
 
     /**
