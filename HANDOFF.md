@@ -6,6 +6,50 @@
 
 ---
 
+## 2026-08-11 (23) — A2 cerrado en código: los cinco commits (C1-C5), mergeado a `main`
+
+**Herramienta:** Claude Code. **Estado:** mergeado (`feat/destinos-alcance-completo`, `--no-ff`).
+Sesión autónoma, sin intervención del usuario desde que arrancó D.
+
+**Los cinco commits, cada uno verificado en verde antes del siguiente:**
+- **C1+C2** — vocabulario (`DESTINOS_BASE`/`ConteoDeDestinos<D>`/`contarDestinos<D>` en `toolkit.ts`),
+  contrato (`destinos?` en `SalidaDeAdaptador`, `declaraDestinos` en `CapacidadesAdaptador`, los
+  **cuatro** sitios — el cuarto, `extracto-sintetico.ts`, no estaba en el plan original y lo encontró
+  `backend-dev`). Santander migrado a lo genérico. 725+7 (refactor puro, 0 movido).
+- **C3** — Macro instrumentado. `fueraDelCuerpo=0` como predecía el plan. 728+7 (+3).
+- **C4** — Galicia instrumentado. Acá SÍ se movió un número a propósito: residuo bajó de 8 a 0 contra
+  el fixture (carátula reclasificada a `fueraDelCuerpo`), auditado fila por fila antes de escribirlo.
+  731+7 (+3). Code-reviewer recomendó `SalidaGalicia` como intersection (no alias) para no simular en
+  runtime una garantía que TS da gratis — aplicado.
+- **C5** — el gate (`verificarDestinos`, enganchado en `ingestar.ts`). Único commit que cambia
+  veredictos de producción; convocatoria más estricta, 7 casos de qa-automation cada uno con mutante
+  confirmado en vivo. Code-reviewer encontró que la genericidad `<D extends string>` escondía un cast
+  inseguro — simplificado a tipado directo contra `DestinoBase`. 739+7 (+8).
+
+**Convocatoria completa antes de tocar código**: `tech-lead` (conduce, definió el orden exacto de
+commits) + `backend-dev` + `qa-automation` + `qa-funcional`, en paralelo, con reportes cruzados y
+convergentes. `backend-dev` implementó C3/C4/C5 en tres convocatorias separadas (no todo junto), cada
+una con `code-reviewer` sobre el diff antes de commitear — mismo patrón que A1.
+
+### 🔴 Dos cosas pendientes, explícitas, NO resueltas en esta entrada
+
+1. **La verificación contra archivo real (`pnpm probar`, 3 sittings, 6 comandos) es un checkpoint
+   reservado para el usuario** — el plan lo marca así explícitamente ("avisame cuándo necesités que
+   corra") y no se ejecutó en esta sesión. Las predicciones falsables completas (Macro, Galicia, y la
+   primera medición de `sinDestino` de Santander contra archivo real) están en HANDOFF (22). **A2 no
+   está confirmado contra datos reales todavía — solo contra fixtures sintéticos.**
+2. **Caso borde en `galicia.ts` sin resolver**: un candidato de renglón de anexo sin aparear cae en
+   `fueraDelCuerpo` en vez de `residuo` (ver `docs/diseno/10-deuda-declarada.md` §2.1). No ejercitado
+   por ningún fixture ni por el archivo real medido hasta ahora. `code-reviewer` lo marcó como una
+   decisión pendiente, no un bloqueante de C5. Queda para que el usuario decida si se resuelve antes de
+   confiar en `fueraDelCuerpo` con datos reales o se acepta como hueco conocido.
+
+**Sigue ítem 6** (catálogo `banco` + `alta:cliente` + ingesta real) — 6.1 y 6.2 no dependen de la
+verificación real de A2 y se pueden avanzar en código; **6.3 sí depende** (ingesta real necesita saber
+si A2 está confirmado contra los archivos reales de Santander/Macro antes de correr).
+
+---
+
 ## 2026-08-11 (22) — Plan A2 (CLAUDE.md §3.2, escrito antes del primer `Edit`)
 
 **Herramienta:** Claude Code, sesión autónoma. Dispara modo plan por (c) y (d). Diseño **ya integrado**
