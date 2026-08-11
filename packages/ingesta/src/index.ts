@@ -26,7 +26,6 @@ export {
   CAPACIDADES_GALICIA,
   leerGalicia,
   reconoceGalicia,
-  type EntradaGalicia,
   type SalidaGalicia,
 } from './adaptadores/galicia.ts';
 export {
@@ -34,12 +33,12 @@ export {
   CAPACIDADES_MACRO,
   leerMacro,
   reconoceMacro,
-  type EntradaMacro,
   type SalidaMacro,
 } from './adaptadores/macro.ts';
-// Santander no declara tipos propios de entrada/salida: usa `SalidaDeAdaptador` del contrato, que es
-// hacia dónde converge el registro. Galicia y Macro todavía tienen los suyos, de cuando el contrato no
-// estaba decidido.
+// A1 (`docs/diseno/10-deuda-declarada.md` §2.4): los tres adaptadores usan `EntradaDeAdaptador`/
+// `SalidaDeAdaptador` del contrato — directo (Santander), como alias (Galicia) o como intersection
+// (Macro, que promete más). `SalidaGalicia`/`SalidaMacro` siguen exportándose acá a propósito: son la
+// fachada de cada adaptador, no un tipo paralelo. Ver `registro.ts`.
 export {
   adaptadorSantander,
   CAPACIDADES_SANTANDER,
