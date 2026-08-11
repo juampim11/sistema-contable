@@ -6,6 +6,52 @@
 
 ---
 
+## 2026-08-11 (34) — Plan: `leerCaratula` multi-cuenta (CLAUDE.md §3.2)
+
+**Herramienta:** Claude Code. Dispara modo plan por (b) y (c) — atribución de identificadores reales
+de cuenta (CBU/número, N2-R), y modifica un script que ya corre contra datos reales. El usuario pidió
+explícitamente modo plan para esto, aunque no estuviera 100% seguro del gatillo exacto — correcto:
+sí dispara, por las dos razones de arriba.
+
+**Contexto medido, en esta misma sesión, antes de escribir el plan:**
+- `leerCaratula` (`apps/cli/src/alta-cuenta.ts:99-171`) busca el número de cuenta con 4 etiquetas
+  documentadas como propias de Galicia (`docs/diseno/02-formato-galicia.md` §3) — ninguna matchea el
+  rótulo real de Santander (`"Cuenta Corriente en Pesos Nº ..."` / `"...especial U$S Nº ..."`, per
+  `RE_CABECERA_CUENTA` de `santander.ts`). `valorPorEtiqueta` (`toolkit.ts:104`) busca por substring
+  (`indexOf`), así que ninguna etiqueta corta matchea un rótulo con palabras en el medio.
+- `--moneda` existe en el esquema de `alta-cuenta.ts` (`z.enum(['ARS','USD']).default('ARS')`) pero
+  **no filtra la búsqueda**: con dos cuentas en el mismo archivo (el caso real de Santander: pesos +
+  USD), toma la primera que aparece en el documento, sin garantía de que sea la correcta.
+- El usuario está dando de alta la cuenta en **pesos** (158 movimientos reales; la de USD dio
+  `EST_SIN_MOVIMIENTOS`/`no_verificable` en A2, se deja para después).
+
+1. **Qué cambia y qué no.** `leerCaratula` gana reconocimiento del rótulo real de Santander (`Cuenta
+   Corriente en Pesos Nº` / `Cuenta Corriente especial U$S Nº`), y `--moneda` pasa a filtrar: con
+   múltiples secciones "Cuenta Corriente...Nº" en el documento, se usa la que coincide con la moneda
+   pedida (`ARS`→"en Pesos", `USD`→"especial U$S"/"U$S"), no la primera que aparece. **No cambia:**
+   `santander.ts` ni ningún adaptador (su propia detección ya es correcta, por geometría); el
+   comportamiento para Galicia (una sola cuenta por archivo, sin ambigüedad) no debería moverse.
+2. **Qué se mide.** Test nuevo (o existente, si hay alguno para `leerCaratula`) que confirme: con un
+   texto sintético de dos "Cuenta Corriente" (pesos y USD), `--moneda ARS` encuentra el número de la
+   sección de pesos y `--moneda USD` el de la de USD — nunca cruzados. `pnpm verificar` en verde.
+3. **Predicción falsable.** El usuario corre `pnpm alta:cuenta --banco santander --moneda ARS
+   --archivo <el mismo PDF real> --cliente <uuid> --usuario <uuid>` (con `ENV_FILE=.env.piloto`) y
+   tiene que imprimir la forma del número de cuenta de la sección "en Pesos", sin error. Si imprime la
+   forma de la cuenta USD, o vuelve a fallar, es un hallazgo — no se reintenta sin confirmarlo primero
+   conmigo.
+4. **Agentes.** `dba-data` (escribe `cuenta_bancaria_identificador` con el hash) + `tech-lead`
+   (coherencia entre la detección de `santander.ts` y la de `leerCaratula` — mismo patrón de la quinta
+   cara) + `security-engineer` + `seguridad-datos-financieros` — los dos últimos obligatorios por el
+   riesgo que el propio archivo ya declara: un identificador mal atribuido "nunca va a resolver" y
+   queda así de forma permanente.
+5. **Paso revertible más chico.** Un commit único: los dos cambios (etiqueta + filtro por moneda)
+   resuelven el mismo problema y no tiene sentido separarlos — un commit a medias (solo la etiqueta,
+   sin el filtro) dejaría la ambigüedad multi-cuenta intacta, que es justo lo que el usuario pidió
+   cerrar de una. Revertible con `git revert`, sin efecto en filas ya persistidas (es un fix de lectura,
+   no toca datos existentes).
+
+---
+
 ## 2026-08-11 (33) — 🔴 CIERRE DE SESIÓN. Punto de entrada si retomás sin este chat.
 
 **Herramienta:** Claude Code, sesión larga y autónoma (el usuario se ausentó después de dar la
