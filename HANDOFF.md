@@ -6,6 +6,21 @@
 
 ---
 
+## 2026-08-11 (25) — 6.1 cerrado: catálogo de bancos poblado
+
+**Herramienta:** Claude Code, sesión autónoma. Mergeado a `main` (`feat/catalogo-bancos`, `--no-ff`).
+
+Migración `0011_catalogo_bancos.sql`, aplicada contra la base de desarrollo (no contra el piloto — eso
+es 6.3). `dba-data` la escribió y verificó (`banco_r28` del fixture de tests intacto); `security-engineer`
+y `seguridad-datos-financieros` revisaron en paralelo sin bloqueantes. Se incorporó una mejora
+preventiva: advertencia explícita en el `comment on column banco.capacidades` contra meter ahí un dato
+de ejemplo real (heredaría la clasificación N0 de la columna). `pnpm verificar`: 739+7, sin cambios.
+
+**Sigue 6.2** (`pnpm alta:cliente`), con su propia convocatoria (`dba-data` + `arquitecto-software` +
+`security-engineer` + `seguridad-datos-financieros` — toca el modelo de tenancy).
+
+---
+
 ## 2026-08-11 (24) — Plan 6.1 (CLAUDE.md §3.2, escrito antes del primer `Edit`)
 
 **Herramienta:** Claude Code, sesión autónoma. Dispara modo plan por (a) migración — obligatorio,
