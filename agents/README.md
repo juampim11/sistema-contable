@@ -46,8 +46,60 @@ agents/
     └── … un archivo por persona, con el MISMO nombre
 ```
 
-**Estado de activación:** `.claude/agents/` ya existe con los **11** wrappers copiados (3 genéricos +
-8 de dominio). Al agregar o editar un wrapper, volver a copiar (ver §Activación).
+**Estado de activación:** `.claude/agents/` tiene los **23** wrappers copiados (3 genéricos + 8 de
+dominio + 12 técnicos), sincronizados 1:1 con `agents/personas/` y `agents/wrappers-claude/`. Pero
+"copiado en disco" **no es lo mismo** que "invocable ahora mismo" — ver §Registro runtime vs. disco
+antes de asumir que un `Agent(subagent_type: "<nombre>")` que falla significa que falta el wrapper.
+Al agregar o editar un wrapper, volver a copiar (ver §Activación).
+
+### Registro runtime vs. disco (verificado 2026-08-10/11)
+
+Los 23 wrappers están en disco y son idénticos en estructura, pero en una sesión de Claude Code
+abierta antes de que se agregaran los 12 wrappers técnicos/de dominio más nuevos (commit `c9979a5`),
+solo **11 quedaron invocables** como `subagent_type` — los otros 12 devuelven `Agent type '<nombre>'
+not found`:
+
+- **Invocables esa sesión (11):** `code-reviewer`, `documentador`, `fiscal-nacional-iva-ganancias`,
+  `motor-conciliacion-contable`, `product-owner`, `analista-funcional`, `tech-lead`, `frontend-dev`,
+  `ux-designer`, `devops`, `qa-funcional`.
+- **No invocables (12), requerían el fallback de persona (CLAUDE.md §3.1 regla 4):** `tester`,
+  `contador-dominio`, `fiscal-ingresos-brutos-convenio-multilateral`, `integraciones-afip`,
+  `plan-cuentas-multicliente`, `balances-normas-tecnicas`, `seguridad-datos-financieros`,
+  `arquitecto-software`, `backend-dev`, `dba-data`, `qa-automation`, `security-engineer`.
+
+**Lo que se investigó y lo que quedó confirmado, sin forzar la conclusión:**
+
+1. **Correlación exacta encontrada:** los 12 no invocables eran justo los 12 cuya `description:` del
+   frontmatter tenía `": "` (dos puntos + espacio) sin comillar — un escalar YAML plano no puede
+   llevar eso en medio del texto sin que el parser lo lea como un mapeo anidado. Los 11 invocables
+   tenían **cero** apariciones de `": "` sin comillar. Sin excepciones en los 23 archivos.
+2. **Prueba en vivo, dentro de la misma sesión:** se comillo la `description` de `tester.md` (en
+   `.claude/agents/` y en `agents/wrappers-claude/`) y se reintentó `Agent(subagent_type: "tester")`
+   **sin reiniciar** — siguió devolviendo `not found`, con la misma lista de 17 agentes de siempre.
+   Conclusión: el registro de subagentes se arma **una vez, al arrancar el proceso**; editar el
+   archivo a mitad de sesión no lo vuelve a leer. Esto **no confirma ni descarta** la hipótesis del
+   punto 1 — solo confirma que hace falta una sesión nueva para volver a probarla.
+3. **Issues de `anthropics/claude-code` citados como referencia** (`#59881`, `#24439`, `#20931`,
+   `#11205`, `#4728`): son reales y documentan fallas de descubrimiento de agentes custom, pero
+   **ninguno reproduce este síntoma exacto** (un split parcial 11/12 correlacionado con la sintaxis
+   del `description`) — describen escenarios de detección **cero** (extensión de VS Code, `/agents`,
+   `~/.claude/agents/` de usuario). No se citan como causa confirmada de este caso puntual.
+4. **Ya se aplicó el fix candidato:** se comilló el `description:` de los 12 wrappers afectados, en
+   `.claude/agents/` y en `agents/wrappers-claude/` (mismo texto, solo se agregaron comillas dobles —
+   ninguna descripción tenía comillas internas que escapar).
+
+**Confirmado (2026-08-11):** una sesión nueva de Claude Code sí registró los 23 — el fix del punto 4
+resolvió el registro. Los 23 `subagent_type` del roster están invocables directo; no hace falta el
+fallback de persona salvo que se agregue una persona nueva con el mismo error de YAML.
+
+**Si en el futuro un wrapper nuevo no registra:** revisar primero que su `description:` no tenga
+`": "` sin comillar (punto 1) antes de asumir otra causa.
+
+**El fallback de persona sigue documentado** (CLAUDE.md §3.1 regla 4) para el caso en que un wrapper
+nuevo tenga el mismo problema antes de corregirse:
+`Agent(subagent_type: "general-purpose", ...)` con un prompt que instruya leer
+`agents/personas/<nombre>.md` completo y adoptarlo — no depende de este bug y produce una opinión de
+verdad independiente igual que un wrapper nativo.
 
 ## Roster base (propósito general)
 

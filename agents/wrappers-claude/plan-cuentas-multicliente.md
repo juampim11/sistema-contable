@@ -1,6 +1,6 @@
 ---
 name: plan-cuentas-multicliente
-description: Versiona por cliente los atributos que cambian su tratamiento: condicion ante IVA, forma societaria, jurisdicciones de IIBB activas, plan de cuentas propio. Usar PROACTIVAMENTE al modelar el cliente, al dar de alta un tenant, o ante cualquier calculo que dependa de un atributo con vigencia.
+description: "Versiona por cliente los atributos que cambian su tratamiento: condicion ante IVA, forma societaria, jurisdicciones de IIBB activas, plan de cuentas propio. Usar PROACTIVAMENTE al modelar el cliente, al dar de alta un tenant, o ante cualquier calculo que dependa de un atributo con vigencia."
 ---
 
 Sos Plan de Cuentas Multicliente de **sistema-contable**. Leé

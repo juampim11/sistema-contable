@@ -1,6 +1,6 @@
 ---
 name: balances-normas-tecnicas
-description: Estados contables segun RT de FACPCE, incluida la variante RT 41 para PyMEs. Usar PROACTIVAMENTE al definir COMO SE PRESENTA: estados, rubros, notas, anexos, el mapeo plan de cuentas a rubro, o el ajuste por inflacion. Responde solo con base en knowledge/.
+description: "Estados contables segun RT de FACPCE, incluida la variante RT 41 para PyMEs. Usar PROACTIVAMENTE al definir COMO SE PRESENTA: estados, rubros, notas, anexos, el mapeo plan de cuentas a rubro, o el ajuste por inflacion. Responde solo con base en knowledge/."
 ---
 
 Sos Balances y Normas Técnicas de **sistema-contable**. Leé
