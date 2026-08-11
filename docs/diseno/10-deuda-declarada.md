@@ -435,6 +435,34 @@ guardia, o reportarlo upstream. No bloqueante — no toca el veredicto de ningú
 
 ---
 
+### 2.11 🟡 `alta-cuenta.ts` duplica 3 regex de `santander.ts`; el guardrail cruzado solo cubre 1 de las 3
+
+**Contexto:** el fix de `leerCaratula` multi-cuenta (HANDOFF 2026-08-11 (34) y su enmienda) duplicó a
+propósito `RE_CABECERA_CUENTA`, `RE_NUMERO_CUENTA_EN_CABECERA` y `RE_ES_DOLARES` de
+`packages/ingesta/src/adaptadores/santander.ts` en `apps/cli/src/alta-cuenta.ts` — no se importan
+porque `packages/ingesta/src/index.ts` prohíbe exponer el vocabulario interno de un adaptador (§2.4).
+
+**El hallazgo (`code-reviewer`, en la revisión de ese mismo fix):** el test guardrail
+(`apps/cli/tests/alta-cuenta.test.ts`, describe `guardrail cruzado con santander.ts`) corre la misma
+cadena literal contra `leerCaratula` y contra `reconoceSantander`, la única función pública que ejercita
+`RE_CABECERA_CUENTA`. Pero `reconoceSantander` **no** evalúa `RE_NUMERO_CUENTA_EN_CABECERA` ni
+`RE_ES_DOLARES` — esas dos regex duplicadas no tienen ningún cross-check automatizado. Hoy están
+verificadas carácter por carácter contra el original (confirmado con `JSON.stringify`/`codePointAt`
+sobre las dos copias, mismo `º` = U+00BA en las dos), pero una divergencia futura en `santander.ts:388`
+o `:391` que no se replique acá pasaría el gate en verde.
+
+**Por qué no se cerró en el mismo commit:** cerrarlo de verdad pide invocar `leerSantander` (que sí usa
+las tres regex) con un `FilaGeometrica[]` completo — encabezado de columnas, región de tabla, cierre
+con "Saldo total" — del mismo tamaño que las fixtures de `santander.test.ts` (~300 líneas). Es
+desproporcionado para un fix puntual de `leerCaratula`, que ni siquiera arma `FilaGeometrica`.
+
+**Qué hacer:** si se toca `alta-cuenta.ts` o `santander.ts` de nuevo, extender el guardrail para
+ejercitar `leerSantander` con una fixture mínima (cabecera + "No tenés movimientos en ... este
+período", sin movimientos reales) y comparar `cuentas[].numero`/`.moneda` contra lo que devuelve
+`leerCaratula` para el mismo texto. No bloqueante — las tres copias están verificadas manualmente hoy.
+
+---
+
 ## 3. Lo que se corrigió en esta tanda (para que no se busque acá)
 
 | Hallazgo | Dónde quedó |

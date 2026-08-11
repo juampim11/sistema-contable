@@ -6,6 +6,51 @@
 
 ---
 
+## 2026-08-11 (35) — Cierre: `leerCaratula` multi-cuenta implementado, revisado y en verde
+
+**Herramienta:** Claude Code. Cierra la tarea planificada en (34) y su enmienda.
+
+**Qué se hizo, sobre el alcance final de la enmienda (no el original):**
+- `apps/cli/src/alta-cuenta.ts`: `leerCaratula(texto, moneda, cbuManual)` ahora detecta el formato
+  Santander (cabeceras `Cuenta Corriente...Nº`, regex duplicadas de `santander.ts` con el mismo escape
+  `º`), filtra el número de cuenta por moneda con dedupe por valor distinto, cruza contra la otra
+  moneda para detectar un filtro que no discrimine, deriva `tipoCuenta` de la cabecera matcheada, y trata
+  el CBU como no atribuible cuando el documento tiene más de una cuenta (mismo criterio que
+  `santander.ts:817-832`) — exige `--cbu <22 dígitos>` explícito en ese caso, nuevo argumento opcional.
+  El camino Galicia (una sola cuenta, sin esas cabeceras) queda sin cambios de comportamiento.
+  `leerCaratula`/`argumentos`/`clasificarTipo` pasan a `export function` con guard `esEjecucionDirecta`
+  (mismo patrón que `ingestar.ts`), y la salida imprime qué sección se usó (texto de código, nunca la
+  línea real del documento).
+- `apps/cli/tests/alta-cuenta.test.ts` (nuevo, 19 tests): Galicia sin cambios, Santander una-cuenta,
+  multi-cuenta con y sin `--cbu`, 0/`&gt;1` números distintos, cross-check de colisión, cabecera repetida
+  por página (no es error), idempotencia cruzada (el guard corta antes de tocar la base), y un guardrail
+  que corre la misma cadena literal contra `leerCaratula` y contra `reconoceSantander` (exportado de
+  `santander.ts`) para detectar divergencia futura entre las dos copias de regex.
+- `docs/diseno/10-deuda-declarada.md` §2.11 (nuevo): declara que el guardrail cruzado solo cubre
+  `RE_CABECERA_CUENTA` vía `reconoceSantander` — `RE_NUMERO_CUENTA_EN_CABECERA` y `RE_ES_DOLARES` quedan
+  sin cross-check automatizado (verificadas a mano, carácter por carácter, hoy). No bloqueante.
+
+**Convocatoria (§3.1, tareas #25-28) y `code-reviewer` (diff completo):** los cuatro agentes de la
+enmienda están documentados en (34). `code-reviewer`, sobre el diff final, no encontró bugs de
+correctitud activos — confirmó dedupe, cross-check, guard de CBU y camino Galicia correctos — y señaló
+el hallazgo que quedó como §2.11 más un `º` sin escapar (corregido antes de este commit).
+
+**Medido:** `pnpm typecheck` limpio, `pnpm test` 767/767 (27 archivos, 0 fallos — incluida
+`verificar-fixtures.test.ts`, que había dado timeout una vez por contención de recursos mientras corrían
+los cuatro agentes en paralelo, y corrió limpio en 24.7 s en la corrida en serie), `pnpm barrido` limpio.
+
+**Predicción falsable (punto 3 del plan), NO verificada todavía:** falta que el usuario corra
+`pnpm alta:cuenta --banco santander --moneda ARS --cbu &lt;el CBU real de la cuenta en pesos&gt; --archivo
+&lt;el PDF&gt; --cliente &lt;uuid&gt; --usuario &lt;uuid&gt;` con `ENV_FILE=.env.piloto`. Nota importante para esa
+corrida: como el documento es multi-cuenta (trae también la sección USD), **hace falta `--cbu` explícito**
+— sin él, el script va a fallar con el mensaje "no se puede atribuir a una sola moneda", que es el
+comportamiento correcto y esperado, no un bug nuevo.
+
+**Rama:** `fix/alta-cuenta-caratula-multicuenta`, un commit único (más este de cierre), lista para
+mergear a `main` con `--no-ff`.
+
+---
+
 ## 2026-08-11 (34) — Plan: `leerCaratula` multi-cuenta (CLAUDE.md §3.2)
 
 **Herramienta:** Claude Code. Dispara modo plan por (b) y (c) — atribución de identificadores reales
@@ -49,6 +94,79 @@ sí dispara, por las dos razones de arriba.
    sin el filtro) dejaría la ambigüedad multi-cuenta intacta, que es justo lo que el usuario pidió
    cerrar de una. Revertible con `git revert`, sin efecto en filas ya persistidas (es un fix de lectura,
    no toca datos existentes).
+
+### Enmienda tras la convocatoria (los cuatro agentes ya corrieron) — el alcance del punto 1 creció
+
+Los cuatro agentes de la matriz de arriba corrieron de verdad (`Agent()`, no narrado) y devolvieron
+hallazgos que **cambian el alcance** del punto 1, no solo lo confirman. Se documentan acá, antes de
+escribir el diff, siguiendo el mismo estándar que ya se aplicó toda la sesión (HANDOFF (17)/(18)): un
+plan que no se actualiza con lo que dice la convocatoria es la misma falla de nuevo.
+
+- **`tech-lead`** confirmó el diseño exacto: reusar `RE_CABECERA_CUENTA`/`RE_NUMERO_CUENTA`/
+  `RE_ES_DOLARES` de `santander.ts` (líneas 377/388/391), **duplicados** en `alta-cuenta.ts` (no
+  importados — `packages/ingesta/src/index.ts` prohíbe exponer vocabulario interno de un adaptador), con
+  un test-guardrail que corre el mismo string sintético contra las dos copias para que una divergencia
+  futura tire el gate rojo. El patrón de valor actual (`^...$`, anclado en los dos extremos) NO sirve
+  para Santander: ahí el número va incrustado en la misma línea que la cabecera, no en la línea
+  siguiente — hace falta `RE_NUMERO_CUENTA` con `.exec()` directo, sin pasar por `valorPorEtiqueta`.
+  Selección: juntar TODAS las cabeceras que matchean `RE_CABECERA_CUENTA`, filtrar por
+  `RE_ES_DOLARES(l) === (moneda==='USD')`, extraer número de cada una y **deduplicar por valor
+  distinto** (no por cantidad de cabeceras — la cabecera puede repetirse una vez por página). 0 números
+  distintos o >1 número distinto para la moneda pedida ⇒ error explícito, nunca adivinar. Confirmó
+  también que Galicia no colisiona (su etiqueta nunca aparece como substring del rótulo de Santander) y
+  que **hace falta exportar `leerCaratula`/`argumentos`/`clasificarTipo`** con el mismo patrón de guard
+  que ya usa `ingestar.ts` (`esEjecucionDirecta`) — hoy es imposible testear la función sin correr el
+  script completo, y sin eso el punto 2 de este plan no es escribible.
+- **`security-engineer`** encontró el hallazgo que más cambia el alcance: **el plan original no tocaba
+  el CBU**, solo el número de cuenta. Pero el CBU es el campo obligatorio del que depende toda
+  resolución futura de extractos, y `santander.ts` (líneas 817-832) ya decidió, con dos cuentas en el
+  documento, que el CBU queda **no determinado** — nunca atribuido a una sola moneda, porque no hay
+  ninguna señal en el archivo que lo ate a una de las dos. Peor: como `altaDeCuentaBancaria` es
+  idempotente por `(cliente_id, pepper_id, cbu_hmac, vigente_desde)`, si las dos altas (ARS y luego USD,
+  que es justo el plan del usuario: "la de USD la dejamos para después") comparten el mismo CBU leído
+  con el mismo `vigenteDesde`, la segunda alta **no crea nada** — devuelve en silencio los ids de la
+  cuenta ya cargada, y el CLI imprime "Alta OK" como si hubiera dado de alta la cuenta en dólares.
+  También señaló que `tipoCuenta` no estaba cubierto por el filtro propuesto (mismo riesgo de cruce que
+  el número) y que la etiqueta/sección matcheada tiene que imprimirse (texto de código, no dato del
+  cliente) porque `forma()` sola no distingue dos números de igual longitud de secciones distintas.
+- **`seguridad-datos-financieros`** midió la consecuencia concreta si el filtro matcheara la sección
+  equivocada sin fallar: la cuenta real en pesos queda huérfana con un diagnóstico **engañoso**
+  (`cuenta_no_pertenece_al_cliente`, no `cuenta_no_registrada` — le dice al operador "este archivo no es
+  de este cliente" cuando sí lo es), y la cuenta real en dólares resuelve **silenciosamente** contra la
+  fila mal rotulada, mezclando movimientos de las dos monedas bajo una sola cuenta. Severidad: crítica.
+  Recomendó, además del error explícito, un cross-check en la misma corrida (comparar el número hallado
+  para la moneda pedida contra el de la otra moneda; si coinciden, el filtro no discriminó y hay que
+  abortar) como defensa adicional contra un ancla débil.
+- **`dba-data`** confirmó que no hace falta migración y que la única red de la base
+  (`uq_cuenta_ident_numero_vigente`/`uq_cuenta_ident_cbu_vigente`, `0009`) **no cubre** este escenario
+  porque protege contra reuso de un identificador ya existente, no contra un primer alta mal atribuido
+  contra un identificador que todavía no está en la base (la cuenta USD real). También confirmó que no
+  existe ningún camino para dar de baja un identificador mal cargado — se documenta como hueco en
+  `docs/diseno/10-deuda-declarada.md` si hace falta después, no se resuelve acá.
+
+**Alcance final del punto 1, reemplaza al original:**
+1. `leerCaratula` detecta el formato Santander (≥1 cabecera `RE_CABECERA_CUENTA`) vs. Galicia (0
+   cabeceras, camino actual sin cambios).
+2. Con formato Santander: número de cuenta filtrado por moneda con dedupe por valor distinto + error
+   explícito si 0 o >1; cross-check contra la otra moneda (mismo número en las dos ⇒ abortar);
+   `tipoCuenta` derivado de qué cabecera matcheó (`especial U$S`→`cuenta_corriente_especial`,
+   si no→`cuenta_corriente`), no de la etiqueta `'Tipo de cuenta'` que Santander no imprime.
+3. CBU: si el documento tiene más de una cabecera de cuenta (multi-cuenta), **no se atribuye** — se
+   agrega `--cbu <22 dígitos>` como argumento opcional nuevo, exigido solo en este caso, con el mismo
+   error explícito que ya usa el resto del archivo si falta. Documento de una sola cuenta: sin cambios
+   (se sigue leyendo por etiqueta).
+4. La salida imprime, además de las formas ya existentes, qué sección/etiqueta se usó (texto de código
+   fijo, nunca la línea real del documento) para que el operador confirme a ojo.
+5. `leerCaratula`/`argumentos`/`clasificarTipo` pasan a `export function`, con guard
+   `esEjecucionDirecta` igual a `ingestar.ts`, para que sean testeables.
+
+El punto 2 (qué se mide) se amplía: además del caso ya descripto, un test de idempotencia cruzada (dos
+altas con `vigenteDesde` igual y CBU compartido tienen que fallar por el punto 3 de arriba ANTES de
+llegar a `altaDeCuentaBancaria` — nunca devolver silenciosamente los ids de la otra cuenta) y el
+guardrail cruzado de regex contra `santander.ts` que pidió `tech-lead`. El punto 3 (predicción
+falsable) no cambia. El punto 5 (paso revertible) tampoco: sigue siendo un commit único — separar el
+CBU del número dejaría exactamente el mismo riesgo crítico que describió `seguridad-datos-financieros`
+sin cerrar.
 
 ---
 
