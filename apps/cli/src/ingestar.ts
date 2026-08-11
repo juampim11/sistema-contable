@@ -278,6 +278,42 @@ export async function ingestar(
     if (!loteId) throw new Error('No se pudo crear el lote de ingesta.');
 
     /**
+     * 🔴 SAVEPOINT — la atomicidad real del lote, HANDOFF 2026-08-11 (40).
+     *
+     * `conUsuario` comitea la transacción entera en cualquier `return` normal del callback (solo
+     * revierte si `fn` lanza). Los ~8 caminos de rechazo de acá abajo hacen `rechazar(tx, ...)` +
+     * `return` — nunca `throw` — así que sin esto, si una cuenta anterior del loop YA se persistió con
+     * éxito cuando una posterior falla, las dos cosas se comitean juntas: la cuenta buena queda con sus
+     * filas reales, colgada de un lote marcado `con_errores`. Confirmado contra el piloto: 158 filas
+     * reales de una cuenta que cuadra, bajo un lote rechazado porque la SIGUIENTE cuenta del archivo
+     * (una cuenta real, distinta, que el operador todavía no había dado de alta) no resolvió.
+     *
+     * `despues_del_lote` se pone DESPUÉS de crear `loteId` — así el `insert` de arriba nunca se revierte,
+     * y el lote sigue siendo el ancla del rechazo aunque todo lo posterior se deshaga (`ingestar.ts:22-23`
+     * ya documentaba esa garantía; ahora es real también cuando algo posterior se persistió de más).
+     * También va después del `set_config('app.user_id', ..., true)` que `conUsuario` hace antes de
+     * invocar este callback (`packages/data/src/db/conexion.ts`) — confirmado por tres agentes de forma
+     * independiente que un `ROLLBACK TO SAVEPOINT` posterior no puede tocar ese contexto de tenant.
+     *
+     * El `ROLLBACK TO SAVEPOINT` en sí vive DENTRO de `rechazar()` (ver más abajo), no repetido en cada
+     * uno de los ~8 sitios que la llaman: la garantía depende de un solo lugar, no de que cada futuro
+     * call site se acuerde de hacer las dos cosas en el orden correcto — el mismo tipo de disciplina
+     * distribuida que ya falló una vez (este bug).
+     *
+     * SAVEPOINT único, no 2-3 `conUsuario` separados: partir en transacciones abre una ventana de crash
+     * entre ellas donde el lote queda `estado=recibido`, durable, sin nadie que lo vaya a rechazar nunca
+     * — un lote fantasma que necesitaría un job de limpieza nuevo. Con un solo SAVEPOINT, si el proceso
+     * muere en cualquier punto, la transacción completa nunca se comitea: no hay estado intermedio
+     * observable.
+     *
+     * 🟡 No cierra `docs/diseno/10-deuda-declarada.md` §1.1 (el problema inverso: un `throw` real —un
+     * `23505` traducido, o el de `persistirAnexos` por un literal con identificador— pierde hasta el
+     * propio lote-ancla, sin `motivo_codigo` ni rastro). Ese es un `throw`, no un `return`: se escapa
+     * directo al `catch` de `conUsuario` y se lleva el SAVEPOINT con él. Queda declarado, no resuelto acá.
+     */
+    await tx.consultar('savepoint despues_del_lote');
+
+    /**
      * PASOS 5 A 11 — leer, resolver, verificar, persistir, y **recién ahí** guardar el objeto.
      *
      * El orden no es una preferencia:
@@ -452,6 +488,14 @@ export async function ingestar(
      * Es el **default seguro** mientras la pregunta esté abierta (plan §11: *"¿un archivo con una sola cuenta
      * no resuelta se rechaza entero?"*). Queda escrito como default **elegido**, no como olvido: si no
      * estuviera acá, la primera corrida multi-cuenta lo resolvería por accidente en la dirección contraria.
+     *
+     * 🔴 **Esta garantía dependía de que cada rechazo lanzara, y no era cierto** hasta HANDOFF 2026-08-11
+     * (40): los caminos de rechazo de acá abajo hacen `return`, no `throw`, así que sin el `ROLLBACK TO
+     * SAVEPOINT` que ahora vive dentro de `rechazar()`, una cuenta anterior YA persistida quedaba
+     * comiteada junto con el rechazo. Confirmado contra el piloto: 158 filas reales de una cuenta que
+     * cuadra, bajo un lote `con_errores` porque la cuenta siguiente del mismo archivo no resolvió. Ahora
+     * es real: `rechazar()` deshace todo lo posterior al `SAVEPOINT` (creado justo después del insert
+     * del lote) antes de escribir el rechazo.
      */
     let filasTotales = 0;
     let estadoPeor: EstadoLotePersistido = 'procesado';
@@ -506,8 +550,12 @@ export async function ingestar(
         codigos_diferencia: verificacion.diferencias.map((d) => d.codigo).join(','),
       });
 
-      // 10. Persistir. Un fallo revierte **todo el lote**, incluidas las cuentas ya insertadas: están en la
-      //     misma transacción.
+      // 10. Persistir. Dos formas de fallar, dos garantías distintas: si `persistirCuenta` LANZA (un
+      //     error técnico de la base), `conUsuario` revierte toda la transacción. Si devuelve
+      //     `persistido: false` (una decisión de negocio limpia, `no_cuadra`), el `return` de acá abajo
+      //     no lanza — la reversión de las cuentas ya insertadas la hace `rechazar()` con su
+      //     `ROLLBACK TO SAVEPOINT` (HANDOFF 2026-08-11 (40)), no "estar en la misma transacción" por
+      //     sí solo, que es justo lo que dejaba pasar el bug: la transacción compartida no alcanzaba.
       const persistido = await persistirCuenta(tx, {
         clienteId: args.cliente,
         loteId,
@@ -595,11 +643,24 @@ export async function ingestar(
  * El valor `'rechazo'` existe justamente por esto (migración 0004). Registrarlo como `'escritura'` sería
  * asentar un hecho que no ocurrió en la única tabla append-only del sistema; y no registrarlo dejaría el
  * caso más importante del módulo —un archivo que no era de este cliente— sin rastro.
+ *
+ * 🔴 **Primera línea: `ROLLBACK TO SAVEPOINT despues_del_lote`** (HANDOFF 2026-08-11 (40)). Deshace
+ * cualquier persistencia de una cuenta anterior del loop de `ingestar()` — o de la cuenta actual, si
+ * falló a mitad de camino — ANTES de escribir el rechazo. El orden importa y es al revés de lo que
+ * parece intuitivo: si se escribiera el rechazo primero y se revirtiera después, el `ROLLBACK TO
+ * SAVEPOINT` se llevaría puesto el propio `update`/`registrarAcceso` de acá abajo, y el lote volvería a
+ * `recibido` sin motivo ni rastro — peor que el bug que esto corrige (`security-engineer`, HANDOFF (40)).
+ *
+ * Esta función es la ÚNICA que hace el rollback — no cada uno de los ~8 call sites — para que la
+ * garantía de atomicidad no dependa de que cada sitio nuevo se acuerde de hacerlo en el orden correcto
+ * (`dba-data`, HANDOFF (40)).
  */
 async function rechazar(
   tx: Tx,
   args: { readonly clienteId: string; readonly loteId: string; readonly motivoCodigo: string },
 ): Promise<void> {
+  await tx.consultar('rollback to savepoint despues_del_lote');
+
   await tx.consultar(
     `update lote_ingesta set estado = $4, motivo_codigo = $2
       where id = $1 and cliente_id = $3`,

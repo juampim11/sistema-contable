@@ -151,7 +151,15 @@ function primeraDiferencia(verificacion: Verificacion): string {
 
 /**
  * Persiste una cuenta con sus movimientos. **Asume que ya está dentro de una transacción** con identidad
- * (la de `conUsuario`): no abre ni cierra nada, así que un fallo revierte todo el lote.
+ * (la de `conUsuario`): no abre ni cierra nada.
+ *
+ * 🟡 La garantía de "un fallo revierte todo el lote" NO es de esta función — es del **llamador**. Si acá
+ * adentro se lanza (un error técnico de la base), sí, la transacción entera se revierte sola. Pero si
+ * esta función devuelve `persistido: false` (una decisión de negocio limpia, `no_cuadra`), la reversión
+ * de lo que ya se insertó es responsabilidad de quien llama — `apps/cli/src/ingestar.ts` la resuelve con
+ * `rechazar()`, que hace `ROLLBACK TO SAVEPOINT` antes de escribir el rechazo (HANDOFF 2026-08-11 (40)).
+ * Este archivo no puede garantizar esa reversión por su cuenta: no sabe si el llamador va a `throw` o a
+ * `return` con el resultado.
  */
 export async function persistirCuenta(
   tx: Tx,
