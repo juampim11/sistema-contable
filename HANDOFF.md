@@ -6,6 +6,44 @@
 
 ---
 
+## 2026-08-11 (19) — Parte D cerrada: modo plan obligatorio en CLAUDE.md §3.2 + AGENTS.md §6
+
+**Herramienta:** Claude Code. **Estado:** mergeado a `main` (`feat/modo-plan-obligatorio`, `--no-ff`),
+sesión autónoma (usuario ausente, instrucción explícita de avanzar D → A1 → A2 → 6 sin pedir más
+confirmación salvo bloqueante real).
+
+**Registro de sub-agentes, resuelto de verdad esta vez.** HANDOFF (18) §0 dejó abierta la hipótesis de
+que el harness cachea `.claude/agents/` al arrancar el proceso. Encontrada la causa real: 12 de los 23
+wrappers tenían `": "` sin comillar dentro de `description:` del frontmatter — YAML plano no lo admite
+sin romper el parseo. Comillado en los 12 (`.claude/agents/` y `agents/wrappers-claude/`), confirmado
+en una sesión nueva: **los 23 registran**. Detalle completo en `agents/README.md` §"Registro runtime
+vs. disco". Commit `fix/registro-subagentes-yaml`, mergeado antes de esta parte.
+
+**Convocados de verdad, con `TaskCreate`/`addBlockedBy` bloqueando la implementación:** `product-owner`
+y `documentador`, en paralelo, antes de escribir una línea de la regla.
+
+- `product-owner` **ajustó el umbral de tres disparadores a cuatro**: agregó "(c) modifica un
+  adaptador/motor/consulta que ya corre contra datos de un cliente o en producción, sin importar
+  cantidad de archivos" — con el caso real y medido de `galicia.ts` (HANDOFF 17§4/18§3, truncado
+  silencioso de razón social, 814/1346 filas) como evidencia de que el umbral de 3+ archivos solo
+  dejaba pasar exactamente ese tipo de cambio. También agregó una válvula de escape para el disparador
+  de "3+ archivos" (cambios puramente mecánicos no lo disparan) y marcó qué campos del plan son
+  no-negociables (1, 2 y 4) y cuáles se pueden resolver en una línea (3 y 5, con "no hay baseline, se
+  mide en el paso 1" como respuesta válida al campo 3).
+- `documentador` fijó la ubicación (`CLAUDE.md §3.2`, entre §3.1 y §4; `AGENTS.md §6`, después de §5) y
+  el mecanismo de trazabilidad para Codex: el plan tiene que existir **escrito en `HANDOFF.md` antes**
+  del primer `apply_patch`/`Edit`, mismo criterio inspeccionable que el banner `=== [Persona] ===` de
+  `AGENTS.md` §5.
+
+**Verificación:** `pnpm verificar` no se re-corrió en esta parte (cambio de solo documentación, sin
+código); el barrido de fuga en modo estricto corrió como parte del pre-commit hook de los dos commits
+(YAML + Parte D) y dio `0 fugas` las dos veces.
+
+**Sigue A1** (contrato unificado), con su propia convocatoria (`arquitecto-software` + `tech-lead` +
+`code-reviewer`) antes de tocar `galicia.ts`/`macro.ts`.
+
+---
+
 ## 2026-08-10 (18) — CI arreglado, módulo de detectores centralizado, `galicia.ts` sin truncado, Parte B cerrada
 
 **Herramienta:** Claude Code. **Estado:** `pnpm verificar` verde — **724 tests + 7 todo**, 25 archivos.
