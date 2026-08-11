@@ -8,7 +8,14 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { argumentos, clasificarTipo, leerCaratula } from '../src/alta-cuenta.ts';
+import {
+  argumentos,
+  clasificarTipo,
+  leerCaratula,
+  pedirCbuConfirmado,
+  pedirValorOculto,
+  PedidoDeCbuCancelado,
+} from '../src/alta-cuenta.ts';
 import { reconoceSantander, type FilaGeometrica, type TextoDelPdf } from '@sistema-contable/ingesta';
 
 const CBU_SINTETICO = '9990000090000000000001';
@@ -59,14 +66,29 @@ describe('argumentos()', () => {
     expect(argumentos(base).moneda).toBe('ARS');
   });
 
-  it('acepta --cbu de 22 dígitos', () => {
-    const r = argumentos([...base, '--cbu', CBU_MANUAL_SINTETICO]);
-    expect(r.cbu).toBe(CBU_MANUAL_SINTETICO);
+  it(
+    '--cbu ya NO es un argumento válido: se rechaza explícito, nunca en silencio ' +
+      '(security-engineer, HANDOFF (36) — z.object sin .strict() lo descartaría sin avisar)',
+    () => {
+      expect(() => argumentos([...base, '--cbu', CBU_MANUAL_SINTETICO])).toThrow(
+        /--cbu ya no es un argumento válido/,
+      );
+    },
+  );
+
+  it('el rechazo de --cbu no depende del valor que traiga (ni siquiera bien formado)', () => {
+    expect(() => argumentos([...base, '--cbu', '123'])).toThrow(/--cbu ya no es un argumento válido/);
   });
 
-  it('rechaza --cbu que no tiene 22 dígitos', () => {
-    expect(() => argumentos([...base, '--cbu', '123'])).toThrow(/Argumentos inválidos/);
-  });
+  it(
+    '--cbu=valor (pegado con =) también se rechaza, no solo --cbu valor ' +
+      '(code-reviewer, HANDOFF (36) — el loop de parseo lo descartaba en silencio total)',
+    () => {
+      expect(() => argumentos([...base, `--cbu=${CBU_MANUAL_SINTETICO}`])).toThrow(
+        /--cbu ya no es un argumento válido/,
+      );
+    },
+  );
 });
 
 describe('clasificarTipo()', () => {
@@ -95,7 +117,7 @@ describe('leerCaratula() — Galicia, formato de una sola cuenta (regresión: no
 });
 
 describe('leerCaratula() — Santander, una sola cuenta en el documento', () => {
-  it('no exige --cbu: lo lee de la etiqueta como cualquier documento de una sola cuenta', () => {
+  it('no exige un CBU manual: lo lee de la etiqueta como cualquier documento de una sola cuenta', () => {
     const r = leerCaratula(textoDe(...CARATULA_SANTANDER_UNA_CUENTA), 'ARS', undefined);
     expect(r.numero).toBe(CUENTA_PESOS);
     expect(r.cbu).toBe(CBU_SINTETICO);
@@ -111,19 +133,19 @@ describe('leerCaratula() — Santander, una sola cuenta en el documento', () => 
 });
 
 describe('leerCaratula() — Santander multi-cuenta (el caso real que motiva el fix)', () => {
-  it('--moneda ARS sin --cbu: falla explícito, nunca atribuye el CBU único a una de las dos cuentas', () => {
+  it('--moneda ARS sin CBU manual: falla explícito, nunca atribuye el CBU único a una de las dos cuentas', () => {
     expect(() => leerCaratula(textoDe(...CARATULA_MULTICUENTA), 'ARS', undefined)).toThrow(
       /no se puede atribuir a una sola moneda/,
     );
   });
 
-  it('--moneda USD sin --cbu: mismo fallo explícito (no es un caso especial de ARS)', () => {
+  it('--moneda USD sin CBU manual: mismo fallo explícito (no es un caso especial de ARS)', () => {
     expect(() => leerCaratula(textoDe(...CARATULA_MULTICUENTA), 'USD', undefined)).toThrow(
       /no se puede atribuir a una sola moneda/,
     );
   });
 
-  it('ARS con --cbu: usa el número de la sección en pesos, nunca el de dólares', () => {
+  it('ARS con CBU manual: usa el número de la sección en pesos, nunca el de dólares', () => {
     const r = leerCaratula(textoDe(...CARATULA_MULTICUENTA), 'ARS', CBU_MANUAL_SINTETICO);
     expect(r.numero).toBe(CUENTA_PESOS);
     expect(r.numero).not.toBe(CUENTA_DOLARES);
@@ -132,7 +154,7 @@ describe('leerCaratula() — Santander multi-cuenta (el caso real que motiva el 
     expect(r.seccionUsada).toMatch(/Pesos/);
   });
 
-  it('USD con --cbu: usa el número de la sección en dólares, nunca el de pesos', () => {
+  it('USD con CBU manual: usa el número de la sección en dólares, nunca el de pesos', () => {
     const r = leerCaratula(textoDe(...CARATULA_MULTICUENTA), 'USD', CBU_MANUAL_SINTETICO);
     expect(r.numero).toBe(CUENTA_DOLARES);
     expect(r.numero).not.toBe(CUENTA_PESOS);
@@ -188,7 +210,7 @@ describe('leerCaratula() — Santander multi-cuenta (el caso real que motiva el 
   });
 
   it(
-    'idempotencia cruzada: sin --cbu, la alta de USD nunca llega a intentar escribir en la base ' +
+    'idempotencia cruzada: sin CBU manual, la alta de USD nunca llega a intentar escribir en la base ' +
       '(prueba de que el guard corta ANTES de altaDeCuentaBancaria, no que la idempotencia "resuelva bien")',
     () => {
       // Documentado en HANDOFF (34), enmienda: si esto no lanzara, altaDeCuentaBancaria devolvería en
@@ -229,5 +251,233 @@ describe('guardrail cruzado con santander.ts (tech-lead, HANDOFF (34) enmienda)'
   it('sin la cabecera "Cuenta Corriente...Nº", reconoceSantander NO reconoce (control negativo)', () => {
     const filas: FilaGeometrica[] = [filaDeUnFragmento('Movimientos en pesos')];
     expect(reconoceSantander(filas)).toBe(false);
+  });
+});
+
+describe('ningún throw de leerCaratula interpola el CBU (seguridad-datos-financieros, HANDOFF (36))', () => {
+  /**
+   * No alcanza con leer el código a ojo y confirmar que hoy ningún `throw` interpola `cbuManual` — eso es
+   * un invariante implícito que un futuro mensaje "más claro" podría romper sin que nadie lo note (mismo
+   * patrón que ya causó una fuga real en este repo, ADR-0002 §H.3.bis). Este test lo fija: corre un CBU
+   * manual sintético, reconocible y fijo, por cada rama de error de `leerCaratula`, y confirma que NINGÚN
+   * mensaje contiene el valor completo ni ninguna corrida de 6+ dígitos consecutivos de él.
+   */
+  const CBU_TRAZABLE = '9999999999999999999901';
+
+  function sinCorridaDelCbu(mensaje: string): boolean {
+    if (mensaje.includes(CBU_TRAZABLE)) return false;
+    for (let i = 0; i + 6 <= CBU_TRAZABLE.length; i += 1) {
+      if (mensaje.includes(CBU_TRAZABLE.slice(i, i + 6))) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Todas las filas pasan `CBU_TRAZABLE` como `cbuManual` — así que la única rama de `leerCaratula` que
+   * NO se puede ejercitar acá es "no se puede atribuir a una sola moneda" (esa condición es exactamente
+   * `!cbuManual`, y con un CBU manual presente no dispara). No hace falta: en esa rama no hay ningún CBU
+   * manual todavía que se pudiera filtrar, así que no hay nada que este test tuviera que verificar ahí.
+   */
+  const escenarios: ReadonlyArray<{ readonly nombre: string; readonly texto: TextoDelPdf; readonly moneda: 'ARS' | 'USD' }> = [
+    {
+      nombre: '0 números distintos para la moneda pedida',
+      texto: textoDe(`CBU: ${CBU_SINTETICO}`, PERIODO, `Cuenta Corriente especial U$S Nº ${CUENTA_DOLARES}`),
+      moneda: 'ARS',
+    },
+    {
+      nombre: '>1 número distinto para la misma moneda',
+      texto: textoDe(
+        `CBU: ${CBU_SINTETICO}`,
+        PERIODO,
+        `Cuenta Corriente Nº ${CUENTA_PESOS}`,
+        `Cuenta Corriente Nº 111-222333/4`,
+      ),
+      moneda: 'ARS',
+    },
+    {
+      nombre: 'cross-check: mismo número en las dos monedas',
+      texto: textoDe(
+        `CBU: ${CBU_SINTETICO}`,
+        PERIODO,
+        `Cuenta Corriente Nº ${CUENTA_PESOS}`,
+        `Cuenta Corriente especial U$S Nº ${CUENTA_PESOS}`,
+      ),
+      moneda: 'ARS',
+    },
+    {
+      nombre: 'Galicia sin número de cuenta',
+      texto: textoDe(`CBU: ${CBU_SINTETICO}`, PERIODO),
+      moneda: 'ARS',
+    },
+    {
+      nombre: 'sin período',
+      texto: textoDe(`CBU: ${CBU_SINTETICO}`, `Cuenta Corriente Nº ${CUENTA_PESOS}`),
+      moneda: 'ARS',
+    },
+  ];
+
+  it.each(escenarios)('$nombre', ({ texto, moneda }) => {
+    let capturado: unknown;
+    try {
+      leerCaratula(texto, moneda, CBU_TRAZABLE);
+    } catch (error) {
+      capturado = error;
+    }
+    expect(capturado).toBeInstanceOf(Error);
+    const mensaje = (capturado as Error).message;
+    expect(sinCorridaDelCbu(mensaje)).toBe(true);
+  });
+});
+
+describe('pedirValorOculto() — lectura de stdin en modo raw, sin eco (security-engineer, HANDOFF (36))', () => {
+  /** Doble mínimo de `process.stdin`: emite `data` a demanda, sin abrir una terminal real. */
+  class EntradaFalsa {
+    isTTY: boolean | undefined = true;
+    rawMode = false;
+    pausada = true;
+    private escuchas: Array<(fragmento: string) => void> = [];
+    setRawMode(modo: boolean): void {
+      this.rawMode = modo;
+    }
+    resume(): void {
+      this.pausada = false;
+    }
+    pause(): void {
+      this.pausada = true;
+    }
+    setEncoding(): void {}
+    on(_evento: 'data', escucha: (fragmento: string) => void): void {
+      this.escuchas.push(escucha);
+    }
+    removeListener(_evento: 'data', escucha: (fragmento: string) => void): void {
+      this.escuchas = this.escuchas.filter((e) => e !== escucha);
+    }
+    emitir(fragmento: string): void {
+      for (const escucha of [...this.escuchas]) escucha(fragmento);
+    }
+    tieneEscuchas(): boolean {
+      return this.escuchas.length > 0;
+    }
+  }
+
+  class SalidaFalsa {
+    lineas: string[] = [];
+    write(texto: string): boolean {
+      this.lineas.push(texto);
+      return true;
+    }
+    toString(): string {
+      return this.lineas.join('');
+    }
+  }
+
+  it('sin terminal interactiva (isTTY false), rechaza de entrada y nunca activa raw mode', async () => {
+    const entrada = new EntradaFalsa();
+    entrada.isTTY = false;
+    const salida = new SalidaFalsa();
+    await expect(pedirValorOculto('CBU: ', entrada, salida)).rejects.toThrow(/terminal interactiva/);
+    expect(entrada.rawMode).toBe(false);
+  });
+
+  it('Enter corta la lectura y devuelve exactamente lo tipeado, sin ecoar el valor a la salida', async () => {
+    const entrada = new EntradaFalsa();
+    const salida = new SalidaFalsa();
+    const promesa = pedirValorOculto('CBU: ', entrada, salida);
+    entrada.emitir('1234567890123456789012\r');
+    const valor = await promesa;
+    expect(valor).toBe('1234567890123456789012');
+    expect(salida.toString()).not.toContain('1234567890123456789012');
+    expect(entrada.rawMode).toBe(false);
+  });
+
+  it('un chunk único con el valor Y el Enter pegados (paste) se corta bien, no se pierde el corte', async () => {
+    const entrada = new EntradaFalsa();
+    const salida = new SalidaFalsa();
+    const promesa = pedirValorOculto('CBU: ', entrada, salida);
+    entrada.emitir('9990000090000000000002\r\n');
+    await expect(promesa).resolves.toBe('9990000090000000000002');
+  });
+
+  it('backspace borra el último carácter tipeado antes de Enter', async () => {
+    const DEL = String.fromCharCode(127);
+    const entrada = new EntradaFalsa();
+    const salida = new SalidaFalsa();
+    const promesa = pedirValorOculto('CBU: ', entrada, salida);
+    // '1','2','3', DEL (borra el '3'), '4', Enter -> "124"
+    entrada.emitir(`123${DEL}4\r`);
+    await expect(promesa).resolves.toBe('124');
+  });
+
+  it('Ctrl+C cancela con PedidoDeCbuCancelado, restaura rawMode y nunca resuelve con el buffer parcial', async () => {
+    const entrada = new EntradaFalsa();
+    const salida = new SalidaFalsa();
+    const promesa = pedirValorOculto('CBU: ', entrada, salida);
+    entrada.emitir('123');
+    await expect(promesa).rejects.toBeInstanceOf(PedidoDeCbuCancelado);
+    expect(entrada.rawMode).toBe(false);
+    expect(entrada.tieneEscuchas()).toBe(false);
+  });
+
+  describe('pedirCbuConfirmado() — doble tipeo (seguridad-datos-financieros, HANDOFF (36))', () => {
+    async function correr(
+      primero: string,
+      segundo: string,
+    ): Promise<{ resultado: string | undefined; error: Error | undefined; salida: SalidaFalsa }> {
+      const entrada = new EntradaFalsa();
+      const salida = new SalidaFalsa();
+      const promesa = pedirCbuConfirmado(entrada, salida);
+      // El primer prompt ya registró su escucha de forma síncrona (el executor de la Promise corre
+      // síncrono); el segundo recién se registra después de que el primero resuelve, así que hace falta
+      // ceder el control del event loop entre las dos emisiones.
+      entrada.emitir(`${primero}\r`);
+      await new Promise((r) => setImmediate(r));
+      entrada.emitir(`${segundo}\r`);
+      try {
+        const resultado = await promesa;
+        return { resultado, error: undefined, salida };
+      } catch (error) {
+        return { resultado: undefined, error: error as Error, salida };
+      }
+    }
+
+    it('las dos veces coinciden y son 22 dígitos: resuelve con el valor', async () => {
+      const { resultado, error } = await correr(CBU_MANUAL_SINTETICO, CBU_MANUAL_SINTETICO);
+      expect(error).toBeUndefined();
+      expect(resultado).toBe(CBU_MANUAL_SINTETICO);
+    });
+
+    it('las dos tipeadas NO coinciden: rechaza sin mostrar ninguna de las dos en el mensaje', async () => {
+      const otro = '1111111111111111111111';
+      const { resultado, error } = await correr(CBU_MANUAL_SINTETICO, otro);
+      expect(resultado).toBeUndefined();
+      expect(error?.message).toMatch(/no coinciden/);
+      expect(error?.message).not.toContain(CBU_MANUAL_SINTETICO);
+      expect(error?.message).not.toContain(otro);
+    });
+
+    it('coinciden pero no son 22 dígitos: rechaza con mensaje genérico, sin interpolar el valor', async () => {
+      const corto = '123';
+      const { resultado, error } = await correr(corto, corto);
+      expect(resultado).toBeUndefined();
+      expect(error?.message).toBe('El CBU tiene que ser de 22 dígitos.');
+      expect(error?.message).not.toContain(corto);
+    });
+
+    it('imprime la advertencia de no copiar/pegar el CBU en ningún chat o asistente (ADR-0002 §F.2)', async () => {
+      const { salida } = await correr(CBU_MANUAL_SINTETICO, CBU_MANUAL_SINTETICO);
+      expect(salida.toString()).toMatch(/no lo copies ni lo pegues/i);
+    });
+
+    it(
+      'no acumula listeners sobre process.exit entre llamadas ' +
+        '(code-reviewer, HANDOFF (36) — antes del fix, cada llamada dejaba uno colgado)',
+      async () => {
+        const antes = process.listenerCount('exit');
+        await correr(CBU_MANUAL_SINTETICO, CBU_MANUAL_SINTETICO);
+        await correr(CBU_MANUAL_SINTETICO, '1111111111111111111111'); // camino de rechazo también limpia
+        await correr(CBU_MANUAL_SINTETICO, CBU_MANUAL_SINTETICO);
+        expect(process.listenerCount('exit')).toBe(antes);
+      },
+    );
   });
 });

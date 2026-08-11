@@ -4,7 +4,7 @@
  *     node apps/cli/src/alta-cuenta.ts \
  *       --cliente <uuid> --usuario <uuid> --banco galicia --archivo <ruta al PDF>
  *
- * ## Por qué el CBU se lee del archivo y no se pasa por argumento
+ * ## Por qué el CBU se lee del archivo y no se pasa por argumento — NUNCA, ni con `--cbu`
  *
  * Tres razones, y las tres son caminos por los que un identificador se escapa a lugares donde ningún control
  * del proyecto llega:
@@ -20,6 +20,16 @@
  *
  * El archivo ya está en `privado/`, que es el lugar autorizado. Leerlo desde ahí, hashear y insertar es el
  * camino más corto entre el dato y la base: **el valor no pasa por ninguna otra parte.**
+ *
+ * 🔴 **`--cbu` NO existe como argumento — a propósito, dos veces.** El fix de multi-cuenta (HANDOFF
+ * 2026-08-11 (34)/(35)) lo agregó como argumento para el caso en que la carátula trae más de una cuenta y
+ * el CBU no se puede atribuir a una sola moneda, y eso reintrodujo exactamente el riesgo 1 de arriba —
+ * detectado por el usuario, no por la convocatoria original (HANDOFF (36)). Para ese caso, `argumentos()`
+ * rechaza cualquier `--cbu` explícito con un error, y la CLI real pide el valor con un prompt interactivo
+ * oculto (`pedirCbuConfirmado`, más abajo): lee de `stdin` en modo raw, sin ecoar ni un carácter, nunca pasa
+ * por `argv` ni por una variable de entorno, y pide el valor **dos veces** para detectar un error de
+ * transcripción sin necesidad de mostrarlo en pantalla (`forma()` no sirve acá: todo CBU de 22 dígitos
+ * produce la misma forma, así que no hay manera de que el operador confirme a ojo que tipeó el correcto).
  *
  * ## Qué imprime
  *
@@ -58,15 +68,6 @@ const esquema = z.object({
   banco: z.string().regex(/^[a-z0-9_]{2,32}$/),
   archivo: z.string().min(1),
   moneda: z.enum(['ARS', 'USD']).default('ARS'),
-  /**
-   * Solo se usa cuando la carátula tiene más de una cuenta y el CBU declarado no se puede atribuir a
-   * una sola moneda (ver el comentario de `leerCaratula`). En el resto de los casos se ignora: el CBU
-   * se lee del archivo, nunca por argumento — mismos tres motivos de la cabecera del archivo.
-   */
-  cbu: z
-    .string()
-    .regex(/^\d{22}$/, 'el CBU tiene que ser de 22 dígitos')
-    .optional(),
   /** Etiqueta humana. **Nunca** la razón social. */
   alias: z.string().max(60).optional(),
 });
@@ -74,6 +75,33 @@ const esquema = z.object({
 export type ArgumentosAltaDeCuenta = z.infer<typeof esquema>;
 
 export function argumentos(argv: readonly string[] = process.argv.slice(2)): ArgumentosAltaDeCuenta {
+  /**
+   * 🔴 Chequeo explícito, ANTES del parseo de Zod — no alcanza con que `--cbu` no esté en `esquema`.
+   *
+   * `z.object(...)` sin `.strict()` descarta claves desconocidas en silencio: si alguien tipea `--cbu
+   * <valor>` (por hábito, por un runbook viejo, por copiar un comando de una entrada vieja de HANDOFF),
+   * Zod lo ignora y el script sigue como si nada — pero el valor **ya quedó grabado** en
+   * `ConsoleHost_history.txt` en el momento en que se apretó Enter, antes de que Node procese una sola
+   * línea (`security-engineer`, HANDOFF (36)). Sin este chequeo, el operador no tiene ninguna señal de que
+   * acaba de repetir exactamente el error que la cabecera del archivo prohíbe.
+   *
+   * 🔴 **También `--cbu=valor`, no solo `--cbu valor`** (`code-reviewer`, HANDOFF (36)). El loop de parseo
+   * de más abajo exige que el token siguiente NO empiece con `--` para consumirlo como valor — con
+   * `--cbu=X` el "valor" queda pegado al propio flag y ese loop simplemente lo descarta sin verlo, así que
+   * sin este segundo chequeo `--cbu=<22 dígitos>` pasaba en **silencio total**: ni error, ni recordatorio
+   * de limpiar el historial. El CBU ya había quedado grabado igual.
+   */
+  if (argv.some((a) => a === '--cbu' || a.startsWith('--cbu='))) {
+    throw new Error(
+      `--cbu ya no es un argumento válido: quedaría en texto plano en el historial de PowerShell, que es ` +
+        `exactamente lo que este script evita (ver la cabecera de este archivo).${SALTO}${SALTO}` +
+        `Si lo tipeaste, esa línea YA quedó grabada — revisá y limpiá tu historial ` +
+        `((Get-PSReadlineOption).HistorySavePath) antes de seguir.${SALTO}${SALTO}` +
+        `El CBU ahora se pide en un prompt interactivo oculto, solo cuando hace falta (documento con más ` +
+        `de una cuenta) — no hace falta pasarlo por argumento nunca.`,
+    );
+  }
+
   const mapa = new Map<string, string>();
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -92,9 +120,8 @@ export function argumentos(argv: readonly string[] = process.argv.slice(2)): Arg
       `Argumentos inválidos: ${r.error.issues.map((i) => `--${String(i.path[0])}`).join(', ')}.${SALTO}${SALTO}` +
         `  node apps/cli/src/alta-cuenta.ts --cliente <uuid> --usuario <uuid> \\${SALTO}` +
         `    --banco <codigo> --archivo <ruta al PDF> [--moneda ARS] [--alias "cuenta operativa"]${SALTO}${SALTO}` +
-        `El CBU NO se pasa por argumento salvo con --cbu <22 dígitos>, y solo hace falta cuando la ` +
-        `carátula tiene más de una cuenta y no se puede atribuir el CBU declarado a una sola moneda ` +
-        `(ver la cabecera de este script y el comentario de leerCaratula).`,
+        `El CBU NO se pasa por argumento, nunca: se lee del archivo, o si la carátula tiene más de una ` +
+        `cuenta, se pide con un prompt interactivo oculto en el momento.`,
     );
   }
   return r.data;
@@ -139,7 +166,8 @@ const RE_ES_DOLARES = /especial\s+U\$S/i;
  * por valor. El CBU, en cambio, se imprime una sola vez para todo el documento y nada lo ata a una de las
  * dos cuentas — mismo criterio que `santander.ts:817-832`, que lo deja explícitamente sin determinar
  * cuando hay más de una región: con más de una cabecera de cuenta en el documento, el CBU no se atribuye
- * solo, hace falta `--cbu` explícito.
+ * solo, hace falta un `cbuManual` explícito (que la CLI real obtiene con un prompt interactivo oculto,
+ * nunca por argumento — ver la cabecera del archivo).
  *
  * Sin esto, un CBU mal atribuido no solo es plausible: `altaDeCuentaBancaria` es idempotente por
  * `(cliente_id, pepper_id, cbu_hmac, vigente_desde)`, así que dar de alta la cuenta en dólares DESPUÉS de
@@ -219,8 +247,7 @@ export function leerCaratula(
       if (!cbuManual) {
         throw new Error(
           'La carátula tiene más de una cuenta (pesos y dólares) y el CBU declarado no se puede ' +
-            'atribuir a una sola moneda — mismo criterio que packages/ingesta/src/adaptadores/santander.ts. ' +
-            'Pasá --cbu <22 dígitos> con el CBU real de esta cuenta.',
+            'atribuir a una sola moneda — mismo criterio que packages/ingesta/src/adaptadores/santander.ts.',
         );
       }
       cbuAtribuido = cbuManual;
@@ -323,6 +350,150 @@ function imprimir(t: string): void {
 }
 
 // -----------------------------------------------------------------------------
+// Prompt oculto de CBU — HANDOFF (36). Ver la cabecera del archivo: `--cbu` no existe como argumento.
+// -----------------------------------------------------------------------------
+
+/** El subconjunto de `process.stdin` que hace falta para leer sin ecoar. Así se puede inyectar un doble en tests. */
+type EntradaOculta = {
+  readonly isTTY: boolean | undefined;
+  setRawMode(modo: boolean): void;
+  resume(): void;
+  pause(): void;
+  setEncoding(codificacion: BufferEncoding): void;
+  on(evento: 'data', escucha: (fragmento: string) => void): void;
+  removeListener(evento: 'data', escucha: (fragmento: string) => void): void;
+};
+
+/** El subconjunto de `process.stdout` que hace falta para escribir el prompt. Mismo motivo que `EntradaOculta`. */
+type SalidaOculta = {
+  write(texto: string): boolean;
+};
+
+/** Se lanza cuando el operador cancela el prompt con Ctrl+C. Nunca lleva el valor tipeado. */
+export class PedidoDeCbuCancelado extends Error {}
+
+/**
+ * Lee un valor de `stdin` en modo raw, **sin ecoar un solo carácter** — ni siquiera asteriscos: dos CBU
+ * de 22 dígitos con la misma cantidad de dígitos se ven idénticos bajo cualquier máscara por posición,
+ * así que ni un asterisco por tecla aporta nada y sí deja ver la longitud tipeada. El valor nunca pasa
+ * por `argv` ni por una variable de entorno, así que no lo agarra `PSReadLine` (`security-engineer`,
+ * HANDOFF (36), confirmado: el historial de PowerShell solo registra lo que se somete al line-editor del
+ * propio shell, nunca lo que un proceso hijo lee de su stdin después de haber arrancado).
+ *
+ * Restaura el modo de la terminal en TODOS los caminos de salida — Enter, Ctrl+C, o cualquier excepción
+ * que ocurra después, en cualquier otra parte del proceso, mientras el raw mode siguiera activo (ver el
+ * `process.on('exit', ...)` en `pedirCbuConfirmado`).
+ */
+export function pedirValorOculto(
+  mensaje: string,
+  entrada: EntradaOculta = process.stdin,
+  salida: SalidaOculta = process.stdout,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!entrada.isTTY) {
+      reject(
+        new Error(
+          'No hay una terminal interactiva para pedir el CBU. Corré el script desde una consola real, no ' +
+            'con stdin redirigido ni en un pipeline no interactivo.',
+        ),
+      );
+      return;
+    }
+
+    salida.write(mensaje);
+    entrada.setRawMode(true);
+    entrada.resume();
+    entrada.setEncoding('utf8');
+
+    let buffer = '';
+    const cerrar = (): void => {
+      entrada.setRawMode(false);
+      entrada.pause();
+      entrada.removeListener('data', onData);
+    };
+
+    // 🔴 Recorre TODO el fragmento, no solo el último carácter: un `paste` con el Enter incluido llega
+    // en un solo evento `data`, y mirar solo `fragmento.at(-1)` se comería el corte de línea en silencio.
+    const onData = (fragmento: string): void => {
+      for (const caracter of fragmento) {
+        if (caracter === '\u0003') {
+          cerrar();
+          salida.write(SALTO);
+          reject(new PedidoDeCbuCancelado('Cancelado por el operador (Ctrl+C).'));
+          return;
+        }
+        if (caracter === '\r' || caracter === '\n') {
+          cerrar();
+          salida.write(SALTO);
+          resolve(buffer);
+          return;
+        }
+        if (caracter === '\u007f' || caracter === '\b') {
+          buffer = buffer.slice(0, -1);
+          continue;
+        }
+        buffer += caracter;
+      }
+    };
+    entrada.on('data', onData);
+  });
+}
+
+/**
+ * Pide el CBU dos veces y exige que coincidan byte a byte antes de aceptarlo.
+ *
+ * **Por qué doble tipeo y no una confirmación con eco parcial** (`seguridad-datos-financieros`, HANDOFF
+ * (36)): mostrar `forma(cbu)` después de tipearlo no sirve para que el operador se autoverifique — todo
+ * CBU de 22 dígitos produce la misma forma, así que un dígito transpuesto o mal tipeado es indistinguible
+ * del correcto bajo esa máscara. El único chequeo posible sin mostrar el valor en pantalla es pedirlo dos
+ * veces y compararlas.
+ *
+ * Ninguno de los tres `throw` de acá interpola el valor tipeado — ni en el de "no coinciden" ni en el de
+ * formato inválido — a propósito: es exactamente el tipo de fuga que ya pasó una vez en este repo por un
+ * mensaje "más claro" (ADR-0002 §H.3.bis, citado en la cabecera del archivo).
+ */
+export async function pedirCbuConfirmado(
+  entrada: EntradaOculta = process.stdin,
+  salida: SalidaOculta = process.stdout,
+): Promise<string> {
+  // Red de seguridad: si algo más adelante en el proceso tira una excepción sin atrapar mientras el raw
+  // mode sigue activo (por ejemplo, entre los dos prompts), la terminal no debe quedar sin eco para el
+  // usuario después de que el script salió. Se remueve en el `finally` de abajo apenas esta función
+  // termina — de lo contrario, `pedirCbuConfirmado` acumula un listener sobre `process` por cada llamada
+  // (`code-reviewer`, HANDOFF (36): confirmado con 3 invocaciones seguidas, 3 listeners acumulados).
+  const restaurarAlSalir = (): void => {
+    if (entrada.isTTY) entrada.setRawMode(false);
+  };
+  process.on('exit', restaurarAlSalir);
+
+  try {
+    salida.write(SALTO);
+    salida.write(
+      '  Este documento tiene más de una cuenta y el CBU no se puede atribuir a una sola moneda.' + SALTO,
+    );
+    salida.write('  Se pide acá, tecleado, para que nunca quede en el historial de la terminal.' + SALTO);
+    salida.write(
+      '  No lo copies ni lo pegues de ningún chat, ticket, captura ni asistente de IA — tipealo directo.' +
+        SALTO,
+    );
+    salida.write(SALTO);
+
+    const primero = await pedirValorOculto('  CBU (22 dígitos): ', entrada, salida);
+    const segundo = await pedirValorOculto('  Repetí el CBU para confirmar: ', entrada, salida);
+
+    if (primero !== segundo) {
+      throw new Error('Los dos CBU tipeados no coinciden. Volvé a correr el comando y tipealo con cuidado.');
+    }
+    if (!/^\d{22}$/.test(primero)) {
+      throw new Error('El CBU tiene que ser de 22 dígitos.');
+    }
+    return primero;
+  } finally {
+    process.removeListener('exit', restaurarAlSalir);
+  }
+}
+
+// -----------------------------------------------------------------------------
 // CLI
 // -----------------------------------------------------------------------------
 
@@ -348,7 +519,30 @@ if (esEjecucionDirecta) {
     process.exit(1);
   }
 
-  const caratula = leerCaratula(texto, args.moneda, args.cbu);
+  /**
+   * Primer intento sin CBU manual. Si la carátula tiene una sola cuenta, esto alcanza y nunca se pide
+   * nada por prompt. Si tiene más de una, `leerCaratula` tira el error puntual de "no se puede atribuir
+   * a una sola moneda" — se atrapa ACÁ, y solo esa condición, para pedir el CBU de forma oculta. Cualquier
+   * otro error (número de cuenta, período, etc.) sigue de largo sin pasar por el prompt.
+   */
+  let caratula: ReturnType<typeof leerCaratula>;
+  let cbuFueManual = false;
+  try {
+    caratula = leerCaratula(texto, args.moneda, undefined);
+  } catch (error) {
+    const esAmbiguedadDeCbu =
+      error instanceof Error && error.message.includes('no se puede atribuir a una sola moneda');
+    if (!esAmbiguedadDeCbu) throw error;
+    try {
+      const cbuManual = await pedirCbuConfirmado();
+      caratula = leerCaratula(texto, args.moneda, cbuManual);
+      cbuFueManual = true;
+    } catch (errorDePrompt) {
+      const mensaje = errorDePrompt instanceof Error ? errorDePrompt.message : 'error desconocido';
+      imprimir(`  ABORTA: ${mensaje}`);
+      process.exit(1);
+    }
+  }
 
   // Lo que se imprime es la FORMA, para poder confirmar a ojo que se leyó la celda correcta sin publicar
   // el valor. `forma()` no conserva ni un dígito ni una letra del original. `seccionUsada` sí se imprime
@@ -379,7 +573,15 @@ if (esEjecucionDirecta) {
           clienteId: args.cliente,
           accion: 'escritura',
           recurso: 'cuenta_bancaria_identificador',
-          motivo: `alta de cuenta ${args.banco} desde la caratula del resumen, piloto Modulo 1`,
+          /**
+           * El sufijo de procedencia lo agrega la CLI, nunca el operador — así la pregunta "¿este CBU se
+           * leyó del extracto o lo tipeó alguien?" es contestable desde `acceso_auditoria` sin depender de
+           * que quien lo dio de alta se haya acordado de anotarlo (`seguridad-datos-financieros`, HANDOFF
+           * (36)). Nunca lleva el valor del CBU, solo la procedencia.
+           */
+          motivo:
+            `alta de cuenta ${args.banco} desde la caratula del resumen, piloto Modulo 1` +
+            (cbuFueManual ? ' — CBU ingresado manualmente por el operador, no leido del documento' : ''),
         },
         (ctx) =>
           altaDeCuentaBancaria(tx, ctx, {

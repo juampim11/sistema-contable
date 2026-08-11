@@ -6,6 +6,71 @@
 
 ---
 
+## 2026-08-11 (36) — `--cbu` sacado del CLI: prompt oculto de doble tipeo, en su lugar
+
+**Herramienta:** Claude Code. Cierra un gap de seguridad que el propio usuario detectó en el cierre (35),
+antes de correr el comando que esa entrada dejaba pendiente — no se le dio ningún comando con `--cbu`.
+
+**El problema.** El fix de (34)/(35) agregó `--cbu <22 dígitos>` como argumento CLI para el caso
+multi-cuenta. Eso reintroduce el riesgo 1 que la propia cabecera de `alta-cuenta.ts` (líneas 7-22) ya
+documentaba desde antes: un valor pasado por argumento queda permanente en
+`PSReadLine\ConsoleHost_history.txt`. Ni la convocatoria de (34)/(35) (`dba-data`, `tech-lead`,
+`security-engineer`, `seguridad-datos-financieros`) lo cruzó contra el propio header del archivo que
+motivaba la regla.
+
+**Qué se hizo, convocando de nuevo a `security-engineer` y `seguridad-datos-financieros` sobre el
+diseño antes de escribirlo, y a `code-reviewer` sobre el diff final:**
+- `--cbu` sale del esquema de argumentos. `argumentos()` ahora rechaza explícito cualquier `--cbu` o
+  `--cbu=valor` en `argv` (el chequeo por `=` lo agregó `code-reviewer`: el primero solo cubría
+  `--cbu <valor>` con espacio, y `--cbu=valor` pasaba en **silencio total** — ni error ni el
+  recordatorio de limpiar el historial). El mensaje le dice al operador que, si lo tipeó, esa línea
+  YA quedó grabada, y da el comando de PowerShell para revisar el historial.
+- `pedirValorOculto()` (nueva, exportada para test): lee de `stdin` en modo raw, sin ecoar un solo
+  carácter (ni asteriscos — dos CBU de igual longitud se ven idénticos bajo cualquier máscara por
+  posición), con soporte de backspace, Ctrl+C (rechaza con `PedidoDeCbuCancelado`, nunca con el buffer
+  parcial) y escaneo del chunk completo (no solo el último carácter, por si un paste trae el Enter
+  pegado). Nunca pasa por `argv` ni por una variable de entorno.
+- `pedirCbuConfirmado()` (nueva, exportada): pide el CBU **dos veces** y exige que coincidan byte a
+  byte antes de aceptarlo — no una confirmación con `forma()`, que no sirve acá (todo CBU de 22 dígitos
+  produce la misma forma, no hay manera de que el operador confirme a ojo que tipeó el correcto).
+  Imprime una advertencia de no copiar/pegar el valor en ningún chat, ticket, captura ni asistente de
+  IA (ADR-0002 §F.2). Ninguno de sus tres `throw` interpola el valor tipeado.
+- El bloque CLI real intenta `leerCaratula` sin CBU manual primero; solo si tira el error puntual de
+  "no se puede atribuir a una sola moneda" invoca el prompt. El motivo de auditoría de
+  `escribirConAuditoria` gana un sufijo fijo (`— CBU ingresado manualmente por el operador, no leido del
+  documento`) cuando el CBU vino del prompt, agregado por la CLI, nunca por el operador — para que
+  "¿esto se leyó o lo tipeó alguien?" sea contestable desde `acceso_auditoria`.
+
+**Hallazgos de la convocatoria, todos cerrados en el mismo commit:**
+- `security-engineer` confirmó la premisa central (stdin de un proceso hijo no lo registra `PSReadLine`,
+  a diferencia de lo que se somete al propio prompt de PowerShell) y encontró el gap de `--cbu=valor`
+  antes que `code-reviewer` lo confirmara ejecutando código real contra un `--cbu` sin `=`; pidió manejo
+  explícito de Ctrl+C y escaneo de chunk completo — los dos ya estaban en el diseño y quedaron
+  implementados tal cual.
+- `seguridad-datos-financieros` calificó de **crítico** el riesgo de que un operador tipee de memoria el
+  CBU de otra cuenta real del mismo cliente (mismo mecanismo de idempotencia silenciosa que ya describió
+  en (34)) y pidió doble tipeo en vez de una confirmación con eco parcial — implementado.
+- `code-reviewer`, sobre el diff final, encontró el bug de `--cbu=valor` (bloqueante, corregido) y un
+  leak de `process.on('exit', ...)` en `pedirCbuConfirmado` sin `removeListener` simétrico (corregido
+  con `try/finally`). Sugirió además un valor de prueba menos repetitivo para el test de no-interpolación
+  — no aplicado, cosmético.
+
+**Medido:** `pnpm typecheck` limpio, `pnpm test` 783/783 (35 tests nuevos en `alta-cuenta.test.ts`,
+incluidos los dos casos que atraparon los bugs de `code-reviewer`), `pnpm barrido` limpio.
+
+**Predicción falsable (retoma la de (35)):** el usuario corre `pnpm alta:cuenta --banco santander
+--moneda ARS --archivo <el PDF real> --cliente <uuid> --usuario <uuid>` con `ENV_FILE=.env.piloto` —
+**sin `--cbu`, nunca**. Al detectar que el documento tiene más de una cuenta, el script va a pedir el
+CBU con un prompt oculto (dos veces, sin eco). Si el script pide `--cbu` como argumento, o si algo se ve
+en pantalla mientras se tipea, es un hallazgo — no seguir, avisar antes de reintentar.
+
+**Rama:** commit directo sobre la rama de (35) ya mergeada, listo para su propia rama +
+`merge --no-ff`.
+
+---
+
+---
+
 ## 2026-08-11 (35) — Cierre: `leerCaratula` multi-cuenta implementado, revisado y en verde
 
 **Herramienta:** Claude Code. Cierra la tarea planificada en (34) y su enmienda.
