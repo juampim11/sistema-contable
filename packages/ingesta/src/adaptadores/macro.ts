@@ -72,6 +72,7 @@ import {
   type SeccionDetectada,
 } from './toolkit.ts';
 import { ErrorDeAdaptador } from './contrato.ts';
+import type { EntradaDeAdaptador, SalidaDeAdaptador } from './registro.ts';
 
 export const BANCO_CODIGO = 'macro';
 export const VERSION = 1;
@@ -582,10 +583,14 @@ const VOCABULARIO: readonly EtiquetaDelBanco[] = [
   ...CONCEPTOS_SIN_CONTRAPARTE.map((c) => ({ etiqueta: c, ancla: normalizar(c) })),
 ].sort((a, b) => b.ancla.length - a.ancla.length || (a.ancla < b.ancla ? -1 : 1));
 
-export type SalidaMacro = {
-  readonly cuentas: readonly CuentaConMovimientos[];
-  readonly lineasNoInterpretadas: readonly LineaNoInterpretada[];
-  readonly paginasDeclaradas: number | undefined;
+/**
+ * Estrechamiento del contrato compartido, no un tipo paralelo: Macro promete más que el mínimo.
+ * `consolidadosPorMoneda` y `cuentasDeclaradas` son opcionales en `SalidaDeAdaptador` porque hay bancos
+ * que no los publican, pero **este** banco sí, siempre — §14.4-bis mide el consolidado por moneda de la
+ * carátula, y §14.2 el literal independiente con el que se cuentan las cuentas declaradas. Ver
+ * `registro.ts` para las tres formas posibles y cuándo va cada una.
+ */
+export type SalidaMacro = SalidaDeAdaptador & {
   readonly consolidadosPorMoneda: readonly ConsolidadoPorMoneda[];
   readonly cuentasDeclaradas: number | undefined;
 };
@@ -1762,21 +1767,10 @@ function residuo(
 // El adaptador, con la forma del contrato
 // -----------------------------------------------------------------------------
 
-/**
- * La entrada es la **vista geométrica**, igual que en el resto del roster: extraerla es I/O y eso no es
- * responsabilidad del adaptador.
- *
- * Este banco confirma por tercera vez que la geometría no es la excepción sino la regla — y acá por un
- * motivo propio: `aLineas()` reconstruye bien la fila visual (las 1346 arrancan con `dd/mm/aa`), pero **cada
- * línea trae exactamente 2 tokens con forma de importe y nada en el texto dice cuál es débito y cuál
- * crédito** (§1). Por líneas, el signo es indecidible.
- */
-export type EntradaMacro = { readonly filas: readonly FilaGeometrica[] };
-
 export const adaptadorMacro = {
   bancoCodigo: BANCO_CODIGO,
   version: VERSION,
   capacidades: CAPACIDADES_MACRO,
-  reconoce: (e: EntradaMacro): boolean => reconoceMacro(e.filas),
-  leer: (e: EntradaMacro): SalidaMacro => leerMacro(e.filas),
+  reconoce: (e: EntradaDeAdaptador): boolean => reconoceMacro(e.filas),
+  leer: (e: EntradaDeAdaptador): SalidaMacro => leerMacro(e.filas),
 } as const;

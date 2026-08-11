@@ -48,6 +48,7 @@ import {
   textoDeFila,
   type FilaGeometrica,
 } from '../texto-pdf.ts';
+import type { EntradaDeAdaptador, SalidaDeAdaptador } from './registro.ts';
 import {
   buscarIgnorandoAcentos,
   extraerPeriodo,
@@ -152,11 +153,11 @@ const RUIDO_GALICIA: readonly { readonly patron: RegExp; readonly motivo: string
   { patron: /^Movimientos$|^Saldos$|^Datos de la cuenta$|^Per[íi]odo de movimientos$/i, motivo: 'Título.' },
 ];
 
-export type SalidaGalicia = {
-  readonly cuentas: readonly CuentaConMovimientos[];
-  readonly lineasNoInterpretadas: readonly LineaNoInterpretada[];
-  readonly paginasDeclaradas: number | undefined;
-};
+/**
+ * Galicia no promete nada que el contrato compartido no tenga: alias sin campos propios.
+ * Ver `registro.ts` para las tres formas posibles (uso directo, alias, intersection) y cuándo va cada una.
+ */
+export type SalidaGalicia = SalidaDeAdaptador;
 
 export function reconoceGalicia(filas: readonly FilaGeometrica[]): boolean {
   const textos = filas.slice(0, 80).map(textoDeFila);
@@ -1116,20 +1117,10 @@ function esLiteralDeAnexo(fila: FilaGeometrica, texto: string): boolean {
 // El adaptador, con la forma del contrato
 // -----------------------------------------------------------------------------
 
-/**
- * `Adaptador` recibe `EntradaAdaptador` (texto + líneas) porque así se declaró el contrato, y este banco
- * necesita **geometría**. Así que la entrada trae las filas geométricas ya calculadas: extraerlas es I/O y
- * eso no es responsabilidad del adaptador.
- *
- * Es la primera evidencia de que el contrato necesita una tercera vista, y queda anotada acá en vez de
- * cambiarlo con un solo banco escrito: con el segundo se sabrá si `filas` es lo normal o la excepción.
- */
-export type EntradaGalicia = { readonly filas: readonly FilaGeometrica[] };
-
 export const adaptadorGalicia = {
   bancoCodigo: BANCO_CODIGO,
   version: VERSION,
   capacidades: CAPACIDADES_GALICIA,
-  reconoce: (e: EntradaGalicia): boolean => reconoceGalicia(e.filas),
-  leer: (e: EntradaGalicia): SalidaGalicia => leerGalicia(e.filas),
+  reconoce: (e: EntradaDeAdaptador): boolean => reconoceGalicia(e.filas),
+  leer: (e: EntradaDeAdaptador): SalidaGalicia => leerGalicia(e.filas),
 } as const;

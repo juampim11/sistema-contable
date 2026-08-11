@@ -240,7 +240,7 @@ describe('aislamiento entre bancos: un adaptador no puede romper a otro', () => 
       for (const otro of adaptadores) {
         const nombre = rel(otro).split('/').at(-1)?.replace('.ts', '') ?? '';
         if (nombre === propio) continue;
-        if (new RegExp(`from ['"]\./${nombre}\.ts['"]`).test(contenido)) {
+        if (new RegExp(String.raw`from ['"]\./${nombre}\.ts['"]`).test(contenido)) {
           infractores.push(`${rel(ruta)} importa ${nombre}`);
         }
       }
@@ -263,6 +263,40 @@ describe('aislamiento entre bancos: un adaptador no puede romper a otro', () => 
       return /@sistema-contable\/(?:data|almacenamiento)/.test(readFileSync(r, 'utf8'));
     });
     expect(infractores.map(rel)).toEqual([]);
+  });
+
+  /**
+   * A1 (`docs/diseno/10-deuda-declarada.md` §2.4): el contrato compartido vive en `registro.ts`
+   * (`EntradaDeAdaptador`/`SalidaDeAdaptador`). Un adaptador puede usarlo directo (Santander), aliasarlo
+   * sin agregar nada (Galicia) o estrecharlo con una intersection cuando promete más que el mínimo
+   * (Macro) — las tres son fachadas del contrato. Lo que no puede es declarar un objeto `Entrada*`/
+   * `Salida*` PROPIO, paralelo al contrato: eso es exactamente lo que tenían Galicia y Macro antes de
+   * A1, y lo que un quinto banco copia-pega si nadie lo impide.
+   *
+   * La regla mira el LADO DERECHO de la declaración, no el nombre: Galicia y Macro siguen declarando
+   * `SalidaGalicia`/`SalidaMacro` a propósito (son la fachada), así que un chequeo por nombre se
+   * rompería contra el propio diseño de A1.
+   */
+  it('todo Entrada*/Salida* fuera de registro.ts es fachada de XxxDeAdaptador, no un tipo propio', () => {
+    const adaptadores = FUENTES.filter(
+      (r) => rel(r).includes('/adaptadores/') && !rel(r).endsWith('registro.ts'),
+    );
+    const infractores: string[] = [];
+    const declaracion = /export type (Entrada|Salida)\w*\s*=\s*([^;]+);/g;
+    for (const ruta of adaptadores) {
+      const contenido = readFileSync(ruta, 'utf8');
+      for (const m of contenido.matchAll(declaracion)) {
+        const derecha = (m[2] ?? '').trim();
+        if (!/^(Entrada|Salida)DeAdaptador\b/.test(derecha)) {
+          infractores.push(`${rel(ruta)}: ${m[0]}`);
+        }
+      }
+    }
+    expect(
+      infractores,
+      'un Entrada*/Salida* fuera de registro.ts solo puede ser alias o intersection de XxxDeAdaptador ' +
+        '— un objeto propio es el patrón que A1 cerró',
+    ).toEqual([]);
   });
 });
 

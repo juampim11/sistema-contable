@@ -40,6 +40,17 @@ import type {
  */
 export type EntradaDeAdaptador = { readonly filas: readonly FilaGeometrica[] };
 
+/**
+ * ## Cómo un adaptador se relaciona con este contrato (A1, `docs/diseno/10-deuda-declarada.md` §2.4)
+ *
+ * Tres formas, ninguna más: **usarlo directo** cuando el shape ya coincide (Santander, cero tipo
+ * propio); **alias** cuando el adaptador no promete nada que el contrato no tenga
+ * (`type SalidaGalicia = SalidaDeAdaptador`); **intersection** cuando el adaptador promete MÁS que el
+ * mínimo del contrato — un campo opcional acá que ese banco publica siempre
+ * (`type SalidaMacro = SalidaDeAdaptador & { ... }`, ver `macro.ts`). Lo que un adaptador no puede
+ * declarar es un objeto `Entrada*`/`Salida*` **propio**, paralelo a este: eso es exactamente lo que
+ * tenían Galicia y Macro antes de A1, y lo que `reglas-de-codigo.test.ts` impide que vuelva.
+ */
 export type SalidaDeAdaptador = {
   readonly cuentas: readonly CuentaConMovimientos[];
   readonly lineasNoInterpretadas: readonly LineaNoInterpretada[];
