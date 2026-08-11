@@ -334,6 +334,44 @@ que funcionan** — la coherencia es un medio, no un fin. Lo que sí conviene an
 escribir el esqueleto como plantilla (`09 §7` o un `adaptadores/PLANTILLA.md`), para que el cuarto banco
 **nazca** alineado. Es más barato que alinear ocho después.
 
+### 2.10 🟡 `unpdf` tira `Warning: TypeError: Math.sumPrecise is not a function` — benigno, confirmado
+
+**Verificado contra archivo real** (A2, confirmación con el usuario, 2026-08-11): al correr `pnpm probar`
+contra los PDF reales de Galicia (4 veces) y Santander (8 veces) aparece este warning al arrancar la
+lectura. **No aparece con Macro.**
+
+**De dónde sale, rastreado hasta el código fuente.** No es de este repo: `grep -r "sumPrecise"
+packages/` da cero resultados, y `creditos`/`debitos` en `verificacion/invariantes.ts` son `BigInt`
+acumulados a mano (`0n`), sin ningún `Math.sumPrecise` en el camino. Sale de la copia minificada de
+`pdf.js` que empaqueta `unpdf` (`packages/ingesta/src/texto-pdf.ts`, `node_modules/.pnpm/unpdf@1.8.0/
+.../dist/pdfjs.mjs`) — **17 usos, los 17 en código de escritura/subseteo de fuentes, formularios XFA
+y guardado de PDF** (`GlyfTable.getSize()`, `Glyph.getSize()`, apariencias de campos de formulario,
+MD5 para guardar). Ninguno está en el camino de decodificación de texto que `aFilas`/`extraerTexto`
+consumen.
+
+**Por qué falla.** `Math.sumPrecise` es una API de V8 muy nueva (propuesta TC39 en etapa 3). No existe
+como global ni en Node v24.14.0 (confirmado) — la versión de `pdf.js` que trae `unpdf@1.8.0` la llama
+sin comprobar si existe. Es un bug de esa dependencia, no de este repo.
+
+**Por qué no rompe nada.** `pdf.js` tiene su propio `warn()` (`console.warn('Warning: '+e)`, confirmado
+leyendo el bundle) — el error se atrapa y se loguea, no se propaga: si fuera una excepción sin atrapar,
+el script se habría caído antes de imprimir el LOTE, y en cambio corrió completo hasta el veredicto.
+Verificado además de forma empírica, no solo por lectura de código: en la corrida real de Galicia,
+`verificoTotales=true` sin `ARIT_TOTAL_CREDITOS`/`ARIT_TOTAL_DEBITOS` — la suma de créditos/débitos
+calculada por este repo (ajena por completo a `Math.sumPrecise`) coincidió exacta con el total que
+declara la carátula del banco, más `hashes únicos = total` y cadena de saldos sin rupturas. Si el texto
+extraído hubiera salido corrompido, ese cruce habría fallado con error, no en silencio.
+
+**Por qué en Galicia/Santander y no en Macro.** Se investigó una hipótesis (¿correlaciona con
+`traeTotalesDeclarados`/el camino V2 de verificación de totales?) y **se descartó con datos reales**:
+Santander tiene `traeTotalesDeclarados: false` (no publica totales, usa V5) y el warning apareció igual,
+8 veces. Los 17 usos están en fuentes/formularios del PDF, así que la correlación real es con la
+estructura interna de cada archivo (fuentes embebidas, campos de formulario), no con qué verificación
+corre de este lado.
+
+**Qué hacer:** actualizar `unpdf` cuando exista una versión que no dependa de `Math.sumPrecise` sin
+guardia, o reportarlo upstream. No bloqueante — no toca el veredicto de ningún lote.
+
 ---
 
 ## 3. Lo que se corrigió en esta tanda (para que no se busque acá)
