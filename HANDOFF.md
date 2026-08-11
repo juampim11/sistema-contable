@@ -33,7 +33,24 @@ convocatoria.
 ### A2 contra los tres archivos reales — el resultado que importa
 
 - **Macro**: exacto contra la predicción (HANDOFF 22). `sinDestino=0`, `residuo=0`,
-  `fueraDelCuerpo=0`, 1346/6/3. `INV-destinos: diferencias=0`.
+  `fueraDelCuerpo=0`, 1346/6/3. `INV-destinos: diferencias=0`. **Dos observaciones en la corrida,
+  las dos verificadas contra el código y NO son hallazgos** (re-preguntadas por el usuario después
+  de que la primera respuesta se perdiera en un resumen de contexto — esta vez con cita exacta):
+  1. `VEREDICTO DEL LOTE: no_verificable` — viene de la cuenta 1 (USD, 0 movimientos).
+     `verificarAritmetica` (`invariantes.ts:307-309`) empuja `EST_SIN_MOVIMIENTOS` en severidad
+     `observación` (no `error`) porque el lote entero tiene movimientos (1346); con eso el tri-estado
+     de esa cuenta da `no_verificable`, nunca `no_cuadra`. `persistir.ts:86-125` tiene el bloque
+     específico para esto —con su propia advertencia 🔴 de un bug real que un panel de tres agentes
+     encontró ahí en una versión anterior, ya corregido (exige `saldoInicialDeclarado ===
+     saldoFinalDeclarado`, si no coincide rechaza igual)— y persiste la cuenta vacía como
+     `procesado_con_observaciones`. Mismo patrón ya medido para la cuenta USD vacía de Santander.
+     **Diseño confirmado funcionando, no deuda.**
+  2. Cuenta 3, 4 filas `EST_FECHA_FUERA_DE_PERIODO` — coincide EXACTO con lo ya declarado en
+     `CAPACIDADES_MACRO` (`macro.ts:124-131`, "4 movimientos... dos del 20/10 y dos del 22/10 en un
+     resumen del 01/11 al 28/11"): el archivo real corrido es ese mismo resumen. Severidad
+     `observación` a propósito (`traeMovimientosFueraDelPeriodo: true`), por eso la cuenta igual dio
+     `cuadra`. **Es la misma medición ya declarada antes de esta sesión, reproducida — no un
+     hallazgo nuevo.**
 - **Galicia**: exacto contra la predicción. `sinDestino=0`, `fueraDelCuerpo=29`, `residuo=0`, 326/9.
   `INV-destinos: diferencias=0`.
 - **Santander**: `residuo=5` — primera vez que se mide contra archivo real, sin predicción numérica
