@@ -7,3 +7,4 @@ export * from './db/lectores-auditados.ts';
 export * from './credenciales.ts';
 export * from './ingesta/lecturas.ts';
 export * from './ingesta/escrituras.ts';
+export * from './tenancy/escrituras.ts';

@@ -1,7 +1,7 @@
 /**
  * ALTA DE UNA CUENTA BANCARIA — lee la carátula del PDF y **nunca imprime el identificador**.
  *
- *     node packages/data/scripts/alta-cuenta.ts \
+ *     node apps/cli/src/alta-cuenta.ts \
  *       --cliente <uuid> --usuario <uuid> --banco galicia --archivo <ruta al PDF>
  *
  * ## Por qué el CBU se lee del archivo y no se pasa por argumento
@@ -80,7 +80,7 @@ function argumentos(): z.infer<typeof esquema> {
   if (!r.success) {
     throw new Error(
       `Argumentos inválidos: ${r.error.issues.map((i) => `--${String(i.path[0])}`).join(', ')}.${SALTO}${SALTO}` +
-        `  node packages/data/scripts/alta-cuenta.ts --cliente <uuid> --usuario <uuid> \\${SALTO}` +
+        `  node apps/cli/src/alta-cuenta.ts --cliente <uuid> --usuario <uuid> \\${SALTO}` +
         `    --banco <codigo> --archivo <ruta al PDF> [--moneda ARS] [--alias "cuenta operativa"]${SALTO}${SALTO}` +
         `El CBU NO se pasa por argumento: se lee de la carátula del archivo. Ver la cabecera de este script.`,
     );
