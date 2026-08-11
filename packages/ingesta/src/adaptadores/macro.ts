@@ -128,6 +128,8 @@ export const CAPACIDADES_MACRO: CapacidadesAdaptador = {
   // §14.4-bis: `Saldo Cuentas en PESOS` / `en DOLARES EE.UU.`, 45 apariciones cada uno. Es la entrada de
   // INV-multicuenta, la única ecuación del documento que cruza cuentas.
   traeConsolidadoPorMoneda: true,
+  // A2 (C3): todavía no instrumentado. Pasa a `true` cuando `leerMacro` empiece a devolver `destinos`.
+  declaraDestinos: false,
 };
 
 /**

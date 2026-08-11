@@ -859,3 +859,82 @@ export function seccionesPorClave(
     indicesSinSeccion,
   };
 }
+
+// -----------------------------------------------------------------------------
+// Destinos (A2, `docs/diseno/10-deuda-declarada.md` §2.1) — vocabulario compartido de los tres bancos
+// -----------------------------------------------------------------------------
+
+/**
+ * Los siete destinos posibles de una fila del documento, para cualquier banco. **Unión cerrada.**
+ *
+ * Nacieron en `santander.ts` (`DestinoSantander`) y se generalizan acá porque describen el **pipeline**,
+ * no al banco: toda fila o se vuelve un movimiento, o alimenta uno, o es dato de verificación, o es
+ * ruido con regla escrita, o es un renglón de anexo, o está fuera del cuerpo, o no se entendió —
+ * verificado contra el código de los tres adaptadores, ninguno de los 7 queda vacío por no aplicar. Una
+ * unión por banco conservaría el defecto que A2 existe para sacar: el residuo no era comparable entre
+ * adaptadores (`09-lecciones-aprendidas.md` §3).
+ *
+ * - `movimiento` — la fila que abre un movimiento emitido.
+ * - `continuacion` — una fila que aportó glosa, comprobante o par a un movimiento abierto, o texto a un
+ *   rótulo de anexo que envolvió. No tiene registro propio: su contenido está adentro del registro de
+ *   otra fila.
+ * - `saldoDeclarado` — saldo inicial o final **rotulado**: dato de la verificación, no ruido.
+ * - `ruido` — una regla escrita lo explica (encabezado, título, leyenda, pie). Siempre **con su regla**.
+ * - `anexo` — un renglón emitido de un bloque de anexo.
+ * - `fueraDelCuerpo` — fuera de toda región de tabla y de todo bloque de anexo, y ninguna regla la
+ *   explica: carátula y leyendas legales. Se **cuenta** y no pone el lote en rojo — es la distinción
+ *   entera del diseño (`verificarDestinos`, `verificacion/invariantes.ts`).
+ * - `residuo` — va a `lineasNoInterpretadas`, con su forma. Empuja el lote a `no_cuadra`.
+ */
+export const DESTINOS_BASE = [
+  'movimiento',
+  'continuacion',
+  'saldoDeclarado',
+  'ruido',
+  'anexo',
+  'fueraDelCuerpo',
+  'residuo',
+] as const;
+export type DestinoBase = (typeof DESTINOS_BASE)[number];
+
+export type ConteoDeDestinos<D extends string> = Readonly<Record<D, number>> & {
+  /**
+   * Filas que **ninguna** rama del lector marcó. Tiene que dar **0**: es el control de la partición, y
+   * es lo que hace que "toda fila tiene un destino declarado" sea un hecho medido y no una afirmación
+   * del autor. Mismo razonamiento que `residuoDeParticion` en este archivo.
+   */
+  readonly sinDestino: number;
+  readonly total: number;
+};
+
+/**
+ * Cuenta las filas por destino, genérico en la unión `D` que reciba el llamador.
+ *
+ * `noUncheckedIndexedAccess: true` vuelve incierto el tipo de `conteo[destino]` con `D` genérico, así
+ * que el acumulador interno es un `Map<D, number>` (no un record indexado) y el resultado se
+ * materializa con un único cast local: sano por construcción porque `D` viene de `destinosPosibles`.
+ *
+ * Un destino marcado que `destinosPosibles` no contiene es un error de programación, no un dato del
+ * documento — mismo precedente que `registrarAdaptador` (`registro.ts`): **lanza**, no silencia.
+ */
+export function contarDestinos<D extends string>(
+  destinosPosibles: readonly D[],
+  destinoDeFila: ReadonlyMap<number, D>,
+  total: number,
+): ConteoDeDestinos<D> {
+  const acumulador = new Map<D, number>(destinosPosibles.map((d) => [d, 0]));
+  for (const destino of destinoDeFila.values()) {
+    const previo = acumulador.get(destino);
+    if (previo === undefined) {
+      throw new Error(
+        `contarDestinos: "${destino}" no está en destinosPosibles (${destinosPosibles.join(', ')}). ` +
+          'Un destino fuera de la unión declarada es un error de programación del adaptador.',
+      );
+    }
+    acumulador.set(destino, previo + 1);
+  }
+  // Sano por construcción: `acumulador` tiene exactamente las claves de `destinosPosibles` (se
+  // inicializó con todas, y `set` solo corre sobre claves ya presentes en el guard de arriba).
+  const conteo = Object.fromEntries(acumulador) as Record<D, number>;
+  return { ...conteo, sinDestino: total - destinoDeFila.size, total };
+}

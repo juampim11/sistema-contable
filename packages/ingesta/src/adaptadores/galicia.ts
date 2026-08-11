@@ -87,6 +87,8 @@ export const CAPACIDADES_GALICIA: CapacidadesAdaptador = {
   traeMovimientosFueraDelPeriodo: false,
   // Una sola cuenta en el archivo: no hay consolidado por moneda que publicar (spec §3).
   traeConsolidadoPorMoneda: false,
+  // A2 (C4): todavía no instrumentado. Pasa a `true` cuando `leerGalicia` empiece a devolver `destinos`.
+  declaraDestinos: false,
 };
 
 /**

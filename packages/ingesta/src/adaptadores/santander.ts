@@ -38,8 +38,8 @@
  *    salían **ni en `anexos` ni en `lineasNoInterpretadas`: desaparecían sin dejar rastro**, y el adaptador
  *    parecía el mejor del roster justamente por eso (0 líneas sin interpretar). Ahora cada fila cae en uno de
  *    siete destinos —`movimiento`, `continuacion`, `saldoDeclarado`, `ruido`, `anexo`, `fueraDelCuerpo`,
- *    `residuo`— y la partición **se cuenta**: `leerSantanderConDestinos` devuelve el recuento con
- *    `sinDestino`, que tiene que dar **0**. Ver `ConteoDeDestinos`.
+ *    `residuo`— y la partición **se cuenta**: `leerSantander` devuelve el recuento en `destinos`, con
+ *    `sinDestino`, que tiene que dar **0**. Ver `ConteoDeDestinos` (`toolkit.ts`, generalizado en A2).
  *
  * ## Los anexos (§9): dos bloques, 7 renglones, y el que NO está en los movimientos
  *
@@ -109,12 +109,16 @@ import {
   type Fragmento,
 } from '../texto-pdf.ts';
 import {
+  contarDestinos,
   dentroDeAlgunaRegion,
   parDeColumnas,
   periodoPorEtiquetas,
   regionesDeTabla,
   valorPorEtiqueta,
+  DESTINOS_BASE,
   type ColumnasDeImporte,
+  type ConteoDeDestinos,
+  type DestinoBase,
   type ParDeFila,
   type RegionDeTabla,
 } from './toolkit.ts';
@@ -187,6 +191,8 @@ export const CAPACIDADES_SANTANDER: CapacidadesAdaptador = {
    * acá es la separación por región más el `Saldo total` de cada una.
    */
   traeConsolidadoPorMoneda: false,
+  // A2: Santander tiene la disciplina completa de destinos (unión cerrada, `sinDestino` medido).
+  declaraDestinos: true,
 };
 
 // -----------------------------------------------------------------------------
@@ -511,7 +517,9 @@ type MetadatoDeCuenta = {
 };
 
 /**
- * Los siete destinos posibles de una fila del documento. **Unión cerrada y exhaustiva.**
+ * Los siete destinos posibles de una fila del documento (`DESTINOS_BASE`, `toolkit.ts`) — generalizados
+ * ahí en A2 (`docs/diseno/10-deuda-declarada.md` §2.1) porque describen el pipeline, no a este banco.
+ * Santander fue el primero en tener la disciplina completa y sigue siendo la referencia:
  *
  * Existe porque `"cae fuera de la región de tabla"` no es un destino: es una ubicación, y mientras se usó
  * como si fuera un destino los 7 renglones fiscales de los dos anexos (§9) desaparecían sin dejar rastro.
@@ -530,52 +538,34 @@ type MetadatoDeCuenta = {
  *   `residuo`.
  * - `residuo` — va a `lineasNoInterpretadas`, con su **forma**. Empuja el lote a `no_cuadra`.
  */
-export const DESTINOS_SANTANDER = [
-  'movimiento',
-  'continuacion',
-  'saldoDeclarado',
-  'ruido',
-  'anexo',
-  'fueraDelCuerpo',
-  'residuo',
-] as const;
-export type DestinoSantander = (typeof DESTINOS_SANTANDER)[number];
 
-export type ConteoDeDestinos = Readonly<Record<DestinoSantander, number>> & {
-  /**
-   * Filas que **ninguna** rama del lector marcó. Tiene que dar **0**: es el control de la partición, y es lo
-   * que hace que "toda fila tiene un destino declarado" sea un hecho medido y no una afirmación del autor.
-   * Mismo razonamiento que `residuoDeParticion` en el toolkit.
-   */
-  readonly sinDestino: number;
-  readonly total: number;
+/**
+ * Estrechamiento del contrato compartido, no un tipo paralelo (A1, `registro.ts`): Santander **siempre**
+ * declara destinos (`CAPACIDADES_SANTANDER.declaraDestinos: true`), así que el campo opcional del
+ * contrato pasa a requerido acá — mismo patrón que `SalidaMacro` con `consolidadosPorMoneda`.
+ */
+export type SalidaSantander = SalidaDeAdaptador & {
+  readonly destinos: ConteoDeDestinos<DestinoBase>;
 };
 
 /**
- * El lector, con el recuento de la partición al lado.
- *
- * `SalidaDeAdaptador` es el contrato **compartido** de los tres bancos y no se toca por uno; el recuento sale
- * por acá, que es una función propia de este adaptador. `leerSantander` delega en ésta y tira el recuento, así
- * que **hay una sola pasada y no hay dos clasificaciones que puedan divergir** — que es exactamente el defecto
- * que un segundo recorrido "de auditoría" habría introducido.
+ * El lector. `SalidaDeAdaptador` es el contrato **compartido** de los tres bancos; el recuento de destinos
+ * es un campo más de esa misma salida (A2), no una función paralela — antes de A2 `leerSantander` delegaba
+ * en `leerSantanderConDestinos` y **tiraba** el recuento, así que la disciplina completa corría en cada
+ * llamada de producción sin que nadie la consumiera. Sigue habiendo **una sola pasada**: no hay dos
+ * clasificaciones que puedan divergir, que es exactamente el defecto que un segundo recorrido "de
+ * auditoría" habría introducido.
  */
-export function leerSantander(filas: readonly FilaGeometrica[]): SalidaDeAdaptador {
-  return leerSantanderConDestinos(filas).salida;
-}
-
-export function leerSantanderConDestinos(filas: readonly FilaGeometrica[]): {
-  readonly salida: SalidaDeAdaptador;
-  readonly destinos: ConteoDeDestinos;
-} {
+export function leerSantander(filas: readonly FilaGeometrica[]): SalidaSantander {
   const textos = filas.map(textoDeFila);
   const noInterpretadas: LineaNoInterpretada[] = [];
 
   /** Índice de fila → destino. Se pisa cuando una decisión posterior lo revisa (ver `cerrar`). */
-  const destinoDeFila = new Map<number, DestinoSantander>();
-  const marcar = (i: number, destino: DestinoSantander): void => {
+  const destinoDeFila = new Map<number, DestinoBase>();
+  const marcar = (i: number, destino: DestinoBase): void => {
     destinoDeFila.set(i, destino);
   };
-  const marcarSiFalta = (i: number, destino: DestinoSantander): void => {
+  const marcarSiFalta = (i: number, destino: DestinoBase): void => {
     if (!destinoDeFila.has(i)) destinoDeFila.set(i, destino);
   };
 
@@ -863,33 +853,13 @@ export function leerSantanderConDestinos(filas: readonly FilaGeometrica[]): {
   );
 
   return {
-    salida: {
-      cuentas: cuentas.filter((c): c is CuentaConMovimientos => c !== null),
-      lineasNoInterpretadas: noInterpretadas,
-      paginasDeclaradas: leerPaginasDeclaradas(filas),
-      // `traeConsolidadoPorMoneda: false`: el renglón existe y es ilegible por fila (§2.1). Se omite el
-      // campo, y la ausencia se lee como "no hay qué comparar", nunca como "cuadra".
-    },
-    destinos: contarDestinos(destinoDeFila, filas.length),
+    cuentas: cuentas.filter((c): c is CuentaConMovimientos => c !== null),
+    lineasNoInterpretadas: noInterpretadas,
+    paginasDeclaradas: leerPaginasDeclaradas(filas),
+    // `traeConsolidadoPorMoneda: false`: el renglón existe y es ilegible por fila (§2.1). Se omite el
+    // campo, y la ausencia se lee como "no hay qué comparar", nunca como "cuadra".
+    destinos: contarDestinos(DESTINOS_BASE, destinoDeFila, filas.length),
   };
-}
-
-/** El recuento por destino, más las dos cifras de control. Ver `ConteoDeDestinos`. */
-function contarDestinos(
-  destinoDeFila: ReadonlyMap<number, DestinoSantander>,
-  total: number,
-): ConteoDeDestinos {
-  const conteo: Record<DestinoSantander, number> = {
-    movimiento: 0,
-    continuacion: 0,
-    saldoDeclarado: 0,
-    ruido: 0,
-    anexo: 0,
-    fueraDelCuerpo: 0,
-    residuo: 0,
-  };
-  for (const destino of destinoDeFila.values()) conteo[destino] += 1;
-  return { ...conteo, sinDestino: total - destinoDeFila.size, total };
 }
 
 /** Las dos clases de fila que una regla escrita explica: el pie anclado (§8) y `RUIDO_SANTANDER`. */
@@ -993,7 +963,7 @@ type LecturaDePiezas =
 
 /**
  * Cómo se leyó una fila del bloque **antes** de mirar a sus vecinas. Unión cerrada: toda fila del bloque cae
- * en una de las cinco, que es la misma disciplina de `DestinoSantander` un nivel más abajo.
+ * en una de las cinco, que es la misma disciplina de `DestinoBase` (`toolkit.ts`) un nivel más abajo.
  *
  * - `ruido` — una regla escrita la explica (`RUIDO_SANTANDER` o el pie).
  * - `residuo` — no se entendió, con el código con el que se reporta.
@@ -1108,7 +1078,7 @@ function leerAnexos(
   regiones: readonly RegionDeTabla[],
   atribucionCuenta: AtribucionAnexo,
   noInterpretadas: LineaNoInterpretada[],
-  marcar: (i: number, destino: DestinoSantander) => void,
+  marcar: (i: number, destino: DestinoBase) => void,
 ): readonly AnexoExtracto[] {
   const anexos: AnexoExtracto[] = [];
 
@@ -1696,7 +1666,7 @@ function metadatoDeRegion(
   k: number,
   region: RegionDeTabla,
   noInterpretadas: LineaNoInterpretada[],
-  marcar: (i: number, destino: DestinoSantander) => void,
+  marcar: (i: number, destino: DestinoBase) => void,
 ): MetadatoDeCuenta {
   const hasta = region.indiceCierre ?? textos.length;
 

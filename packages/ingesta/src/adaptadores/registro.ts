@@ -28,6 +28,7 @@ import type {
   CuentaConMovimientos,
   LineaNoInterpretada,
 } from '../esquema.ts';
+import type { ConteoDeDestinos, DestinoBase } from './toolkit.ts';
 
 /**
  * La entrada del registro: las **filas geométricas**.
@@ -80,6 +81,13 @@ export type SalidaDeAdaptador = {
   // un adaptador que **calcula** el valor y a veces le da `undefined` —el caso real: el documento no
   // declara nada— no puede omitir la propiedad. Es el mismo estilo que `paginasDeclaradas` de acá arriba.
   readonly cuentasDeclaradas?: number | undefined;
+  /**
+   * A2 (`docs/diseno/10-deuda-declarada.md` §2.1): el recuento por destino de **toda** fila del
+   * documento (`DESTINOS_BASE`, `toolkit.ts`). `undefined` = este adaptador todavía no declara
+   * destinos — **no** es "residuo 0". Ver `capacidades.declaraDestinos` y `verificarDestinos`
+   * (`verificacion/invariantes.ts`).
+   */
+  readonly destinos?: ConteoDeDestinos<DestinoBase> | undefined;
 };
 
 export type Adaptador = {

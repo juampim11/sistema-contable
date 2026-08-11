@@ -116,6 +116,16 @@ export const capacidadesAdaptadorSchema = z.object({
    * totales y el parser no los encontró, no se degrada a no aplica: el parser falló"*.
    */
   traeConsolidadoPorMoneda: z.boolean(),
+  /**
+   * A2 (`docs/diseno/10-deuda-declarada.md` §2.1): ¿este adaptador clasifica CADA fila en uno de los
+   * destinos de `DESTINOS_BASE` (`toolkit.ts`) y publica el recuento en `SalidaDeAdaptador.destinos`?
+   *
+   * Mismo razonamiento que `traeTotalesDeclarados`/`traeConsolidadoPorMoneda`: sin la declaración,
+   * "este banco todavía no está instrumentado" y "el adaptador dejó de mandar el conteo" se ven
+   * exactamente igual. Con `true`, `destinos === undefined` en la salida es un `error` del gate, no un
+   * "no aplica" — ver `verificarDestinos`.
+   */
+  declaraDestinos: z.boolean(),
 });
 export type CapacidadesAdaptador = z.infer<typeof capacidadesAdaptadorSchema>;
 
