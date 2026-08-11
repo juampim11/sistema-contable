@@ -6,6 +6,33 @@
 
 ---
 
+## 2026-08-11 (24) — Plan 6.1 (CLAUDE.md §3.2, escrito antes del primer `Edit`)
+
+**Herramienta:** Claude Code, sesión autónoma. Dispara modo plan por (a) migración — obligatorio,
+sin importar tamaño.
+
+1. **Qué cambia y qué no.** `packages/data/migrations/00NN_catalogo_bancos.sql`: `insert ... on
+   conflict (codigo) do nothing` para los tres códigos ya construidos (`galicia`, `santander`,
+   `macro`) en la tabla `banco`. `galicia` hoy está insertada a mano en el piloto sin mecanismo
+   reproducible — la migración la formaliza sin duplicarla. `capacidades` es `jsonb not null default
+   '{}'` sin `check`, así que no hace falta mantenerla sincronizada con `CAPACIDADES_GALICIA/_MACRO/
+   _SANTANDER`; entra un resumen informativo con un comentario explícito de que no es fuente de
+   verdad. **No cambia:** ningún dato existente (es `on conflict do nothing`, no `update`). **No
+   entra:** Bancor (pausa total) ni ningún banco de los cinco pendientes.
+2. **Qué se mide.** La migración corre limpia contra una base nueva y contra el piloto (que ya tiene
+   `galicia`) sin duplicar filas ni tocar la existente. `pnpm verificar` sigue verde.
+3. **Predicción falsable.** Antes: piloto con 1 fila en `banco` (`galicia`). Después de correr la
+   migración contra el piloto: 3 filas (`galicia` sin cambios, `santander` y `macro` nuevas). Si
+   `galicia` cambia de fila (distinto uuid o algún campo) es un hallazgo — `on conflict do nothing`
+   tiene que dejarla exactamente como está.
+4. **Agentes.** `dba-data` + `security-engineer` + `seguridad-datos-financieros` — los tres,
+   obligatorio por ser migración (CLAUDE.md §3.1).
+5. **Paso revertible más chico.** La migración entera ya es la unidad atómica: un archivo SQL nuevo,
+   revertible con una migración de baja (`delete where codigo in (...)`) si hiciera falta, sin tocar
+   ninguna fila que no haya insertado ella misma.
+
+---
+
 ## 2026-08-11 (23) — A2 cerrado en código: los cinco commits (C1-C5), mergeado a `main`
 
 **Herramienta:** Claude Code. **Estado:** mergeado (`feat/destinos-alcance-completo`, `--no-ff`).
