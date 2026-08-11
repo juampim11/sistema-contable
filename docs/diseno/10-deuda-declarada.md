@@ -199,7 +199,7 @@ mismo patrón que el caso `cuenta_no_pertenece_al_cliente` ya documentado.
 La conducta de Santander tiene la razón escrita (*"un adaptador que siguiera adelante apagaría V7 en
 silencio"*) y debería ser la única. Cambiarla implica que Galicia empiece a lanzar.
 
-### 2.4 🟠 La forma del contrato: cuatro tipos propios donde debería haber uno
+### 2.4 ✅ RESUELTO (A1, 2026-08-11) — La forma del contrato: cuatro tipos propios donde debería haber uno
 
 `SalidaGalicia`, `SalidaMacro`, `EntradaGalicia`, `EntradaMacro` contra `SalidaDeAdaptador` /
 `EntradaDeAdaptador`. Medido:
@@ -215,6 +215,13 @@ silencio"*) y debería ser la única. Cambiarla implica que Galicia empiece a la
 de aislamiento entre bancos): *ningún archivo de `adaptadores/` declara un tipo `Salida*` o `Entrada*`
 propio; el contrato es `registro.ts`.* **Sin esa regla, el cuarto banco declara los suyos y volvemos a
 tres.**
+
+**Resuelto tal como estaba diseñado acá**, con dos ajustes que aparecieron al implementar (ver
+`HANDOFF.md` 2026-08-11, entradas del cierre de A1): `packages/ingesta/src/index.ts` re-exportaba los
+dos tipos `Entrada*` por nombre explícito y había que ajustarlo (si no, no compila), y la regla de
+código quedó redactada contra el **lado derecho** de la declaración (`XxxDeAdaptador` o una
+intersection de eso), no contra el nombre — porque `SalidaGalicia`/`SalidaMacro` siguen existiendo a
+propósito, como fachada del contrato, no como tipos paralelos.
 
 ### 2.5 🔴 La lectura de carátula: hay un patrón que debería ser el único, y migrarlo mueve el hash
 

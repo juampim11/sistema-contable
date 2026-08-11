@@ -6,6 +6,45 @@
 
 ---
 
+## 2026-08-11 (21) — A1 cerrado: contrato unificado de adaptadores
+
+**Herramienta:** Claude Code. **Estado:** mergeado a `main` (`fix/contrato-unificado-adaptadores`,
+`--no-ff`). Sesión autónoma, sigue sin intervención del usuario.
+
+**Plan escrito en HANDOFF (20) antes del primer `Edit`**, tal como exige la Parte D recién cerrada.
+Convocados `arquitecto-software` + `tech-lead` (diseño, antes de tocar código) y `code-reviewer`
+(diff final, antes de mergear) — los tres con `TaskCreate`/`addBlockedBy` bloqueando la
+implementación.
+
+**Dos hallazgos de los agentes que cambiaron la implementación respecto del plan original:**
+1. `arquitecto-software`: `packages/ingesta/src/index.ts` re-exporta los adaptadores **por nombre
+   explícito** (no `export *`, por la colisión de `BANCO_CODIGO`/`VERSION` entre bancos ya
+   documentada ahí) y nombraba literalmente `EntradaGalicia`/`EntradaMacro` — sin ajustarlo, el build
+   no compila al borrar esos tipos.
+2. Los dos agentes de diseño, independientemente: la regla de código tal como estaba redactada en el
+   plan ("ningún archivo declara `Salida*`/`Entrada*` propio") se **auto-rompe** contra el propio
+   diseño de A1, porque `SalidaGalicia`/`SalidaMacro` siguen existiendo a propósito como fachada del
+   contrato. Se redactó contra el **lado derecho** de la declaración en vez del nombre.
+
+**Implementado:** `EntradaGalicia`/`EntradaMacro` borrados; `SalidaGalicia` → alias de
+`SalidaDeAdaptador`; `SalidaMacro` → intersection type; comentario nuevo en `registro.ts` con las
+tres formas posibles de relacionarse con el contrato; `index.ts` ajustado; regla nueva en
+`reglas-de-codigo.test.ts` **probada por mutación a mano** (reintroduje un tipo paralelo en
+`galicia.ts`, confirmé que el test cae con el mensaje esperado, revertí); de paso, `code-reviewer`
+encontró y `String.raw` corrigió un regex sin escapar en la regla de aislamiento entre bancos ya
+existente (bug real, confirmado con Node, sin impacto práctico medido hasta ahora).
+
+**Verificado contra la predicción falsable del plan:** `pnpm verificar` → **725 tests + 7 todo**
+(era 724+7, **+1 exacto** por la regla nueva, 0 tests rotos) — la predicción del punto 3 del plan se
+cumplió tal cual. Barrido estricto: 0 fugas. `docs/diseno/10-deuda-declarada.md` §2.4 marcado
+resuelto.
+
+**Sigue A2** (destinos, los tres pasos — diseño ya integrado en el plan externo
+`cheerful-gathering-feather.md`), con su propia convocatoria (`tech-lead` conduce + `backend-dev` +
+`qa-automation` + `qa-funcional`) antes de tocar `toolkit.ts`/`macro.ts`/`galicia.ts`.
+
+---
+
 ## 2026-08-11 (20) — Plan A1 (CLAUDE.md §3.2, escrito antes del primer `Edit`)
 
 **Herramienta:** Claude Code, sesión autónoma. Dispara modo plan por (c) y (d): modifica adaptadores
