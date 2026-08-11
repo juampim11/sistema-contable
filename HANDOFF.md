@@ -6,6 +6,57 @@
 
 ---
 
+## 2026-08-11 (37) — Investigación: "el prompt de CBU no acepta nada" — no era un bug
+
+**Herramienta:** Claude Code. El usuario reportó, antes de correr nada más, que el prompt oculto de (36)
+no aceptaba tipeo ni pegado, en PowerShell (dentro y fuera de VS Code). Pidió investigar la causa antes
+de reintentar cualquier cosa, y explícitamente que no se sugiriera `--cbu` como workaround.
+
+**Descartado por descarte sucesivo, con el usuario corriendo cada prueba:**
+1. pnpm envolviendo `stdin` — descartado: falló igual con `node apps/cli/src/alta-cuenta.ts` directo.
+2. VS Code/ConPTY — descartado: falló igual en una ventana de PowerShell común, fuera del editor.
+3. El mecanismo de `stdin` en modo raw en la máquina del usuario — **descartado con evidencia
+   concluyente**, dos diagnósticos corridos por el usuario:
+   - En la corrida real, `Ctrl+C` sobre el prompt colgado produjo exactamente
+     `ABORTA: Cancelado por el operador (Ctrl+C).` — ese mensaje **solo puede salir si el modo raw
+     estaba activo** y `onData` interceptó el byte ``. Si el modo raw no hubiera estado
+     funcionando, Windows/Node habrían matado el proceso con el SIGINT default, sin ese mensaje.
+   - Un test aislado (`node -e "process.stdin.setRawMode(true); ..."`, sin este repo de por medio)
+     mostró cada tecla tipeada llegando una por una (`GOT:"s"`, `GOT:"f"`, etc.).
+
+**Conclusión: nunca hubo un bug funcional.** El mismo `onData` que procesó el Ctrl+C correctamente
+procesa cada dígito exactamente igual — no hay ninguna rama que trate un carácter de control distinto
+de un dígito en cuanto a si SE RECIBE. Lo que pasaba es que el diseño (deliberado, de la convocatoria
+de (36): "ni un asterisco") no da **ninguna** señal de que el prompt está vivo mientras se tipea, y con
+dos prompts seguidos (CBU y confirmación) es fácil no notar la transición al segundo. Desde la
+perspectiva del usuario, "funciona en silencio" y "está colgado" son indistinguibles — el mismo costo
+que ya había anticipado `seguridad-datos-financieros` en (36) al elegir cero eco, pero sin haber previsto
+que también generaría esta duda.
+
+**Fix aplicado — cosmético, cero cambio de superficie de seguridad:** una línea de texto antes del
+primer prompt, aclarando explícitamente que no va a aparecer nada en pantalla, que es a propósito, y
+que después del primero va a aparecer un segundo pedido. No cambia el modelo de eco (sigue sin haber
+ni un asterisco).
+
+**Decisión sobre agregar feedback por tecla (asteriscos):** se le preguntó al usuario si quería
+reabrir la decisión de (36) y agregar un asterisco por tecla (confirmaría "está vivo" sin revelar el
+valor, solo la cantidad tipeada — que de todas formas ya se sabe que son 22). El usuario respondió que
+la aclaración de texto ya alcanza ("Solucionado") — **se mantiene cero eco, sin asteriscos**, sin
+reconvocar a `security-engineer`/`seguridad-datos-financieros` porque no hubo cambio de diseño que
+revisar.
+
+**Medido:** `pnpm typecheck` limpio, `pnpm test` en verde (783 tests, sin cambios de comportamiento en
+ninguno), `pnpm barrido` limpio.
+
+**Para quien retome:** si un futuro operador reporta el mismo síntoma, el primer paso NO es asumir un
+bug de `stdin` — es confirmar con las mismas dos pruebas de acá (Ctrl+C sobre el prompt colgado, y el
+`node -e` aislado) antes de tocar código. Si las dos dan la misma señal que acá, es la misma causa:
+falta de familiaridad con el diseño de cero eco, no un defecto.
+
+---
+
+---
+
 ## 2026-08-11 (36) — `--cbu` sacado del CLI: prompt oculto de doble tipeo, en su lugar
 
 **Herramienta:** Claude Code. Cierra un gap de seguridad que el propio usuario detectó en el cierre (35),
