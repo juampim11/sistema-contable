@@ -6,6 +6,32 @@
 
 ---
 
+## 2026-08-11 (26) — Plan 6.2 (CLAUDE.md §3.2, escrito antes del primer `Edit`)
+
+**Herramienta:** Claude Code, sesión autónoma. Dispara modo plan por (a)/(b) — toca el modelo de
+tenancy y aislamiento entre clientes.
+
+1. **Qué cambia y qué no.** `apps/cli/src/alta-cliente.ts` (mismo directorio que `alta-cuenta.ts`, no
+   `packages/data/scripts/` como dice el comentario desactualizado de ese archivo — se corrige de
+   paso). Inserta un `tenant_node` con `tipo='cliente'` colgando del `estudio` existente. Recibe
+   `--estudio <uuid>` y `--nombre "<etiqueta>"` — **nunca** un CUIT, nunca lo imprime. Imprime **solo**
+   el uuid nuevo. **No cambia:** el modelo de tenancy en sí (ya está diseñado, HANDOFF entrada 11); no
+   se toca `alta-cuenta.ts` salvo lectura de referencia de estilo.
+2. **Qué se mide.** Test de integración: creación exitosa, unicidad razonable (no dos clientes
+   idénticos por accidente, sin inventar una restricción que el modelo no pida), y que el uuid nuevo
+   quede resoluble por `conUsuario` del socio del estudio (aislamiento correcto desde el primer
+   momento).
+3. **Predicción falsable.** Antes: el piloto tiene 1 cliente (`CLIENTE PILOTO 01`). Después de correr
+   `pnpm alta:cliente` dos veces (Santander, Macro): 3 clientes, cada uno resoluble por `conUsuario`
+   del socio del estudio, ninguno con CUIT en ninguna columna ni en la salida de stdout.
+4. **Agentes.** `dba-data` + `arquitecto-software` (modelo de tenancy) + `security-engineer` +
+   `seguridad-datos-financieros` — los cuatro, porque toca aislamiento entre clientes.
+5. **Paso revertible más chico.** El script entero ya es la unidad atómica razonable: es un alta, no
+   una migración de esquema — revertible borrando la fila (o, en el piloto, simplemente no
+   usándola) sin tocar ninguna otra.
+
+---
+
 ## 2026-08-11 (25) — 6.1 cerrado: catálogo de bancos poblado
 
 **Herramienta:** Claude Code, sesión autónoma. Mergeado a `main` (`feat/catalogo-bancos`, `--no-ff`).
