@@ -581,6 +581,19 @@ export const CODIGOS_DIFERENCIA = [
    * consolidado, no rompe ninguna cadena, y desaparece del sistema con todo cerrando.
    */
   'EST_CUENTAS_NO_COINCIDEN',
+  /**
+   * A2 (C5): el adaptador **declara** que clasifica destinos (`capacidades.declaraDestinos: true`) y la
+   * salida no trae `destinos`. Mismo precedente que `EST_CONSOLIDADO_MONEDA`/`consolidado_no_encontrado`:
+   * la declaración existe para que "todavía no lo instrumenté" y "el adaptador dejó de mandar el conteo"
+   * no se vean igual. Ver `verificarDestinos` (`verificacion/invariantes.ts`).
+   */
+  'EST_DESTINOS_NO_DECLARADOS',
+  /**
+   * A2 (C5): `destinos.sinDestino > 0` — quedó una fila que ninguna rama del lector clasificó en uno de
+   * los `DESTINOS_BASE` (`toolkit.ts`). La partición que `contarDestinos` mide no cerró: es un hueco en
+   * el lector, no un dato del documento. Ver `verificarDestinos`.
+   */
+  'EST_DESTINOS_SIN_CLASIFICAR',
 ] as const;
 export type CodigoDiferencia = (typeof CODIGOS_DIFERENCIA)[number];
 

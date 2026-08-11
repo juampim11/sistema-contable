@@ -16,6 +16,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cerrarConexiones, conUsuario } from '@sistema-contable/data';
 import type { ObjectStorage } from '@sistema-contable/almacenamiento';
+import {
+  CAPACIDADES_SINTETICAS,
+  extractoSintetico,
+  registrarAdaptador,
+  type Adaptador,
+  type CapacidadesAdaptador,
+} from '@sistema-contable/ingesta';
 import { clienteDuenio, sembrar, USUARIOS, type Sembrado } from '../../../packages/data/tests/ayuda.ts';
 import { ingestar, parsearArgumentos } from '../src/ingestar.ts';
 
@@ -40,6 +47,93 @@ function archivoUnico(marca: string): string {
   const ruta = join(dirTemporal, `extracto-${marca}.pdf`);
   writeFileSync(ruta, `no soy un PDF valido, marca ${marca}`);
   return ruta;
+}
+
+/**
+ * Un PDF **de verdad**, mínimo, para el único test de este archivo que necesita llegar más allá del
+ * parseo (A2, C5): el guard, `--cliente` y la idempotencia se prueban con bytes cualquiera porque
+ * rechazan **antes** de abrir el documento; el gate de destinos rechaza **después** de leerlo, así que
+ * hace falta un PDF que `extraerTexto`/`aFilas` (`unpdf`) puedan parsear de verdad.
+ *
+ * Cada línea es un objeto `Tj` propio (una fila geométrica por línea) a fuente chica, para que el texto
+ * completo sobreviva a la extracción sin quedar recortado por el ancho de página — medido: a 24pt una
+ * frase larga se corta a los ~37 caracteres, a 6pt no.
+ */
+function pdfMinimoConTexto(lineas: readonly string[]): Buffer {
+  const objetos: Record<number, string> = {
+    1: '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    2: '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+    3: '3 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> ' +
+      '/MediaBox [0 0 612 792] /Contents 5 0 R >>\nendobj\n',
+    4: '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+  };
+  let y = 720;
+  const contenidoStream = lineas
+    .map((l) => {
+      const linea = `BT /F1 6 Tf 72 ${y} Td (${l}) Tj ET`;
+      y -= 12;
+      return linea;
+    })
+    .join('\n');
+  objetos[5] =
+    `5 0 obj\n<< /Length ${contenidoStream.length} >>\nstream\n${contenidoStream}\nendstream\nendobj\n`;
+
+  let cuerpo = '%PDF-1.4\n';
+  const offsets: number[] = [0, 0, 0, 0, 0, 0];
+  for (let i = 1; i <= 5; i += 1) {
+    offsets[i] = Buffer.byteLength(cuerpo, 'latin1');
+    cuerpo += objetos[i];
+  }
+  const offsetXref = Buffer.byteLength(cuerpo, 'latin1');
+  // La primera entrada de todo xref (spec ISO 32000) es SIEMPRE offset cero con diez dígitos, generación
+  // 65535, libre — no depende del documento. Se arma con `repeat` y no como un literal de diez ceros
+  // seguidos: el barrido de fuga (`tools/barrido-fuga.ts`) cruza cualquier corrida de diez dígitos contra
+  // el material real, y ese boilerplate del formato PDF no tiene nada que ver con un dato de cliente.
+  let xref = `xref\n0 6\n${'0'.repeat(10)} 65535 f \n`;
+  for (let i = 1; i <= 5; i += 1) {
+    xref += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  cuerpo += `${xref}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${offsetXref}\n%%EOF`;
+  return Buffer.from(cuerpo, 'latin1');
+}
+
+/**
+ * Un adaptador de PRUEBA (no un banco real), registrado con el código ya sembrado `banco_cli`. Declara
+ * `declaraDestinos: true` y devuelve `destinos.sinDestino = 1`: la partición de `contarDestinos` no
+ * cerró, y eso es exactamente lo que `verificarDestinos` (A2, C5) tiene que agarrar antes de persistir
+ * una sola fila.
+ */
+function adaptadorFalsoConResiduo(): Adaptador {
+  const capacidades: CapacidadesAdaptador = { ...CAPACIDADES_SINTETICAS, declaraDestinos: true };
+  const cuenta = extractoSintetico({
+    semilla: 91,
+    cantidadMovimientos: 3,
+    saldoInicialCentavos: 10_000_00n,
+    periodoDesde: '2026-06-01',
+    periodoHasta: '2026-06-30',
+  });
+  return {
+    bancoCodigo: 'banco_cli',
+    version: 1,
+    capacidades,
+    reconoce: () => true,
+    leer: () => ({
+      cuentas: [cuenta],
+      lineasNoInterpretadas: [],
+      paginasDeclaradas: undefined,
+      destinos: {
+        movimiento: 3,
+        continuacion: 0,
+        saldoDeclarado: 0,
+        ruido: 0,
+        anexo: 0,
+        fueraDelCuerpo: 0,
+        residuo: 0,
+        sinDestino: 1,
+        total: 4,
+      },
+    }),
+  };
 }
 
 /** Storage espía: registra si se lo llamó. Para este test importa eso, no qué guardó. */
@@ -300,5 +394,50 @@ describe('idempotencia por cliente', () => {
       return Number(f[0]?.n ?? '0');
     });
     expect(antesA).toBeGreaterThan(0);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('A2 (C5) — el gate de residuo rechaza el lote entero, antes de persistir una cuenta', () => {
+  beforeAll(() => {
+    // Un adaptador de prueba, no uno de los tres bancos reales: lo único que hace falta demostrar es que
+    // el CLI, con un `SalidaDeAdaptador.destinos` que no cierra, rechaza el lote con el motivo nuevo —
+    // `verificarDestinos` en sí ya está probado exhaustivamente en `verificacion.test.ts`.
+    registrarAdaptador(adaptadorFalsoConResiduo());
+  });
+
+  it('sinDestino > 0 se rechaza con motivo_codigo = destinos_no_cuadran, y no persiste nada', async () => {
+    const { storage, escrituras } = storageEspia();
+    const ruta = join(dirTemporal, 'extracto-destinos.pdf');
+    writeFileSync(
+      ruta,
+      pdfMinimoConTexto([
+        'DOCUMENTO SINTETICO DE PRUEBA PARA EL GATE DE DESTINOS A2 C5',
+        'SEGUNDA LINEA SOLO PARA SUPERAR EL UMBRAL DE CARACTERES MINIMOS',
+      ]),
+    );
+
+    const r = await ingestar(
+      { cliente: s.clienteA, archivo: ruta, banco: 'banco_cli', usuario: USUARIOS.socio },
+      storage,
+    );
+
+    expect(r.estado).toBe('rechazado');
+    if (r.estado === 'rechazado') {
+      expect(r.motivoCodigo).toBe('destinos_no_cuadran');
+
+      const lote = await conUsuario(USUARIOS.socio, async (tx) => {
+        const f = await tx.consultar<{ estado: string; motivo_codigo: string | null }>(
+          'select estado, motivo_codigo from lote_ingesta where id = $1 and cliente_id = $2',
+          [r.loteId, s.clienteA],
+        );
+        return f[0];
+      });
+      expect(lote?.estado).toBe('con_errores');
+      expect(lote?.motivo_codigo).toBe('destinos_no_cuadran');
+    }
+
+    // El lote se rechaza ANTES del bucle por cuenta: ni el objeto ni ninguna cuenta llegan a persistirse.
+    expect(escrituras).toEqual([]);
   });
 });

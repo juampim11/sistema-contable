@@ -17,7 +17,9 @@ import {
   verificarAritmetica,
   verificarConsolidadoPorMoneda,
   verificarConteoDeCuentas,
+  verificarDestinos,
 } from '../src/verificacion/invariantes.ts';
+import type { ConteoDeDestinos, DestinoBase } from '../src/adaptadores/toolkit.ts';
 import { estadoSegunVerificacion } from '../src/persistir.ts';
 import {
   CODIGO_ESPERADO,
@@ -611,5 +613,69 @@ describe('el conteo de cuentas declarado por el documento', () => {
     const d = verificarConteoDeCuentas(2, 3)[0];
     expect(d?.campo).toBeUndefined();
     expect(Object.keys(d ?? {}).sort()).toEqual(['codigo', 'severidad']);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// A2 (C5) — el gate de residuo: `verificarDestinos`
+// -----------------------------------------------------------------------------
+
+/**
+ * Fixture mínimo de `ConteoDeDestinos<DestinoBase>`: todos los destinos en 0 salvo los que el test
+ * pisa. `total` no importa para `verificarDestinos` (no lo lee), así que se completa por consistencia
+ * del tipo y no se usa como aserción.
+ */
+function destinosDe(
+  over: { readonly sinDestino?: number; readonly residuo?: number; readonly fueraDelCuerpo?: number } = {},
+): ConteoDeDestinos<DestinoBase> {
+  const conteo: Record<DestinoBase, number> = {
+    movimiento: 0,
+    continuacion: 0,
+    saldoDeclarado: 0,
+    ruido: 0,
+    anexo: 0,
+    fueraDelCuerpo: over.fueraDelCuerpo ?? 0,
+    residuo: over.residuo ?? 0,
+  };
+  const sinDestino = over.sinDestino ?? 0;
+  const total = sinDestino + Object.values(conteo).reduce((a, b) => a + b, 0);
+  return { ...conteo, sinDestino, total };
+}
+
+describe('verificarDestinos — el gate de residuo (A2, C5)', () => {
+  it('caso A: sin destinos y el adaptador no declara → no aplica todavía, no "cuadra"', () => {
+    expect(verificarDestinos(undefined, false)).toEqual([]);
+  });
+
+  it('caso B: sin destinos y el adaptador SÍ declara → prometió el conteo y no llegó', () => {
+    const r = verificarDestinos(undefined, true);
+    expect(r).toEqual([{ codigo: 'EST_DESTINOS_NO_DECLARADOS', severidad: 'error' }]);
+  });
+
+  it('caso C: sinDestino > 0 → la partición no cierra', () => {
+    const r = verificarDestinos(destinosDe({ sinDestino: 1 }), true);
+    expect(r).toEqual([{ codigo: 'EST_DESTINOS_SIN_CLASIFICAR', severidad: 'error' }]);
+  });
+
+  it("caso C': sinDestino = 0 (control negativo) → sin diferencias", () => {
+    expect(verificarDestinos(destinosDe({ sinDestino: 0 }), true)).toEqual([]);
+  });
+
+  it('caso D: residuo > 0 → reusa EST_LINEA_NO_INTERPRETADA, código exacto', () => {
+    const r = verificarDestinos(destinosDe({ residuo: 1 }), true);
+    expect(r).toEqual([{ codigo: 'EST_LINEA_NO_INTERPRETADA', severidad: 'error' }]);
+  });
+
+  it('caso E: fueraDelCuerpo > 0 (resto en 0) → NINGUNA diferencia — es la distinción entera del diseño', () => {
+    const r = verificarDestinos(destinosDe({ fueraDelCuerpo: 5 }), true);
+    expect(r).toEqual([]);
+  });
+
+  it('caso F: sinDestino Y residuo a la vez → las DOS diferencias, checks independientes', () => {
+    const r = verificarDestinos(destinosDe({ sinDestino: 1, residuo: 1 }), true);
+    expect(r).toEqual([
+      { codigo: 'EST_DESTINOS_SIN_CLASIFICAR', severidad: 'error' },
+      { codigo: 'EST_LINEA_NO_INTERPRETADA', severidad: 'error' },
+    ]);
   });
 });
