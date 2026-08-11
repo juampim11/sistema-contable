@@ -126,6 +126,69 @@ describe('redactor — por forma del valor (el caso que más se filtra)', () => 
 });
 
 // -----------------------------------------------------------------------------
+/**
+ * LA FUGA DE LA CORRIDA LARGA — encontrada en un barrido proactivo, no en un incidente.
+ *
+ * `cbu` y `cuit` anclan con `\b` a los dos lados. El límite izquierdo estaba: lo que faltaba era que
+ * una corrida MÁS LARGA que la publicada rompe el `\b` derecho y **no matchea ningún detector** — ni
+ * el propio, ni ningún otro. `glosa.ts` (`packages/ingesta/src/glosa.ts`) ya tenía el catch-all que
+ * tapa esto; acá no había llegado.
+ *
+ * El signo del error se invierte según el lado: en un LECTOR un límite faltante captura de más y se
+ * nota (el error de los cuatro rostros de `09` §1); en un REDACTOR captura de MENOS y no se nota
+ * nunca. Por cada caso: el publicado (que ya funcionaba) y el mismo valor con un dígito de más (que
+ * antes de este fix pasaba entero).
+ */
+describe('la corrida larga: el catch-all que faltaba propagar desde glosa.ts', () => {
+  it('CBU de 22 se tapa (caso publicado, ya funcionaba)', () => {
+    const { texto, detectores } = redactarTexto('cuenta 0070012345678901234567 ok');
+    expect(texto).toBe('cuenta [REDACTADO] ok');
+    expect(detectores).toContain('cbu');
+  });
+
+  it('🔴 CBU de 23 (un dígito más) — antes pasaba entero, ahora lo tapa el catch-all', () => {
+    const { texto, detectores } = redactarTexto('cuenta 00700123456789012345678 ok');
+    expect(texto).toBe('cuenta [REDACTADO] ok');
+    expect(texto).not.toContain('00700123456789012345678');
+    expect(detectores).toContain('corrida_larga');
+  });
+
+  it('CUIT válido se tapa (caso publicado, ya funcionaba)', () => {
+    const { texto, detectores } = redactarTexto('cliente 20-99999999-5 ok');
+    expect(texto).toBe('cliente [REDACTADO] ok');
+    expect(detectores).toContain('cuit');
+  });
+
+  it('🔴 CUIT con un dígito pegado — antes pasaba entero, ahora lo tapa el catch-all', () => {
+    const { texto, detectores } = redactarTexto('cliente 209999999955 ok');
+    expect(texto).toBe('cliente [REDACTADO] ok');
+    expect(texto).not.toContain('209999999955');
+    expect(detectores).toContain('corrida_larga');
+  });
+
+  it('una glosa realista con la corrida pegada al texto también queda tapada', () => {
+    // Es la forma en que el hallazgo se manifestaría de verdad: no un valor aislado, sino dentro de
+    // una descripción de movimiento que terminó en un log de error.
+    const { texto } = redactarTexto('TRANSF 00700123456789012345678 CTA');
+    expect(texto).not.toContain('00700123456789012345678');
+  });
+
+  it('NO tapa un conteo de diagnóstico corto (8 dígitos): el piso es 9, igual que en glosa.ts', () => {
+    const { texto, detectores } = redactarTexto('archivo_bytes=12345678');
+    expect(texto).toBe('archivo_bytes=12345678');
+    expect(detectores).toHaveLength(0);
+  });
+
+  it('NO tapa un importe en formato argentino, aunque tenga más de 9 dígitos en total', () => {
+    // El lookaround excluye la coma decimal: el importe se tapa por su propio detector, y el
+    // catch-all no debe además comerse el conteo de dígitos que separa.
+    const { texto, detectores } = redactarTexto('saldo 1.234.567.890,50 ok');
+    expect(texto).toBe('saldo [REDACTADO] ok');
+    expect(detectores).toEqual(['importe_ar']);
+  });
+});
+
+// -----------------------------------------------------------------------------
 describe('enmascarados para pantalla', () => {
   it('ultimos4 y cuitParcial no revelan el dato completo', () => {
     expect(ultimos4('0170123400000012345678')).toBe('••••5678');

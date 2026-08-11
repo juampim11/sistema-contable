@@ -100,6 +100,27 @@ export const DETECTORES: readonly { nombre: string; patron: RegExp; motivo: stri
     patron: /(?<![\d,.])-?\d{1,3}(?:\.\d{3})+,\d{2}(?![\d,.])/g,
     motivo: 'Importe en formato argentino — N2.',
   },
+  {
+    nombre: 'corrida_larga',
+    // 🔴 Va AL FINAL a propósito: es el catch-all, y el orden "los más específicos primero" (comentario
+    // de arriba) tiene que ganarle cuando aplica, para que el detector que se reporta sea el preciso
+    // (`cbu`, `cuit`) y no éste.
+    //
+    // Es la propagación de `packages/ingesta/src/glosa.ts` (mismo patrón, mismo argumento: "un
+    // identificador parcial sigue siendo un identificador"), que nunca llegó hasta acá. El agujero era
+    // real y se midió: un CBU de 23 dígitos (uno más que el publicado) o un CUIT con un dígito pegado no
+    // matcheaban `cbu` ni `cuit` —los dos anclan con `\b` a los dos lados, y una corrida más larga rompe
+    // el límite derecho— y **`redactarTexto` los dejaba pasar enteros**. En un LECTOR ese límite faltante
+    // captura de más y se nota; en un REDACTOR captura de menos y no se nota nunca — es la cara más grave
+    // de "todo dato posicional necesita sus dos límites" (`docs/diseno/09-lecciones-aprendidas.md` §1):
+    // acá el límite estaba puesto, pero no se había propagado al archivo hermano.
+    //
+    // 9 dígitos porque es el piso de `glosa.ts` (ahí lo eligieron por ser más corto que el CUIT de 11).
+    // Los lookarounds excluyen separadores para no comerse un importe (que siempre lleva coma decimal)
+    // ni la cola de un uuid interno, que es justo lo que tiene que quedar legible para depurar.
+    patron: /(?<![\d\-.,])\d{9,}(?![\d\-.,])/g,
+    motivo: 'Corrida larga de dígitos sin clasificar — puede ser un identificador parcial o completo.',
+  },
 ];
 
 /** Tapa en un texto todo lo que matchee un detector. Devuelve el texto y qué detectores saltaron. */
