@@ -31,7 +31,7 @@ con más de una fuente coincidiendo:
    rechazar si no es `'estudio'` o está borrado) — no se toca la migración `0001` de tenancy, que está
    fuera del alcance declarado del plan (punto 1: "no cambia el modelo de tenancy en sí"). El trigger de
    esquema que lo cerraría de raíz (para cualquier vía de inserción futura, no solo este script) queda
-   como deuda declarada — ver `docs/diseno/10-deuda-declarada.md`.
+   como deuda declarada — ver `docs/diseno/10-deuda-declarada.md` §1.7.
 4. **`--nombre`**: Zod rechaza si matchea `RE_CUIT` (detector ya existente y auditado), largo máximo 60
    (mismo criterio que `alias` de `alta-cuenta.ts`). No cierra el vector del todo (nadie puede impedir
    que el operador tipee un nombre real igual) pero cubre el error más probable sin costo.

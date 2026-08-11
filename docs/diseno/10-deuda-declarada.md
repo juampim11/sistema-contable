@@ -91,6 +91,24 @@ habilita un `INSERT … VALUES (…),(…)` multi-fila. **No viola R21**: R21 pr
 
 **Por qué no se corrigió:** es una optimización, no una falla. Entra cuando el volumen lo pida.
 
+**Addendum (6.2, 2026-08-11) — el mismo `RETURNING` puede además RECHAZAR, no solo costar de más, y esto
+sí es una falla, no una optimización pendiente.** Verificado en Postgres real (`security-engineer`, no
+solo por lectura de la documentación de Postgres): si una tabla con `FORCE ROW LEVEL SECURITY` tiene una
+policy de `SELECT` que resuelve consultando **esa misma tabla** (patrón self-referencial — hoy, en este
+repo, solo `tenant_node` vía `accessible_tenant_ids()`), un `insert ... returning` sobre esa tabla
+rechaza con *"new row violates row-level security policy"* **incluso para un usuario con acceso legítimo
+confirmado un instante después** en la misma transacción. Confirmado que no depende de correlación de la
+subconsulta, del origen del `id`, ni del contenido de la policy — se reprodujo con el chequeo más trivial
+posible (`exists(select 1 from t where id = p_id)`). **No es el mismo mecanismo que el de
+`registrarAcceso`/`acceso_auditoria`** (ahí el escritor genuinamente no tiene rol de lectura, es un
+rechazo legítimo); acá el rechazo es puramente del timing de la re-evaluación dentro del mismo statement.
+**Mitigación, la misma que ya prescribe este párrafo para el caso de performance:** no usar `RETURNING`
+en el `insert`; generar el `id` en la aplicación con `randomUUID()` e insertarlo explícito (aplicado en
+`altaDeClienteEnEstudio`, `packages/data/src/tenancy/escrituras.ts`), o hacer un `select` en un statement
+separado dentro de la misma transacción. Aplica a cualquier tabla futura con el mismo patrón
+self-referencial de policy — las tablas de dominio estándar (con `cliente_id` preexistente al insert) no
+lo pisan, por eso `persistir.ts` nunca lo vio como rechazo, solo como costo.
+
 ### 1.4 🟡 Sin timeouts, y el `PUT` al storage corre dentro de la transacción
 
 No hay `statement_timeout` ni `idle_in_transaction_session_timeout` en ningún lado (verificado en todo
@@ -133,6 +151,27 @@ Es una decisión de `arquitecto-software` + `seguridad-datos-financieros`, no de
 La base admite `~'^[A-Z]{3}$'` en 4 tablas; el código admite `['ARS','USD']`. El dominio de la base es
 **más ancho** y eso no está declarado como deliberado. Decidir: o se estrecha el `check`, o se escribe
 por qué queda ancho.
+
+### 1.7 🟠 Nada en el esquema impide que un `tenant_node` `cliente` cuelgue de otro `cliente`
+
+`tenant_node_raiz_chk` (migración `0001`) solo exige `(tipo='estudio' ⇒ parent_id is null)` y
+`(tipo≠'estudio' ⇒ parent_id is not null)` — **no valida el `tipo` del padre**. Un `cliente` podría
+colgar de otro `cliente` (o de sí mismo transitivamente) por un simple error de operador pasando el uuid
+equivocado, y ni el `check`, ni la FK, ni la policy `tenant_node_wr` lo detectan: `has_role_on` resuelve
+por prefijo de `path`, así que un socio con rol sobre el `cliente` padre-por-error tendría rol también
+sobre el hijo. No es fuga entre estudios (RLS sigue protegiendo eso), pero rompe silenciosamente el
+supuesto "los clientes son hojas" y, si algún día se habilita un rol de lectura acotado a un cliente
+puntual (`cliente_lectura`, ya nombrado en el roster de personas), ese rol vería también los datos del
+cliente anidado por error.
+
+**Hallazgo de `seguridad-datos-financieros`** (6.2, 2026-08-11), confirmado por `security-engineer` y
+`dba-data`. **Mitigado hoy solo a nivel de aplicación**: `altaDeClienteEnEstudio`
+(`packages/data/src/tenancy/escrituras.ts`) valida `tipo='estudio'` antes de insertar, para el único
+camino de alta que existe. **No cierra la vía de raíz**: cualquier otro insert futuro sobre `tenant_node`
+(un job, una consola, un segundo script) podría seguir sin ese guard. **Cierre correcto, pendiente**: un
+trigger en la migración de tenancy que valide el `tipo` del padre para cualquier vía de inserción, no
+solo la de aplicación — fuera del alcance de 6.2 porque tocar `0001_tenancy.sql` es una decisión de
+mayor radio que un guard de aplicación en una función nueva.
 
 ---
 
