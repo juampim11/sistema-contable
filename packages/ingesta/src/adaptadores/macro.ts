@@ -62,12 +62,16 @@ import {
   type FilaGeometrica,
 } from '../texto-pdf.ts';
 import {
+  contarDestinos,
   dentroDeAlgunaRegion,
   extraerPeriodo,
   parDeColumnas,
   regionesDeTabla,
   seccionesPorClave,
+  DESTINOS_BASE,
   type ColumnasDeImporte,
+  type ConteoDeDestinos,
+  type DestinoBase,
   type RegionDeTabla,
   type SeccionDetectada,
 } from './toolkit.ts';
@@ -128,8 +132,8 @@ export const CAPACIDADES_MACRO: CapacidadesAdaptador = {
   // §14.4-bis: `Saldo Cuentas en PESOS` / `en DOLARES EE.UU.`, 45 apariciones cada uno. Es la entrada de
   // INV-multicuenta, la única ecuación del documento que cruza cuentas.
   traeConsolidadoPorMoneda: true,
-  // A2 (C3): todavía no instrumentado. Pasa a `true` cuando `leerMacro` empiece a devolver `destinos`.
-  declaraDestinos: false,
+  // A2 (C3): `leerMacro` clasifica cada fila en uno de los `DESTINOS_BASE` y devuelve el recuento.
+  declaraDestinos: true,
 };
 
 /**
@@ -595,6 +599,12 @@ const VOCABULARIO: readonly EtiquetaDelBanco[] = [
 export type SalidaMacro = SalidaDeAdaptador & {
   readonly consolidadosPorMoneda: readonly ConsolidadoPorMoneda[];
   readonly cuentasDeclaradas: number | undefined;
+  /**
+   * A2 (C3, `docs/diseno/10-deuda-declarada.md` §2.1): el recuento de las siete filas posibles
+   * (`DESTINOS_BASE`, `toolkit.ts`). `CAPACIDADES_MACRO.declaraDestinos: true` deja este campo
+   * **requerido** acá, mismo patrón que `consolidadosPorMoneda`.
+   */
+  readonly destinos: ConteoDeDestinos<DestinoBase>;
 };
 
 export function reconoceMacro(filas: readonly FilaGeometrica[]): boolean {
@@ -627,6 +637,13 @@ type Contexto = {
    * la tabla de cuentas de la p1 y la segunda línea de la leyenda del anexo. Ver `filasExplicadasPorBloque`.
    */
   readonly explicadasPorBloque: ReadonlySet<number>;
+  /**
+   * A2 (C3): marca el destino de la fila `i`. **Pisa** lo que hubiera antes — es lo que usa `cerrar`-style
+   * revisión cuando una fila se marcó provisoriamente y la decisión posterior la desarma.
+   */
+  readonly marcar: (i: number, destino: DestinoBase) => void;
+  /** Como `marcar`, pero no pisa una marca ya puesta. Es el fallback genérico (ruido conocido). */
+  readonly marcarSiFalta: (i: number, destino: DestinoBase) => void;
 };
 
 /**
@@ -651,9 +668,22 @@ export function leerMacro(filas: readonly FilaGeometrica[]): SalidaMacro {
   const textos = filas.map(textoDeFila);
   const noInterpretadas: LineaNoInterpretada[] = [];
 
+  /**
+   * A2 (C3): índice de fila → destino. Se crea ACÁ, antes de las pasadas de carátula y de anexos, porque
+   * esas dos ya clasifican filas (el consolidado, el titular, el anexo) antes de que exista `Contexto`.
+   * Mismo patrón que `santander.ts`: `marcar` pisa, `marcarSiFalta` no.
+   */
+  const destinoDeFila = new Map<number, DestinoBase>();
+  const marcar = (i: number, destino: DestinoBase): void => {
+    destinoDeFila.set(i, destino);
+  };
+  const marcarSiFalta = (i: number, destino: DestinoBase): void => {
+    if (!destinoDeFila.has(i)) destinoDeFila.set(i, destino);
+  };
+
   const periodoArchivo = leerPeriodoDelArchivo(textos);
-  const consolidadosPorMoneda = leerConsolidados(filas, textos, noInterpretadas);
-  const titular = leerTitularDelArchivo(filas, textos, noInterpretadas);
+  const consolidadosPorMoneda = leerConsolidados(filas, textos, noInterpretadas, marcar);
+  const titular = leerTitularDelArchivo(filas, textos, noInterpretadas, marcar);
 
   const { secciones, indicesSinSeccion } = seccionesPorClave(textos, claveDeSeccion);
 
@@ -665,7 +695,7 @@ export function leerMacro(filas: readonly FilaGeometrica[]): SalidaMacro {
    */
   const regiones = regionesDeTabla(textos, RE_ENCABEZADO_TABLA, RE_SALDO_FINAL);
 
-  const anexado = leerAnexosDelLote(filas, textos, secciones, noInterpretadas);
+  const anexado = leerAnexosDelLote(filas, textos, secciones, noInterpretadas, marcar);
 
   const contexto: Contexto = {
     filas,
@@ -676,6 +706,8 @@ export function leerMacro(filas: readonly FilaGeometrica[]): SalidaMacro {
     noInterpretadas,
     consumidos: anexado.consumidos,
     explicadasPorBloque: filasExplicadasPorBloque(filas, textos),
+    marcar,
+    marcarSiFalta,
   };
   const cuentas = secciones.map((s) => armarCuenta(contexto, s, anexado.porSeccion.get(s.clave) ?? []));
 
@@ -693,6 +725,8 @@ export function leerMacro(filas: readonly FilaGeometrica[]): SalidaMacro {
     paginasDeclaradas: undefined,
     consolidadosPorMoneda,
     cuentasDeclaradas: cuentasDeclaradasPorElDocumento(textos),
+    // A2 (C3): la partición completa, contada — no autocertificada por ninguna rama del lector.
+    destinos: contarDestinos(DESTINOS_BASE, destinoDeFila, filas.length),
   };
 }
 
@@ -763,6 +797,7 @@ function leerConsolidados(
   filas: readonly FilaGeometrica[],
   textos: readonly string[],
   noInterpretadas: LineaNoInterpretada[],
+  marcar: (i: number, destino: DestinoBase) => void,
 ): readonly ConsolidadoPorMoneda[] {
   const porMoneda = new Map<Moneda, ConsolidadoPorMoneda>();
 
@@ -776,15 +811,22 @@ function leerConsolidados(
     const importe = importeDeLaVentanaDeSaldo(fila);
     if (importe === null) {
       noInterpretadas.push(residuo('columna_sin_ancla', fila, texto, i));
+      marcar(i, 'residuo');
       continue;
     }
 
     const ya = porMoneda.get(moneda);
     if (ya === undefined) {
       porMoneda.set(moneda, { moneda, importe, paginaPdf: fila.pagina });
+      marcar(i, 'ruido');
       continue;
     }
-    if (ya.importe !== importe) noInterpretadas.push(residuo('desconocido', fila, texto, i));
+    if (ya.importe !== importe) {
+      noInterpretadas.push(residuo('desconocido', fila, texto, i));
+      marcar(i, 'residuo');
+    } else {
+      marcar(i, 'ruido');
+    }
   }
 
   return [...porMoneda.values()];
@@ -878,11 +920,12 @@ function leerTitularDelArchivo(
   filas: readonly FilaGeometrica[],
   textos: readonly string[],
   noInterpretadas: LineaNoInterpretada[],
+  marcar: (i: number, destino: DestinoBase) => void,
 ): DatosDelTitular {
   const acordado = <T,>(
     leer: (fila: FilaGeometrica, i: number) => T | null,
     iguales: (a: T, b: T) => boolean,
-  ): T | null => valorAcordadoEnElArchivo(filas, textos, noInterpretadas, leer, iguales);
+  ): T | null => valorAcordadoEnElArchivo(filas, textos, noInterpretadas, leer, iguales, marcar);
 
   const delCuit = acordado(
     (fila) => {
@@ -988,6 +1031,7 @@ function valorAcordadoEnElArchivo<T>(
   noInterpretadas: LineaNoInterpretada[],
   leer: (fila: FilaGeometrica, i: number) => T | null,
   iguales: (a: T, b: T) => boolean,
+  marcar: (i: number, destino: DestinoBase) => void,
 ): T | null {
   let primero: T | null = null;
   let contradicho = false;
@@ -1003,6 +1047,7 @@ function valorAcordadoEnElArchivo<T>(
 
     contradicho = true;
     noInterpretadas.push(residuo('desconocido', fila, textos[i] ?? '', i));
+    marcar(i, 'residuo');
   }
 
   return contradicho ? null : primero;
@@ -1089,26 +1134,46 @@ function armarCuenta(
 
     // --- Señal y dato de la sección: se leen ANTES de cualquier regla de ruido ---
 
-    if (RE_SECCION.test(texto)) continue;
+    /**
+     * A2 (C3): `RE_SECCION` y `RE_CBU` se consumen con `continue` ANTES de llegar a `esRuidoConocido` /
+     * `reportarSiEsResiduo` — igual que ya están en `RUIDO_MACRO` para cuando aparecen FUERA de una
+     * sección (`indicesSinSeccion`), pero acá adentro nunca pasan por esa función. Sin la marca explícita
+     * quedan `sinDestino`.
+     */
+    if (RE_SECCION.test(texto)) {
+      ctx.marcar(i, 'ruido');
+      continue;
+    }
 
     const cbuLeido = RE_CBU.exec(texto)?.[1];
     if (cbuLeido !== undefined) {
       cbu ??= cbuLeido;
+      ctx.marcar(i, 'ruido');
       continue;
     }
 
     if (RE_SALDO_ULTIMO.test(texto)) {
       const importe = importeDeLaVentanaDeSaldo(fila);
-      if (importe === null) ctx.noInterpretadas.push(residuo('fila_sin_importe', fila, texto, i));
-      else saldoInicial ??= importe;
+      if (importe === null) {
+        ctx.noInterpretadas.push(residuo('fila_sin_importe', fila, texto, i));
+        ctx.marcar(i, 'residuo');
+      } else {
+        saldoInicial ??= importe;
+        ctx.marcar(i, 'saldoDeclarado');
+      }
       continue;
     }
 
     const finalM = RE_SALDO_FINAL.exec(texto);
     if (finalM) {
       const importe = importeDeLaVentanaDeSaldo(fila);
-      if (importe === null) ctx.noInterpretadas.push(residuo('fila_sin_importe', fila, texto, i));
-      else saldoFinal ??= importe;
+      if (importe === null) {
+        ctx.noInterpretadas.push(residuo('fila_sin_importe', fila, texto, i));
+        ctx.marcar(i, 'residuo');
+      } else {
+        saldoFinal ??= importe;
+        ctx.marcar(i, 'saldoDeclarado');
+      }
       fechaSaldoFinal ??= parsearFecha(finalM[1] ?? '');
       continue;
     }
@@ -1133,10 +1198,12 @@ function armarCuenta(
       const leido = leerMovimiento(fila, fechaFrag.texto, ctx.periodoArchivo, filaNumero + 1, moneda);
       if ('codigo' in leido) {
         ctx.noInterpretadas.push(residuo(leido.codigo, fila, texto, i));
+        ctx.marcar(i, 'residuo');
         continue;
       }
       filaNumero += 1;
       movimientos.push(leido.movimiento);
+      ctx.marcar(i, 'movimiento');
       continue;
     }
 
@@ -1426,6 +1493,7 @@ function leerAnexosDelLote(
   textos: readonly string[],
   secciones: readonly SeccionDetectada[],
   noInterpretadas: LineaNoInterpretada[],
+  marcar: (i: number, destino: DestinoBase) => void,
 ): AnexosDelLote {
   /** De qué sección es cada fila. Es dónde el banco lo **imprime**, que no es lo mismo que de qué cuenta es. */
   const seccionDeIndice = new Map<number, SeccionDetectada>();
@@ -1453,19 +1521,24 @@ function leerAnexosDelLote(
      * los 6 renglones caen dentro de una sección.
      */
     if (fila === undefined || seccion === undefined) {
-      if (fila !== undefined) noInterpretadas.push(residuo('linea_fuera_de_zona', fila, texto, i));
+      if (fila !== undefined) {
+        noInterpretadas.push(residuo('linea_fuera_de_zona', fila, texto, i));
+        marcar(i, 'residuo');
+      }
       continue;
     }
 
     const periodo = periodoDelAnexo(texto);
     if (periodo === null) {
       noInterpretadas.push(residuo('desconocido', fila, texto, i));
+      marcar(i, 'residuo');
       continue;
     }
 
     const importe = importeDelAnexo(filas, fila, colas, proximaCola);
     if (importe === null) {
       noInterpretadas.push(residuo('fila_sin_importe', fila, texto, i));
+      marcar(i, 'residuo');
       continue;
     }
 
@@ -1477,12 +1550,18 @@ function leerAnexosDelLote(
     const conceptoLiteral = texto.slice(0, periodo.indiceDeCorte).replace(/\s+/g, ' ').trim();
     if (conceptoLiteral === '' || RE_LITERAL_CON_IDENTIFICADOR.test(conceptoLiteral)) {
       noInterpretadas.push(residuo('desconocido', fila, texto, i));
+      marcar(i, 'residuo');
       continue;
     }
 
     ordenEnLote += 1;
-    if (importe.indiceDeLaCola !== null) consumidos.add(importe.indiceDeLaCola);
+    // A2 (C3): la cola —cuando la hubo— aportó el importe a ESTE renglón; no tiene registro propio.
+    if (importe.indiceDeLaCola !== null) {
+      consumidos.add(importe.indiceDeLaCola);
+      marcar(importe.indiceDeLaCola, 'continuacion');
+    }
     consumidos.add(i);
+    marcar(i, 'anexo');
     proximaCola = importe.proximaCola;
 
     const lista = porSeccion.get(seccion.clave) ?? [];
@@ -1751,9 +1830,23 @@ function reportarSiEsResiduo(ctx: Contexto, i: number): void {
   const fila = ctx.filas[i];
   const texto = ctx.textos[i];
   if (fila === undefined || texto === undefined || texto === '') return;
-  if (ctx.consumidos.has(i) || ctx.explicadasPorBloque.has(i)) return;
-  if (esRuidoConocido(fila, texto)) return;
+  // Ya lo marcó la pasada de anexos del lote (etiqueta o cola): no se revisa acá.
+  if (ctx.consumidos.has(i)) return;
+  /**
+   * A2 (C3): `marcarSiFalta`, no `marcar` — una fila puede llegar ya marcada `residuo` desde una pasada
+   * anterior (`leerConsolidados`, `valorAcordadoEnElArchivo`) cuyo texto IGUAL matchea una regla de
+   * `RUIDO_MACRO`. La marca de la pasada anterior es la que corresponde: no se pisa.
+   */
+  if (ctx.explicadasPorBloque.has(i)) {
+    ctx.marcarSiFalta(i, 'ruido');
+    return;
+  }
+  if (esRuidoConocido(fila, texto)) {
+    ctx.marcarSiFalta(i, 'ruido');
+    return;
+  }
   ctx.noInterpretadas.push(residuo('linea_fuera_de_zona', fila, texto, i));
+  ctx.marcar(i, 'residuo');
 }
 
 function residuo(
