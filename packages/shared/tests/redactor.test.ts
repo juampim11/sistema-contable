@@ -173,9 +173,9 @@ describe('la corrida larga: el catch-all que faltaba propagar desde glosa.ts', (
     expect(texto).not.toContain('00700123456789012345678');
   });
 
-  it('NO tapa un conteo de diagnóstico corto (8 dígitos): el piso es 9, igual que en glosa.ts', () => {
-    const { texto, detectores } = redactarTexto('archivo_bytes=12345678');
-    expect(texto).toBe('archivo_bytes=12345678');
+  it('un conteo de diagnóstico corto (4-6 dígitos) sigue sin taparse: fuera del rango de CUIT/DNI', () => {
+    const { texto, detectores } = redactarTexto('archivo_bytes=123456');
+    expect(texto).toBe('archivo_bytes=123456');
     expect(detectores).toHaveLength(0);
   });
 
@@ -185,6 +185,30 @@ describe('la corrida larga: el catch-all que faltaba propagar desde glosa.ts', (
     const { texto, detectores } = redactarTexto('saldo 1.234.567.890,50 ok');
     expect(texto).toBe('saldo [REDACTADO] ok');
     expect(detectores).toEqual(['importe_ar']);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('el detector de documento (DNI): el hueco que dejaba pasar un dato N2R entero', () => {
+  it('🔴 un DNI de 7 dígitos en texto libre — antes pasaba entero, no hay detector que lo taparía', () => {
+    const { texto, detectores } = redactarTexto('DNI 1234567 no encontrado');
+    expect(texto).toBe('DNI [REDACTADO] no encontrado');
+    expect(texto).not.toContain('1234567');
+    expect(detectores).toContain('documento');
+  });
+
+  it('un DNI de 8 dígitos también se tapa', () => {
+    const { texto, detectores } = redactarTexto('Key (titular_documento)=(12345678) already exists.');
+    expect(texto).not.toContain('12345678');
+    expect(detectores).toContain('documento');
+  });
+
+  it('NO se come el decimal de un importe sin separador de miles', () => {
+    // El mismo bug que ya se había corregido en glosa.ts: sin excluir la coma, '1234567,89' le entrega
+    // sus siete dígitos enteros al detector de documento.
+    const { texto, detectores } = redactarTexto('importe 1234567,89 ok');
+    expect(texto).toBe('importe 1234567,89 ok');
+    expect(detectores).toHaveLength(0);
   });
 });
 

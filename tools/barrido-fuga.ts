@@ -50,7 +50,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { inflateRawSync, inflateSync } from 'node:zlib';
 import { extname, join, relative, sep } from 'node:path';
-import { DETECTORES } from '@sistema-contable/shared/seguridad';
+import { DETECTORES, sinEstado } from '@sistema-contable/shared/seguridad';
 import { formaParaLog } from '@sistema-contable/shared/observabilidad';
 import { raizDelRepo } from './cargar-env.ts';
 
@@ -263,8 +263,11 @@ export function candidatosEnTexto(
   for (let i = 0; i < lineas.length; i += 1) {
     const linea = lineas[i] ?? '';
     for (const d of DETECTORES) {
-      // Sin la bandera `g`: alcanza el primer match por línea y por detector para localizar el archivo.
-      const re = new RegExp(d.patron.source, d.patron.flags.replace('g', ''));
+      // Sin las banderas con estado (`g`/`y`): alcanza el primer match por línea y por detector para
+      // localizar el archivo. Antes era `.flags.replace('g', '')` acá mismo, que tapaba `g` y dejaba
+      // pasar `y` — el mismo bug que ya se había corregido en `toolkit.ts`, reintroducido por no importar
+      // de ahí (paquete distinto). `sinEstado` ahora vive en `packages/shared`, importado por los dos.
+      const re = sinEstado(d.patron);
       const valor = re.exec(linea)?.[0];
       if (valor) salida.push({ linea: i + 1, detector: d.nombre, valor });
     }

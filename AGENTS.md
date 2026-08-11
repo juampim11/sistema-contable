@@ -115,3 +115,7 @@ Codex **no auto-descubre** los sub-agentes de `.claude/agents/`. Para trabajar c
 3. Al terminar, cerrá el rol: `=== [fin Code Reviewer] ===`.
 4. Toda conclusión queda **escrita** (en la doc o en `HANDOFF.md`): lo que no está escrito no existe
    para Claude Code.
+
+🔴 **El banner `=== [Persona] ===` es la convocatoria estructural de Codex** — el equivalente a la
+tarea bloqueante `addBlockedBy` de `CLAUDE.md` §3.1 punto 6. Si el banner no aparece en la transcripción
+**antes** del cambio de código, la convocatoria no ocurrió, sin importar qué diga el resumen final.

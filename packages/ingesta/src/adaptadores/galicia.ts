@@ -25,6 +25,7 @@
  */
 
 import { formaParaLog } from '@sistema-contable/shared/observabilidad';
+import { RE_CUIT as RE_CUIT_COMPARTIDO } from '@sistema-contable/shared/seguridad';
 import {
   centavosAImporte,
   importeACentavos,
@@ -47,7 +48,13 @@ import {
   textoDeFila,
   type FilaGeometrica,
 } from '../texto-pdf.ts';
-import { extraerPeriodo, parDeColumnas, valorPorEtiqueta, type ParDeFila } from './toolkit.ts';
+import {
+  buscarIgnorandoAcentos,
+  extraerPeriodo,
+  parDeColumnas,
+  valorPorEtiqueta,
+  type ParDeFila,
+} from './toolkit.ts';
 
 export const BANCO_CODIGO = 'galicia';
 export const VERSION = 1;
@@ -682,8 +689,15 @@ function leerCbu(filas: readonly FilaGeometrica[]): string | null {
 /** La etiqueta que imprime el banco antes del CUIT del titular (spec §3). */
 const ETIQUETA_CUIT_TITULAR = 'CUIT del Responsable Impositivo';
 
-/** La forma publicada del CUIT en la carátula: `##-########-#` (spec §3). Con guiones, siempre. */
-const RE_CUIT_DEL_TITULAR = /\d{2}-\d{8}-\d/;
+/**
+ * La forma publicada del CUIT en la carátula: `##-########-#` (spec §3). Con guiones, siempre.
+ *
+ * 🔴 Antes era un patrón local sin `\b` ni validación de prefijo — el mismo hueco que el CBU vecino
+ * (`RE_CBU`, arriba) ya había cerrado con `\b`, sin propagarlo al patrón hermano de CUIT (hallazgo de
+ * `tech-lead` en la revisión de Parte B). Ahora importa del catálogo centralizado
+ * (`packages/shared/src/seguridad/detectores-forma.ts`), igual que `santander.ts`.
+ */
+const RE_CUIT_DEL_TITULAR = RE_CUIT_COMPARTIDO;
 
 /**
  * `IVA: <condición>` (spec §3), con la forma medida `Aaaaaaaaaaa aaaaaaaaa`: la primera palabra en
@@ -694,6 +708,74 @@ const RE_CUIT_DEL_TITULAR = /\d{2}-\d{8}-\d/;
  * se la llevaría puesta y la condición ante IVA saldría con media etiqueta ajena pegada.
  */
 const RE_CONDICION_IVA = /\bIVA\s*:\s*([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[a-záéíóúñ]+)*)/;
+
+/**
+ * Cuánto puede separar a dos fragmentos de la carátula, en puntos PDF, para que sigan siendo la MISMA
+ * razón social partida por el extractor — y no una columna distinta que comparte fila.
+ *
+ * 🔴 **Sin medir contra un archivo real con la razón social partida.** Es una hipótesis, no un dato
+ * (`docs/diseno/09-lecciones-aprendidas.md` §2: "un renglón sin conteo verificado es un renglón NO
+ * MEDIDO"). El valor de partida es conservador a propósito: bastante menor que el hueco más angosto
+ * medido entre columnas del cuerpo (`Fecha`→`Descripción`, 43.8 pt: `COLUMNAS.descripcion.x -
+ * COLUMNAS.fecha.x`) y bastante mayor que el ancho de un espacio simple. Antes de confiar en esto para un
+ * caso real, correr `pnpm probar --caratula` contra el archivo que motivó el cambio y ajustar al hueco
+ * medido.
+ */
+const HUECO_MAXIMO_ENTRE_FRAGMENTOS_DE_RAZON_SOCIAL = 8;
+
+/**
+ * Fusiona, caminando hacia la izquierda desde `indiceEtiqueta`, los fragmentos que son la MISMA razón
+ * social partida — nunca una columna vecina.
+ *
+ * ## Por qué esto no es `fragmentosEnBanda`
+ *
+ * Esa función (`texto-pdf.ts`) fusiona por BANDA de `x`, y una banda de `x` ya rompió este mismo campo una
+ * vez: sin corte derecho, el documento del titular terminaba guardado adentro del campo del nombre
+ * (`docs/diseno/09-lecciones-aprendidas.md` §1, fila "Banda del titular"). No es casualidad: a diferencia
+ * del cuerpo, la carátula no tiene columnas con `x` publicada ni estable — sus fragmentos "salen
+ * intercalados" (ver el comentario de `leerCbu`, spec §3.1.3) — así que no hay ningún `[desde, hasta)` que
+ * la especificación respalde para "todo lo que precede a la etiqueta".
+ *
+ * En vez de eso, se camina fragmento por fragmento desde `indiceEtiqueta - 1` hacia la izquierda. Cada uno
+ * entra solo si cumple las DOS condiciones:
+ *
+ *   1. no tiene dígitos (la guarda que ya existía: descarta un CUIT o un `(####)` vecino);
+ *   2. el hueco entre su borde derecho y el borde izquierdo del fragmento ya aceptado a su derecha es
+ *      chico — la firma geométrica de "es la misma frase partida", no "es otra columna que comparte
+ *      baseline".
+ *
+ * El primer fragmento que no cumple alguna de las dos corta la fusión ahí mismo: lo que quede más a la
+ * izquierda no entra, aunque tampoco tenga dígitos. Con el fixture de la "quinta cara" (una columna vecina
+ * alfabética separada por un hueco real), el hueco da muy por fuera de la tolerancia y sigue quedando
+ * afuera — ahora por geometría, no solo por tomar un único fragmento.
+ *
+ * Medido contra el archivo real (`pnpm probar --caratula`): hoy la fila trae exactamente un fragmento
+ * antes de la etiqueta, así que para ese archivo el resultado no cambia — la fusión entra en juego recién
+ * cuando hay más de uno.
+ */
+function razonSocialAntesDe(fila: FilaGeometrica, indiceEtiqueta: number): string | null {
+  const partes: string[] = [];
+  let bordeIzquierdoAceptado: number | null = null;
+
+  for (let i = indiceEtiqueta - 1; i >= 0; i -= 1) {
+    const candidato = fila.fragmentos[i];
+    if (!candidato) break;
+
+    const texto = candidato.texto.trim();
+    if (texto.length === 0 || /\d/.test(texto)) break;
+
+    if (bordeIzquierdoAceptado !== null) {
+      const hueco = bordeIzquierdoAceptado - (candidato.x + candidato.ancho);
+      if (Math.abs(hueco) > HUECO_MAXIMO_ENTRE_FRAGMENTOS_DE_RAZON_SOCIAL) break;
+    }
+
+    partes.unshift(texto);
+    bordeIzquierdoAceptado = candidato.x;
+  }
+
+  const unido = partes.join(' ').trim();
+  return unido.length >= 2 ? unido : null;
+}
 
 /**
  * Lee los datos del titular de la carátula.
@@ -726,12 +808,39 @@ function leerTitular(filas: readonly FilaGeometrica[]): {
 
   const documento = valorPorEtiqueta(textos, [ETIQUETA_CUIT_TITULAR], RE_CUIT_DEL_TITULAR);
 
+  /**
+   * La razón social se arma fusionando los fragmentos contiguos que preceden a la etiqueta del CUIT —
+   * `razonSocialAntesDe`, más arriba — en vez de tomar un único fragmento fijo.
+   *
+   * 🔴 **Truncado silencioso, corregido.** La versión anterior tomaba SOLO `fragmentos[indiceEtiqueta -
+   * 1]`: si la razón social real viniera partida en 2+ fragmentos geométricos (medido en Macro:
+   * `texto-pdf.ts` documenta 1 a 4 fragmentos por fila para un campo de texto libre en la misma columna),
+   * se perdía todo menos el último pedazo, sin error y sin campo ausente — el peor modo de falla del
+   * módulo (`docs/diseno/09-lecciones-aprendidas.md`).
+   *
+   * La ubicación de la etiqueta ahora reusa `buscarIgnorandoAcentos` (`toolkit.ts`), la misma que ya usa
+   * `valorPorEtiqueta`, en vez de reimplementar la búsqueda con `.includes()` sin normalizar acentos.
+   *
+   * 🔴 **Residuo declarado, medido y no cubierto por test (hallazgo de `code-reviewer`).** `documento` se
+   * ubica sobre el texto de la fila YA UNIDO (`textoDeFila`, vía `valorPorEtiqueta`) — robusto a que la
+   * etiqueta venga partida en varios fragmentos. `indiceEtiqueta`, en cambio, busca la etiqueta COMPLETA
+   * dentro de un ÚNICO fragmento (`f.texto`): si `ETIQUETA_CUIT_TITULAR` viniera partida en 2+ fragmentos
+   * geométricos —el mismo fenómeno que ya se corrigió para la razón social, arriba— `indiceEtiqueta` daría
+   * `-1` y `razonSocial` quedaría `null`. No es un truncado (el campo se declara ausente, no un valor
+   * parcial), pero sí una pérdida de un dato que hoy se lee bien. Medido contra el archivo real
+   * (`pnpm probar --caratula`): la etiqueta sale en un solo fragmento, así que no ocurre hoy. Sin caso real
+   * que lo ejercite, no se fuerza un fix especulativo — queda declarado acá para que la próxima medición
+   * decida si hace falta.
+   */
   let razonSocial: string | null = null;
   if (documento) {
-    const linea = textos[documento.linea] ?? '';
-    const corte = linea.toUpperCase().indexOf(ETIQUETA_CUIT_TITULAR.toUpperCase());
-    const prefijo = corte <= 0 ? '' : linea.slice(0, corte).trim();
-    if (prefijo.length >= 2 && !/\d/.test(prefijo)) razonSocial = prefijo;
+    const fila = filas[documento.linea];
+    const indiceEtiqueta = fila?.fragmentos.findIndex(
+      (f) => buscarIgnorandoAcentos(f.texto, ETIQUETA_CUIT_TITULAR) !== -1,
+    );
+    if (fila && indiceEtiqueta !== undefined && indiceEtiqueta > 0) {
+      razonSocial = razonSocialAntesDe(fila, indiceEtiqueta);
+    }
   }
 
   let condicionIva: string | null = null;

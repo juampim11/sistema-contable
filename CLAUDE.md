@@ -183,6 +183,26 @@ y recién después integra, verifica y decide. Los agentes **reportan**; quien c
    `agents/personas/<nombre>.md` completo. Es el mismo protocolo que usa Codex (`AGENTS.md`).
 5. **Lo que el agente afirma se verifica** antes de aplicarlo. Ya pasó que un agente reportara mal, y
    también que uno corrigiera a quien conducía: las dos cosas se resuelven mirando el código.
+6. 🔴 **Escribir "convoca: X" en un plan NO es convocar.** Pasó dos veces en este repo — el Módulo 1
+   completo, y después una tanda de fixes de seguridad en la misma sesión que escribió este párrafo —
+   que la tabla de arriba estuviera citada y aun así nadie llamara al agente. La intención escrita no
+   ejecuta sola. La convocatoria es **estructural, no una promesa de texto**:
+   - Toda tarea que caiga en la matriz de arriba se crea en el sistema de tareas **junto con** una
+     tarea hija `convocar <agente> para <tarea>` por cada agente de la fila, con `addBlockedBy` sobre
+     la tarea de implementación.
+   - La tarea de implementación **no arranca** — no se marca `in_progress`, no hay `Edit`/`Write` sobre
+     los archivos afectados — mientras la de convocatoria siga `pending`.
+   - La tarea de convocatoria se marca `completed` únicamente después de una llamada real a `Agent()`
+     cuyo reporte quedó incorporado. **El fallback de la regla 4 (persona no registrada) satisface esto
+     igual, porque sigue siendo un `Agent()` separado** —`subagent_type: general-purpose` con el prompt
+     de adopción, no `subagent_type: <nombre-de-la-persona>`— que produce una opinión de verdad
+     independiente. Lo que **NO** satisface el gate, y no reemplaza ninguna convocatoria: narrar
+     `=== [Persona] ===` dentro de la propia respuesta de quien conduce, sin invocar `Agent()`. Eso es
+     el protocolo de Codex (`AGENTS.md` §5, una sola herramienta, sin subagentes) — en Claude Code, con
+     subagentes disponibles, es exactamente el trabajar-solo-con-disfraz que esta regla existe para
+     impedir. Nunca se marca `completed` por describir la convocatoria en un documento.
+   - Es **inspeccionable**: alcanza con mirar `TaskList` para saber si la convocatoria existió y
+     bloqueó, sin depender de que quien conduce lo recuerde o lo declare.
 
 ## 4. Handoff
 

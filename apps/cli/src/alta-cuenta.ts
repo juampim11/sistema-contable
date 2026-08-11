@@ -119,10 +119,17 @@ function leerCaratula(texto: TextoDelPdf): {
    * Lo encontró el adaptador de Galicia al leer el mismo dato por la vía geométrica.
    */
   const cbu = valorPorEtiqueta(lineas, ['CBU', 'C.B.U.'], /\b\d{22}\b/, 2);
+  /**
+   * 🔴 Antes sin ancla derecha (`/N?°?\s*[\d\-/ ]{6,}/`): la clase `[\d\-/ ]` es greedy y sin `$`, así que
+   * si sobrara texto después del número en la misma línea (otro campo numérico, o el inicio de la etiqueta
+   * siguiente compartiendo fila), el match seguía comiendo mientras hubiera dígitos, guiones, barras o
+   * espacios — captura de más, silenciosa. `galicia.ts` (`leerNumeroDeCuenta`) ya lee el mismo dato con
+   * `^...$` anclado en los dos extremos; acá se alinea al mismo patrón, sobre el mismo formato de archivo.
+   */
   const numero = valorPorEtiqueta(
     lineas,
     ['Número de cuenta', 'Nro. de cuenta', 'Cuenta Nº', 'Cuenta N°'],
-    /N?°?\s*[\d\-/ ]{6,}/,
+    /^N?°?\s*[\d\-/ ]{6,}$/,
     2,
   );
   const tipo = valorPorEtiqueta(lineas, ['Tipo de cuenta'], /[A-Za-zÁÉÍÓÚÑáéíóúñ .]{4,}/, 2);

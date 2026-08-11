@@ -80,6 +80,7 @@
  */
 
 import { formaParaLog } from '@sistema-contable/shared/observabilidad';
+import { RE_CBU as RE_CBU_COMPARTIDO, RE_CUIT as RE_CUIT_COMPARTIDO } from '@sistema-contable/shared/seguridad';
 import {
   centavosAImporte,
   importeACentavos,
@@ -413,9 +414,30 @@ const RE_FECHA_CUERPO = /^\d{2}\/\d{2}\/\d{2}$/;
 const RE_DESDE = /^Desde:\s*(\d{2}\/\d{2}\/\d{2})$/;
 const RE_HASTA = /^Hasta:\s*(\d{2}\/\d{2}\/\d{2})$/;
 
-/** CUIT del titular, por etiqueta (§2). Nunca por patrón: la glosa trae identificadores de terceros. */
-const RE_CUIT = /\d{2}-\d{8}-\d/;
-const RE_CBU = /\d{22}/;
+/**
+ * CUIT y CBU del titular, por etiqueta (§2). Nunca por patrón: la glosa trae identificadores de terceros.
+ *
+ * 🔴 **Antes eran patrones locales sin `\b` en ningún lado** (`/\d{2}-\d{8}-\d/`, `/\d{22}/`): una corrida
+ * más larga que la publicada matcheaba igual sus primeros dígitos y el archivo quedaba leído con un
+ * identificador plausible pero equivocado — exactamente el bug que `alta-cuenta.ts` y `galicia.ts` ya
+ * habían cerrado para el mismo dato, sin propagarlo acá. Ahora importan del catálogo centralizado
+ * (`packages/shared/src/seguridad/detectores-forma.ts`), que ancla con `\b` a los dos lados.
+ */
+const RE_CUIT = RE_CUIT_COMPARTIDO;
+const RE_CBU = RE_CBU_COMPARTIDO;
+
+/**
+ * Cuántas filas del principio son carátula, para acotar dónde se buscan las etiquetas `CBU:`/`CUIT:`.
+ *
+ * 🔴 Antes se buscaban sobre `textos.map(textoDeFila)` **del documento entero**, sin ventana. Galicia ya
+ * documentaba el riesgo para el mismo dato: la glosa de una transferencia puede traer la palabra `CBU`
+ * seguida del CBU **de la contraparte**, y sin ventana ese renglón se leería como el identificador del
+ * titular. Acá las etiquetas son igual de cortas (`CBU:`, `CUIT:`), así que el mismo riesgo aplica.
+ *
+ * Mismo valor que ya usa `reconoceSantander` (200 filas, cubre la carátula entera y el primer encabezado
+ * con margen, sobre las 414 del archivo medido en §1) — no es una ventana nueva, es la misma ya medida.
+ */
+const FILAS_DE_CARATULA = 200;
 
 /**
  * Lo que dentro de la tabla **no** es un movimiento (§8). Se descarta explícitamente, con su motivo.
@@ -811,10 +833,14 @@ export function leerSantanderConDestinos(filas: readonly FilaGeometrica[]): {
    * el CBU de la cuenta en pesos a la cuenta en dólares haría que las dos resolvieran a la misma, con todo
    * cuadrando. **A qué cuenta pertenece el CBU de la carátula queda no determinado** (§15) y por eso no se
    * publica; el número de cuenta, que sí sale de la cabecera de cada región, alcanza para resolver.
+   *
+   * 🔴 La búsqueda se acota a `FILAS_DE_CARATULA`, no al documento entero: ver el comentario de esa
+   * constante.
    */
+  const textosCaratula = textos.slice(0, FILAS_DE_CARATULA);
   const cbu =
-    regiones.length === 1 ? (valorPorEtiqueta(textos, ['CBU:'], RE_CBU)?.valor ?? null) : null;
-  const cuitTitular = valorPorEtiqueta(textos, ['CUIT:'], RE_CUIT)?.valor ?? null;
+    regiones.length === 1 ? (valorPorEtiqueta(textosCaratula, ['CBU:'], RE_CBU)?.valor ?? null) : null;
+  const cuitTitular = valorPorEtiqueta(textosCaratula, ['CUIT:'], RE_CUIT)?.valor ?? null;
 
   /**
    * **Los anexos cuelgan de la PRIMERA cuenta, y eso no es una atribución.**

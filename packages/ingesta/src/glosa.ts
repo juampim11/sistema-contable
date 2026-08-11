@@ -31,6 +31,7 @@
  * número de documento— sobrevive en la descripción.
  */
 
+import { RE_CBU, RE_CORRIDA_LARGA, RE_CUIT, RE_DNI } from '@sistema-contable/shared/seguridad';
 import { normalizar } from './parseo-ar.ts';
 
 /** Marcadores estables. Se conserva la posición del identificador sin conservar su valor. */
@@ -60,24 +61,28 @@ export type GlosaDepurada = {
  * corridas de 11 y de 8, así que si el CUIT se buscara primero le comería los primeros once dígitos de un
  * CBU y dejaría los otros once sueltos en la descripción. De más largo a más corto.
  */
-const PATRONES = [
-  { clase: 'cbu' as const, re: /(?<![\d-])\d{22}(?![\d-])/g },
-  { clase: 'cuit' as const, re: /(?<![\d-])(?:\d{2}-\d{8}-\d|\d{11})(?![\d-])/g },
+/**
+ * Los cuatro patrones, en el orden en que se aplican, ahora centralizados en
+ * `packages/shared/src/seguridad/detectores-forma.ts` — compartidos con el redactor de logs
+ * (`redactar.ts`). Antes cada archivo tenía su propia copia, y ya habían divergido: ver el comentario de
+ * ese módulo para el caso medido (un CBU pegado a un guión que el lookaround-sin-guión de acá dejaba pasar
+ * entero, mientras el `\b` de `redactar.ts` sí lo atrapaba) y para por qué el CUIT ahora exige prefijo
+ * válido en vez de aceptar cualquier corrida de 11 dígitos.
+ *
+ * **`PATRONES` se exporta** para que el test de paridad estructural (`detectores-compartidos.test.ts`)
+ * pueda afirmar que este archivo y `redactar.ts` importan del mismo catálogo — no una copia con el mismo
+ * contenido.
+ */
+export const PATRONES = [
+  { clase: 'cbu' as const, re: RE_CBU },
+  { clase: 'cuit' as const, re: RE_CUIT },
   /**
-   * Documento: 7 u 8 dígitos. Es el más ambiguo (un número de operación también los tiene), y ese
-   * conservadurismo es deliberado — ver la nota de abajo.
-   *
-   * **El lookahead excluye la coma, y esa coma faltaba.** Sin ella, un importe escrito sin separador de
-   * miles —`1234567,89`— entregaba sus siete dígitos enteros a este patrón: la glosa quedaba
-   * `TRANSFERENCIA USD [DOC],89` y el importe entraba a `identificadores.documento` **como si fuera un
-   * documento**. Dos daños: desaparece de la glosa un importe que suele ser la evidencia del movimiento en
-   * moneda extranjera o la base de una retención, y la lista de "documentos" que el Módulo 2 va a cruzar
-   * contra el padrón de socios queda contaminada con importes.
-   *
-   * El patrón de 9+ dígitos de abajo ya la excluía; este no. Dos patrones hermanos con lookarounds
-   * distintos es exactamente donde se esconde este tipo de error.
+   * Documento (DNI): 7 u 8 dígitos, con separadores comunes opcionales (ver `detectores-forma.ts`). Es el
+   * más ambiguo de los cuatro (un número de operación también tiene esta forma), y el lookaround que
+   * excluye la coma —el fix del bug original de este archivo: sin él, un importe sin separador de miles
+   * (`1234567,89`) entregaba sus siete dígitos a este patrón— viaja con el patrón importado.
    */
-  { clase: 'documento' as const, re: /(?<![\d-.,])\d{7,8}(?![\d-.,])/g },
+  { clase: 'documento' as const, re: RE_DNI },
   /**
    * Corrida larga de dígitos: 9 o más, que no cayó en ninguna clase anterior.
    *
@@ -89,7 +94,7 @@ const PATRONES = [
    * No hay riesgo de comerse un importe: un importe siempre lleva coma decimal, y el lookbehind excluye
    * los separadores.
    */
-  { clase: 'documento' as const, re: /(?<![\d-.,])\d{9,}(?![\d-.,])/g },
+  { clase: 'documento' as const, re: RE_CORRIDA_LARGA },
 ] as const;
 
 /**
