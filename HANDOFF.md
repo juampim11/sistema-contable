@@ -6,6 +6,25 @@
 
 ---
 
+## 2026-08-11 (30) — A2 confirmado contra archivo real: Macro (1 de 3)
+
+**Corrido por el usuario** (`pnpm probar --banco macro --archivo <ruta real, 11-2025 cta cte
+especial.pdf>`), no por un agente — dato real, no pasa por este contexto más que como conteos.
+
+**Coincide exacto con la fila "Esperado" de la predicción de Macro (HANDOFF 22):** `sinDestino=0`,
+`residuo=0` (no interpretadas=0), `fueraDelCuerpo=0`, 1346 movimientos, 6 anexos (1+3+2 por cuenta), 3
+cuentas. `INV-destinos: diferencias=0` — el gate de C5 no rechaza nada. **La instrumentación de Macro
+(C3) queda confirmada contra archivo real**, no solo contra el fixture sintético.
+
+Dos observaciones en la corrida, ninguna es hallazgo — ya estaban documentadas en `CAPACIDADES_MACRO`
+antes de esta sesión: `VEREDICTO DEL LOTE: no_verificable` viene de la cuenta USD con `EST_SIN_MOVIMIENTOS`
+(0 movimientos en dólares, ya sabido); los 4 `EST_FECHA_FUERA_DE_PERIODO` en la cuenta 3 son los mismos 4
+movimientos de octubre en el resumen de noviembre ya medidos (`traeMovimientosFueraDelPeriodo: true`).
+
+**Falta Galicia y Santander** (el usuario los está corriendo) antes de dar A2 por confirmado del todo.
+
+---
+
 ## 2026-08-11 (29) — Plan 6.3, primer paso (CLAUDE.md §3.2, escrito antes del primer `Edit`)
 
 **Herramienta:** Claude Code, sesión autónoma, con confirmación explícita del usuario para este paso
