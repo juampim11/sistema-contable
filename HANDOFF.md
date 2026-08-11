@@ -6,6 +6,34 @@
 
 ---
 
+## 2026-08-11 (20) — Plan A1 (CLAUDE.md §3.2, escrito antes del primer `Edit`)
+
+**Herramienta:** Claude Code, sesión autónoma. Dispara modo plan por (c) y (d): modifica adaptadores
+que ya corren contra datos reales, y toca 4+ archivos.
+
+1. **Qué cambia y qué no.** `EntradaGalicia`/`EntradaMacro` se borran (idénticas carácter a carácter
+   al contrato). `SalidaGalicia` pasa a `export type SalidaGalicia = SalidaDeAdaptador`.
+   `SalidaMacro` pasa a intersection type (`SalidaDeAdaptador & { consolidadosPorMoneda, cuentasDeclaradas
+   requeridos }`), no tipo paralelo. Regla nueva en `reglas-de-codigo.test.ts`: ningún archivo de
+   `adaptadores/` declara `Salida*`/`Entrada*` propio. **No cambia:** `santander.ts` (ya usa el
+   contrato), ni el comportamiento de lectura de ningún banco — es un cambio de tipos, no de runtime.
+   **No entra A2** (destinos) en esta parte — depende de que la regla de código de A1 exista primero.
+2. **Qué se mide.** `pnpm verificar` en verde, con el mismo conteo de tests **+1** (la regla nueva) y
+   0 tests rotos. Barrido de fuga en modo estricto: 0 fugas (no cambia dato sensible).
+3. **Predicción falsable.** Si `SalidaMacro` como intersection sigue exigiendo
+   `consolidadosPorMoneda`/`cuentasDeclaradas` no-opcionales, los tests existentes de `macro.test.ts`
+   no deberían cambiar de resultado — 0 tests de Macro rotos. Si alguno se rompe, el estrechamiento no
+   es fiel al comportamiento real del adaptador y hay que revisar el diseño, no forzar el tipo.
+4. **Agentes.** `arquitecto-software` + `tech-lead` (diseño, antes de tocar código — límite entre
+   módulos y ≥2 implementaciones del mismo patrón) + `code-reviewer` (sobre el diff final, antes de
+   mergear).
+5. **Paso revertible más chico.** El commit único (borra Entradas + reemplaza Salidas + agrega la
+   regla) ya es la unidad atómica razonable: separar "borrar Entradas" de "reemplazar Salidas" dejaría
+   un estado intermedio con imports rotos, sin beneficio. Es revertible con `git revert` sin efecto en
+   runtime — los tipos no existen en tiempo de ejecución.
+
+---
+
 ## 2026-08-11 (19) — Parte D cerrada: modo plan obligatorio en CLAUDE.md §3.2 + AGENTS.md §6
 
 **Herramienta:** Claude Code. **Estado:** mergeado a `main` (`feat/modo-plan-obligatorio`, `--no-ff`),
