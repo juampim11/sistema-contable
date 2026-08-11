@@ -15,6 +15,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cerrarConexiones, conUsuario } from '@sistema-contable/data';
+import { hmacIdentificador, ultimos4ParaGuardar } from '@sistema-contable/shared/seguridad';
 import type { ObjectStorage } from '@sistema-contable/almacenamiento';
 import {
   CAPACIDADES_SINTETICAS,
@@ -546,4 +547,152 @@ describe('contingencia de residuo (2026-08-11): observación NO rechaza, a difer
     // pero tampoco por el bug que este test existe para agarrar.
     expect(escrituras).toEqual([]);
   });
+});
+
+// -----------------------------------------------------------------------------
+describe('atomicidad del lote multi-cuenta (HANDOFF 2026-08-11 (40))', () => {
+  /**
+   * A diferencia de los demás adaptadores falsos de este archivo, ACÁ sí hace falta una `cuenta_bancaria`
+   * real registrada para `s.clienteA` — es la única forma de que la PRIMERA cuenta del archivo resuelva y
+   * se persista de verdad, que es la precondición del bug: una cuenta exitosa comiteada junto con el
+   * rechazo de la cuenta siguiente. Es exactamente la infraestructura que los demás tests de este archivo
+   * evitan a propósito (ver el comentario de la contingencia de residuo, más arriba) — acá no se puede
+   * evitar porque es lo que se está probando.
+   */
+  let cuenta1: ReturnType<typeof extractoSintetico>;
+  let cuenta2: ReturnType<typeof extractoSintetico>;
+
+  beforeAll(async () => {
+    cuenta1 = extractoSintetico({
+      semilla: 501,
+      cantidadMovimientos: 4,
+      saldoInicialCentavos: 5_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: 'banco_cli_atomico',
+    });
+    // Semilla distinta: número de cuenta distinto, y a propósito NUNCA se registra para este cliente —
+    // es el análogo sintético de la cuenta USD real que HANDOFF (40) documenta como "se deja para después".
+    cuenta2 = extractoSintetico({
+      semilla: 502,
+      cantidadMovimientos: 4,
+      saldoInicialCentavos: 5_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: 'banco_cli_atomico',
+    });
+
+    const duenio = await clienteDuenio();
+    try {
+      await duenio.query(
+        `insert into banco (codigo, nombre) values ('banco_cli_atomico', 'BANCO DE PRUEBA ATOMICIDAD')
+         on conflict (codigo) do nothing`,
+      );
+    } finally {
+      await duenio.end();
+    }
+
+    const cbuCuenta1 = '9990000090000000000099';
+    await conUsuario(USUARIOS.socio, async (tx) => {
+      const c = await tx.consultar<{ id: string }>(
+        `insert into cuenta_bancaria (cliente_id, banco_codigo, moneda)
+         values ($1, 'banco_cli_atomico', 'ARS') returning id::text as id`,
+        [s.clienteA],
+      );
+      const cuentaBancariaId = c[0]?.id;
+      if (!cuentaBancariaId) throw new Error('no se creó la cuenta de prueba');
+      await tx.consultar(
+        `insert into cuenta_bancaria_identificador
+           (cliente_id, cuenta_bancaria_id, tipo_cuenta, numero, cbu_hmac, cbu_ultimos4, vigente_desde)
+         values ($1, $2, 'cuenta_corriente', $3, $4, $5, '2026-01-01')`,
+        [
+          s.clienteA,
+          cuentaBancariaId,
+          cuenta1.cuenta.numero,
+          hmacIdentificador(cbuCuenta1),
+          ultimos4ParaGuardar(cbuCuenta1),
+        ],
+      );
+    });
+
+    registrarAdaptador({
+      bancoCodigo: 'banco_cli_atomico',
+      version: 1,
+      capacidades: CAPACIDADES_SINTETICAS,
+      reconoce: (e) => e.filas.some((f) => textoDeFila(f).includes('MARCA ATOMICIDAD 2026-08-11')),
+      leer: () => ({
+        // Cuenta 1: resuelve contra la cuenta ya registrada arriba y cuadra — se persiste. Cuenta 2:
+        // ningún identificador registrado para este cliente — falla la resolución DESPUÉS de que la 1
+        // ya se persistió. Reproducción mínima del bug real (158 filas de Santander, HANDOFF (40)).
+        cuentas: [cuenta1, cuenta2],
+        lineasNoInterpretadas: [],
+        paginasDeclaradas: undefined,
+        destinos: undefined,
+      }),
+    });
+  });
+
+  it(
+    'una cuenta persistida con éxito NO sobrevive si una cuenta posterior del mismo archivo falla ' +
+      '(antes del fix: quedaba comiteada junto con el rechazo — 158 filas reales contra el piloto)',
+    async () => {
+      const { storage, escrituras } = storageEspia();
+      const ruta = join(dirTemporal, 'extracto-atomicidad.pdf');
+      writeFileSync(
+        ruta,
+        pdfMinimoConTexto([
+          'MARCA ATOMICIDAD 2026-08-11 PARA EL TEST DE SAVEPOINT',
+          'SEGUNDA LINEA SOLO PARA SUPERAR EL UMBRAL DE CARACTERES MINIMOS',
+        ]),
+      );
+
+      const r = await ingestar(
+        { cliente: s.clienteA, archivo: ruta, banco: 'banco_cli_atomico', usuario: USUARIOS.socio },
+        storage,
+      );
+
+      expect(r.estado).toBe('rechazado');
+      if (r.estado !== 'rechazado') return;
+
+      // La cuenta 2 nunca se registró para este cliente, y el cliente YA tiene una cuenta (la 1) —
+      // exactamente el mecanismo real de HANDOFF (40): `cuenta_no_pertenece_al_cliente`, no
+      // `cuenta_no_registrada`.
+      expect(r.motivoCodigo).toBe('cuenta_no_pertenece_al_cliente');
+
+      const { filasDeLaCuentaExitosa, lote, rechazoAuditado } = await conUsuario(
+        USUARIOS.socio,
+        async (tx) => {
+          const filas = await tx.consultar<{ n: string }>(
+            `select count(*)::text as n from movimiento_bancario_crudo where lote_ingesta_id = $1`,
+            [r.loteId],
+          );
+          const l = await tx.consultar<{ estado: string; motivo_codigo: string | null }>(
+            'select estado, motivo_codigo from lote_ingesta where id = $1 and cliente_id = $2',
+            [r.loteId, s.clienteA],
+          );
+          const rechazo = await tx.consultar<{ n: string }>(
+            `select count(*)::text as n from acceso_auditoria
+              where accion = 'rechazo' and recurso_id = $1`,
+            [r.loteId],
+          );
+          return {
+            filasDeLaCuentaExitosa: Number(filas[0]?.n ?? '0'),
+            lote: l[0],
+            rechazoAuditado: Number(rechazo[0]?.n ?? '0'),
+          };
+        },
+      );
+
+      // La aserción central: CERO filas, ni siquiera las 4 de la cuenta 1 que sí cuadraba y sí se
+      // persistió con éxito. Sin el SAVEPOINT, este número daba 4 acá (158 contra el archivo real).
+      expect(filasDeLaCuentaExitosa, 'la cuenta exitosa quedó comiteada bajo un lote rechazado').toBe(0);
+      expect(lote?.estado).toBe('con_errores');
+      expect(lote?.motivo_codigo).toBe('cuenta_no_pertenece_al_cliente');
+      // El rollback parcial no puede llevarse puesto el propio registro del rechazo — el orden correcto
+      // es ROLLBACK TO SAVEPOINT primero, `rechazar()` después (security-engineer, HANDOFF (40)): si se
+      // invirtiera, el lote volvería a `recibido` sin motivo ni rastro, peor que el bug original.
+      expect(rechazoAuditado, 'el rechazo no quedó auditado').toBe(1);
+      expect(escrituras, 'guardó el objeto de un lote que terminó rechazado').toEqual([]);
+    },
+  );
 });

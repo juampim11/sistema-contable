@@ -6,6 +6,65 @@
 
 ---
 
+## 2026-08-11 (41) — Cierre: atomicidad real de `ingestar.ts`, causa raíz corregida
+
+**Herramienta:** Claude Code. Cierra la tarea planificada en (40).
+
+**Qué se hizo, sobre el diseño final incorporando los cuatro hallazgos de la convocatoria:**
+- `apps/cli/src/ingestar.ts`: `SAVEPOINT despues_del_lote` justo después de crear `loteId`. `rechazar()`
+  gana `ROLLBACK TO SAVEPOINT despues_del_lote` como primera línea (antes del `update`/
+  `registrarAcceso` del propio rechazo — el orden es crítico, invertirlo se lleva puesto el rastro del
+  rechazo también). Los ~8 sitios que llaman a `rechazar(tx, ...)` no cambiaron una sola línea propia:
+  la garantía vive en un solo lugar. Los `throw` técnicos (errores de Postgres traducidos, el de
+  `persistirAnexos`, el del storage) quedan intactos — siguen revirtiendo toda la transacción.
+- `packages/ingesta/src/persistir.ts`: docstring de `persistirCuenta` corregido — la garantía de "un
+  fallo revierte todo el lote" es del **llamador** (vía `rechazar()`), no de esta función por sí sola.
+- Cinco comentarios de `ingestar.ts` corregidos para reflejar el mecanismo real, no solo la intención.
+- `apps/cli/tests/ingestar.test.ts`: un test nuevo con una `cuenta_bancaria` real registrada (necesaria
+  para que la primera cuenta resuelva y persista de verdad, la precondición del bug) — confirma que una
+  cuenta exitosa NO sobrevive cuando una cuenta posterior del mismo archivo falla: cero filas en
+  `movimiento_bancario_crudo`, el lote en `con_errores` con su motivo, y el rechazo auditado.
+
+**Verificación por mutación, dos veces independientes:** quien conduce comentó el `ROLLBACK TO
+SAVEPOINT` y confirmó que el test detecta 4 filas huérfanas (en vez de 0) — reproduce el bug real a
+escala. `code-reviewer`, además, invirtió el orden dentro de `rechazar()` (escritura antes que rollback)
+y confirmó que produce exactamente el escenario "peor que el bug original" que predijo
+`security-engineer`: el lote vuelve a `recibido` sin `motivo_codigo` ni rastro. Los dos restauraron el
+archivo después; sin residuo.
+
+**Convocatoria (`tech-lead`, `dba-data`, `security-engineer`, `seguridad-datos-financieros`, HANDOFF
+(40)) y `code-reviewer` sobre el diff final: sin bloqueantes.**
+
+**Confirmado por lectura de código, sin tocar datos: Macro tiene el mismo bug** (`leerMacro` arma un
+elemento de `cuentas` por cada sección, el loop de `ingestar.ts` es agnóstico del banco). El fix, al
+vivir enteramente en `ingestar.ts`, corrige la exposición de Macro también — no hizo falta ni se tocó
+`macro.ts`.
+
+**No cierra `docs/diseno/10-deuda-declarada.md` §1.1** (el problema inverso: un `throw` real pierde el
+lote-ancla). Queda declarado, no resuelto — una posible segunda tarea simétrica, a decidir después.
+
+**Remediación de las 158 filas ya comiteadas (del intento real de Santander): recomendación
+documentada en (40), NO implementada.** Borrar está estructuralmente bloqueado (sin grant de `delete` en
+`movimiento_origen_crudo`, y `force row level security` sin policy de `delete` — deniega incluso al
+dueño del esquema). La recomendación es "completar" el lote existente con una función nueva (fuera de
+este fix, necesita su propio plan y criterio de aceptación de `analista-funcional`/`contador-dominio`
+antes de escribirse, por la ausencia de máquina de estados que señaló `dba-data`).
+
+**Medido:** `pnpm typecheck` limpio, `pnpm test` 794/794 (27 archivos), `pnpm barrido` limpio.
+
+**Predicción falsable, para cuando el usuario reintente:** al reintentar la ingesta de Santander (con
+la cuenta USD todavía sin registrar, a propósito), el lote debe rechazarse con el mismo `motivo_codigo`
+de siempre, pero esta vez con **CERO filas nuevas** en `movimiento_bancario_crudo` para ese lote. Las
+158 filas del intento anterior siguen ahí — no las toca este fix, es la remediación pendiente descripta
+arriba.
+
+**Rama:** `fix/ingestar-atomicidad-savepoint`, un commit único (más este de cierre), lista para
+mergear a `main` con `--no-ff`.
+
+---
+
+---
+
 ## 2026-08-11 (40) — Plan: atomicidad real de `ingestar.ts` (CLAUDE.md §3.2)
 
 **Herramienta:** Claude Code. Dispara modo plan por (a)/(c) — toca la transacción que escribe datos
