@@ -204,6 +204,70 @@ y recién después integra, verifica y decide. Los agentes **reportan**; quien c
    - Es **inspeccionable**: alcanza con mirar `TaskList` para saber si la convocatoria existió y
      bloqueó, sin depender de que quien conduce lo recuerde o lo declare.
 
+## 3.2. Modo plan obligatorio (**se planifica antes de tocar código, no después**)
+
+**Antes del primer `Edit`/`Write`** sobre un cambio que dispare esta regla, se entra en modo plan y se
+presenta un plan con estos cinco puntos. Recién después de que el usuario lo aprueba (`ExitPlanMode`)
+arranca la implementación.
+
+**Se activa cuando el cambio cumple cualquiera de estas** (no hace falta que se cumplan todas):
+
+- **(a) Esquema o migración** — tabla, columna, RLS. Lo mismo que ya dispara `dba-data` +
+  `security-engineer` + `seguridad-datos-financieros` en la matriz de §3.1.
+- **(b) Seguridad, permisos, credenciales o datos de clientes** — aislamiento, visibilidad, secreto
+  fiscal. Sin importar cantidad de archivos.
+- **(c) Modifica (no crea de cero) un adaptador, motor o consulta que ya corre contra datos de un
+  cliente o en producción.** Sin importar cantidad de archivos: el caso real que motiva este
+  disparador es un diff de un solo archivo (`galicia.ts`, `HANDOFF.md` 2026-08-10 (17) §4 y (18) §3)
+  que truncaba en silencio la razón social de un tercero en 814 de 1346 filas medidas — sin tocar
+  esquema y sin ser "seguridad" en el sentido estricto de permisos o credenciales.
+- **(d) 3 o más archivos**, salvo que el cambio sea puramente mecánico y sin cambio de comportamiento
+  observable (rename, fix de import, reformateo) — en ese caso se declara así en una línea del mensaje
+  de commit y no dispara el plan.
+
+Ante la duda de si aplica, se activa: el costo de un plan de más es un párrafo; el de uno de menos ya
+se pagó tres veces en este repo (ver el porqué, abajo).
+
+**El plan contiene, siempre, estos cinco puntos:**
+
+1. **Qué cambia y qué no.** Alcance explícito — qué archivo o módulo queda afuera **a propósito**, y
+   **qué se pierde** con lo que se recorta (mismo criterio que dejó a Bancor "en pausa total" mientras
+   se cerraba otra parte del trabajo). *No negociable: sin esto no hay decisión de alcance, hay una
+   intención.*
+2. **Qué se mide.** El criterio de aceptación en números — el conteo de `pnpm verificar`, el resultado
+   del barrido, o la línea de base que corresponda. *No negociable: sin número no hay forma de
+   verificar el cierre.*
+3. **Predicción falsable de los números que se van a mover.** El método de
+   `docs/diseno/09-lecciones-aprendidas.md` §5, generalizado: una tabla de "si sale X, significa Y",
+   escrita **antes** de tocar código. *Negociable a una línea — incluida la respuesta explícita "no hay
+   baseline, se mide en el paso 1" cuando el plan es exploratorio: eso no es saltear el campo, es una
+   respuesta honesta.*
+4. **Qué agentes se convocan.** Los que exige la matriz de §3.1 para este tipo de tarea, nombrados
+   acá — se convierten directo en las tareas `convocar <agente>` con `addBlockedBy` que bloquean la
+   implementación. *No negociable: es la razón de existir de esta regla — capturar la convocatoria
+   antes de escribir código, porque después ya se demostró que no pasa.*
+5. **El paso revertible más chico.** La unidad mínima que se puede probar, mergear o deshacer sola
+   (mismo espíritu que "una tarea = una rama, PRs chicos" de §2). *Negociable a una línea — "el cambio
+   ya es atómico" es una respuesta válida cuando no aplica descomponerlo.*
+
+> **Por qué está escrito como regla y no como sugerencia.** `HANDOFF.md` (2026-08-10, entradas 17 y
+> 18): se ejecutaron Parte 0 y Parte B de un plan de seis partes **sin convocar al panel** que exige
+> §3.1 — la misma falla del Módulo 1, la **tercera vez**. Se frenó el trabajo a mitad de camino, se
+> hizo una revisión retroactiva (`code-reviewer` + `seguridad-datos-financieros`) y aparecieron
+> hallazgos **reales**: faltaba el detector de DNI en el redactor, `galicia.ts` truncaba una razón
+> social partida en silencio, y `main` tenía el CI roto por una allowlist que nadie había regenerado.
+> La corrección, en los hechos, fue escribir el plan completo y dejarlo aprobado por el usuario antes
+> de seguir. Esta sección convierte esa corrección puntual en regla: **la Parte D de ese mismo plan es
+> esta sección.**
+
+**Relación con §3.1:** no la reemplaza. El punto 4 de acá **nombra** a quién se convoca; §3.1 sigue
+rigiendo **cómo** se convoca y cuándo una tarea de convocatoria se marca `completed`. Un plan que dice
+"convoca: X" en el punto 4 y no lo hace tiene el mismo problema que describe §3.1 punto 6 — la
+intención escrita no ejecuta sola.
+
+**Trazabilidad:** el plan aprobado se resume en la entrada de `HANDOFF.md` que cierra la tarea (§4).
+Un plan que solo existió en la sesión no existe para la otra herramienta.
+
 ## 4. Handoff
 
 Escribí una entrada en `HANDOFF.md` **apenas se cierra el DoD** de una tarea o decisión (no esperes al
