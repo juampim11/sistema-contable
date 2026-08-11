@@ -463,6 +463,36 @@ período", sin movimientos reales) y comparar `cuentas[].numero`/`.moneda` contr
 
 ---
 
+### 2.12 🟡 Mismo hueco que §2.11, ahora para las dos regex de Macro (`RE_SECCION_MACRO`/`RE_CBU_MACRO`)
+
+**Contexto:** el fix de `leerCaratula` para Macro (HANDOFF 2026-08-11 (38)) duplicó
+`RE_SECCION_MACRO`/`RE_CBU_MACRO` de `packages/ingesta/src/adaptadores/macro.ts` en
+`apps/cli/src/alta-cuenta.ts`, mismo motivo que §2.11 (`index.ts` prohíbe exponer vocabulario interno
+de un adaptador). A diferencia de Santander, el *particionado* en secciones (`seccionesPorClave`) SÍ se
+reusa importada — es infraestructura compartida de `toolkit.ts`, no vocabulario privado (`tech-lead`,
+HANDOFF (38)) — así que la superficie duplicada acá es más chica: solo las dos regex y dos funciones
+puramente derivadas (`tipoDeCuentaDelTituloMacro`/`monedaDelTituloMacro`).
+
+**El hallazgo (`tech-lead`, en el diseño del mismo fix):** `reconoceMacro` (la función pública que el
+adaptador real usa para reconocer el formato) no ejercita ni `RE_SECCION_MACRO` ni `RE_CBU_MACRO` — su
+`MARCAS` usa `RE_ENCABEZADO_TABLA` y dos etiquetas de carátula distintas. No hay hoy ninguna función
+pública de `macro.ts` que sirva de guardrail cruzado automatizado para estas dos regex, a diferencia de
+`RE_CABECERA_CUENTA` de Santander (que sí tiene `reconoceSantander` como guardrail).
+
+**Verificación hecha en su lugar:** corrida empírica de solo-conteo contra el archivo real del piloto
+(nunca contenido, solo conteos y categorías) confirmando que las dos regex matchean sobre `aLineas()`
+tal como se esperaba: 47 matches de `RE_SECCION_MACRO` (3 números de cuenta distintos, tipos
+`corriente`/`especial`, monedas `ARS`/`USD`), 47 matches de `RE_CBU_MACRO`, con **las 47 dando
+exactamente 22 dígitos** después de limpiar guiones. Confirma el diseño contra el archivo real, pero no
+es un guardrail automatizado que el gate vuelva a correr — es una medición puntual de esta sesión.
+
+**Qué hacer:** mismo camino que §2.11 — si se agrega superficie pública angosta a `macro.ts` (por
+ejemplo, exportar `claveDeSeccion` como `claveDeSeccionMacro`, que ya es exactamente la función que
+`seccionesPorClave` recibe en producción), un test podría correr la misma cadena literal contra las dos
+copias. Decisión de superficie pública del paquete, no de este fix puntual. No bloqueante.
+
+---
+
 ## 3. Lo que se corrigió en esta tanda (para que no se busque acá)
 
 | Hallazgo | Dónde quedó |

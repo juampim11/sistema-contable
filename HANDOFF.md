@@ -6,6 +6,60 @@
 
 ---
 
+## 2026-08-11 (39) — Cierre: `leerCaratula` para Macro, implementado, verificado, en verde
+
+**Herramienta:** Claude Code. Cierra la tarea planificada en (38).
+
+**Qué se hizo, sobre el diseño final incorporando los cinco hallazgos de la convocatoria:**
+- `apps/cli/src/alta-cuenta.ts`: tercera rama en `leerCaratula`, detectada por `seccionesPorClave`
+  (importada de `@sistema-contable/ingesta`, no duplicada — infraestructura compartida de
+  `toolkit.ts`). Duplica solo `RE_SECCION_MACRO`/`RE_CBU_MACRO`/`tipoDeCuentaDelTituloMacro`/
+  `monedaDelTituloMacro` (vocabulario privado de `macro.ts`, verificado carácter por carácter contra
+  el original). Filtra por `(moneda, tipo)`: `--tipo` nuevo, opcional, enum cerrado de 3 valores
+  (`cuenta_corriente`/`cuenta_corriente_especial`/`caja_ahorro`, derivado de `TipoCuentaAlta` con
+  `as const satisfies`), aplicado **siempre** que esté presente — nunca ignorado en silencio aunque
+  `--moneda` sola ya alcanzara. 0/`>1` candidatas por `(moneda, tipo)` → error explícito con tipo +
+  cantidad de movimientos (aproximada, solo de consola) de cada candidata — nunca número ni CBU, y
+  nunca solo el tipo (sería un eco circular). El CBU real de Macro trae guiones — se limpia
+  (`.replace(/\D/g, '')`) y se valida `/^\d{22}$/` antes de aceptarlo. Motivo de auditoría con un
+  segundo sufijo (independiente del de CBU manual de (36)) cuando `--tipo` participó de la elección.
+- `apps/cli/tests/alta-cuenta.test.ts`: 10 tests nuevos (45 en total), con los mismos valores
+  sintéticos que ya usa `macro.test.ts` (`NRO_USD`/`NRO_ESPECIAL`/`NRO_BANCARIA`, mismos CBU con
+  guión) — no se inventa un formato nuevo.
+- `docs/diseno/10-deuda-declarada.md` §2.12 (nuevo): mismo criterio que §2.11 — el guardrail cruzado
+  automatizado no tiene equivalente para `RE_SECCION_MACRO`/`RE_CBU_MACRO` (`reconoceMacro` no las
+  ejercita). No bloqueante, documentado.
+
+**Verificación empírica pedida por `tech-lead` (HANDOFF (38), punto 4), hecha antes de cerrar:** script
+descartable de solo-conteo (nunca contenido) contra el PDF real del piloto, confirmando que
+`RE_SECCION_MACRO`/`RE_CBU_MACRO` matchean sobre `aLineas()` tal como predecía el diseño: **47** matches
+de cabecera (3 números de cuenta distintos, tipos `corriente`/`especial`, monedas `ARS`/`USD`), **47**
+matches de CBU, con las 47 dando **exactamente 22 dígitos** después de limpiar guiones. Script borrado
+después de correrlo, no queda en el repo.
+
+**Convocatoria (`tech-lead`, `dba-data`, `security-engineer`, `seguridad-datos-financieros`, todos en
+HANDOFF (38)) y `code-reviewer` sobre el diff final:** sin bloqueantes. `code-reviewer` verificó con una
+prueba de mutación real que el test `'--tipo se aplica SIEMPRE...'` discrimina de verdad — reintrodujo
+el bug exacto que `security-engineer` había pedido prevenir (ignorar `--tipo` cuando moneda sola ya
+alcanzaba) y el test lo detectó de inmediato; restauró el archivo después, sin diff residual confirmado.
+
+**Medido:** `pnpm typecheck` limpio, `pnpm test` 793/793 (27 archivos), `pnpm barrido` limpio.
+
+**Predicción falsable:** el usuario corre `pnpm alta:cuenta --banco macro --moneda ARS --tipo
+cuenta_corriente --archivo <el PDF real> --cliente <uuid> --usuario <uuid>` (con
+`ENV_FILE=.env.piloto`) y tiene que imprimir la forma del número/CBU de la cuenta de 1335 movimientos,
+sin error. Sin `--tipo` (documento con las dos ARS), tiene que fallar explícito listando los dos tipos
+candidatos con su conteo de movimientos — `cuenta_corriente_especial` con un conteo chico,
+`cuenta_corriente` con uno mucho más grande. Si imprime la cuenta equivocada o vuelve a fallar de otra
+forma, es un hallazgo — no se reintenta sin confirmarlo conmigo primero.
+
+**Rama:** `feat/alta-cuenta-macro-multicuenta`, un commit único (más este de cierre), lista para
+mergear a `main` con `--no-ff`.
+
+---
+
+---
+
 ## 2026-08-11 (38) — Plan: `leerCaratula` para Macro, tres cuentas y dos ejes (CLAUDE.md §3.2)
 
 **Herramienta:** Claude Code. Dispara modo plan por (a)/(c) — atribución de identificador real de cuenta
