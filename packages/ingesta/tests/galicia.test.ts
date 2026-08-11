@@ -122,19 +122,50 @@ const CBU_SINTETICO = ['1234567890', '1234567890', '12'].join('');
  *
  * `conEtiquetaDeCbu: false` deja el valor y saca **solo la etiqueta**: es el caso que prueba que sin ancla
  * impresa el campo queda ausente en vez de adivinado.
+ *
+ * `conColumnaVecina: true` agrega un CUARTO fragmento en la fila de la razón social, más a la izquierda
+ * que ella — la "columna vecina alfabética" de la quinta cara del error de límites (`09` §1): sin dígitos,
+ * así que las guardas de forma no la frenan. Prueba que la fusión de fragmentos se detiene en el hueco
+ * geométrico y no sigue absorbiendo hacia la izquierda hasta la columna vecina.
+ *
+ * `conRazonSocialPartida: true` parte la razón social en DOS fragmentos CONTIGUOS (gap = 0 entre ellos) —
+ * la firma geométrica de "el mismo campo cortado por el extractor", medida en Macro (`texto-pdf.ts`: un
+ * campo de texto libre puede salir en 1 a 4 fragmentos por fila). Prueba que `leerTitular` los fusiona en
+ * vez de quedarse solo con el último.
  */
 function caratula(
-  opciones: { readonly conEtiquetaDeCuit?: boolean; readonly conEtiquetaDeCbu?: boolean } = {},
+  opciones: {
+    readonly conEtiquetaDeCuit?: boolean;
+    readonly conEtiquetaDeCbu?: boolean;
+    readonly conColumnaVecina?: boolean;
+    readonly conRazonSocialPartida?: boolean;
+  } = {},
 ): FilaGeometrica[] {
   const conCuit = opciones.conEtiquetaDeCuit ?? true;
   const conCbu = opciones.conEtiquetaDeCbu ?? true;
+  const conVecina = opciones.conColumnaVecina ?? false;
+  const conPartida = opciones.conRazonSocialPartida ?? false;
   return [
     fila([{ texto: 'Resumen de Cuenta Corriente en Pesos', x: 200 }]),
     ...(conCuit
       ? [
           fila([
+            // `ancho: 20` explícito: con el default (`texto.length*5`) su borde derecho pisaría X_FECHA y
+            // borraría el hueco real que la separa de la razón social — la señal geométrica que el test de
+            // "columna vecina" necesita medir.
+            ...(conVecina ? [{ texto: 'OTRA COLUMNA', x: 5, ancho: 20 }] : []),
             // Un fragmento en la columna de FECHA que no es una fecha: el autómata no puede abrir acá.
-            { texto: 'RAZON SOCIAL SINTETICA S.R.L.', x: X_FECHA },
+            ...(conPartida
+              ? [
+                  /**
+                   * Dos fragmentos CONTIGUOS: el borde derecho del primero (`X_FECHA + 20*5 = 138.4`) es
+                   * exactamente el borde izquierdo del segundo. Gap = 0 — la firma geométrica de un campo
+                   * partido por el extractor, no de una columna aparte.
+                   */
+                  { texto: 'RAZON SOCIAL PARTIDA', x: X_FECHA },
+                  { texto: 'EN DOS FRAGMENTOS S.A.', x: X_FECHA + 100 },
+                ]
+              : [{ texto: 'RAZON SOCIAL SINTETICA S.R.L.', x: X_FECHA }]),
             { texto: 'CUIT del Responsable Impositivo : 30-12345678-9', x: 300 },
           ]),
         ]
@@ -468,6 +499,70 @@ describe('carátula: lo que no tiene etiqueta se deriva, y lo que la tiene se le
     expect(cuenta.cuenta.titular).toBe('RAZON SOCIAL SINTETICA S.R.L.');
     // La etiqueta siguiente comparte fila y arranca en mayúscula: no se la lleva puesta.
     expect(cuenta.cuenta.titularCondicionIva).toBe('Responsable inscripto');
+  });
+
+  /**
+   * 🔴 La quinta cara del error de límites (`09` §1): una columna vecina alfabética, más a la izquierda
+   * que la razón social, en la MISMA fila geométrica. Sin dígitos, así que las guardas de forma no la
+   * frenan por sí solas — el límite tiene que venir de la geometría, no del contenido.
+   *
+   * Prueba por mutación: con `fila.fragmentos.slice(0, indiceEtiqueta).join(' ')` (la versión que junta
+   * TODO lo anterior a la etiqueta) esto daría `'OTRA COLUMNA RAZON SOCIAL SINTETICA S.R.L.'`. Con el
+   * fragmento inmediatamente anterior, sólo la razón social.
+   */
+  it('una columna vecina alfabética a la izquierda de la razón social NO se cuela', () => {
+    const conVecina = documento([
+      ...caratula({ conColumnaVecina: true }),
+      ...cuerpo(),
+      lineaDeTotales(),
+      ...pie(2, 2),
+    ]);
+    const c = laCuenta(leerGalicia(conVecina));
+    expect(c.cuenta.titular).toBe('RAZON SOCIAL SINTETICA S.R.L.');
+    expect(c.cuenta.titular).not.toContain('OTRA COLUMNA');
+  });
+
+  /**
+   * 🔴 Razón social partida en fragmentos geométricos, delante de la etiqueta del CUIT — un campo de texto
+   * libre en esa columna puede salir partido en 1 a 4 fragmentos por fila (medido en Macro: 814 de 1346
+   * filas en 3 fragmentos; `texto-pdf.ts`). La versión anterior de `leerTitular` tomaba SOLO
+   * `fragmentos[indiceEtiqueta - 1]` — el ÚLTIMO fragmento antes de la etiqueta — así que con la razón
+   * social partida en dos, el primer pedazo se perdía SIN error y sin campo ausente: un titular incompleto
+   * quedaba persistido en silencio.
+   *
+   * Prueba por mutación: con la implementación anterior esto da `titular === 'EN DOS FRAGMENTOS S.A.'` —
+   * `'RAZON SOCIAL PARTIDA'` desaparece sin dejar rastro.
+   */
+  it('une los fragmentos de la razón social cuando viene partida delante de la etiqueta', () => {
+    const partida = documento([
+      ...caratula({ conRazonSocialPartida: true }),
+      ...cuerpo(),
+      lineaDeTotales(),
+      ...pie(2, 2),
+    ]);
+    const c = laCuenta(leerGalicia(partida));
+    expect(c.cuenta.titular).toBe('RAZON SOCIAL PARTIDA EN DOS FRAGMENTOS S.A.');
+  });
+
+  /**
+   * 🔴 El control cruzado que evita que el fix se pase de largo: razón social partida en dos fragmentos Y
+   * una columna vecina real, en la MISMA fila. La fusión tiene que juntar los dos fragmentos CONTIGUOS de
+   * la razón social (gap = 0) y PARAR ahí — no seguir absorbiendo hacia la izquierda hasta la columna
+   * vecina, separada por un hueco real (13.4pt en el fixture, contra 0pt entre los fragmentos de la razón
+   * social). Si el fix se implementara como "todo lo que precede a la etiqueta sin dígitos" —el bug
+   * original que motivó la quinta cara— este test lo atrapa: daría
+   * `'OTRA COLUMNA RAZON SOCIAL PARTIDA EN DOS FRAGMENTOS S.A.'`.
+   */
+  it('funde la razón social partida sin absorber una columna vecina real en la misma fila', () => {
+    const partidaConVecina = documento([
+      ...caratula({ conRazonSocialPartida: true, conColumnaVecina: true }),
+      ...cuerpo(),
+      lineaDeTotales(),
+      ...pie(2, 2),
+    ]);
+    const c = laCuenta(leerGalicia(partidaConVecina));
+    expect(c.cuenta.titular).toBe('RAZON SOCIAL PARTIDA EN DOS FRAGMENTOS S.A.');
+    expect(c.cuenta.titular).not.toContain('OTRA COLUMNA');
   });
 
   /**

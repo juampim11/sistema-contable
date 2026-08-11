@@ -14,6 +14,7 @@
  */
 
 import { CLAVES_SENSIBLES_EXTERNAS, COLUMNAS_SENSIBLES } from './clasificacion-campos.ts';
+import { RE_CBU, RE_CORRIDA_LARGA, RE_CUIT, RE_DNI } from './detectores-forma.ts';
 
 export const MARCA = '[REDACTADO]';
 
@@ -54,7 +55,10 @@ export const DETECTORES: readonly { nombre: string; patron: RegExp; motivo: stri
   },
   {
     nombre: 'cbu',
-    patron: /\b\d{22}\b/g,
+    // Forma centralizada en `detectores-forma.ts`, compartida con `glosa.ts`: mismo patrón, con soporte de
+    // separadores comunes (espacio, guión, punto). Ver el comentario de ese módulo para el caso medido
+    // (un CBU pegado a un guión) que justifica `\b` en vez de un lookaround que excluye el guión.
+    patron: RE_CBU,
     motivo: 'CBU (22 dígitos) — N2R.',
   },
   {
@@ -70,8 +74,22 @@ export const DETECTORES: readonly { nombre: string; patron: RegExp; motivo: stri
   },
   {
     nombre: 'cuit',
-    patron: /\b(20|23|24|25|26|27|30|33|34)-?\d{8}-?\d\b/g,
+    // Forma centralizada en `detectores-forma.ts`, compartida con `glosa.ts` (que antes aceptaba
+    // cualquier corrida de 11 dígitos sin validar prefijo — acá se unificó hacia la versión estricta).
+    patron: RE_CUIT,
     motivo: 'CUIT/CUIL — N2R.',
+  },
+  {
+    nombre: 'documento',
+    // 🔴 Hasta acá el redactor no tenía detector de DNI: `redactarTexto('DNI 1234567 no encontrado')`
+    // devolvía el texto entero, sin tapar nada. Es la misma clase de fuga que motivó el catch-all
+    // `corrida_larga` de más abajo (un identificador de un tercero que ningún detector reconocía) — la
+    // diferencia es que acá el hueco era total: 7-8 dígitos ni siquiera caen en el catch-all (que empieza
+    // en 9). `glosa.ts` ya tenía este detector para la glosa bancaria; nunca se había propagado acá.
+    // Forma centralizada en `detectores-forma.ts` — ver ahí el motivo de excluir la coma del lookaround
+    // (no comerse el decimal de un importe sin separador de miles).
+    patron: RE_DNI,
+    motivo: 'DNI (7-8 dígitos) — N2R.',
   },
   {
     nombre: 'jwt',
@@ -118,7 +136,10 @@ export const DETECTORES: readonly { nombre: string; patron: RegExp; motivo: stri
     // 9 dígitos porque es el piso de `glosa.ts` (ahí lo eligieron por ser más corto que el CUIT de 11).
     // Los lookarounds excluyen separadores para no comerse un importe (que siempre lleva coma decimal)
     // ni la cola de un uuid interno, que es justo lo que tiene que quedar legible para depurar.
-    patron: /(?<![\d\-.,])\d{9,}(?![\d\-.,])/g,
+    //
+    // Forma centralizada en `detectores-forma.ts`, idéntica carácter por carácter a la que ya tenía
+    // `glosa.ts` — antes eran dos copias que podían divergir sin que nadie lo notara.
+    patron: RE_CORRIDA_LARGA,
     motivo: 'Corrida larga de dígitos sin clasificar — puede ser un identificador parcial o completo.',
   },
 ];

@@ -14,6 +14,15 @@
  * | `clasificarRuido` / `particionar` / `agruparEnFilas` / `residuoDeParticion` / `RUIDO_COMUN` | **CERO en los tres bancos.** Santander las **nombra** en dos comentarios y no importa ninguna | **se deciden con el cuarto** |
  * | **`inferirCortes` / `cortarEnColumnas`** | **CERO en los tres bancos** | **se borran con el cuarto** |
  *
+ * **Cola de anexo con rótulo partido — Macro y Santander, NO generalizada a propósito.** Los dos bancos
+ * tienen la misma familia de problema (un rótulo de anexo que se parte en una línea de más), con mecánicas
+ * de apareo genuinamente distintas: Macro cruza el corte de página y consume por cola FIFO sobre el
+ * **documento entero** (`macro.ts`, `leerAnexosDelLote`); Santander está acotado a la **misma página** y al
+ * rótulo **inmediato anterior** (`santander.ts`, `RE_COLA_PERIODO_DE_EMISION`). Forzar una función común con
+ * dos casos que ya divergen en su regla de apareo es la misma trampa que ya evitó este archivo con una sola
+ * implementación (revisión de Parte B de la quinta cara, 2026-08-10) — se deja anotado acá para que la
+ * próxima vez que aparezca (un tercer banco con "rótulo con cola") el criterio no se decida a ciegas.
+ *
  * 🔴 La primera fila decía *"Santander los ejercita"* y era **falso**: los tres adaptadores construyen su
  * autómata a mano. Queda escrito porque es el error que sostiene una abstracción muerta durante cinco
  * bancos más — y porque **esta tabla es el documento con el que se toma esa decisión**. Un encabezado
@@ -54,20 +63,9 @@ import {
   type ImporteCanonico,
 } from '../parseo-ar.ts';
 import { fragmentoEnVentanaDerecha, type FilaGeometrica } from '../texto-pdf.ts';
-
-/**
- * Copia de un regex **sin las flags que llevan estado**: `g` y `y`.
- *
- * Las dos hacen que `exec`/`test` arrastren `lastIndex` entre llamadas, así que un patrón reusado sobre
- * varias líneas **saltea apariciones** — y el salteo es silencioso: no falla, devuelve menos.
- *
- * Estaba escrito cuatro veces como `.flags.replace('g', '')`, o sea que **tapaba `g` y dejaba pasar `y`**.
- * Un regex sticky es raro de escribir a mano pero perfectamente válido en la firma de estas funciones, que
- * reciben el patrón del adaptador. Acá, en un solo lugar, y con las dos.
- */
-function sinEstado(re: RegExp): RegExp {
-  return new RegExp(re.source, re.flags.replace(/[gy]/g, ''));
-}
+// `sinEstado` vivía acá, duplicada peor en `tools/barrido-fuga.ts` (esa copia tapaba `g` y dejaba pasar
+// `y`). Un solo lugar, en `packages/shared`, importado por los dos.
+import { sinEstado } from '@sistema-contable/shared/seguridad';
 
 // -----------------------------------------------------------------------------
 // Carátula: leer POR ETIQUETA, nunca por patrón
@@ -127,7 +125,7 @@ export function valorPorEtiqueta(
 }
 
 /** Índice de `aguja` en `texto`, ignorando acentos y mayúsculas, preservando las posiciones originales. */
-function buscarIgnorandoAcentos(texto: string, aguja: string): number {
+export function buscarIgnorandoAcentos(texto: string, aguja: string): number {
   const plano = (s: string): string =>
     s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
   return plano(texto).indexOf(plano(aguja));
