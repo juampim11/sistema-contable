@@ -6,6 +6,77 @@
 
 ---
 
+## 2026-08-11 (43) — Cierre: `completar-lote.ts` implementado, revisado y en verde. Listo para que el usuario lo corra.
+
+**Herramienta:** Claude Code. Cierra la tarea planteada en (42): la función de remediación para lotes
+`con_errores` a los que el bug de atomicidad (pre-(40)/(41)) les dejó una cuenta ya persistida y otra
+sin persistir — el caso real de Santander en el piloto (158 filas de ARS comiteadas, USD sin registrar).
+
+**Qué se construyó, tal cual el diseño aprobado en (42):**
+- `packages/data/migrations/0012_remediacion_lote.sql`: `lote_ingesta.motivo_codigo_previo text`
+  nullable, aplicada a la base local. Entrada nueva en `clasificacion-campos.ts` (N1, exportable).
+- `apps/cli/src/completar-lote.ts`: `pnpm completar-lote --cliente --archivo --banco --usuario`. Guard
+  R18, lote tiene que EXISTIR por `(cliente_id, archivo_hash)` (nunca se crea uno ni se cae a "el más
+  reciente"), `--banco` releído tiene que coincidir con el persistido. Resuelve TODAS las cuentas del
+  documento (lectura pura) y cuenta cuántas no tienen fila en `lote_ingesta_cuenta`: 0 → `ya_completado`;
+  exactamente 1 → verifica y persiste (reusa `resolverCuentaDelExtracto`/`verificarAritmetica`/
+  `persistirCuenta`/`guardarExtractoTrasResolver` de `ingestar.ts`, sin tocar ese archivo); ≥2 → aborta
+  explícito. Sin `SAVEPOINT`: hasta el punto de decidir todo es lectura, y si la única cuenta pendiente
+  no persiste, no hay nada que revertir. Recalcula `filas_leidas`/`filas_aceptadas` con `sum()` sobre
+  `lote_ingesta_cuenta`, corrige `adaptador_version` (hallazgo de `dba-data`: quedaba en `@pendiente`) y
+  completa `archivo_clave`/`paginas_declaradas`/`paginas_sin_texto` (el objeto nunca se había guardado).
+  Auditoría con `registrarAcceso` directo (no es N2-R), motivo `completar_lote:<código previo>`.
+- `apps/cli/tests/completar-lote.test.ts`: 8 tests, todos contra fixtures sintéticos — nunca contra el
+  piloto. Los cinco del criterio de aceptación (0/1-resuelve/1-no-resuelve/≥2/segunda-corrida) más
+  `lote_no_encontrado`, `banco_no_coincide`, y el que agregó la revisión (ver abajo): 1 pendiente que
+  resuelve pero `verificarAritmetica` da `no_cuadra`.
+
+**`code-reviewer` convocado sobre el diff completo** (migración + script + tests). Sin hallazgos de fuga
+N2/N2-R, aislamiento multi-tenant o doble persistencia. Dos hallazgos reales, corregidos acá:
+1. **Correctness:** la clasificación de "pendientes" resolvía cada cuenta del documento sin verificar
+   primero si `lote_ingesta_cuenta` ya tenía tantas filas como cuentas trae el archivo — una cuenta YA
+   persistida que dejara de re-resolver (identificador cuya vigencia cambió después de la ingesta
+   original) se contaba como pendiente igual que una genuinamente faltante. Nunca corrompía nada (no hay
+   `insert` posible sobre una cuenta ya persistida, por `uq_lote_cuenta_natural`), pero podía devolver
+   `rechazado`/`multiples_cuentas_pendientes` sobre un lote ya completo. Fix: atajo
+   `existentes.length >= leido.cuentas.length → ya_completado`, antes de resolver una sola cuenta.
+2. **Test-coverage:** faltaba el caso "la cuenta pendiente resuelve pero no cuadra" — el guardrail
+   explícito de `seguridad-datos-financieros` en (42) ("fallo de verificación después de resolución
+   exitosa se trata IGUAL que fallo de resolución"). Agregado con `mutar(cuenta, 'borrar_fila_del_medio')`
+   (mismo mutador de `mutaciones.test.ts`) para romper la coherencia de un fixture sin armarlo a mano.
+
+Un tercer hallazgo (simplificación: `RE_UUID`/`esquemaArgumentos`/`EXTENSIONES_ACEPTADAS`/`contentTypeDe`
+duplicados de `ingestar.ts`) se dejó **sin aplicar, a propósito**: extraerlos exige tocar `ingestar.ts`,
+y (42) declaró explícitamente "no cambia: ingestar.ts" — CLAUDE.md §3.2(c) se dispara de nuevo por
+cualquier edición a un archivo que ya corre contra datos reales, aunque sea mover una constante pura.
+Diez líneas duplicadas es más barato que reabrir esa puerta para este cambio puntual. Queda declarado en
+el propio código (comentario junto a `RE_UUID` en `completar-lote.ts`), no silencioso.
+
+**Medido:** `pnpm typecheck` limpio. `pnpm verificar` en verde: 802 tests pasan (7 `todo` preexistentes,
+sin relación), 809 en total — 8 nuevos de este archivo sobre los 801 previos a esta tarea.
+
+**🔴 Regla que no cambia: esto NO se corre contra el piloto desde acá.** El usuario la corre él mismo,
+con:
+
+```
+pnpm completar-lote --cliente <uuid-del-cliente> \
+  --archivo <la MISMA ruta del PDF de Santander que se usó en la ingesta original> \
+  --banco santander --usuario <uuid-del-usuario>
+```
+
+Predicción falsable (la de (42), sin cambios): `estado='procesado_con_observaciones'`, 2 filas en
+`lote_ingesta_cuenta`, `filas_leidas=filas_aceptadas=158`, `motivo_codigo IS NULL`,
+`motivo_codigo_previo='cuenta_no_pertenece_al_cliente'`, `adaptador_version` sin `@pendiente`, una fila
+nueva en `acceso_auditoria` con `accion='escritura'` y `recurso_id` igual al lote. La cuenta USD tiene
+que estar dada de alta ANTES de correr esto (mismo alta que ya se usó para Macro). Si algo no coincide,
+es un hallazgo — no se reintenta sin confirmarlo primero.
+
+**Pendiente, explícitamente fuera de esta tarea:** Macro sigue "en pausa total" (nadie corrió su alta de
+3 cuentas ni su ingesta real todavía — tarea #22 del roster). `docs/diseno/10-deuda-declarada.md` §1.1
+(el `throw` que pierde el lote-ancla) sigue declarado, no resuelto.
+
+---
+
 ## 2026-08-11 (42) — Plan: `completar-lote.ts`, remediación del lote con_errores (CLAUDE.md §3.2)
 
 **Herramienta:** Claude Code. Dispara modo plan por (a)/(b)/(c) — agrega una columna a `lote_ingesta`,
