@@ -6,6 +6,113 @@
 
 ---
 
+## 2026-08-11 (44) — 🔴 PUNTO DE ENTRADA SI RETOMÁS SIN ESTE CHAT. Primera corrida real de `completar-lote.ts` falló contra el piloto — causa raíz confirmada, nada corrupto, **bloqueado en un paso operativo del usuario**.
+
+**Herramienta:** Claude Code. El usuario corrió el comando exacto que dejó (43) contra el piloto real,
+con la cuenta USD de Santander ya registrada. Falló con:
+
+```
+column "motivo_codigo_previo" of relation "lote_ingesta" does not exist
+```
+
+El usuario pidió, explícitamente, **no reintentar nada** hasta contestar tres preguntas con evidencia
+real (no supuestos) — mismo criterio que ya se aplicó en (40) con el bug de atomicidad. Las tres,
+contestadas y confirmadas contra el piloto real (nunca contra la base local):
+
+**1. Causa raíz — confirmada.** La migración `0012_remediacion_lote.sql` se aplicó a la base LOCAL de
+desarrollo (donde corrieron los tests) pero **nunca al piloto**. Mismo patrón exacto que ya había pasado
+con la migración del catálogo de bancos (0011) — es la **segunda vez** que este tipo de olvido pasa.
+Confirmado con:
+```
+$env:ENV_FILE=".env.piloto"
+pnpm db:migrate --estado
+# ... = 0011_catalogo_bancos.sql (ya aplicada)
+# + 0012_remediacion_lote.sql (PENDIENTE)
+```
+
+**2. Nada quedó huérfano en Postgres — verificado con una consulta de solo lectura contra el piloto**
+(dueño del esquema, mismo patrón que `migrar.ts`/`clienteDuenio()`, sin necesitar el uuid del usuario
+real). Lote `e58a957c-8862-4fa4-b561-39817f97225f` (cliente `7f74496f-9779-457c-b35e-43dfa7b619f2`,
+`banco_codigo='santander'`):
+- `lote_ingesta_cuenta`: **una sola fila**, la cuenta ARS original (158, `cuadra`) — sin cambios. **Cero
+  fila para la cuenta USD.**
+- `movimiento_bancario_crudo`: 158 filas, todas de la cuenta ARS.
+- `acceso_auditoria` para este lote: **una sola fila**, el `rechazo` original de (40). Nada nuevo.
+- `lote_ingesta`: sigue `estado='con_errores'`, `motivo_codigo='cuenta_no_pertenece_al_cliente'`,
+  `archivo_clave IS NULL` — exactamente como estaba antes de esta corrida.
+
+Mecanismo: el `update` con la columna inexistente lanzó un error real de Postgres; `conUsuario` hizo
+`rollback` en el `catch` (`conexion.ts:249-255`); y Postgres **aborta la transacción entera** ante un
+error de esquema mid-transacción, así que el `insert` de `persistirCuenta` para la cuenta USD (0 filas,
+pero sí una fila en `lote_ingesta_cuenta`) se revirtió con todo lo posterior. El diseño de "hasta el
+punto de decisión todo es lectura pura" de (42) sostuvo — la única escritura real que había ocurrido
+(la cuenta USD) se deshizo sola, sin necesitar `SAVEPOINT`.
+
+**3. El log `cuenta_bancaria_id == lote_id` — confirmado, no es nuevo de este script.** Es intencional,
+heredado de `ingestar.ts` (mismo patrón, mismo comentario ahí: el objeto es del LOTE, no de una cuenta
+puntual, y no hay una sola `cuentaBancariaId` para poner cuando el archivo trae varias). **Sin impacto
+funcional**: `construirClave` (`clave.ts:52-55`) arma la clave con `pedido.loteId` directo, nunca con
+ese campo — el `cuenta_bancaria_id` del log es puramente cosmético, y solo se vio por primera vez en un
+log real porque es la primera corrida en producción que llega a esa línea con un lote multi-cuenta. Es
+confuso y valdría la pena arreglarlo, pero toca el contrato compartido `ResolucionCuenta`/`extracto.ts`
+usado por los dos scripts — tarea aparte, no bloqueante, no tocada acá.
+
+**4. Hallazgo propio, que la evidencia del punto 3 destapó y el usuario no había preguntado
+directamente: SÍ hay un objeto huérfano real en el storage del piloto.** El log `extracto.guardado`
+significa que `storage.guardar()` (un `PUT` real a S3/MinIO) corrió **antes** del `update` que falló —
+y ese `PUT` no es parte de la transacción de Postgres, así que el `rollback` no lo deshizo. Confirmado
+con `HeadObjectCommand` (**nunca** se bajó el contenido — es un PDF real con datos N2/N2-R de un
+cliente):
+```
+cliente/7f74496f-9779-457c-b35e-43dfa7b619f2/extracto/e58a957c-8862-4fa4-b561-39817f97225f.pdf
+EXISTE: tamaño=133338 bytes
+```
+**No es una fuga** (nada lo lista, nada lo sirve sin `archivo_clave`, que sigue `NULL`) y **es
+autocurativo en este caso puntual**: la clave es determinística (`cliente_id`+`lote_id`), así que la
+próxima corrida exitosa vuelve a hacer `PUT` sobre la misma clave (sobreescribe con contenido idéntico,
+sin duplicar nada) y esta vez, si el `update` tiene éxito, `archivo_clave` sí queda apuntándolo. Se
+documentó como deuda declarada nueva: **`docs/diseno/10-deuda-declarada.md` §1.8** (el mecanismo general
+sigue sin reversa — acá se curó solo porque la causa del fallo era transitoria/reintentable, pero un
+fallo de negocio real y definitivo dejaría un huérfano permanente sin que nada lo detecte).
+
+**Scripts de diagnóstico usados y ya BORRADOS** (mismo patrón descartable de siempre, nada comiteado):
+`packages/data/scripts/diag-completar-lote-santander.ts` (solo lectura, dueño del esquema, solo
+conteos/códigos) y `packages/almacenamiento/scripts/diag-existe-objeto.ts` (solo `HEAD`, nunca `GET`).
+
+**Nada se tocó en el código de `completar-lote.ts` ni en la migración `0012` — están bien tal cual
+quedaron en (43).** El problema es puramente operativo: falta aplicar la migración en el entorno del
+piloto. Esta sesión terminó en diagnóstico puro, sin ningún commit nuevo de código.
+
+**🔴 BLOQUEADO EN UNA ACCIÓN DEL USUARIO — no la ejecuto yo, mismo criterio de siempre.** Próximos dos
+pasos, en orden, para el usuario:
+
+```
+$env:ENV_FILE=".env.piloto"
+pnpm db:migrate
+```
+
+Y recién después, exactamente el mismo comando de `completar-lote` que ya está documentado en (43) —sin
+cambios. Predicción falsable, la misma de (42)/(43) más un punto nuevo:
+`estado='procesado_con_observaciones'`, 2 filas en `lote_ingesta_cuenta`, `filas_leidas=filas_aceptadas=158`,
+`motivo_codigo IS NULL`, `motivo_codigo_previo='cuenta_no_pertenece_al_cliente'`, `adaptador_version` sin
+`@pendiente`, una fila nueva en `acceso_auditoria`, y **`archivo_clave` apuntando al objeto que ya existe
+en el storage** (el de arriba) sin haber duplicado nada. Si algo no coincide, es un hallazgo — no se
+reintenta sin confirmarlo primero.
+
+**Deuda nueva, declarada, no bloqueante:**
+- `docs/diseno/10-deuda-declarada.md` §1.8 (nueva): el `PUT` al storage sin reversa transaccional,
+  confirmado por primera vez contra un dato real.
+- El log `cuenta_bancaria_id == lote_id` en `extracto.guardado` (punto 3): cosmético, compartido entre
+  `ingestar.ts` y `completar-lote.ts`, no arreglado.
+- **Patrón recurrente, segunda vez**: una migración se aplica en local y se olvida en el piloto (0011,
+  y ahora 0012). Vale la pena, en algún momento, agregar un chequeo de `pnpm db:migrate --estado` contra
+  el entorno declarado como paso previo obligatorio antes de correr cualquier ingesta/alta/remediación
+  real — no se implementó acá, queda como sugerencia para `devops`.
+- Macro sigue "en pausa total" (tarea #22 del roster): nadie corrió su alta de 3 cuentas ni su ingesta
+  real todavía.
+
+---
+
 ## 2026-08-11 (43) — Cierre: `completar-lote.ts` implementado, revisado y en verde. Listo para que el usuario lo corra.
 
 **Herramienta:** Claude Code. Cierra la tarea planteada en (42): la función de remediación para lotes

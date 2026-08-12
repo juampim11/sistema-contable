@@ -173,6 +173,27 @@ trigger en la migración de tenancy que valide el `tipo` del padre para cualquie
 solo la de aplicación — fuera del alcance de 6.2 porque tocar `0001_tenancy.sql` es una decisión de
 mayor radio que un guard de aplicación en una función nueva.
 
+### 1.8 🟡 El `PUT` al storage no participa de la transacción: un fallo POSTERIOR deja el objeto huérfano, confirmado contra el piloto
+
+Manifestación concreta de lo que §1.4 ya señalaba en abstracto ("el `PUT` corre dentro de la
+transacción [de Postgres, pero el storage no participa de esa transacción]"), confirmada por primera vez
+contra un dato real: HANDOFF 2026-08-11 (44), `completar-lote.ts` corrió contra el piloto con la
+migración `0012` sin aplicar ahí. `guardarExtractoTrasResolver` hizo el `PUT` con éxito (log
+`extracto.guardado`), y el `update` de `lote_ingesta` que sigue **después** falló por la columna
+inexistente. `conUsuario` revirtió Postgres entero, pero el objeto en S3/MinIO **no tiene reversa**: quedó
+en el bucket real, sin ningún `archivo_clave` que lo señale.
+
+**No es una fuga** (nada lista por prefijo, nada lo sirve sin `archivo_clave`) y **es autocurativo en
+este caso puntual**: la clave es determinística (`cliente_id` + `lote_id`, `clave.ts`), así que la
+próxima corrida exitosa vuelve a hacer `PUT` sobre la misma clave (sobreescribe con contenido idéntico,
+sin duplicar nada) y esta vez si el `update` tiene éxito, `archivo_clave` sí lo termina señalando. **Pero
+el mecanismo general sigue sin reversa**: si el fallo posterior no fuera transitorio/reintentable (por
+ejemplo, un error real de negocio que aborta la corrida para siempre en vez de una migración pendiente),
+el objeto quedaría huérfano permanentemente, sin que nada en el sistema lo detecte. **Cierre correcto,
+pendiente**: mover el `PUT` fuera de la transacción por completo (guardar primero bajo una clave
+provisoria/con TTL, confirmar después) o un job de barrido que compare objetos existentes contra
+`lote_ingesta.archivo_clave` — ninguna de las dos se intentó acá, alcance de una tarea aparte.
+
 ---
 
 ## 2. Coherencia entre adaptadores (pasada de `tech-lead`)
