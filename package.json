@@ -23,6 +23,7 @@
     "fixtures:verificar": "node tools/verificar-fixtures.ts",
     "probar": "node packages/ingesta/scripts/probar-adaptador.ts",
     "ingesta": "node apps/cli/src/ingestar.ts",
+    "completar-lote": "node apps/cli/src/completar-lote.ts",
     "alta:cuenta": "node apps/cli/src/alta-cuenta.ts",
     "alta:cliente": "node apps/cli/src/alta-cliente.ts"
   },

@@ -280,6 +280,12 @@ export const CLASIFICACION = {
         nota: 'CÓDIGO del vocabulario cerrado, nunca un mensaje: un mensaje armado desde el archivo ' +
           'filtra su contenido al log.',
       },
+      motivo_codigo_previo: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'CÓDIGO del vocabulario cerrado, el motivo_codigo que tenía el lote antes de remediarse ' +
+          '(completar-lote.ts, HANDOFF 2026-08-11 (42)). NULL si el lote nunca se remedió.',
+      },
       procesado_por: UUID_INTERNO,
       created_at: MARCA_TIEMPO,
     },

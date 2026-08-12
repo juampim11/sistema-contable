@@ -6,6 +6,193 @@
 
 ---
 
+## 2026-08-11 (43) — Cierre: `completar-lote.ts` implementado, revisado y en verde. Listo para que el usuario lo corra.
+
+**Herramienta:** Claude Code. Cierra la tarea planteada en (42): la función de remediación para lotes
+`con_errores` a los que el bug de atomicidad (pre-(40)/(41)) les dejó una cuenta ya persistida y otra
+sin persistir — el caso real de Santander en el piloto (158 filas de ARS comiteadas, USD sin registrar).
+
+**Qué se construyó, tal cual el diseño aprobado en (42):**
+- `packages/data/migrations/0012_remediacion_lote.sql`: `lote_ingesta.motivo_codigo_previo text`
+  nullable, aplicada a la base local. Entrada nueva en `clasificacion-campos.ts` (N1, exportable).
+- `apps/cli/src/completar-lote.ts`: `pnpm completar-lote --cliente --archivo --banco --usuario`. Guard
+  R18, lote tiene que EXISTIR por `(cliente_id, archivo_hash)` (nunca se crea uno ni se cae a "el más
+  reciente"), `--banco` releído tiene que coincidir con el persistido. Resuelve TODAS las cuentas del
+  documento (lectura pura) y cuenta cuántas no tienen fila en `lote_ingesta_cuenta`: 0 → `ya_completado`;
+  exactamente 1 → verifica y persiste (reusa `resolverCuentaDelExtracto`/`verificarAritmetica`/
+  `persistirCuenta`/`guardarExtractoTrasResolver` de `ingestar.ts`, sin tocar ese archivo); ≥2 → aborta
+  explícito. Sin `SAVEPOINT`: hasta el punto de decidir todo es lectura, y si la única cuenta pendiente
+  no persiste, no hay nada que revertir. Recalcula `filas_leidas`/`filas_aceptadas` con `sum()` sobre
+  `lote_ingesta_cuenta`, corrige `adaptador_version` (hallazgo de `dba-data`: quedaba en `@pendiente`) y
+  completa `archivo_clave`/`paginas_declaradas`/`paginas_sin_texto` (el objeto nunca se había guardado).
+  Auditoría con `registrarAcceso` directo (no es N2-R), motivo `completar_lote:<código previo>`.
+- `apps/cli/tests/completar-lote.test.ts`: 8 tests, todos contra fixtures sintéticos — nunca contra el
+  piloto. Los cinco del criterio de aceptación (0/1-resuelve/1-no-resuelve/≥2/segunda-corrida) más
+  `lote_no_encontrado`, `banco_no_coincide`, y el que agregó la revisión (ver abajo): 1 pendiente que
+  resuelve pero `verificarAritmetica` da `no_cuadra`.
+
+**`code-reviewer` convocado sobre el diff completo** (migración + script + tests). Sin hallazgos de fuga
+N2/N2-R, aislamiento multi-tenant o doble persistencia. Dos hallazgos reales, corregidos acá:
+1. **Correctness:** la clasificación de "pendientes" resolvía cada cuenta del documento sin verificar
+   primero si `lote_ingesta_cuenta` ya tenía tantas filas como cuentas trae el archivo — una cuenta YA
+   persistida que dejara de re-resolver (identificador cuya vigencia cambió después de la ingesta
+   original) se contaba como pendiente igual que una genuinamente faltante. Nunca corrompía nada (no hay
+   `insert` posible sobre una cuenta ya persistida, por `uq_lote_cuenta_natural`), pero podía devolver
+   `rechazado`/`multiples_cuentas_pendientes` sobre un lote ya completo. Fix: atajo
+   `existentes.length >= leido.cuentas.length → ya_completado`, antes de resolver una sola cuenta.
+2. **Test-coverage:** faltaba el caso "la cuenta pendiente resuelve pero no cuadra" — el guardrail
+   explícito de `seguridad-datos-financieros` en (42) ("fallo de verificación después de resolución
+   exitosa se trata IGUAL que fallo de resolución"). Agregado con `mutar(cuenta, 'borrar_fila_del_medio')`
+   (mismo mutador de `mutaciones.test.ts`) para romper la coherencia de un fixture sin armarlo a mano.
+
+Un tercer hallazgo (simplificación: `RE_UUID`/`esquemaArgumentos`/`EXTENSIONES_ACEPTADAS`/`contentTypeDe`
+duplicados de `ingestar.ts`) se dejó **sin aplicar, a propósito**: extraerlos exige tocar `ingestar.ts`,
+y (42) declaró explícitamente "no cambia: ingestar.ts" — CLAUDE.md §3.2(c) se dispara de nuevo por
+cualquier edición a un archivo que ya corre contra datos reales, aunque sea mover una constante pura.
+Diez líneas duplicadas es más barato que reabrir esa puerta para este cambio puntual. Queda declarado en
+el propio código (comentario junto a `RE_UUID` en `completar-lote.ts`), no silencioso.
+
+**Medido:** `pnpm typecheck` limpio. `pnpm verificar` en verde: 802 tests pasan (7 `todo` preexistentes,
+sin relación), 809 en total — 8 nuevos de este archivo sobre los 801 previos a esta tarea.
+
+**🔴 Regla que no cambia: esto NO se corre contra el piloto desde acá.** El usuario la corre él mismo,
+con:
+
+```
+pnpm completar-lote --cliente <uuid-del-cliente> \
+  --archivo <la MISMA ruta del PDF de Santander que se usó en la ingesta original> \
+  --banco santander --usuario <uuid-del-usuario>
+```
+
+Predicción falsable (la de (42), sin cambios): `estado='procesado_con_observaciones'`, 2 filas en
+`lote_ingesta_cuenta`, `filas_leidas=filas_aceptadas=158`, `motivo_codigo IS NULL`,
+`motivo_codigo_previo='cuenta_no_pertenece_al_cliente'`, `adaptador_version` sin `@pendiente`, una fila
+nueva en `acceso_auditoria` con `accion='escritura'` y `recurso_id` igual al lote. La cuenta USD tiene
+que estar dada de alta ANTES de correr esto (mismo alta que ya se usó para Macro). Si algo no coincide,
+es un hallazgo — no se reintenta sin confirmarlo primero.
+
+**Pendiente, explícitamente fuera de esta tarea:** Macro sigue "en pausa total" (nadie corrió su alta de
+3 cuentas ni su ingesta real todavía — tarea #22 del roster). `docs/diseno/10-deuda-declarada.md` §1.1
+(el `throw` que pierde el lote-ancla) sigue declarado, no resuelto.
+
+---
+
+## 2026-08-11 (42) — Plan: `completar-lote.ts`, remediación del lote con_errores (CLAUDE.md §3.2)
+
+**Herramienta:** Claude Code. Dispara modo plan por (a)/(b)/(c) — agrega una columna a `lote_ingesta`,
+escribe datos financieros reales de un cliente, y completa un lote que ya corrió contra el piloto.
+Convocatoria en dos rondas: `analista-funcional` + `contador-dominio` (criterio de aceptación, ya
+aprobado por el usuario) y `dba-data` + `security-engineer` + `seguridad-datos-financieros` (diseño
+técnico), las dos completas antes de este commit.
+
+**Criterio de aceptación** (`analista-funcional` + `contador-dominio`, aprobado sin objeciones):
+1. Estado final: `procesado_con_observaciones`, sin estado nuevo en el vocabulario cerrado — matemáticamente
+   idéntico al caso ya medido de Macro (`estadoSegunVerificacion` es pura, no le importa el camino).
+2. `filas_leidas`/`filas_aceptadas` finales = 158, **calculados** (`sum()` sobre `lote_ingesta_cuenta`),
+   no hardcodeados — hoy están en 0 porque `rechazar()` nunca las tocó.
+3. `filas_rechazadas` se mantiene en 0 — no se usa en ningún camino del módulo, no se inaugura acá.
+4. "Lote completo" verificable: 2 filas en `lote_ingesta_cuenta` (hoy 1), `motivo_codigo IS NULL`,
+   `estado='procesado_con_observaciones'`.
+5. Trazabilidad en dos lugares complementarios: `acceso_auditoria` (rastro append-only) + una nota
+   legible en el propio lote (para no depender de saber buscar en el rastro técnico).
+6. La función relee el archivo original (mismo `archivo_hash`) para sacar el saldo declarado de la
+   cuenta faltante — nunca tipeado a mano.
+
+**Diseño técnico, con la tensión entre `dba-data` y `seguridad-datos-financieros` resuelta explícitamente:**
+
+`seguridad-datos-financieros` confirmó que `resolverCuentaDelExtracto` es de solo lectura y que, **para
+una sola cuenta faltante**, un `throw` simple alcanza — recomendó acotar el alcance de la v1 a "una
+cuenta faltante por corrida" como límite de diseño declarado. `dba-data` marcó como bloqueante que, si
+la función alguna vez procesa **más de una** cuenta pendiente en la misma corrida, hace falta el mismo
+`SAVEPOINT` de (40)/(41) — y que, si hace falta, **no se puede reimplementar suelto en un segundo
+archivo** (la lección exacta de (40): la garantía depende de un solo lugar).
+
+**Resolución: se adopta la restricción de `seguridad-datos-financieros` de forma literal, no como
+atajo.** `completar-lote.ts` resuelve TODAS las cuentas del documento (lectura pura, sin riesgo) y
+cuenta cuántas todavía no tienen fila en `lote_ingesta_cuenta` para este lote. Si son 0: no-op limpio
+(`ya_completado`). Si es exactamente 1: se verifica y persiste esa sola cuenta — sin `SAVEPOINT`, porque
+nada se escribió antes en esta transacción y un `throw` simple alcanza (mismo argumento de
+`seguridad-datos-financieros`). **Si son ≥2: aborta explícito** ("esta función completa una cuenta por
+corrida, hay N pendientes — corré esto N veces"), nunca intenta una segunda en la misma invocación. Con
+este límite, el escenario que preocupa a `dba-data` (dos cuentas en la misma corrida, la primera
+persiste, la segunda falla) **no puede ocurrir** — no hace falta el mecanismo compartido que hubiera
+sido bloqueante replicar. Los dos quedan satisfechos: la simplicidad que pedía
+`seguridad-datos-financieros`, y la garantía de "nunca una segunda cuenta comiteada bajo una corrida que
+no completó" que pedía `dba-data`, por construcción en vez de por vigilancia.
+
+**Migración nueva, confirmada necesaria por `dba-data`** (no hay ninguna columna existente que sirva):
+`lote_ingesta` es **N1 estricto a propósito** (comentario de la migración 0004: "ni una sola columna ≥
+N2"), y `lote_ingesta_cuenta.verificacion_detalle` es por CUENTA, no por lote — meter ahí una nota sobre
+el lote entero mezclaría dos conceptos de alcance distinto. `0012_remediacion_lote.sql`:
+`alter table lote_ingesta add column motivo_codigo_previo text` (nullable, sin `check` — mismo criterio
+que `motivo_codigo`, que tampoco lo tiene porque su dominio es grande y evolutivo, no un enum chico).
+`NULL` es el flag "nunca se remedió". Entrada nueva en `clasificacion-campos.ts`, mismo nivel que
+`motivo_codigo` (N1, exportable, nota explicando que es un código cerrado).
+
+**El puente que pidió `seguridad-datos-financieros`** (la nota tiene que poder pivotear al registro
+completo de `acceso_auditoria`, "no solo qué pasó, también quién") **no necesita una columna nueva**:
+`registrarAcceso(tx, {recurso:'lote_ingesta', recursoId: loteId, ...})` ya ata cada fila de
+`acceso_auditoria` al lote por `recurso_id = lote_ingesta.id` — es una clave exacta, no "adivinar por
+rango de fecha". El comentario de la columna nueva deja escrito el camino de consulta
+(`acceso_auditoria where recurso='lote_ingesta' and recurso_id = <id>`) para que nadie tenga que
+redescubrirlo.
+
+**Hallazgo nuevo de `dba-data`, no estaba en el criterio original:** `rechazar()` solo toca
+`estado`/`motivo_codigo` — el lote rechazado también quedó con `adaptador_version='santander@pendiente'`
+(el placeholder que arma el paso 4 antes de leer el archivo), `archivo_clave`/`paginas_declaradas`/
+`paginas_sin_texto` en `NULL`. La función de remediación tiene que completar TODO eso, no solo estado y
+contadores — si no, el lote queda `procesado_con_observaciones` con una versión de adaptador que dice
+`@pendiente`, inconsistente para cualquier reinterpretación futura (el comentario de la migración dice
+que la versión existe justamente para eso).
+
+**Guardrails de `security-engineer`, incorporados:**
+- Guard R18 al principio, mismo orden que `ingestar.ts` (antes de abrir el archivo).
+- "No encontré el lote por `(cliente_id, archivo_hash)`" es un aborto explícito, **nunca** un fallback
+  (ni crear un lote nuevo, ni "el más reciente en `con_errores`" de ese cliente).
+- Validar que el `--banco` releído coincide con el `banco_codigo` ya persistido en el lote, y que el
+  lote esté **exactamente** `con_errores` antes de tocar nada.
+- El motivo de auditoría se arma solo con códigos cerrados + uuids — nunca texto libre del operador ni
+  dato leído del PDF.
+
+**Guardrails de `seguridad-datos-financieros`, incorporados:**
+- Fallo de verificación (`no_cuadra`) después de una resolución exitosa se trata IGUAL que fallo de
+  resolución: aborto limpio, sin distinguir escritura parcial.
+- Cualquier impresión del saldo releído pasa por `forma()`; nunca por el `logger` (ni siquiera con
+  `forma()` — R26/R27 de ADR-0002 prohíben cualquier valor N2/N2-R en el logger, sea cual sea su forma).
+- Segunda corrida sobre una cuenta ya completada: `select` explícito antes de intentar el `insert`,
+  resultado `ya_completado` con código cerrado — nunca dejar salir un `23505` crudo (fuga potencial de
+  fragmento de fila vía el mensaje de Postgres, no solo mala UX).
+
+**Auditoría — confirmado por `dba-data`:** `escribirConAuditoria` no aplica (es el gate de N2-R; estas
+tablas no lo son — `persistirCuenta` ya las escribe hoy sin ese envoltorio). `registrarAcceso` directo,
+`accion='escritura'`, motivo con el patrón de sufijos ya usado en `alta-cuenta.ts`.
+
+1. **Qué cambia y qué no.** Cambia: migración nueva (una columna N1), `clasificacion-campos.ts`, un
+   script nuevo `apps/cli/src/completar-lote.ts`. **No cambia:** `ingestar.ts` (no hace falta tocarlo,
+   ni extraer nada compartido, dado que no hace falta `SAVEPOINT`); ninguna fila ya persistida de ARS;
+   el vocabulario cerrado de `estado`/`accion`.
+2. **Qué se mide.** Tests con fixtures sintéticos (nunca contra el piloto real — lo corre el usuario):
+   0 cuentas faltantes → `ya_completado`; 1 faltante que resuelve → estado/contadores/`adaptador_version`
+   correctos, auditoría escrita; 1 faltante que NO resuelve → aborta sin tocar nada; ≥2 faltantes →
+   aborta explícito sin intentar ninguna; segunda corrida sobre un lote ya completado → `ya_completado`,
+   sin `23505` crudo. `pnpm verificar` en verde.
+3. **Predicción falsable.** El usuario corre `completar-lote.ts` contra el lote real de Santander (con
+   la cuenta USD ya registrada) y tiene que ver: `estado='procesado_con_observaciones'`, 2 filas en
+   `lote_ingesta_cuenta`, `filas_leidas=filas_aceptadas=158`, `motivo_codigo IS NULL`,
+   `motivo_codigo_previo='cuenta_no_pertenece_al_cliente'`, `adaptador_version` correcta (no
+   `@pendiente`), y una fila nueva en `acceso_auditoria` con `accion='escritura'` y `recurso_id` igual al
+   lote. Si algo de esto no coincide, es un hallazgo — no se reintenta sin confirmarlo conmigo primero.
+4. **Agentes.** Ya convocados en dos rondas: `analista-funcional`, `contador-dominio` (criterio,
+   aprobado), `dba-data`, `security-engineer`, `seguridad-datos-financieros` (diseño técnico) — los
+   cinco con hallazgos incorporados arriba. `code-reviewer` sobre el diff final antes de cerrar.
+5. **Paso revertible más chico.** Un commit único: la migración y el script resuelven el mismo problema
+   y separarlos dejaría la migración sin nada que la use. Revertible con `git revert` de la migración +
+   el script juntos (la columna nueva es nullable, sin dato existente que dependa de ella).
+
+---
+
+---
+
 ## 2026-08-11 (41) — Cierre: atomicidad real de `ingestar.ts`, causa raíz corregida
 
 **Herramienta:** Claude Code. Cierra la tarea planificada en (40).
