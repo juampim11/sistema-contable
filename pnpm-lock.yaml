@@ -39,6 +39,9 @@ importers:
       '@sistema-contable/almacenamiento':
         specifier: workspace:*
         version: link:../../packages/almacenamiento
+      '@sistema-contable/contabilidad':
+        specifier: workspace:*
+        version: link:../../packages/contabilidad
       '@sistema-contable/data':
         specifier: workspace:*
         version: link:../../packages/data

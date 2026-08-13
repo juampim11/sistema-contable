@@ -392,6 +392,7 @@ describe('R32 — el lector auditado es el ÚNICO camino a `movimiento_origen_cr
     'packages/shared/src/seguridad/clasificacion-campos.ts',  // registro de clasificación: idem
     'packages/data/scripts/sembrar.ts',                       // truncate del seed, corre como dueño del esquema
     'packages/ingesta/src/glosa.ts',                          // solo la nombra en un comentario
+    'packages/data/src/contabilidad/lecturas.ts',             // solo la nombra en un comentario (por qué NO se usa)
     // Llaman a `leerFilasOrigenDeLote` a través de `leerConAuditoria`, nunca con una consulta
     // propia — y el `recurso: 'movimiento_origen_crudo'` que le pasan al choke point es el nombre
     // de la tabla auditada, no un bypass (migración 0013).
@@ -545,6 +546,9 @@ describe('R-F — `clase: \'propuesta\'` solo se construye en nucleo/motor.ts', 
     'packages/contabilidad/src/nucleo/reconocimiento.ts', // la declaración de TIPO (`readonly clase: 'propuesta'`)
     'packages/contabilidad/src/nucleo/lexico.ts', // docblocks que citan la frase en prosa
     'packages/contabilidad/tests/',
+    // Test del CLI de dry-run de capa C (P6, adaptive-herding-pillow): construye Reconocimiento
+    // sintéticos para probar agregarMatriz() sin base — mismo motivo que packages/contabilidad/tests/.
+    'apps/cli/tests/resolver-contrapartida.test.ts',
   ];
   const PATRON_PROPUESTA = /clase:\s*'propuesta'/;
 
@@ -658,6 +662,121 @@ describe('R-I — el catálogo canónico no ramifica lógica por banco (04 §1.3
     expect(PATRON_RAMA_POR_BANCO.test("documento: 'docs/diseno/06-formato-santander.md'")).toBe(false);
     expect(PATRON_RAMA_POR_BANCO.test('// ══ Santander (P7) — conceptos nuevos ══')).toBe(false);
     expect(PATRON_RAMA_POR_BANCO.test("'retencion_iva_percepcion_macro'")).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-J — packages/contabilidad/src/nucleo es SÍNCRONO, sin excepción (Ronda 1, arquitecto-software)', () => {
+  /**
+   * R-B bloquea el import nombrado de `data`/`ingesta`/`almacenamiento`; no bloquea que una función
+   * de `nucleo/` reciba una `Promise` como "argumento" y erosione la pureza con el tiempo — alguien
+   * pasa un callback que hace I/O, en vez de un valor ya resuelto. `reconocer()` y
+   * `resolverContraparte()` ya son síncronas hoy; esto lo hace verificable, no solo accidental.
+   */
+  const PATRON_ASINCRONO = /\basync\b|\bawait\b|\bPromise\s*[<(]/;
+
+  function archivosDeNucleo(): string[] {
+    return FUENTES.filter((ruta) => rel(ruta).startsWith('packages/contabilidad/src/nucleo/'));
+  }
+
+  it('ningún archivo de packages/contabilidad/src/nucleo usa async/await/Promise', () => {
+    const infractores = archivosDeNucleo().filter((ruta) => PATRON_ASINCRONO.test(readFileSync(ruta, 'utf8')));
+    expect(
+      infractores.map(rel),
+      'nucleo/ es código puro por diseño (R-B) — si necesita un dato de la base, lo recibe como ' +
+        'argumento ya resuelto; una función async ahí es la primera grieta por la que se cuela I/O',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta las tres formas de infracción', () => {
+    expect(PATRON_ASINCRONO.test('export async function resolverContraparte() {}')).toBe(true);
+    expect(PATRON_ASINCRONO.test('const x = await leerAlgo();')).toBe(true);
+    expect(PATRON_ASINCRONO.test('function f(p: Promise<string>) {}')).toBe(true);
+    expect(PATRON_ASINCRONO.test('export function resolverContraparte() { return synchronousValue; }')).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-H bis — CandidatoDeContraparte espeja CandidatoContraparte/Candidato (árbitro mientras no exista 0014)', () => {
+  /**
+   * `nucleo/contrapartida.ts` no puede importar `packages/ingesta/src/contraparte.ts` ni
+   * `packages/data/src/contabilidad/lecturas.ts` (R-B, ciclo bidireccional confirmado en la Ronda 1
+   * — `arquitecto-software`), así que duplica los nombres de campo del candidato a mano en los tres
+   * archivos. Mismo mecanismo que R-H para `EvidenciaDeMovimiento`.
+   */
+  // 🔴 NO incluye el HMAC en sí (Ronda 3, `tech-lead` + `tester`): el campo se llama distinto en
+  // cada paquete a propósito (`hmac` en contabilidad/ingesta, `identificadorHmac` en data) — un
+  // barrido textual de "el nombre coincide" no puede arbitrar un campo cuyo nombre CORRECTO diverge.
+  // Ese campo queda sin árbitro automático; un rename ahí lo detecta TypeScript (los adaptadores de
+  // `apps/cli/src/resolver-contrapartida.ts` no compilan si el campo fuente desaparece), pero un
+  // campo NUEVO agregado a un solo lado no dispara ninguna alarma — deuda conocida, ver HANDOFF.
+  const CAMPOS_CANDIDATO = ['clase', 'pepperId'];
+
+  it('los campos del candidato existen tal cual en ingesta/contraparte.ts y en data/contabilidad/lecturas.ts', () => {
+    const contrapartida = readFileSync(
+      join(RAIZ, 'packages/contabilidad/src/nucleo/contrapartida.ts'),
+      'utf8',
+    );
+    const ingesta = readFileSync(join(RAIZ, 'packages/ingesta/src/contraparte.ts'), 'utf8');
+    const data = readFileSync(join(RAIZ, 'packages/data/src/contabilidad/lecturas.ts'), 'utf8');
+    for (const campo of CAMPOS_CANDIDATO) {
+      expect(contrapartida.includes(campo), `"${campo}" no está en nucleo/contrapartida.ts`).toBe(true);
+      expect(ingesta.includes(campo), `"${campo}" no está en ingesta/contraparte.ts`).toBe(true);
+      expect(data.includes(campo), `"${campo}" no está en data/contabilidad/lecturas.ts`).toBe(true);
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-H bis (SocioDelPadron) — espeja packages/data/src/contabilidad/lecturas.ts (Ronda 3, tech-lead)', () => {
+  /**
+   * `SocioDelPadron` vive duplicado en `packages/contabilidad/src/nucleo/contrapartida.ts` y en
+   * `packages/data/src/contabilidad/lecturas.ts` (mismo motivo que `Candidato`: R-B prohíbe
+   * importar entre los dos paquetes). A diferencia de `Candidato`, este tipo no tenía NINGÚN
+   * árbitro — la coincidencia de los 4 campos comparables era casualidad, no una regla verificable.
+   *
+   * El identificador de fila NO está en la lista a propósito: `data/lecturas.ts` usa `id` desnudo
+   * (mismo criterio que `credenciales.ts`/`ingesta/lecturas.ts` — "esta es la fila de la entidad");
+   * `contabilidad` siempre califica (`socioId`, `movimientoId`), sin excepción. Es una divergencia de
+   * CONVENCIÓN de cada paquete, no un descuido — `apps/cli/src/resolver-contrapartida.ts`
+   * (`comoSocioDelPadron`) es el adaptador explícito que la tiende.
+   */
+  const CAMPOS_SOCIO = ['documentoHmac', 'pepperId', 'vigenteDesde', 'vigenteHasta'];
+
+  it('los campos comparables de SocioDelPadron coinciden entre contabilidad y data', () => {
+    const contrapartida = readFileSync(
+      join(RAIZ, 'packages/contabilidad/src/nucleo/contrapartida.ts'),
+      'utf8',
+    );
+    const data = readFileSync(join(RAIZ, 'packages/data/src/contabilidad/lecturas.ts'), 'utf8');
+    for (const campo of CAMPOS_SOCIO) {
+      expect(contrapartida.includes(campo), `"${campo}" no está en nucleo/contrapartida.ts`).toBe(true);
+      expect(data.includes(campo), `"${campo}" no está en data/contabilidad/lecturas.ts`).toBe(true);
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('la marca PadronConsultado se construye en UN solo lugar (Ronda 1, seguridad-datos-financieros)', () => {
+  /**
+   * `marcarPadronConsultado` es la única función que puede producir un `PadronConsultado` — el
+   * símbolo que lo marca no se exporta. Un segundo `as unknown as PadronConsultado` en cualquier
+   * otro archivo forjaría el tipo sin haber pasado por `leerPadronDeSocios`, exactamente lo que la
+   * marca existe para impedir. Mismo mecanismo que ya usa `ContextoAuditado`
+   * (`packages/data/src/db/auditoria.ts`), sin test de catálogo propio — este lo cubre para los dos.
+   */
+  it('"as unknown as PadronConsultado" aparece exactamente una vez en todo el repo, en marcarPadronConsultado', () => {
+    const infractores = FUENTES.filter((ruta) => {
+      const r = rel(ruta);
+      if (r === ESTE_ARCHIVO) return false;
+      if (r === 'packages/contabilidad/src/nucleo/contrapartida.ts') return false;
+      return /as unknown as PadronConsultado/.test(readFileSync(ruta, 'utf8'));
+    });
+    expect(
+      infractores.map(rel),
+      'PadronConsultado solo se puede construir en nucleo/contrapartida.ts — un forge en otro ' +
+        'archivo permite invocar resolverContraparte() sin haber leído el padrón real',
+    ).toEqual([]);
   });
 });
 

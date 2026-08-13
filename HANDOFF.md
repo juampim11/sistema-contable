@@ -6,6 +6,194 @@
 
 ---
 
+## 2026-08-13 (51) — Módulo 2, Capa C: resolución de contrapartida (socio vs. tercero). `pnpm verificar` en verde. **Sin commitear** (rama `feat/capa-c-contrapartida`, el usuario commitea después).
+
+**Herramienta:** Claude Code. Plan `adaptive-herding-pillow` (reescrito para esta etapa — reemplaza al
+plan de (50), CLAUDE.md §3.2(d)). Cierra la pieza que el corpus real venía señalando desde (49)/(50): el
+81,2% del corpus salía `decision_humana` no por falta de léxico sino porque nadie podía distinguir si la
+contraparte de una transferencia es un socio o un tercero. Esta etapa construye esa distinción — código
+puro más los lectores/escritores de `data` — sin migración nueva.
+
+### 🔴 Confirmación de la aplicación real de la migración 0013 al piloto (pedido explícito, sección propia)
+
+Hace unas sesiones, `HANDOFF` (49) implementó `0013_contraparte_hmac_y_padron.sql` sin confirmar en la
+bitácora que se hubiera aplicado al piloto. Ninguna entrada posterior lo confirmó — hasta ahora. Verificado
+DIRECTO contra `sistema-contable-postgres-piloto` (puerto 5443), dos veces: primero al arrancar la
+planificación de esta etapa, y de nuevo ahora, al escribir esta entrada:
+
+```
+select nombre, aplicada_en, hash from _migraciones where nombre like '0013%';
+      nombre                        |          aplicada_en          |       hash
+ 0013_contraparte_hmac_y_padron.sql | 2026-08-12 19:28:10.551005+00 | b8fe1fa7fc7bb375
+```
+
+Hash **idéntico** al del archivo local (mismo algoritmo que usa `migrar.ts`, no un hash genérico). Los tres
+lotes reales se ingirieron **después** (19:45-19:46 del mismo día), así que la captura de contraparte corrió
+**inline**, al momento de ingerir — el backfill nunca hizo falta para estos lotes (no hay ninguna fila
+`backfill_contraparte` en `acceso_auditoria`). Confirmado también ahora, en vivo:
+`movimiento_bancario_crudo.contraparte_captura` = **889 `capturado` + 941 `sin_identificador` = 1830, cero
+`no_capturado`**; `movimiento_contraparte_identificador` = 920 candidatos (657 cuit, 262 dni, 1 cbu, todos
+`pepper_id='v1'`); `padron_socio` = **0 filas** (nadie cargó un socio todavía, esperado).
+
+Es la **tercera vez** que este patrón aparece (0011, 0012, ahora 0013): una migración se implementa, se
+aplica, y nadie escribe la confirmación en la bitácora hasta varias sesiones después — ya está en memoria
+del proyecto ([[verificar-migraciones-en-piloto-antes-de-indicar]]). Con esto, cerrado: **0013 está
+aplicada al piloto, sin drift, desde 2026-08-12.**
+
+### El disparador, medido
+
+De los 1830 movimientos del corpus real (326 Galicia + 158 Santander + 1346 Macro), 1486 (81,2%) salían
+`decision_humana` — 1149 de ellos `TPUSH`/`TRANSF` de Macro esperando saber si la contraparte es socio o
+tercero. El techo real de capa C, medido contra el piloto (sin backfill, ya estaba capturado inline):
+**889/1830 = 48,6%** de los movimientos tienen al menos un candidato de contraparte (Galicia 35,9%,
+Santander 57,6%, Macro 50,6%). Muy por encima del piso de 30% que el plan fijaba como umbral de "vale la
+pena" — la etapa se justificaba antes de escribir una línea de código.
+
+### Convocatoria — 3 rondas
+
+**Ronda 1 (diseño, antes de código):** `arquitecto-software` (fijó la costura pura/I-O — `packages/
+contabilidad` nunca importa `data`/`ingesta`, la prohibición es BIDIRECCIONAL, algo que no estaba escrito
+en ningún lado; agregó R-J —`nucleo/` síncrono, sin `async`/`await`/`Promise`— y R-H bis —los tipos
+duplicados entre `ingesta/contraparte.ts` y `contabilidad/nucleo/contrapartida.ts` no divergen en
+silencio—; ratificó la resolución por-movimiento, no batch), `seguridad-datos-financieros` (2 bloqueantes:
+el CUIT/CUIL de socio nunca entra como flag del CLI —mismo riesgo ya corregido una vez para el CBU—, y el
+guardrail de aislamiento cross-cliente H-6/INV-9 tiene que vivir en una función orquestadora de
+`packages/data`, no en el núcleo puro, que no conoce ningún `clienteId`), `security-engineer` (confirmó
+independientemente el mismo bloqueante del CUIT), `contador-dominio` (🔴 **el hallazgo que cambió el diseño
+de fondo**: no ratificó la propuesta automática de "es tercero" cuando un candidato no matchea contra
+ningún socio, aun con el padrón "consultado" — con `padron_socio` en 0 filas, "la query corrió" no es
+"el padrón está cargado"; exigió un gate explícito `padronSocioDeclaradoCompleto`, atestiguado por el
+contador humano, antes de que la rama negativa pueda proponerse — sin él, va a `decision_humana`),
+`plan-cuentas-multicliente` (ratificó el modelo de vigencia semiabierta de `padron_socio`; señaló que es el
+primer ejemplo en código del patrón a reusar para jurisdicciones de IIBB).
+
+**Ronda 2 (implementación):** `backend-dev` (diseñó los 3 CLIs; encontró un gap real no cubierto por
+ninguna ronda anterior — `EvidenciaDeMovimiento` exige `columnaOrigen`, que no es columna: se deriva del
+signo de `importe` sobre la fila cruda N2-R, hacía falta un lector nuevo para P6), `dba-data` (las
+consultas SQL exactas de `leerPadronDeSocios`/`leerCandidatosDeContraparte` + la función orquestadora con
+el guardrail H-6 y verificación de existencia fail-closed; convocó su propia sub-ronda de
+`security-engineer`/`seguridad-datos-financieros` sobre el DDL de lectura), `motor-conciliacion-contable`
+(el algoritmo completo de `resolverContraparte()` con sus 7 estados, más un refinamiento propio sobre el
+caso de padrón vacío — ver abajo). Hallazgo del conductor en esta ronda: `dba-data` y
+`motor-conciliacion-contable`, trabajando en paralelo sin verse, diseñaron la marca `PadronConsultado` en
+paquetes distintos (`packages/data` y `packages/contabilidad` respectivamente) — conflicto real, resuelto a
+favor de `packages/contabilidad`, la única ubicación consistente con la regla bidireccional de
+`arquitecto-software` (solo `apps/cli` importa los dos paquetes a la vez para conectar uno con otro).
+
+**Ronda 3 (cierre, sobre el código ya escrito):** `tech-lead` (coherente en 4/5 puntos; encontró que
+`SocioDelPadron` no tenía el mismo árbitro R-H bis que `Candidato` — corregido), `qa-funcional` (dos
+hallazgos reales: el reporte de dry-run no auditaba si se usó `--padron-completo` — corregido; y 🔴 la baja
+el MISMO día del alta rompía contra el check de vigencia de la base sin mensaje útil — corregido con un
+motivo de error específico, `BAJA_MISMO_DIA_DE_ALTA`, y su test), `qa-automation` (aplicó mutaciones reales;
+confirmó que el test del refinamiento de padrón vacío discrimina correctamente, y que el algoritmo de
+vigencia semiabierta también), `tester` (🔴 **el hallazgo más grave de toda la etapa** — ver sección propia
+abajo), `code-reviewer` (encontró el bug de la mutación de `qa-automation` sin revertir — ver "Nota de
+proceso" — más dos hallazgos menores: un banco sin léxico se descartaba en silencio del reporte, corregido
+con un contador `sinLexico`).
+
+### 🔴 El hallazgo crítico de `tester`
+
+La regla de intersección de `pepper_id` original era **insegura**. Escenario reproducido ejecutando la
+función real: un padrón con Socio A (nunca re-hasheado, sigue en pepper `v1`) y Socio B (alta nueva, ya en
+`v2`) — un movimiento real de Socio A, capturado DESPUÉS de la rotación (su candidato queda en `v2`), pasaba
+la alineación porque Socio B "cubría" el `v2` a nivel agregado del padrón completo, y el movimiento
+resolvía `es_tercero_padron_completo` — la conversión silenciosa de socio en proveedor que todo el diseño
+de capa C existe para impedir. **Corregido** reemplazando la regla de intersección por una de
+**uniformidad**: alineado ⟺ candidatos del movimiento y padrón, TODOS juntos, usan exactamente una versión
+de `pepper_id`; cualquier heterogeneidad es `pepper_desalineado`, sin excepción y sin "cobertura agregada".
+Test nuevo (`packages/contabilidad/tests/contrapartida.test.ts`) reproduce el escenario exacto de `tester`
+y confirma que da `pepper_desalineado`, nunca `es_socio` ni `es_tercero`.
+
+### Nota de proceso (no un hallazgo sobre el código — algo que pasó durante la Ronda 3)
+
+Dos de los cinco agentes de Ronda 3 corrieron en paralelo sobre el **mismo** working directory, sin
+aislamiento de worktree. `qa-automation`, siguiendo su propia instrucción de "aplicar una mutación real,
+correr el test, revertir", dejó una mutación real **sin revertir** en `contrapartida.ts` durante varios
+minutos mientras seguía trabajando. `code-reviewer`, corriendo en paralelo, la encontró y la reportó como
+bloqueante, verificada por ejecución real. El conductor restauró el archivo de inmediato al notar la
+inconsistencia — quedó sin daño porque se detectó antes de cerrar, pero es una lección real: correr
+agentes con permiso de escritura en paralelo sobre el mismo checkout, durante una ronda de revisión, puede
+dejar el árbol de trabajo en un estado intermedio que otro agente concurrente lee como definitivo. A tener
+en cuenta en sesiones futuras con varios agentes de escritura simultáneos — posible mitigación: aislar con
+worktree cualquier agente de la ronda de cierre que vaya a mutar código de verdad, no solo leerlo.
+
+### Qué se construyó (verificado contra `git status`/`git diff main --stat`, sin commitear)
+
+**Nuevo:**
+- `packages/contabilidad/src/nucleo/contrapartida.ts` + `tests/contrapartida.test.ts` (26 tests) — el
+  núcleo puro: `resolverContraparte()` con sus 7 estados (`es_socio` / `es_tercero_padron_completo` /
+  `sin_match_padron_incompleto` / `sin_candidatos` / `pepper_desalineado` / `multiples_socios` /
+  `socio_fuera_de_vigencia`), `marcarPadronConsultado()` (única constructora de `PadronConsultado`, marca
+  de símbolo privada).
+- `packages/data/src/contabilidad/escrituras.ts` — `altaDeSocio`/`bajaDeSocio`, una sola transacción,
+  `escribirConAuditoria`.
+- `apps/cli/src/alta-socio.ts` + `tests/alta-socio.test.ts` (16 tests) — alta/baja de socio; el
+  CUIT/CUIL nunca entra por flag, prompt oculto con doble tipeo.
+- `apps/cli/src/prompt-oculto.ts` — extraído/generalizado de `alta-cuenta.ts` (que antes tenía su propio
+  prompt oculto solo para CBU), reusado ahora también para el documento de socio.
+- `apps/cli/src/resolver-contrapartida.ts` + `tests/resolver-contrapartida.test.ts` (7 tests) — el CLI de
+  dry-run: motor + capa C sobre un lote, matriz de clases antes/después, nunca imprime `denominacion`.
+- `packages/shared/src/seguridad/validador-documento.ts` + `tests/validador-documento.test.ts` (4 tests) —
+  `verificadorCuitEsValido`, movida desde `packages/data/src/seed/sintetico.ts` (ese módulo sigue siendo
+  deliberadamente de datos sintéticos; la validación real de un alta no depende de eso).
+
+**Modificado:**
+- `packages/data/src/contabilidad/lecturas.ts` (+301/-0 líneas) — `leerPadronDeSocios`,
+  `leerCandidatosDeContraparte`, `leerPadronYCandidatosDeContraparte` (con el guardrail H-6),
+  `leerEvidenciaDeMovimientos` (el lector plano nuevo que tapó el gap de `backend-dev`).
+- `packages/contabilidad/src/nucleo/motor.ts` (+61/-6) — `aplicarContrapartida()`, docblock actualizado
+  (dos constructores de `propuesta`: capa B y capa C, mismo invariante R-F).
+  `packages/contabilidad/src/nucleo/reconocimiento.ts` (+7) — soporte del campo
+  `evidenciaContrapartida?: ResolucionDeContraparte`.
+- `apps/cli/src/alta-cuenta.ts` (-182/+~) — refactor: el prompt oculto propio se extrajo a
+  `prompt-oculto.ts` reusable, sin cambio de comportamiento.
+- `packages/data/src/seed/sintetico.ts` (-10/+~) — deja de tener su propio `verificadorCuitEsValido`,
+  reexporta desde `shared`.
+- `packages/data/tests/reglas-de-codigo.test.ts` (+119) — R-J (`nucleo/` síncrono) y R-H bis (candidato de
+  `contrapartida.ts` espeja `CandidatoContraparte` de `ingesta/contraparte.ts`, más `SocioDelPadron` vs.
+  `Candidato`).
+- `packages/data/tests/aislamiento-modulo-2.test.ts` (+75) — caminos nuevos: escritura del padrón, lectura
+  cross-cliente (H-6, membership en A y B, movimiento de B nunca resuelve contra el padrón de A).
+- `packages/contabilidad/src/index.ts`, `packages/data/src/index.ts`, `packages/shared/src/seguridad/
+  index.ts`, `apps/cli/package.json`, `package.json` (scripts `alta:socio`/`resolver:contrapartida`),
+  `pnpm-lock.yaml` — exports y cableado.
+
+### Medido
+
+`pnpm verificar` en verde de punta a punta: **54 archivos de test, 1287 tests, 0 fallas** (7 `todo`
+preexistentes, sin cambios — mismo número que (50)). Corrido y confirmado ahora, no asumido.
+
+### Lo que NO se construyó en esta etapa (alcance explícito, confirmado contra el plan)
+
+Migración `0014` (decisión del usuario: código puro, cada corrida recalcula — no hay dónde persistir el
+resultado de capa C todavía). El gate `padronSocioDeclaradoCompleto` es un flag manual del CLI, sin
+persistencia (no hay dónde guardarlo sin 0014). Regla 10 (transferencia entre cuentas propias) sigue fuera.
+Allowlist de organismos (N0) sigue fuera. Capa D (imputación) y capa E (composición del asiento) siguen
+esperando el plan de cuentas del cliente.
+
+### Deuda declarada, explícita
+
+- **R-H bis no cubre el nombre del campo HMAC en sí** — cada paquete lo llama distinto
+  (`hmac`/`identificadorHmac`/`documentoHmac`); un campo nuevo agregado a un solo lado no dispara alarma.
+- **No existe herramienta de rehash de `padron_socio`** para una rotación de pepper real — hoy, ante
+  cualquier heterogeneidad de pepper en el padrón, el fail-closed correcto es que TODO el lote caiga en
+  `pepper_desalineado` hasta que alguien recargue el padrón completo bajo la versión nueva. No hay atajo
+  automático.
+- **El caso "aporte/retiro pagado por un tercero en nombre del socio" (interpósita persona) no tiene
+  señal** — el modelo resuelve exclusivamente por CUIT literal de la cuenta ordenante/beneficiaria
+  (hallazgo de `qa-funcional`).
+- **No hay continuidad entre dos documentos distintos del mismo socio a lo largo del tiempo** — cada uno es
+  una serie independiente en `padron_socio_documento`.
+
+### Lo que sigue
+
+Aplicar `0013` YA está confirmado (ver sección propia arriba) — el próximo paso real es correr `pnpm
+alta:socio` contra el piloto con el padrón real de Laura (todavía no entregado, sigue pendiente de ella) y
+medir con `pnpm resolver:contrapartida` cuánto del 48,6% con candidato realmente resuelve. Migración `0014`
+cuando el plan de cuentas del cliente exista.
+
+---
+
 ## 2026-08-13 (50) — Módulo 2, segunda etapa: léxico + catálogo canónico + matcher + motor de reconocimiento, código puro (`packages/contabilidad`, sin migración, sin tocar el piloto). Los tres bancos del piloto (Galicia, Santander, Macro) tienen léxico completo y corren contra el motor real. `pnpm verificar` en verde de punta a punta. **Entrada corregida el mismo día**, tras un pedido explícito del usuario de reconciliar la predicción falsable (§3.2 punto 3) antes de aprobar la siguiente etapa — ver "Corrección post-cierre" al final.
 
 **Herramienta:** Claude Code. Plan `adaptive-herding-pillow` (mismo archivo que la etapa anterior, reescrito

@@ -1,6 +1,7 @@
 import type { Lado, MotivoSinReconocer, Polaridad, QueDecide, TipoMovimiento, ViaEvidencia } from './tipos.ts';
 import type { ConceptoCanonico } from './catalogo.ts';
 import type { PendienteDeLaura } from './lexico.ts';
+import type { ResolucionDeContraparte } from './contrapartida.ts';
 
 /**
  * La entrada del motor.
@@ -41,6 +42,9 @@ export type Reconocimiento =
       readonly lado: Lado;
       readonly via: ViaEvidencia;
       readonly evidencia: EvidenciaDelMatch;
+      /** Solo presente cuando `aplicarContrapartida` (capa C, `motor.ts`) promovió esta propuesta.
+       *  Ausente en toda propuesta de capa B (reglas 1-9, 11, 14). */
+      readonly evidenciaContrapartida?: ResolucionDeContraparte;
     }
   | {
       readonly clase: 'decision_humana';
@@ -52,6 +56,9 @@ export type Reconocimiento =
       readonly evidencia: EvidenciaDelMatch;
       readonly queDecide: QueDecide;
       readonly pendienteDeLaura?: PendienteDeLaura;
+      /** Solo presente cuando `queDecide === 'distinguir_tercero_de_socio'` Y ya se corrió capa C.
+       *  Es el "POR QUÉ" que la persona ve: uno de los 5 estados que no promueven. */
+      readonly evidenciaContrapartida?: ResolucionDeContraparte;
     }
   | {
       readonly clase: 'sin_reconocer';
