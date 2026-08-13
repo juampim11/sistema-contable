@@ -58,6 +58,18 @@ import {
   verificarCredencialDeRequest,
   type TipoCuentaAlta,
 } from '@sistema-contable/data';
+import {
+  pedirValorConfirmado,
+  pedirValorOculto,
+  PedidoOcultoCancelado,
+  type EntradaOculta,
+  type SalidaOculta,
+} from './prompt-oculto.ts';
+
+export { pedirValorOculto, type EntradaOculta, type SalidaOculta };
+/** Alias — mismo tipo que `PedidoOcultoCancelado` (`prompt-oculto.ts`), conservado para no romper
+ *  el import existente de `apps/cli/tests/alta-cuenta.test.ts`. */
+export const PedidoDeCbuCancelado = PedidoOcultoCancelado;
 
 cargarEnv();
 
@@ -529,159 +541,41 @@ function imprimir(t: string): void {
 
 // -----------------------------------------------------------------------------
 // Prompt oculto de CBU — HANDOFF (36). Ver la cabecera del archivo: `--cbu` no existe como argumento.
+// La maquinaria genérica vive en `./prompt-oculto.ts` (extraída para reusarla en `alta-socio.ts`).
 // -----------------------------------------------------------------------------
 
-/** El subconjunto de `process.stdin` que hace falta para leer sin ecoar. Así se puede inyectar un doble en tests. */
-type EntradaOculta = {
-  readonly isTTY: boolean | undefined;
-  setRawMode(modo: boolean): void;
-  resume(): void;
-  pause(): void;
-  setEncoding(codificacion: BufferEncoding): void;
-  on(evento: 'data', escucha: (fragmento: string) => void): void;
-  removeListener(evento: 'data', escucha: (fragmento: string) => void): void;
-};
-
-/** El subconjunto de `process.stdout` que hace falta para escribir el prompt. Mismo motivo que `EntradaOculta`. */
-type SalidaOculta = {
-  write(texto: string): boolean;
-};
-
-/** Se lanza cuando el operador cancela el prompt con Ctrl+C. Nunca lleva el valor tipeado. */
-export class PedidoDeCbuCancelado extends Error {}
-
 /**
- * Lee un valor de `stdin` en modo raw, **sin ecoar un solo carácter** — ni siquiera asteriscos: dos CBU
- * de 22 dígitos con la misma cantidad de dígitos se ven idénticos bajo cualquier máscara por posición,
- * así que ni un asterisco por tecla aporta nada y sí deja ver la longitud tipeada. El valor nunca pasa
- * por `argv` ni por una variable de entorno, así que no lo agarra `PSReadLine` (`security-engineer`,
- * HANDOFF (36), confirmado: el historial de PowerShell solo registra lo que se somete al line-editor del
- * propio shell, nunca lo que un proceso hijo lee de su stdin después de haber arrancado).
- *
- * Restaura el modo de la terminal en TODOS los caminos de salida — Enter, Ctrl+C, o cualquier excepción
- * que ocurra después, en cualquier otra parte del proceso, mientras el raw mode siguiera activo (ver el
- * `process.on('exit', ...)` en `pedirCbuConfirmado`).
- */
-export function pedirValorOculto(
-  mensaje: string,
-  entrada: EntradaOculta = process.stdin,
-  salida: SalidaOculta = process.stdout,
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!entrada.isTTY) {
-      reject(
-        new Error(
-          'No hay una terminal interactiva para pedir el CBU. Corré el script desde una consola real, no ' +
-            'con stdin redirigido ni en un pipeline no interactivo.',
-        ),
-      );
-      return;
-    }
-
-    salida.write(mensaje);
-    entrada.setRawMode(true);
-    entrada.resume();
-    entrada.setEncoding('utf8');
-
-    let buffer = '';
-    const cerrar = (): void => {
-      entrada.setRawMode(false);
-      entrada.pause();
-      entrada.removeListener('data', onData);
-    };
-
-    // 🔴 Recorre TODO el fragmento, no solo el último carácter: un `paste` con el Enter incluido llega
-    // en un solo evento `data`, y mirar solo `fragmento.at(-1)` se comería el corte de línea en silencio.
-    const onData = (fragmento: string): void => {
-      for (const caracter of fragmento) {
-        if (caracter === '\u0003') {
-          cerrar();
-          salida.write(SALTO);
-          reject(new PedidoDeCbuCancelado('Cancelado por el operador (Ctrl+C).'));
-          return;
-        }
-        if (caracter === '\r' || caracter === '\n') {
-          cerrar();
-          salida.write(SALTO);
-          resolve(buffer);
-          return;
-        }
-        if (caracter === '\u007f' || caracter === '\b') {
-          buffer = buffer.slice(0, -1);
-          continue;
-        }
-        buffer += caracter;
-      }
-    };
-    entrada.on('data', onData);
-  });
-}
-
-/**
- * Pide el CBU dos veces y exige que coincidan byte a byte antes de aceptarlo.
- *
- * **Por qué doble tipeo y no una confirmación con eco parcial** (`seguridad-datos-financieros`, HANDOFF
- * (36)): mostrar `forma(cbu)` después de tipearlo no sirve para que el operador se autoverifique — todo
- * CBU de 22 dígitos produce la misma forma, así que un dígito transpuesto o mal tipeado es indistinguible
- * del correcto bajo esa máscara. El único chequeo posible sin mostrar el valor en pantalla es pedirlo dos
- * veces y compararlas.
- *
- * Ninguno de los tres `throw` de acá interpola el valor tipeado — ni en el de "no coinciden" ni en el de
- * formato inválido — a propósito: es exactamente el tipo de fuga que ya pasó una vez en este repo por un
- * mensaje "más claro" (ADR-0002 §H.3.bis, citado en la cabecera del archivo).
+ * Pide el CBU dos veces y exige que coincidan byte a byte antes de aceptarlo. Wrapper de
+ * `pedirValorConfirmado` (`prompt-oculto.ts`) con los mensajes y la validación de forma propios del
+ * CBU (22 dígitos) — la validación de forma queda del lado del llamador, mismo criterio que se usa
+ * para el CUIT/CUIL en `alta-socio.ts`.
  */
 export async function pedirCbuConfirmado(
   entrada: EntradaOculta = process.stdin,
   salida: SalidaOculta = process.stdout,
 ): Promise<string> {
-  // Red de seguridad: si algo más adelante en el proceso tira una excepción sin atrapar mientras el raw
-  // mode sigue activo (por ejemplo, entre los dos prompts), la terminal no debe quedar sin eco para el
-  // usuario después de que el script salió. Se remueve en el `finally` de abajo apenas esta función
-  // termina — de lo contrario, `pedirCbuConfirmado` acumula un listener sobre `process` por cada llamada
-  // (`code-reviewer`, HANDOFF (36): confirmado con 3 invocaciones seguidas, 3 listeners acumulados).
-  const restaurarAlSalir = (): void => {
-    if (entrada.isTTY) entrada.setRawMode(false);
-  };
-  process.on('exit', restaurarAlSalir);
-
-  try {
-    salida.write(SALTO);
-    salida.write(
-      '  Este documento tiene más de una cuenta y el CBU no se puede atribuir a una sola moneda.' + SALTO,
-    );
-    salida.write('  Se pide acá, tecleado, para que nunca quede en el historial de la terminal.' + SALTO);
-    salida.write(
-      '  No lo copies ni lo pegues de ningún chat, ticket, captura ni asistente de IA — tipealo directo.' +
-        SALTO,
-    );
-    /**
-     * 🟡 Aclaración agregada tras un caso real (HANDOFF (37)): sin esto, un operador que tipea el CBU
-     * y no ve NADA reaccionar en pantalla — a propósito, ni un asterisco — no tiene forma de distinguir
-     * "está funcionando, seguí tipeando" de "se colgó". Confirmado con dos diagnósticos que el mecanismo
-     * SÍ funciona (Ctrl+C real interceptado con el mensaje propio, y un test aislado de `stdin` recibiendo
-     * cada tecla) — el problema era enteramente de expectativa, no de código. Esta línea no cambia nada de
-     * seguridad: sigue sin haber eco, solo avisa que la ausencia de eco es así a propósito.
-     */
-    salida.write(
-      '  No vas a ver NADA en pantalla mientras tipeás — ni un asterisco, a propósito. Escribí los 22 ' +
-        'dígitos igual y apretá Enter; después va a aparecer un segundo pedido para confirmarlo.' +
-        SALTO,
-    );
-    salida.write(SALTO);
-
-    const primero = await pedirValorOculto('  CBU (22 dígitos): ', entrada, salida);
-    const segundo = await pedirValorOculto('  Repetí el CBU para confirmar: ', entrada, salida);
-
-    if (primero !== segundo) {
-      throw new Error('Los dos CBU tipeados no coinciden. Volvé a correr el comando y tipealo con cuidado.');
-    }
-    if (!/^\d{22}$/.test(primero)) {
-      throw new Error('El CBU tiene que ser de 22 dígitos.');
-    }
-    return primero;
-  } finally {
-    process.removeListener('exit', restaurarAlSalir);
+  const valor = await pedirValorConfirmado(
+    {
+      primero: '  CBU (22 dígitos): ',
+      segundo: '  Repetí el CBU para confirmar: ',
+      aviso: [
+        'Este documento tiene más de una cuenta y el CBU no se puede atribuir a una sola moneda.',
+        'Se pide acá, tecleado, para que nunca quede en el historial de la terminal.',
+        'No lo copies ni lo pegues de ningún chat, ticket, captura ni asistente de IA — tipealo directo.',
+        // Aclaración agregada tras un caso real (HANDOFF (37)): sin esto, un operador que tipea el
+        // CBU y no ve NADA reaccionar en pantalla no tiene forma de distinguir "está funcionando" de
+        // "se colgó".
+        'No vas a ver NADA en pantalla mientras tipeás — ni un asterisco, a propósito. Escribí los 22 ' +
+          'dígitos igual y apretá Enter; después va a aparecer un segundo pedido para confirmarlo.',
+      ],
+    },
+    entrada,
+    salida,
+  );
+  if (!/^\d{22}$/.test(valor)) {
+    throw new Error('El CBU tiene que ser de 22 dígitos.');
   }
+  return valor;
 }
 
 // -----------------------------------------------------------------------------
