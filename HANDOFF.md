@@ -6,7 +6,652 @@
 
 ---
 
+## 2026-08-13 (50) — Módulo 2, segunda etapa: léxico + catálogo canónico + matcher + motor de reconocimiento, código puro (`packages/contabilidad`, sin migración, sin tocar el piloto). Los tres bancos del piloto (Galicia, Santander, Macro) tienen léxico completo y corren contra el motor real. `pnpm verificar` en verde de punta a punta. **Entrada corregida el mismo día**, tras un pedido explícito del usuario de reconciliar la predicción falsable (§3.2 punto 3) antes de aprobar la siguiente etapa — ver "Corrección post-cierre" al final.
+
+**Herramienta:** Claude Code. Plan `adaptive-herding-pillow` (mismo archivo que la etapa anterior, reescrito
+para esta tarea — CLAUDE.md §3.2(d), paquete nuevo). Disparado por el pedido del usuario de seguir con
+Módulo 2 sin esperar las respuestas de Laura a la consulta pendiente: escribir el léxico para lo que se
+resuelve solo, marcar `pendiente_confirmacion_laura` (mecanismo `pendienteDeLaura`) lo que no, y verificar
+que avanzar así solo arriesga clasificación corregible, no el motor ni la arquitectura.
+
+### Convocatoria — 3 rondas antes de escribir código, 3 más sobre el resultado
+
+**Ronda de diseño (bloqueante, antes de P1):** `arquitecto-software` (ratificó el límite del paquete —
+`packages/contabilidad` sin depender de `data`/`ingesta`/`almacenamiento` — y el movimiento de
+`normalizar()` a `packages/shared/src/texto/`, con 2 ajustes menores aplicados), `contador-dominio`
+(ratificó las 2 desviaciones del diseño original — `QUE_DECIDE` de 5 a 8 valores, `ladoEsperado:'indistinto'`
+— y encontró un bug real: el ejemplo del plan tenía el `reversaDe` de la devolución del impuesto 25413
+cruzado con la pata equivocada, el mismo par trampa que el diseño debía evitar), `analista-funcional`
+(encontró 2 hallazgos distintos, no relacionados entre sí: 1) la hipótesis de `ACREDITAMIENTO` citaba
+evidencia equivocada — `SERVICIO ACREDITAMIENTO DE` es la comisión de acreditación de HABERES, no
+evidencia de adquirente de tarjetas — corregido separando `SERVICIO ACREDITAMIENTO DE` (4 mov.) en su
+propio concepto ya resuelto, `comision_de_acreditacion_de_haberes`; la pregunta de `ACREDITAMIENTO` en sí
+**sigue abierta**, con `pendienteDeLaura` activo, esperando confirmación — esta corrección NO la cierra;
+2) `PERCEP. IVA` + `PERCEPCION RG 5617/24` (Galicia, 5+1=6 mov.) estaban marcados como pendientes de Laura
+por error — `04-imputacion-contable.md` §3 ya los tenía resueltos como `percepcion_impositiva`, régimen
+F — destrabó esos 6 movimientos hacia decisión por régimen).
+
+**Ronda de cierre (después de P8, con los 3 léxicos escritos):** `tech-lead` (coherencia entre los tres
+léxicos — encontró un bug real: `acreditacion_credin` tenía la misma evidencia `no_medido` que sus 4
+hermanas pero un `ladoEsperado` fijo asumido por el nombre del prefijo, sin `pendienteDeLaura` — corregido
+al mismo tratamiento que las demás; más 3 hallazgos de documentación desincronizada, corregidos; y señaló
+como deuda la mezcla de 3 motivos bajo `sin_tipo_asignado` — resuelta más abajo, en la corrección
+post-cierre), `tester` (intento adversarial sobre las dos garantías centrales — la degradación de
+`pendienteDeLaura` y las 4 guardas del matcher de prefijo — **ninguna se rompió**, pero encontró 2 huecos
+de cobertura reales: `pendiente-laura.test.ts` solo enumeraba Galicia, y el canal
+`EntradaLexico.pendienteDeLaura` nunca se ejercitaba con ningún valor real — los dos corregidos),
+`code-reviewer` (encontró 2 bloqueantes reales, los dos del mismo patrón: un assert que nunca podía
+fallar — `cobertura-del-corpus.test.ts` comparaba `propuesta` contra sí mismo, `propiedades-lexico.test.ts`
+deduplicaba `Object.keys()` contra sí mismo sin importar `CONCEPTOS_CANONICOS` — exactamente el
+"anti-falso-verde que no falsea nada" que el propio diseño existe para prevenir; los dos corregidos, más
+5 sugerencias menores aplicadas).
+
+### Qué se construyó
+
+- **`packages/contabilidad`** (paquete nuevo, deps solo `shared`+`zod`): `nucleo/{tipos,normalizacion,
+  lexico,catalogo,reconocimiento,indice,matcher,motor}.ts` — el catálogo canónico tiene ~70 conceptos
+  (31 tipos de movimiento), el motor real con las 13 propiedades verificables (PROP-1..13) sobre el
+  léxico y el catálogo.
+- **`lexico/{galicia,santander,macro}.ts` + `registro.ts`**: 28+27+35 entradas de léxico (32+29+43
+  literales), cubriendo los 104 literales del vocabulario medido de los tres bancos. 13 conceptos se
+  reusan entre bancos cuando representan el mismo hecho económico (impuesto Ley 25413, transferencia
+  entre cuentas propias, comisiones genéricas).
+- **`packages/shared/src/texto/normalizar.ts`** (movido desde `packages/ingesta/src/parseo-ar.ts`, que
+  ahora la re-exporta byte por byte) — necesario porque `contabilidad` no puede depender de `ingesta`.
+- **9 reglas de arquitectura nuevas** (R-A a R-I) en `packages/data/tests/reglas-de-codigo.test.ts`:
+  ciclos de dependencia, ningún léxico importa a otro, el léxico es datos no lógica, cero regex a mano
+  sobre la glosa, el choke point de `clase:'propuesta'`, sin SQL, espejo del esquema de ingesta, el
+  catálogo no ramifica por banco.
+- **280 tests en `packages/contabilidad`** (279 al cierre original + 1 de la corrección post-cierre):
+  PROP-1..13 sobre los 3 léxicos, 4 mutaciones nombradas (cada una pone rojo una propiedad específica),
+  tabla congelada + motor real por banco (`corpus-{galicia,santander,macro}.test.ts`), matriz de
+  cobertura final, invariante de reversa (INV-M2-1), la garantía de que `pendienteDeLaura` nunca produce
+  una propuesta (enumeración exhaustiva, los 3 bancos), y la verificación de que las 3 categorías de
+  `sin_tipo_asignado` están representadas.
+
+### Bugs reales encontrados y corregidos durante la implementación (no por los agentes de convocatoria)
+
+- **Guarda (c) del matcher invertida**: rechazaba matches válidos cuando el texto truncado terminaba en
+  un carácter no alfanumérico (ej. un marcador `[DOC]` enmascarado) seguido de un espacio genuino en el
+  ancla real — encontrado al escribir el caso de test que debía cubrir esa rama.
+- **INV-M2-1 en el motor aplicaba `opuesto()` dos veces** sobre el lado esperado de una reversa,
+  invirtiéndolo mal — encontrado al correr `corpus-galicia.test.ts` (el motor real) contra la tabla
+  congelada y ver que `DEV.IMP.CRED.LEY 25413` no reconocía.
+- **PROP-6 (la procedencia es verdadera) usaba `.includes()` ingenuo** — no detectaba la mutación
+  "acortar un literal" porque el texto acortado sigue siendo subcadena del literal real completo.
+  Fortalecida a exigir el literal exacto entre backticks (formato real de los documentos fuente), lo que
+  a su vez destapó 6 citas mal formadas (2 documento-equivocado, 4 con placeholder de plantilla del
+  documento — `<n>`/`<token>` — no incluido en la cita), todas corregidas.
+- 🔴 **`cobertura-del-corpus.test.ts` usaba el texto de CITA en vez del ancla real** — encontrado recién
+  al reconciliar la predicción falsable (ver "Corrección post-cierre"), no durante el cierre original.
+
+### Medido
+
+`pnpm verificar` en verde de punta a punta: typecheck, barrido (con las 9 reglas nuevas), fixtures, y
+**1224 tests, 0 fallas** (944 previos + 280 de `packages/contabilidad`). 7 `todo` preexistentes, sin
+cambios.
+
+**Distribución real de clases sobre el corpus completo** (1831 movimientos = 326 Galicia + 158 Santander +
+1347 Macro — el ±1 de Macro es una discrepancia NO resuelta, ver "Corrección post-cierre" punto 3), **con el bug de
+`cobertura-del-corpus.test.ts` ya corregido**: **propuesta 209 (11,4%), decision_humana 1486 (81,2%)
+[régimen 1257 + hipótesis pendiente 229], sin_reconocer 136 (7,4%) [sin_tipo_asignado 60 + sin_evidencia
+76]**. `decision_humana` sigue siendo la clase dominante, confirmando que **capa C (resolución de
+contrapartida), no un léxico mejor, es lo que desbloquea el producto** — 1149 de esos movimientos son los
+`TPUSH`/`TRANSF` de Macro esperando el padrón de socios. Comparación completa contra la predicción del
+plan §7, con la explicación del desvío real (`sin_tipo_asignado` 8,5× lo predicho, por un roster que
+creció con Santander/Macro), en `adaptive-herding-pillow.md` §7.
+
+### Lo que NO se construyó en esta etapa (alcance explícito, ya estaba en el plan)
+
+Imputación (capa D) y composición del asiento (capa E) — necesitan el plan de cuentas del cliente, que no
+existe. Migraciones `0014`/`0015` — la forma la fija el código, la migración la copia, nunca al revés.
+Capa C (resolución de contrapartida) — necesita `padron_socio` y el motor puro no lee la base; por esto
+el 81,2% del corpus sale `decision_humana`, que es el estado CORRECTO en esta etapa, no una carencia del
+léxico. FCI y tarjetas corporativas a nivel literal — resuelto en la ronda de convocatoria anterior:
+necesitan una decisión de ingesta de Módulo 1 (documento separado del extracto), no son léxico. Cableado
+desde `apps/cli` — nadie consume `packages/contabilidad` todavía, a propósito (separa "el motor está
+bien" de "el motor está conectado").
+
+### Corrección post-cierre (mismo día, a pedido del usuario, antes de aprobar la siguiente etapa)
+
+El usuario señaló que la distribución reportada (80,8% en `decision_humana`) no se había reconciliado
+contra la predicción del plan §7 tal como exige CLAUDE.md §3.2 punto 3, y pidió resolver — no solo
+señalar — la deuda de `sin_tipo_asignado` antes de dar luz verde a capa C. Las dos cosas se hicieron:
+
+1. **Reconciliación de la predicción**: al desglosar `decision_humana` en sus dos sub-filas (régimen vs.
+   hipótesis pendiente, igual que el plan §7), apareció un bug real en `cobertura-del-corpus.test.ts` —
+   usaba el texto de CITA de `procedencia.porLiteral` (con placeholders `<n>`/`<token>` para 5 conceptos
+   de Macro) para simular qué reconoce el motor, en vez del ancla real (`entrada.literales`). Eso hacía
+   que 102 movimientos de Macro salieran `concepto_no_catalogado` en vez de su clase real, sin que ningún
+   assert lo notara (compara sumas y umbrales, no la cifra exacta). **Corregido.** Los números finales
+   (209/1486/136) quedan muy cerca de los reportados originalmente en esta entrada (209/1480/142) — el
+   bug era real pero de bajo impacto en los agregados; el desvío real contra la predicción está en
+   `sin_tipo_asignado` (60 medido vs. 7 predicho), explicado en `adaptive-herding-pillow.md` §7: la
+   predicción se escribió antes de P7/P8, con el roster de solo Galicia.
+2. **`sin_tipo_asignado` discriminado estructuralmente**: `ResolucionDelConcepto` (`catalogo.ts`) ahora
+   tiene `categoriaDelHueco: 'implementacion_diferida' | 'identidad_incierta' | 'sin_tipo_en_catalogo'`
+   en vez de solo un `motivoDelHueco` de texto libre — el compilador exige que las 10 filas declaren su
+   categoría, y un test nuevo verifica que las tres estén realmente representadas (no todas colapsadas a
+   una). Clasificación aplicada: 4 `implementacion_diferida` (FCI ×2, tarjeta corporativa, compra con
+   débito genérica), 4 `identidad_incierta` (pago de servicios, débito automático ×2, echeq recibido),
+   2 `sin_tipo_en_catalogo` (impuesto de sellos, cheque circuito cerrado).
+
+**Punto 3, agregado tras una segunda ronda de preguntas del usuario sobre esta misma entrada** (no estaba
+en el cierre original ni en la primera corrección):
+
+3. 🔴 **El ±1 de Macro (1347 vs. 1346) NO está resuelto — la entrada original lo daba por "documentado"
+   sin serlo.** El usuario señaló que Macro se midió como **1346** de forma consistente durante toda la
+   sesión de ingesta real (`filas_leidas=filas_aceptadas=1346`, HANDOFF 22 y posteriores; hashes únicos
+   1346/1346; `INV-multicuenta: diferencias=0`; predicción `sinDestino=0/residuo=0` exacta contra 1346),
+   y pidió la referencia precisa del ±1 citado en esta entrada. Verificado: la tabla de vocabulario de
+   `docs/diseno/07-formato-macro.md` §12 (líneas 429-451, documento **anterior a esta sesión**) suma
+   **1347** (181 sin contraparte + 1166 con contraparte), mientras que **todo el resto del mismo
+   documento** (§8, §10, §14.7) y **toda la evidencia real medida contra el piloto** dan 1346, sin una
+   sola excepción. `packages/contabilidad/tests/corpus-macro.test.ts:5-8` ya reconocía la discrepancia
+   pero con la salvedad explícita de que "el detalle exacto de qué literal está de más o de menos no está
+   resuelto" — esa salvedad es la que faltaba trasladar a esta entrada; en su lugar decía "ya documentado"
+   como si estuviera cerrado. **No corregido todavía**: identificar el literal exacto de más en la tabla
+   de `07` §12 requiere consultar `movimiento_bancario_crudo` del lote real de Macro en el piloto, algo
+   que esta sesión no tiene forma de hacer (sin acceso a esa base). Mientras no se corrija, **1346 es el
+   número a tratar como real**; los `1347`/`1831` de este documento y de `cobertura-del-corpus.test.ts`
+   quedan con un +1 de origen documental conocido, no de motor ni de léxico — no cambia ninguna
+   clasificación (ningún movimiento cambia de clase por esto), pero sí el total exacto reportado. Deuda
+   para la próxima vez que haya acceso a la base del piloto.
+
+### Lo que sigue
+
+Ninguna acción del usuario pendiente contra el piloto — esta etapa es código puro, nada se aplicó ni hay
+nada que aplicar. Los próximos pasos naturales: (a) migraciones `0014`/`0015` cuando el plan de cuentas
+del cliente y el catálogo de reglas por cliente estén listos; (b) capa C (padrón de socios, resolución de
+contrapartida) — es lo que más volumen destrabaría, dado que domina `decision_humana`; (c) FCI y tarjetas
+corporativas, como extensión de Módulo 1 (decisión ya tomada de que necesitan un tipo de documento nuevo,
+separado del extracto); (d) los 2 conceptos `sin_tipo_en_catalogo` (impuesto de sellos, cheque circuito
+cerrado) podrían necesitar un tipo nuevo en `04-imputacion-contable.md` §3 — no decidido, señalado.
+
+---
+
+## 2026-08-12 (49) — Módulo 2, primera etapa: migración `0013_contraparte_hmac_y_padron.sql` + backfill de contraparte, implementados, revisados y en verde. **NADA se aplicó al piloto** — comandos y predicción abajo, en orden: primero la migración, después el backfill de los 3 lotes reales.
+
+**Herramienta:** Claude Code. Arranca el Módulo 2 (motor de reconocimiento → asiento propuesto), etapa
+"contraparte y padrón de socios" — el insumo que le falta al sistema para distinguir "transferencia a un
+TERCERO" de "transferencia a un SOCIO" (Proveedores/Deudores vs. Cuenta Particular), la decisión que hoy
+dejaría el 72,7% del archivo de Macro en cola de revisión humana sin remedio. Plan
+`adaptive-herding-pillow`, disparado por CLAUDE.md §3.2(a)/(b)/(d) (esquema nuevo, datos de clientes,
+alcance grande).
+
+### Convocatoria — 3 rondas antes de escribir código, 1 más sobre el DDL final
+
+**Ronda 1 (diseño de alto nivel):** `analista-funcional`, `contador-dominio`, `arquitecto-software`,
+`seguridad-datos-financieros`, `dba-data` — cada uno con investigación propia contra el código real, no
+opinión sin verificar. Resolvieron 4 contradicciones entre sí en el propio plan (documentadas en §0 del
+archivo de plan): la FK con columna generada resultó no ser un patrón real del repo (se usa `clase`
+directo en la FK); el catálogo canónico de conceptos se decidió tabla N0 y no código, por integridad
+referencial; el padrón de socios se partió en `padron_socio`/`padron_socio_documento` (satélite N2-R) en
+vez de una sola tabla; el invariante "el motor nunca ve el banco" se corrigió a "`bancoCodigo` se consume
+una vez, en el léxico, y no cruza esa frontera" (el léxico SÍ es por banco).
+
+**Ronda 2 (H-A, el backfill del histórico):** `security-engineer` + `seguridad-datos-financieros`.
+Encontraron, independientemente y sin verse entre sí, que columnas singulares (`contraparte_cbu_hmac`/
+`contraparte_documento_hmac`) hornearían en la ingesta una regla de negocio que todavía no existe — se
+resolvió a favor de la satélite `movimiento_contraparte_identificador` (0..N candidatos por movimiento).
+`security-engineer` encontró que el bloqueante H-A original era falso (`leerFilasOrigenDeLote` ya existe y
+ya es por lote); `seguridad-datos-financieros` encontró el hallazgo más grave: envolver la lectura N2-R y
+la escritura en una sola transacción deja un bug real (un `ROLLBACK` no borra de la memoria del proceso
+lo que ya se leyó) — se resolvió con el mismo patrón de dos transacciones que ya usa
+`packages/almacenamiento/src/lectura.ts`.
+
+**Decisión de negocio, tomada directamente por el usuario (dueño de producto):** el pepper de
+`movimiento_contraparte_identificador`/`padron_socio` se deriva POR CLIENTE (`HKDF`), no se mantiene
+global — para que un `socio` con membership en varios clientes del estudio no pueda correlacionar
+contrapartes compartidas entre clientes sin relación, comparando digests, sin ver un solo CUIT en claro.
+
+**Ronda 3 (DDL final, antes de escribir):** `dba-data` (DDL completo) + `security-engineer` +
+`seguridad-datos-financieros` (revisión final) — encontraron 3 bloqueantes de último momento: el pepper
+por cliente rompía en silencio el filtro "es la cuenta propia" (se resolvió comparando en espacio GLOBAL,
+transitorio, nunca persistido); `hmacDocumento` etiquetaba `'cuit'`/`'cuil'` distinto y los separaba en
+digests que nunca matchean (se resolvió canonizando los dos al mismo dominio de hash); el dominio `clase`
+incluía `'cuil'`, que `packages/ingesta/src/glosa.ts` nunca puede producir (se resolvió a 3 valores:
+`'cuit'|'dni'|'cbu'`).
+
+**Cierre (`code-reviewer` sobre el código terminado):** un hallazgo real — el centinela de idempotencia
+original (`contraparte_captura = 'no_capturado'`) hacía que la herramienta nunca pudiera servir de
+mecanismo de re-hasheo tras una rotación de pepper, contradiciendo el propio comentario del archivo y el
+compromiso explícito del plan ("no es deuda, es parte del diseño de esta etapa"). **Corregido**: el
+centinela ahora es consciente del pepper objetivo — un movimiento con candidatos ya `'capturado'` vuelve a
+quedar pendiente si no tiene fila para el `pepper_id` actual; `'sin_identificador'`/`'capturado_cuenta_propia'`
+nunca vuelven a quedar pendientes (ninguna de las dos depende del pepper derivado). Test nuevo que ejercita
+la rotación (cambiando `IDENTIFICADOR_PEPPER_ID` entre corridas) confirma que los candidatos de las dos
+versiones conviven, nunca se borran.
+
+### Qué se construyó
+
+- **`packages/data/migrations/0013_contraparte_hmac_y_padron.sql`**: `movimiento_bancario_crudo.contraparte_captura`
+  (N1, centinela, 4 valores); `movimiento_contraparte_identificador` (N2, satélite 0..N candidatos);
+  `padron_socio` (N2) + `padron_socio_documento` (N2-R, satélite del documento en claro).
+- **`packages/shared/src/seguridad/hmac-identificador.ts`**: `pepperDerivadoPorCliente` (privada, HKDF,
+  guard de forma de uuid antes de derivar — sin él, un `clienteId` vacío colapsa a un pepper compartido en
+  silencio) + `hmacDocumento` (pública, canoniza `cuit`/`cuil` al mismo dominio de hash).
+- **`packages/ingesta/src/contraparte.ts`**: `extraerCandidatosDeContraparte`, pura — el guard de forma
+  (un CBU truncado a 13 dígitos o un número de operación de 10 NUNCA se hashean como si fueran un
+  documento) + el filtro "es la cuenta propia del cliente" (comparación transitoria en espacio global,
+  nunca persistida).
+- **`packages/ingesta/src/reproceso/backfill-contraparte.ts`** + **`apps/cli/src/backfill-contraparte.ts`**:
+  el backfill del histórico, dos transacciones, un lote por corrida, dry-run por defecto — mismo patrón
+  que `recapturar-conceptos.ts` de la tarea anterior.
+- **`packages/ingesta/src/persistir.ts`** (modificado): para lotes NUEVOS, el candidato se calcula en el
+  momento de ingerir — exposición cero, nunca hace falta volver a leer N2-R para lo que se ingiera de acá
+  en más.
+- **`packages/data/tests/reglas-de-codigo.test.ts`**: regla `R32` nueva — `movimiento_origen_crudo` (la
+  tabla N2-R) solo se puede nombrar en una allowlist; el choke point de lectura auditada protegía a la
+  FUNCIÓN, no al nombre de la tabla.
+- **`packages/data/tests/aislamiento-modulo-2.test.ts`** (nuevo, 12 tests): las 3 tablas nuevas quedaron
+  explícitamente excluidas de `aislamiento-modulo-1.test.ts` (con motivo escrito) porque tienen su propia
+  cobertura acá — RLS, rol en lectura de la satélite N2-R, y la FK compuesta rechazando un candidato
+  colgado del movimiento de OTRO cliente aunque lo intente el `socio` (acceso legítimo a los dos).
+
+### Medido
+
+`pnpm verificar` en verde de punta a punta: typecheck, barrido (con R32), fixtures, y **929 tests, 0
+fallas** (866 previos + 63 nuevos: catálogo/reglas/aislamiento + `contraparte.test.ts` (14, pura) +
+`backfill-contraparte.test.ts` en `packages/ingesta` (6, incluida la rotación de pepper) + en `apps/cli`
+(6) + `aislamiento-modulo-2.test.ts` (12)). 7 `todo` preexistentes, sin cambios.
+
+### Lo que sigue — el usuario ejecuta contra el piloto, en dos pasos, nunca un agente
+
+1. **Aplicar la migración al piloto** (verificar después con una consulta, no asumir — ya pasó dos veces
+   con 0011/0012 que quedó aplicada solo en local):
+   ```
+   ENV_FILE=.env.piloto pnpm db:migrate
+   ```
+2. **Backfill de los 3 lotes reales**, dry-run primero, `--aplicar` después de revisar el JSON — comando
+   exacto y predicción falsable entregados en el chat que cierra esta tarea (no repetidos acá para no
+   duplicar una fuente que se desactualiza). Si el resultado real diverge de la predicción, se anota acá
+   antes de decidir el siguiente paso — mismo criterio que (44)/(48).
+
+### Lo que NO se construyó en esta etapa (alcance explícito, ver el plan completo)
+
+`0014` (plan de cuentas, catálogo canónico, reglas de reconocimiento por cliente) y `0015`
+(`reconocimiento_movimiento`, `asiento_propuesto`) — el motor en sí. `packages/contabilidad` como paquete
+todavía no existe: el código de esta etapa vive pragmáticamente en `packages/ingesta`/`packages/data`
+hasta que la capa C (resolución de contrapartida) exista y necesite el aislamiento de paquete completo.
+
+---
+
+## 2026-08-12 (48) — `recapturar:conceptos` implementado, revisado y en verde. **Falta que el usuario lo corra contra el lote real de Galicia** — comando y predicción abajo, nada se ejecutó contra el piloto.
+
+**Herramienta:** Claude Code. Cierra el diagnóstico de la entrada (44)/(47): las 326 filas del lote real de
+Galicia en el piloto quedaron con `concepto_banco`/`concepto_completo`/`concepto_banco_estrategia`/
+`pagina_pdf` en `NULL`/`'no_capturado'` porque la migración `0007_concepto_banco.sql` se aplicó al piloto
+**después** de que ese lote se ingiriera — el `ALTER TABLE` backfilleó el default y nadie volvió a tocarlo.
+Sin esto Galicia (90% de la cartera de Laura) no se puede clasificar. Plan `adaptive-herding-pillow`,
+disparado por CLAUDE.md §3.2(a)/(c) (toca `movimiento_bancario_crudo` real y abre el primer lector de bytes
+de storage en producción del repo).
+
+### Convocatoria real (vía `Agent()`, con `TaskCreate`/`addBlockedBy` bloqueando la implementación)
+
+`tech-lead` (herramienta aparte de `completar-lote.ts`, no una extensión — guards de estado mutuamente
+excluyentes, `con_errores`/INSERT vs. `procesado`/UPDATE), `dba-data` (mecánica del UPDATE: matching por
+`fila_hash`, idempotencia por centinela), `seguridad-datos-financieros` (rol `socio` únicamente para esta
+corrida, `--aplicar` explícito con dry-run por defecto, encontró que el check de la base no cubre un
+identificador en la `descripcion` YA ALMACENADA), `security-engineer` (**4 hallazgos bloqueantes sobre el
+diseño, antes de una sola línea de código** — B1: un `return` en vez de `throw` tras un UPDATE parcial
+comitea la escritura a medias; B2: el rol se verificaba una sola vez y la policy `mov_crudo_wr` admite
+también `administrativo`; B3: el UPDATE sin acotar por `lote_ingesta_id` podía escribir sobre la fila
+equivocada porque `fila_hash` es único por cuenta, no por lote; B4: un flag de waiver reabría el "todo o
+nada" por la puerta de atrás — rechazado, **no hay ningún flag de este tipo en el diseño final**),
+`code-reviewer` y `qa-automation` sobre la implementación terminada (ver abajo).
+
+### Qué se construyó
+
+- `packages/almacenamiento/src/lectura.ts` — **el paso revertible más chico**, mergeado antes de construir
+  el backfill sobre él: `obtenerObjetoDeCliente(usuarioId, storage, pedido)`, primer choke point del repo
+  para leer bytes de storage. Orden: `conUsuario` (rol → `registrarAcceso('descarga')`) → **COMMIT** →
+  recién ahí `storage.obtener()` fuera de toda transacción → verificación de hash de integridad (si no
+  coincide: `accion:'rechazo'` en su propia tx, los hashes nunca se loguean). `avisarSiElVolumenEsAnomalo`
+  (antes privada de `descarga.ts`) se exportó para alimentar la misma señal H-8 desde este segundo camino
+  de salida.
+- `packages/ingesta/src/reproceso/recapturar-conceptos.ts` — el núcleo: `recapturarConceptosDeLote(tx,
+  pedido, leido)`. `for update` sobre `lote_ingesta` (TOCTOU + lock) → re-chequeo de rol (cierra B2) →
+  resuelve cuentas → matchea por `fila_hash` **agrupado por cuenta** (nunca por lote entero — cierra el
+  caso de colisión de hash entre cuentas) → 4 compuertas (A: biyección de hash, nunca waivable; B: prefijo
+  INV-14 contra la `descripcion` YA ALMACENADA, nunca waivable; C: informativo; D: `fila_numero`, nunca
+  waivable) + una puerta aparte `contieneIdentificador` sobre el concepto a escribir **y** sobre la
+  descripción ya almacenada (siempre bloqueante, nunca una decisión operativa) → si `--aplicar` y todo
+  limpio, un único `UPDATE` vía `unnest()` acotado por `cliente_id` **y** `lote_ingesta_id` (cierra B3),
+  `throw` — nunca `return` — si el conteo de filas afectadas no cierra contra lo esperado (cierra B1) →
+  `UPDATE lote_ingesta set adaptador_version = ...` (el único campo de `lote_ingesta` que se toca; los
+  conteos originales y `motivo_codigo_previo` quedan intocables).
+- `apps/cli/src/recapturar-conceptos.ts` — `pnpm recapturar:conceptos --cliente <uuid> --usuario <uuid>
+  --lote-id <uuid> [--aplicar]`. Reusa `obtenerObjetoDeCliente` + el adaptador ya resuelto del lote, nunca
+  reconstruye el parseo.
+- `packages/data/tests/reglas-de-codigo.test.ts` — regla nueva: `.obtener(`/`.urlFirmada(`/`.guardar(`
+  solo pueden aparecer en sus archivos autorizados (hallazgo de `security-engineer`: hoy no había ningún
+  control automático sobre el choke point de storage).
+- Tests nuevos (23): `packages/almacenamiento/tests/lectura.test.ts` (6, incluido rol insuficiente con spy
+  que confirma que `storage.obtener()` nunca se llama), `packages/ingesta/tests/reproceso/
+  recapturar-conceptos.test.ts` (7, contra base real: camino feliz dry-run+aplicar, idempotencia
+  `ya_backfilleado`, hash que no reproduce → `'sucio'` sin escribir nada, identificador en descripción ya
+  almacenada → `'sucio'`, aislamiento multi-tenant, `con_errores` → `lote_no_recapturable`, rol
+  insuficiente), `apps/cli/tests/recapturar-conceptos.test.ts` (7, con MinIO y base reales, más
+  `archivo_no_almacenado`).
+
+### `code-reviewer` y `qa-automation` sobre la implementación terminada
+
+`code-reviewer`: **listo para mergear**, verificó punto por punto que los 4 hallazgos de `security-engineer`
+están resueltos en el código (no solo en comentarios), con la cadena completa `throw` → sin `catch` en
+`escribirConAuditoria` → `rollback` en `conUsuario`. Dos observaciones no bloqueantes: falta un test de
+regresión para el escenario B3 exacto (dos lotes de la misma cuenta con `fila_hash` coincidente — el
+código ya lo resuelve, ningún test lo ejercita), y `storage.obtener()` no tiene cota de tamaño (riesgo bajo,
+es un CLI manual, no una superficie expuesta a terceros).
+
+`qa-automation`: sin bloqueantes, pero encontró huecos de cobertura reales — las compuertas B y D no tienen
+mutación dedicada (borrarlas del código, el gate sigue verde), el caso "dos cuentas del mismo lote con el
+mismo `fila_hash`" no está construido en ningún test (es el que de verdad prueba que el matching es por
+cuenta), y **una discrepancia entre el comentario y el comportamiento real**: el estado `0 < pendientes <
+total` (estructuralmente imposible bajo uso normal) no se reporta como `'sucio'` prolijo como decía el
+comentario — las compuertas no lo detectan por `fila_hash`, así que el dry-run podía reportar `'listo'` y
+recién `--aplicar` lo descubre vía B1 (`throw`, rollback, sin escritura parcial — seguro, pero no es el
+mismo camino que las demás compuertas). **Corregido el comentario** en
+`packages/ingesta/src/reproceso/recapturar-conceptos.ts:167-171` para que diga la verdad; no se amplió el
+código bajo este cierre porque el escenario no puede ocurrir contra el lote real (una sola ingesta, todas
+las filas en `'no_capturado'` de forma uniforme) y la propiedad de seguridad (nunca escritura parcial) ya
+se sostiene. **Deuda declarada, no bloqueante**, para quien retome: agregar el test de dos-cuentas-mismo-hash
+y las mutaciones dedicadas de B/D antes de reusar esta herramienta para otro banco.
+
+### Medido
+
+`pnpm verificar` en verde: **885 tests pasan, 7 `todo` preexistentes (892 total)**, 34 archivos de test, 0
+fallas (862 previos + 23 nuevos). `pnpm typecheck` y `pnpm barrido` (con la regla nueva del choke point de
+storage) sin cambios adicionales.
+
+### Lo que sigue — el usuario corre esto, no un agente
+
+Mismo criterio que (43)/(44)/(46)/(47): la ejecución contra el piloto la dispara el usuario. Comando y
+predicción falsable entregados en el chat que cerró esta tarea (no repetidos acá para no duplicar una
+fuente de verdad que puede desactualizarse) — **si el resultado real diverge de la predicción, se anota acá
+antes de decidir el siguiente paso**, mismo patrón que (44) con `completar-lote.ts`.
+
+---
+
+## 2026-08-12 (47) — Nombre legible del export: banco agregado, período y etiqueta de cliente descartados con evidencia
+
+**Herramienta:** Claude Code. El usuario encontró ilegible el nombre `movimientos_<cliente8>_<lote8>_<ts>.xlsx`
+y pidió banco + etiqueta del cliente + período. Antes de tocar código se explicó R30 con precisión (ADR-0002
+línea 153: "ningún dato ≥ N2 en URL, path, query string ni nombre de archivo... nunca CUIT, razón social ni
+el nombre original del archivo") y se convocó a `seguridad-datos-financieros` + `security-engineer` — dispara
+CLAUDE.md §3.2(b)/(c), archivo que ya corre contra el piloto.
+
+**Verificado contra `packages/shared/src/seguridad/clasificacion-campos.ts`, los tres pedidos:**
+- **Banco** (`lote_ingesta.banco_codigo`) es **N1** (corrección sobre mi lectura inicial, que decía N0 — N0
+  es solo el catálogo `banco.codigo`/`nombre`). Entra.
+- **Etiqueta del cliente** (`tenant_node.nombre`, razón social) es **N2**, nombrada explícita en R30. No
+  existe ningún campo de cliente por debajo de N2. El usuario decidió: no crear uno nuevo ahora — queda
+  como posible tarea aparte (migración + `dba-data`/`security-engineer`/`seguridad-datos-financieros`).
+- **Período** (`lote_ingesta_cuenta.periodo_desde`/`hasta`) es **N2**, y `seguridad-datos-financieros`
+  confirmó que es correcto y no excesivo (el borde revela cuándo se abrió/cerró el vínculo bancario, mismo
+  nivel que `cuenta_bancaria.abierta_desde`). El usuario decidió: no agregarlo ahora, ni siquiera un
+  derivado `yyyy-mm` (necesitaría su propia clasificación nueva).
+- Descartado también por su cuenta, sin que se pidiera: **`estado` del lote** — con `--cuenta` el export
+  puede ser parcial, así que un archivo `..._con_observaciones_...` que en realidad solo trae la cuenta que
+  cuadra mentiría sobre su contenido. Bug de correctitud, no solo de seguridad.
+
+**Diseño de `security-engineer`** (camino A sobre B: B —renombrar al final— reintroducía el riesgo de pisar
+un archivo, contra el invariante "nunca pisa" ya escrito): una lectura previa de `banco_codigo`, en su
+propia `conUsuario` **secuencial** (nunca anidada), **best-effort y nunca decisoria** (0 filas → nombre sin
+banco, el export sigue y aborta por su propia razón real si corresponde), sin rol-check ni auditoría
+(`lote_ingesta` no tiene ninguna columna ≥ N2). Más un **chequeo de coherencia** antes de escribir a disco:
+si el banco de la lectura previa no coincide con el que resuelve `exportarPlanillaDeLote` de verdad
+—encontró un camino real: la policy de `UPDATE` sobre `lote_ingesta` incluye `administrativo`, que está
+excluido de exportar— aborta `banco_incoherente`, cero bytes escritos.
+
+**Qué se construyó:**
+- `packages/ingesta/src/planilla/exportar-planilla.ts`: `RE_BANCO_CODIGO` (compartido, misma forma que
+  `banco_codigo_chk`) y `resolverBancoDelLote(tx, {clienteId, loteId})`.
+- `apps/cli/src/exportar-excel.ts`: `exportarExcel` gana un tercer parámetro inyectable `resolverBanco`
+  (mismo patrón que `escritor`), la lectura previa, `nombreDeArchivo` con `cliente8` **primero** (agrupa
+  por tenant en cualquier listado de `salida/` — el riesgo real es secreto fiscal, no legibilidad), y el
+  chequeo de coherencia con el nuevo motivo `banco_incoherente`.
+- Nombre final: `movimientos_<cliente8>_<banco_codigo>_<lote8>_<timestampUTC>.xlsx` (sin segmento de banco
+  si la lectura previa no encontró el lote).
+- `docs/seguridad/registro-excepciones.md`: formato de nombre actualizado en el procedimiento de registro.
+
+**Tests nuevos (7):** `resolverBancoDelLote` contra base real (lote propio, inexistente, de otro cliente —
+`packages/ingesta/tests/exportar-planilla.test.ts`); en `apps/cli/tests/exportar-excel.test.ts`: forma
+completa del nombre fijada por regex (hallazgo de `security-engineer`: no había ningún control automático
+sobre la composición), `resolverBanco` inyectado → `null` (dos casos), → banco distinto del real
+(`banco_incoherente`, con spy que confirma que `escribir` nunca se llama), → lanza (nada se reserva),
+`--listar` nunca lo invoca.
+
+**`code-reviewer` sobre el diff final: sin hallazgos bloqueantes.** El fix del `fd` huérfano de la tarea
+anterior sigue intacto; el patrón nuevo lo respeta. Una mejora no bloqueante ya aplicada (spy sobre
+`escribir` en el test de `banco_incoherente`, en vez de solo mirar el estado final del disco). Deuda menor
+señalada, no de esta tarea: `RE_BANCO_CODIGO` sigue duplicado a mano en `alta-cuenta.ts`,
+`completar-lote.ts` e `ingestar.ts` (preexistente, no se tocan esos archivos sin su propio plan §3.2(c)).
+
+**Medido:** `pnpm verificar` en verde — **862 tests, 7 `todo`** (855 previos + 7 nuevos). `pnpm typecheck` y
+`pnpm barrido` sin cambios.
+
+**Los archivos ya generados en `salida/` con el nombre viejo no se tocan** (Galicia/Santander/Macro de la
+entrada (46)) — el nombre nuevo aplica desde la próxima corrida.
+
+---
+
+## 2026-08-12 (46) — **Primer entregable real para Laura: `pnpm exportar:excel` cerrado.** Gate verde (855/7 todo, reverificado), y un hallazgo del propio cierre: el TTL de 7 días es una decisión, no un mecanismo — el script no lo calcula
+
+> 🟢 **ACTUALIZACIÓN (misma fecha, minutos después): el hallazgo de abajo está CERRADO, no declarado.**
+> El `documentador` encontró bien que el plan aprobado preveía el cálculo del TTL y el código no lo tenía
+> — hizo lo correcto marcándolo como deuda en vez de inventar que estaba hecho. Se implementó a
+> continuación, en la misma sesión: `apps/cli/src/exportar-excel.ts` agrega
+> `TTL_DIAS_RECOMENDADO = 7` y `destruccionRecomendada(generadoEn)` (siempre `new Date(generadoEn)`, con
+> argumento — nunca `new Date()` a secas). El resultado `'exportado'` ahora lleva `destruirAntesDe`
+> (fecha ISO, solo día), y `log.info('exportar.completado', {...})` incluye `destruir_antes_de`. La
+> aserción quedó agregada al mismo test "camino feliz" de `apps/cli/tests/exportar-excel.test.ts`
+> (verifica que la fecha sea exactamente `generado_en + 7 días`). `pnpm verificar` reverificado: sigue en
+> **855/7 todo**, sin tests nuevos (se amplió uno existente, no se agregó uno). El borrado del archivo
+> **sigue siendo manual** — eso no cambió y no tenía que cambiar (ADR-0002 §F.3.8): lo único que se cerró
+> es que el sistema ahora calcula y recuerda la fecha, en vez de exigir que alguien la saque a mano. Las
+> secciones de abajo (el "🔴 Hallazgo" y el §5.2 de `10-deuda-declarada.md`) describen el estado ANTES de
+> este cierre — se dejan como diagnóstico, con esta nota como la versión vigente.
+
+**Herramienta:** Claude Code, en rol `documentador` (persona `agents/personas/documentador.md`). Cierra
+la documentación del export a Excel de movimientos bancarios — plan
+`C:\Users\Juan Pàblo Marchini\.claude-personal\plans\adaptive-herding-pillow.md`, disparado por CLAUDE.md
+§3.2(b)/(d) (datos de un cliente, ≥3 archivos nuevos). El código, los tests y la revisión ya estaban
+cerrados al entrar a esta tarea; acá no se tocó una sola línea de código.
+
+### Qué se construyó
+
+- `packages/ingesta/src/planilla/armar-libro.ts` — puro (sin base, sin disco; único archivo del repo que
+  importa `exceljs`). Arma el `Workbook`: pestaña `Control de saldos` (una fila por cuenta+moneda,
+  declarado vs. calculado, `SUBTOTAL()`, leyenda) + una hoja de movimientos por (cuenta, moneda), nunca
+  mezclando monedas. Débito/Crédito son columnas separadas en positivo, **derivadas del signo de
+  `importe`** (nunca Debe/Haber — esa conversión es del Módulo 2 y queda dicho en la leyenda). Columnas
+  `Cuenta contable`/`Observación` vacías, para que Laura clasifique ahí mismo.
+- `packages/ingesta/src/planilla/exportar-planilla.ts` — nivel de negocio: recibe un `Tx` ya abierto,
+  verifica rol contra la base (`ROLES_QUE_EXPORTAN = ROLES_QUE_DESCARGAN` de `descarga.ts`: socio/contador,
+  nunca administrativo/auditor — H-8), audita con `registrarAcceso({accion:'export', ...})` **antes** de
+  leer un solo movimiento, y solo entonces corre las dos consultas (cabecera de `lote_ingesta_cuenta` +
+  `movimiento_bancario_crudo`), las dos con `cliente_id` explícito en el `WHERE` aunque se vaya por PK.
+- `apps/cli/src/exportar-excel.ts` — el CLI: `pnpm exportar:excel`. Reserva el archivo con `openSync(...,
+  'wx', 0o600)` **antes** de abrir la transacción (una falla de disco aborta pre-auditoría); escribe a
+  disco **después** del commit, nunca antes; si `conUsuario`/`exportarPlanillaDeLote` lanzan (no solo
+  devuelven `abortado`), un `try/catch` libera el `fd` reservado — ver "hallazgo de `code-reviewer`" abajo.
+  Soporta `--listar [--banco <codigo>]` de solo lectura, sin reservar nada.
+- Tests nuevos: `packages/ingesta/tests/planilla.test.ts` (30 — conversores, `armarLibro`, round-trip),
+  `packages/ingesta/tests/exportar-planilla.test.ts` (10, contra base real con `sembrar()`, incluido el
+  test de aislamiento con el canario de ADR-0002 §F.1), `apps/cli/tests/exportar-excel.test.ts` (13,
+  incluye "la auditoría ya commiteó pero la escritura a disco falla" — el mismo caso que motivó el fix de
+  `code-reviewer`).
+- `package.json`: script nuevo `"exportar:excel": "node apps/cli/src/exportar-excel.ts"`.
+- `packages/ingesta/src/index.ts`: re-exporta `exportar-planilla.ts`, **no** `armar-libro.ts` — a
+  propósito, así `apps/cli` nunca ve un tipo de `exceljs`.
+
+### Convocatoria real (vía `Agent()`, con `TaskCreate`/`addBlockedBy` bloqueando la implementación)
+
+`ux-designer` (columnas/hojas), `seguridad-datos-financieros` (clasificó el archivo N2-R — ver decisión
+de seguridad abajo — y fijó el vocabulario cerrado de motivo/destinatario), `security-engineer` (orden
+auditoría-antes-del-efecto, riesgos de `exceljs`, permisos de archivo, path traversal), `backend-dev`
+(partición de archivos, firmas, plan de tests), `contador-dominio` (ratificó Débito/Crédito derivados del
+signo; pidió una columna de trazabilidad que **ya estaba** en el diseño como `N° de fila (sistema)`, sin
+cambios adicionales), `qa-automation` (revisó el plan de tests, encontró agujeros reales — todos
+incorporados) y `code-reviewer` sobre el diff final: encontró un bug bloqueante real (el `fd` reservado
+quedaba huérfano si `exportarPlanillaDeLote` lanzaba una excepción real en vez de devolver `abortado` —
+corregido con el `try/catch` de arriba, con su test) y dos hallazgos no bloqueantes ya resueltos (un
+comentario que afirmaba una garantía de auditoría más fuerte de la que el código sostiene en el camino
+intra-transacción — corregido el texto, no el código; y `writeSync` podía escribir menos bytes de los
+pedidos sin lanzar — se agregó la verificación del conteo devuelto, `escritorReal.escribir`).
+
+### Decisión de seguridad clave: el archivo es N2-R, con TTL y borrado como acto humano
+
+ADR-0002 §A.2 regla 2 ("un derivado hereda el nivel máximo de sus insumos"): `descripcion` lleva CUIT de
+terceros en la glosa bancaria, así que el `.xlsx` es N2-R aunque cada columna origen sea N2. El usuario
+decidió explícitamente: adelante con el export, con controles completos, **más** TTL y borrado explícitos
+declarados (no solo "controles y deuda declarada" a secas). El borrado real del archivo y el registro en
+`docs/seguridad/registro-excepciones.md` (nueva sección, ver abajo) son un paso **manual** del usuario
+después de cada corrida real — mismo criterio que ADR-0002 §F.3.8 ("la destrucción es un acto humano
+registrado").
+
+`acceso_auditoria` no tiene columna `destinatario` (el ADR la exige para todo export N2-R).
+`exportar-planilla.ts` la codifica dentro de `motivo` como `"<motivo_codigo>|dest:<destinatario_codigo>"`
+— deuda declarada, no una migración en esta tarea (`docs/diseno/10-deuda-declarada.md` §5.1).
+
+### 🔴 Hallazgo de este cierre, no del diseño: el TTL de 7 días **no está implementado** en el código
+
+El plan y el pedido de cierre de esta tarea describían que `pnpm exportar:excel` "imprime/loguea una
+fecha de destrucción recomendada (`generado_en + 7 días`) en el evento `exportar.completado`". **Se
+verificó contra el código, no contra el plan, y es falso**: ni `apps/cli/src/exportar-excel.ts` (el
+`log.info('exportar.completado', {...})` solo lleva `cliente_id`, `lote_id`, `banco_codigo`,
+`correlacion`, `filas`, `cuentas`, `archivo_nombre`, `archivo_bytes` — sin fecha derivada), ni
+`exportar-planilla.ts`, ni `armar-libro.ts` (que sí escribe `generado_en` en la celda `A1` y en la leyenda
+"Procedencia" de `Control de saldos`, pero nunca calcula una fecha a partir de él) tienen una sola línea
+de cálculo de TTL. Búsqueda de `ttl`/`destruc`/`7 d[ií]as` en los tres archivos: cero resultados
+relevantes.
+
+**No es un bloqueante para correr el export** — el control sigue vigente como decisión (TTL manual +
+registro), solo que hoy **nada en el sistema lo recuerda ni lo calcula**: quien corre el export tiene que
+sacar la cuenta a mano. Documentado como deuda nueva en `docs/diseno/10-deuda-declarada.md` §5.2, con el
+cambio concreto que lo cerraría (un campo `destruye_recomendado_en` en el log + la leyenda del workbook —
+código chico, no tocado acá porque el documentador no escribe código de producción).
+
+### Medido, reverificado en esta sesión (no solo tomado del reporte de la tarea anterior)
+
+`pnpm verificar` corrido de punta a punta: **855 tests pasan, 7 `todo` preexistentes (862 total), 31
+archivos de test, 0 fallas.** Coincide exacto con lo reportado al cerrar el código (809 previos + 46
+nuevos de esta tarea: 30 de `planilla.test.ts`, 10 de `exportar-planilla.test.ts`, 13 de
+`exportar-excel.test.ts` menos solapamientos de conteo). `pnpm typecheck` y `pnpm barrido`: sin cambios,
+como parte del mismo `pnpm verificar`.
+
+### El comando para el usuario — y una brecha real en esta misma bitácora, encontrada al armarlo
+
+Forma exacta (`apps/cli/src/exportar-excel.ts`, `esquemaArgumentos`):
+
+```
+pnpm exportar:excel --cliente <uuid> --usuario <uuid> --motivo <codigo> --destinatario <codigo> --lote-id <uuid>
+```
+
+`--motivo` ∈ `demo_contadora | revision_mensual | pedido_del_cliente | soporte_incidente`; `--destinatario`
+∈ `estudio_interno | cliente_titular | organismo` (`MOTIVOS_EXPORT`/`DESTINATARIOS_EXPORT`,
+`exportar-planilla.ts`). El usuario que se pase en `--usuario` necesita rol `socio` o `contador` sobre ese
+`--cliente`. Si no se tiene el `--lote-id` a mano, `pnpm exportar:excel --cliente <uuid> --usuario <uuid>
+--motivo demo_contadora --destinatario estudio_interno --listar [--banco <codigo>]` lista los lotes
+exportables de ese cliente sin reservar ni escribir nada.
+
+**Actualizado tras verificar contra el piloto (solo lectura), cierra la brecha que documentador señaló**:
+los tres `cliente_id`/`lote_id` ya están confirmados (Santander en HANDOFF (44); Galicia y Macro,
+consultados ahora contra `lote_ingesta` filtrando por `estado in ('procesado','procesado_con_observaciones')`):
+
+```
+# Galicia — cuadra
+pnpm exportar:excel --cliente 9c051a8e-151e-4c91-82a1-4d55c7212892 --usuario <uuid-usuario> \
+  --motivo demo_contadora --destinatario estudio_interno \
+  --lote-id 2c5253a4-883a-4161-9257-56de7ec58987
+
+# Santander — con observaciones (cuenta USD remediada en (43)/(44))
+pnpm exportar:excel --cliente 7f74496f-9779-457c-b35e-43dfa7b619f2 --usuario <uuid-usuario> \
+  --motivo demo_contadora --destinatario estudio_interno \
+  --lote-id e58a957c-8862-4fa4-b561-39817f97225f
+
+# Macro — con observaciones (3 cuentas, 1346 filas)
+pnpm exportar:excel --cliente 08f3b504-a974-4ec4-8e4a-2699356c819f --usuario <uuid-usuario> \
+  --motivo demo_contadora --destinatario estudio_interno \
+  --lote-id 4a897e3d-b1a0-483d-b9e7-9a132ff41eb8
+```
+
+`<uuid-usuario>` tiene que tener rol `socio` o `contador` sobre el `--cliente` correspondiente.
+
+Después de **cada** corrida real: completar la fila nueva de
+`docs/seguridad/registro-excepciones.md` (sección "Exports N2-R declarados", con el procedimiento
+completo — motivo, destinatario, `correlacion`, `generado_en`, la fecha de destrucción que ya devuelve
+el propio comando (`destruirAntesDe`/`destruir_antes_de`, ver ACTUALIZACIÓN arriba), quién lo corrió).
+
+**Deuda declarada, no bloqueante** (`docs/diseno/10-deuda-declarada.md`):
+- §5.1 — `acceso_auditoria` sin columna `destinatario`, codificado dentro de `motivo`.
+- ~~§5.2 — TTL~~ **cerrado** en esta misma sesión, ver la ACTUALIZACIÓN al principio de esta entrada.
+
+**Archivos tocados en esta tarea:** `HANDOFF.md` (esta entrada), `docs/diseno/10-deuda-declarada.md`
+(§5 nueva, después §5.2 cerrada), `docs/seguridad/registro-excepciones.md` (sección nueva "Exports N2-R
+declarados", después actualizada). Y, en la vuelta de cierre posterior a esta entrada: `apps/cli/src/
+exportar-excel.ts` + su test (TTL calculado) — la única línea de código tocada después del cierre inicial
+de `documentador`.
+
+---
+
+## 2026-08-12 (45) — Documentación retroactiva: `comparar-titularidad.ts` SÍ se corrió contra archivos reales — `mismo_titular: false`, decisión de 3 clientes separados confirmada
+
+**Herramienta:** Claude Code. Cierra el punto abierto que dejó el addendum de (44): el script de
+titularidad **sí se corrió** contra los PDF reales de Santander y Macro —en algún momento antes de que
+se diera de alta la primera cuenta de Macro en el piloto (`cuenta_bancaria` más vieja de Macro:
+2026-08-11T21:00:04Z)— solo que el resultado nunca quedó escrito en esta bitácora. Confirmado por el
+usuario: **`mismo_titular: false`**. Con ese booleano se tomó la decisión de **NO fusionar** Santander y
+Macro bajo un mismo cliente —son titulares distintos— y se hicieron las dos altas de `pnpm alta:cliente`
+por separado. Es exactamente el estado que ya está persistido y verificado en el piloto: 3 clientes
+(Galicia, Santander, Macro), uno por banco. **La decisión de aislamiento ya estaba bien tomada; solo
+faltaba el rastro escrito. No hace falta volver a correr el script contra estos dos archivos.**
+
+**El script sigue siendo válido para el próximo par de bancos que haga falta comparar** (releído hoy,
+`packages/ingesta/scripts/comparar-titularidad.ts` sin cambios de código desde (29)/(33)): usa el mismo
+camino de lectura que `probar-adaptador.ts` (`resolverAdaptador` → `.leer()`), nunca toca la base ni el
+storage, y las guardas siguen intactas (CUIT normalizado antes de comparar, `undefined` en cualquiera de
+los dos → `no_publicado`, nunca un `distinto` silencioso; el `catch` nunca imprime `error.message`, solo
+el nombre del constructor). **Un límite real a tener en cuenta:** registra a mano solo los tres
+adaptadores que existen hoy (Galicia, Macro, Santander) — si se suma un cuarto banco al roster, hay que
+agregarle su `import` + `registrarAdaptador()` antes de poder compararlo contra los otros tres. Sigue
+**sin commitear, a propósito** (mismo criterio de (29)/(33): la traza es esta bitácora, no el árbol de
+git) — no se toca.
+
+---
+
 ## 2026-08-11 (44) — 🔴 PUNTO DE ENTRADA SI RETOMÁS SIN ESTE CHAT. Primera corrida real de `completar-lote.ts` falló contra el piloto — causa raíz confirmada, nada corrupto, **bloqueado en un paso operativo del usuario**.
+
+> 🟢 **ACTUALIZACIÓN (misma fecha, sesión siguiente) — esta entrada quedó DESACTUALIZADA por un corte de
+> contexto al cerrarla: describe un intento fallido, pero el usuario ya lo había resuelto en su propia
+> terminal ANTES de que se comiteara esta misma entrada.** Verificado ahora con una consulta de solo
+> lectura contra el piloto (`lote_ingesta`/`lote_ingesta_cuenta`, id
+> `e58a957c-8862-4fa4-b561-39817f97225f`): **el lote está CERRADO**, coincide exacto con la predicción
+> falsable del punto 2 de abajo — `estado='procesado_con_observaciones'`,
+> `filas_leidas=filas_aceptadas=158`, `motivo_codigo IS NULL`,
+> `motivo_codigo_previo='cuenta_no_pertenece_al_cliente'`, 2 filas en `lote_ingesta_cuenta`,
+> `adaptador_version='santander@1'` (sin `@pendiente`), `archivo_clave` apuntando al objeto huérfano del
+> punto 4 (auto-curado como se predijo, sin duplicar nada) y una segunda fila en `acceso_auditoria`
+> (`accion='escritura'`, `motivo='completar_lote:cuenta_no_pertenece_al_cliente'`).
+>
+> Reconstruido por timestamp: la migración `0012` se aplicó al piloto y `pnpm completar-lote` corrió con
+> éxito a las **23:45:32 -03 del 11/08** — **5 minutos antes** de que se comiteara esta misma entrada
+> (`2ea1444`, 23:50:41 -03). **Ítem 6.3 (ingesta real de Santander) queda CERRADO, no pendiente.**
+>
+> **La sección "Deuda nueva" de abajo también está desactualizada en el mismo punto**: "Macro sigue en
+> pausa total" ya no es cierto. `cuenta_bancaria` tiene sus 3 cuentas dadas de alta (ARS, ARS, USD) y hay
+> un `lote_ingesta` propio de banco `macro`, `procesado_con_observaciones`,
+> `filas_leidas=filas_aceptadas=1346`, 3 filas en `lote_ingesta_cuenta`, `motivo_codigo_previo IS NULL`
+> (ingesta limpia, nunca pasó por el bug de atomicidad) — corrido antes que el de Santander (18:52 -03 vs
+> 23:45 -03, mismo día). **Los dos bancos del roster (#22) están cerrados en el piloto.**
+>
+> **Punto que esto pareció destapar, y no era tal — ver (45):** hoy hay **3 clientes distintos** en el
+> piloto, uno por banco (Galicia, Santander, Macro). En un primer momento pareció que
+> `comparar-titularidad.ts` nunca se había corrido para fundamentar esa separación. **Corregido en (45):
+> sí se corrió**, contra los archivos reales de Santander y Macro, resultado `mismo_titular: false` — la
+> decisión de 3 clientes separados está bien tomada. Lo único que faltaba era el rastro escrito, y (45) lo
+> cierra.
 
 **Herramienta:** Claude Code. El usuario corrió el comando exacto que dejó (43) contra el piloto real,
 con la cuenta USD de Santander ya registrada. Falló con:
