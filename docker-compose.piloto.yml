@@ -1,0 +1,70 @@
+## docker-compose.piloto.yml — Postgres del PILOTO, físicamente separado del de desarrollo/tests.
+##
+## POR QUÉ EXISTE ESTE ARCHIVO APARTE, Y NO UN SEGUNDO `service:` EN docker-compose.yml
+##
+## El 2026-08-12 un `docker volume rm` apuntado a limpiar la base LOCAL (`sistema_contable`, para
+## poder editar una migración todavía no aplicada en ningún lado) borró también la base del PILOTO
+## (`sistema_contable_piloto`) — las dos vivían en el MISMO contenedor y el MISMO volumen físico,
+## diferenciadas solo por nombre de base de datos. La base real de tres clientes (326 + 158 + 1346
+## movimientos, más el trabajo de recaptura de conceptos) se perdió sin que hiciera falta un
+## `--aplicar` mal dirigido: alcanzó con un comando de infraestructura que se creía inocuo.
+##
+## La corrección NO es "tener más cuidado la próxima vez" — es hacer que el comando peligroso no
+## pueda alcanzar al piloto por diseño. Un `docker compose down --volumes` o un `docker compose rm -f
+## postgres` corridos SIN `-f docker-compose.piloto.yml` son, después de este archivo,
+## ESTRUCTURALMENTE incapaces de tocar este contenedor: Docker Compose solo actúa sobre los
+## servicios declarados en el/los archivo(s) que se le pasan explícitamente.
+##
+## Uso:
+##   docker compose -f docker-compose.piloto.yml up -d
+##   docker compose -f docker-compose.piloto.yml down            # nunca --volumes salvo que sea la intención real
+##
+## `.env.piloto` apunta acá: puerto 5443 (el 5442 de docker-compose.yml sigue siendo dev/test), y el
+## mismo nombre de base `sistema_contable_piloto` para que quede claro con un vistazo cuál es cuál —
+## ahora en un SERVIDOR distinto, no solo un nombre distinto en el mismo servidor.
+##
+## MinIO NO se duplica acá: el incidente fue de Postgres, no tocó `minio_data`, y hoy no hay
+## evidencia de que MinIO necesite el mismo aislamiento — si en algún momento se decide que sí,
+## es una sección aparte de este mismo archivo, con su propio volumen.
+
+services:
+  postgres-piloto:
+    image: postgres:16-alpine
+    container_name: sistema-contable-postgres-piloto
+    restart: unless-stopped
+    # Mismos tres flags que docker-compose.yml, mismo motivo (ADR-0002 R29): el log del motor no
+    # puede ser una vía de filtración de CBU/CUIT de un cliente real — acá con más razón todavía,
+    # porque esta base SÍ tiene datos reales.
+    command:
+      - postgres
+      - -c
+      - log_statement=none
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - log_min_duration_statement=1000
+    environment:
+      # Nombres de variable DISTINTOS de los de docker-compose.yml a propósito: los dos archivos
+      # pueden convivir con un solo `.env` en la raíz sin que uno pise los valores del otro. Los
+      # defaults alcanzan para levantarlo sin declarar nada nuevo; se pueden sobrescribir si hace
+      # falta un secreto propio del piloto más adelante.
+      POSTGRES_DB: ${POSTGRES_PILOTO_DB:-sistema_contable_piloto}
+      POSTGRES_USER: ${POSTGRES_PILOTO_USER:-sistema_contable}
+      POSTGRES_PASSWORD: ${POSTGRES_PILOTO_PASSWORD:-sistema_contable_dev}
+    ports:
+      # Puerto DISTINTO del 5442 de desarrollo — y, como docker-compose.yml, publicado solo en
+      # loopback: una base con datos reales de un cliente accesible desde la red es un incidente
+      # de otra clase.
+      - "127.0.0.1:${POSTGRES_PILOTO_PORT:-5443}:5432"
+    volumes:
+      - postgres_piloto_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_PILOTO_USER:-sistema_contable} -d ${POSTGRES_PILOTO_DB:-sistema_contable_piloto}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_piloto_data:

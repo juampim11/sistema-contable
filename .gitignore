@@ -28,6 +28,10 @@ secrets/
 # "extractos reales". Hallazgo G-2 del agente seguridad-datos-financieros.
 /privado/
 
+# `respaldos/` — dumps de `pg_dump` del piloto (packages/data/scripts/respaldar-piloto.ts). Es la
+# base real de un cliente en otro formato: mismo criterio que `/privado/`, nunca al repo.
+/respaldos/
+
 # NO HAY NEGACIONES PARA `fixtures/`, y es deliberado. Una regla `!**/fixtures/**/*.pdf` es el único
 # camino por el que un extracto real puede entrar al repo con un `git add -A` normal — y `fixtures/`
 # es exactamente donde alguien apurado copia el archivo real "para probar con algo de verdad".

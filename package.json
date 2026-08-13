@@ -10,9 +10,12 @@
   "scripts": {
     "db:up": "docker compose up -d postgres minio minio-init",
     "db:down": "docker compose down",
+    "db:up:piloto": "docker compose -f docker-compose.piloto.yml up -d",
+    "db:down:piloto": "docker compose -f docker-compose.piloto.yml down",
     "db:migrate": "node packages/data/scripts/migrar.ts",
     "db:setup": "node packages/data/scripts/setup-roles.ts",
     "db:seed": "node packages/data/scripts/sembrar.ts",
+    "respaldar:piloto": "node packages/data/scripts/respaldar-piloto.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "verificar": "pnpm typecheck && pnpm barrido && pnpm fixtures:verificar && pnpm test",
@@ -25,7 +28,10 @@
     "ingesta": "node apps/cli/src/ingestar.ts",
     "completar-lote": "node apps/cli/src/completar-lote.ts",
     "alta:cuenta": "node apps/cli/src/alta-cuenta.ts",
-    "alta:cliente": "node apps/cli/src/alta-cliente.ts"
+    "alta:cliente": "node apps/cli/src/alta-cliente.ts",
+    "exportar:excel": "node apps/cli/src/exportar-excel.ts",
+    "recapturar:conceptos": "node apps/cli/src/recapturar-conceptos.ts",
+    "backfill:contraparte": "node apps/cli/src/backfill-contraparte.ts"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
