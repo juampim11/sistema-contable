@@ -17,6 +17,8 @@
  * un dato de un cliente no se filtre a un reporte ni a un log. No se usan para nada más.
  */
 
+import { verificadorCuitEsValido as verificadorCuitEsValidoReal } from '@sistema-contable/shared/seguridad';
+
 // -----------------------------------------------------------------------------
 // PRNG determinístico (mulberry32). 12 líneas y suficiente: no es criptografía.
 // -----------------------------------------------------------------------------
@@ -60,11 +62,9 @@ function verificadorCuitReal(once: string): number {
   return 11 - resto;
 }
 
-export function verificadorCuitEsValido(cuit: string): boolean {
-  const d = cuit.replace(/\D/g, '');
-  if (d.length !== 11) return false;
-  return Number(d[10]) === verificadorCuitReal(d.slice(0, 10));
-}
+/** Re-exportada para no romper a `packages/data/scripts/sembrar.ts` — la implementación real vive
+ *  en `@sistema-contable/shared/seguridad` (movida ahí, ver el import de arriba). */
+export const verificadorCuitEsValido = verificadorCuitEsValidoReal;
 
 /**
  * CUIT sintético con formato correcto (11 dígitos, prefijo plausible) y **verificador inválido**.
