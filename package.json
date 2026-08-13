@@ -32,7 +32,8 @@
     "exportar:excel": "node apps/cli/src/exportar-excel.ts",
     "recapturar:conceptos": "node apps/cli/src/recapturar-conceptos.ts",
     "backfill:contraparte": "node apps/cli/src/backfill-contraparte.ts",
-    "alta:socio": "node apps/cli/src/alta-socio.ts"
+    "alta:socio": "node apps/cli/src/alta-socio.ts",
+    "resolver:contrapartida": "node apps/cli/src/resolver-contrapartida.ts"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

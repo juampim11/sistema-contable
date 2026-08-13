@@ -11,6 +11,7 @@
     "@sistema-contable/data": "workspace:*",
     "@sistema-contable/ingesta": "workspace:*",
     "@sistema-contable/almacenamiento": "workspace:*",
+    "@sistema-contable/contabilidad": "workspace:*",
     "zod": "^4.1.13"
   }
 }
