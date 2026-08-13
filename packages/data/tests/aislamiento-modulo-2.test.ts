@@ -16,7 +16,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { cerrarConexiones, conUsuario } from '../src/db/conexion.ts';
 import { leerConAuditoria } from '../src/db/auditoria.ts';
-import { leerDocumentoDeSocio } from '../src/contabilidad/lecturas.ts';
+import {
+  leerCandidatosDeContraparte,
+  leerDocumentoDeSocio,
+  leerPadronDeSocios,
+  leerPadronYCandidatosDeContraparte,
+  MovimientoAjenoAlClienteError,
+} from '../src/contabilidad/lecturas.ts';
 import { hmacDocumento } from '@sistema-contable/shared/seguridad';
 import { clienteDuenio, sembrar, USUARIOS, type Sembrado } from './ayuda.ts';
 
@@ -274,5 +280,72 @@ describe('integridad referencial: un candidato no puede colgar de un movimiento 
         ),
       ),
     ).rejects.toThrow();
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('leerPadronDeSocios / leerCandidatosDeContraparte — capa C, N2 puro sin auditoría', () => {
+  it('leerPadronDeSocios trae solo el padrón del cliente pedido, sin denominación', async () => {
+    const padron = await conUsuario(USUARIOS.contadorA, (tx) => leerPadronDeSocios(tx, s.clienteA));
+    expect(padron).toHaveLength(1);
+    expect(padron[0]?.id).toBe(escenario.socioA);
+    expect(JSON.stringify(padron)).not.toMatch(/SOCIO DE PRUEBA/);
+  });
+
+  it('leerCandidatosDeContraparte agrupa por movimientoId — cada movimiento solo ve los suyos', async () => {
+    const mapa = await conUsuario(USUARIOS.socio, (tx) =>
+      leerCandidatosDeContraparte(tx, {
+        clienteId: s.clienteA,
+        movimientoIds: [escenario.movimientoA],
+      }),
+    );
+    expect(mapa.size).toBe(1);
+    expect(mapa.get(escenario.movimientoA)).toHaveLength(1);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('leerPadronYCandidatosDeContraparte — el guardrail de H-6/INV-9 (Ronda 1, seguridad-datos-financieros)', () => {
+  /**
+   * El caso real de H-6: `USUARIOS.socio` tiene membresía legítima en clienteA Y clienteB — las dos
+   * lecturas (padrón de A, candidatos del movimiento) pasan RLS individualmente. El riesgo es que el
+   * LLAMADOR pida el padrón de A pero pase el `movimientoId` de B por error: sin el guardrail, esa
+   * fila desaparecería en silencio del resultado (0 candidatos, indistinguible de "sin evidencia").
+   */
+  it('camino feliz: movimientoId que sí pertenece al cliente pedido', async () => {
+    const r = await conUsuario(USUARIOS.socio, (tx) =>
+      leerPadronYCandidatosDeContraparte(tx, {
+        clienteId: s.clienteA,
+        movimientoIds: [escenario.movimientoA],
+      }),
+    );
+    expect(r.padron).toHaveLength(1);
+    expect(r.candidatosPorMovimiento.get(escenario.movimientoA)).toHaveLength(1);
+  });
+
+  it('🔴 aborta con MovimientoAjenoAlClienteError si el movimiento es de OTRO cliente — aunque el usuario tenga membership en los dos', async () => {
+    await expect(
+      conUsuario(USUARIOS.socio, (tx) =>
+        leerPadronYCandidatosDeContraparte(tx, {
+          clienteId: s.clienteA,
+          movimientoIds: [escenario.movimientoB], // de clienteB, no de clienteA
+        }),
+      ),
+    ).rejects.toThrow(MovimientoAjenoAlClienteError);
+  });
+
+  it('el error no revela el padrón ni los candidatos — se aborta ANTES de leerlos', async () => {
+    let error: unknown;
+    try {
+      await conUsuario(USUARIOS.socio, (tx) =>
+        leerPadronYCandidatosDeContraparte(tx, { clienteId: s.clienteA, movimientoIds: [escenario.movimientoB] }),
+      );
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(MovimientoAjenoAlClienteError);
+    if (error instanceof MovimientoAjenoAlClienteError) {
+      expect(error.movimientoIdsAjenos).toEqual([escenario.movimientoB]);
+    }
   });
 });
