@@ -159,15 +159,15 @@ describe('fechas sin año: dos bancos del roster quedaban ilegibles', () => {
 
 // -----------------------------------------------------------------------------
 describe('normalización de texto', () => {
-  it('quita acentos, colapsa espacios y pasa a mayúsculas', () => {
+  // Los casos de `normalizar()` en sí viven en `packages/shared/tests/normalizar.test.ts` —
+  // se movió a `@sistema-contable/shared/texto` porque `packages/contabilidad` la necesita y no
+  // puede depender de `ingesta`. Acá solo se fija que el re-export siga funcionando.
+  it('re-exporta normalizar desde @sistema-contable/shared/texto sin cambiar su comportamiento', () => {
     expect(normalizar('  Comisión   de   Servicio ')).toBe('COMISION DE SERVICIO');
   });
 
-  it('CONSERVA el marcador de encoding roto en vez de borrarlo', () => {
-    // El "Excel" de un banco del roster es un TSV en Latin-1: confundir un carácter roto con una letra
-    // hace que dos filas distintas parezcan la misma en el cruce PDF↔Excel.
+  it('tieneEncodingRoto detecta el marcador de reemplazo de encoding', () => {
     const roto = 'COMISI�N';
-    expect(normalizar(roto)).toContain('�');
     expect(tieneEncodingRoto(roto)).toBe(true);
     expect(tieneEncodingRoto('COMISION')).toBe(false);
   });

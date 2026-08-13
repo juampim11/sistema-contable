@@ -303,20 +303,17 @@ export function dentroDelPeriodo(fechaIso: string, periodo: Periodo): boolean {
 // -----------------------------------------------------------------------------
 
 /**
- * Normaliza texto para comparar: sin acentos, sin espacios repetidos, mayúsculas.
+ * `normalizar` vive ahora en `@sistema-contable/shared/texto` y se re-exporta desde acá.
  *
- * Se usa para el `fila_hash` y para el cruce PDF↔Excel. **Conserva el marcador de reemplazo de
- * encoding (`�`)** en vez de borrarlo: el "Excel" de un banco es un TSV en Latin-1 y confundir un
- * carácter roto con una letra hace que dos filas distintas parezcan la misma.
+ * Se movió porque `packages/contabilidad` (el léxico del Módulo 2) la necesita como base de su
+ * propia normalización y no puede depender de `ingesta` — mismo motivo, escrito, por el que
+ * `CLASES_IDENTIFICADOR_CONTRAPARTE` vive en `shared/seguridad/hmac-identificador.ts`.
+ *
+ * 🔴 Se movió BYTE POR BYTE. Alimenta `fila_hash`, que es la identidad de una fila: cualquier
+ * cambio de comportamiento reprocesaría lo ingestado como filas nuevas. Los tests que lo fijan son
+ * `shared/tests/normalizar.test.ts` (incluido el caso `�`) y `pnpm fixtures:verificar`.
  */
-export function normalizar(texto: string): string {
-  return texto
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toUpperCase();
-}
+export { normalizar } from '@sistema-contable/shared/texto';
 
 /** ¿El texto trae marcadores de reemplazo de encoding? Señal de que se leyó con la codificación errónea. */
 export function tieneEncodingRoto(texto: string): boolean {

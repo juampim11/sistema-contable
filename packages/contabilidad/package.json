@@ -1,0 +1,13 @@
+{
+  "name": "@sistema-contable/contabilidad",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@sistema-contable/shared": "workspace:*",
+    "zod": "^4.1.13"
+  }
+}

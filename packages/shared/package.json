@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./seguridad": "./src/seguridad/index.ts",
-    "./observabilidad": "./src/observabilidad/index.ts"
+    "./observabilidad": "./src/observabilidad/index.ts",
+    "./texto": "./src/texto/index.ts"
   },
   "dependencies": {
     "zod": "^4.1.13"

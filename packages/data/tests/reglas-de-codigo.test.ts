@@ -107,6 +107,45 @@ describe('R26 — un solo logger', () => {
   });
 });
 
+describe('R30/R31 — el objeto de storage sale por un único choke point', () => {
+  /**
+   * `security-engineer` lo encontró al diseñar `recapturar-conceptos` (plan `adaptive-herding-pillow`):
+   * el comentario de `descarga.ts` afirma ser "la única función del repo que llama a
+   * `storage.urlFirmada`" — y nada lo verificaba. Es la misma clase de afirmación que este repo ya
+   * aprendió a no creer sin un test (`auditoria.ts` sobre el registro de lectores auditados).
+   *
+   * Las tres operaciones sensibles de `ObjectStorage` tienen el mismo modo de falla: un caller nuevo que
+   * las llama directo se salta el rol, la auditoría, o las dos. Una sola lista para las tres, para que no
+   * se olvide a medias.
+   */
+  it('`.urlFirmada(` solo en `descarga.ts` (el emisor único) y sus tests', () => {
+    const permitidos = ['packages/almacenamiento/src/descarga.ts', 'packages/almacenamiento/tests/'];
+    expect(infractores(/\.urlFirmada\s*\(/, permitidos)).toEqual([]);
+  });
+
+  it('`.obtener(` solo en `lectura.ts` (el choke point de lectura), `object-storage.ts` y sus tests', () => {
+    const permitidos = [
+      'packages/almacenamiento/src/lectura.ts',
+      'packages/almacenamiento/src/object-storage.ts',
+      'packages/almacenamiento/tests/',
+    ];
+    expect(infractores(/\.obtener\s*\(/, permitidos)).toEqual([]);
+  });
+
+  it('`.guardar(` solo en `extracto.ts` (el guardado de extractos) y tests que arman su propia fixture', () => {
+    // A diferencia de `.obtener(`/`.urlFirmada(` (egreso de datos de un cliente, el riesgo real), `.guardar(`
+    // es ingreso: cualquier test que necesite sembrar un objeto en MinIO para su propia corrida (mismo
+    // patrón que ya usa `descarga.test.ts`) puede llamarlo directo sin pasar por ningún choke point.
+    const permitidos = [
+      'packages/almacenamiento/src/extracto.ts',
+      'packages/almacenamiento/src/object-storage.ts',
+      'packages/almacenamiento/tests/',
+      'apps/cli/tests/',
+    ];
+    expect(infractores(/\.guardar\s*\(/, permitidos)).toEqual([]);
+  });
+});
+
 describe('R30 — nada sensible en la clave de un objeto de storage', () => {
   it('la convención de clave documentada arranca con el uuid del cliente', () => {
     // Todavía no hay módulo de almacenamiento; cuando exista, este test verifica su constructor de
@@ -128,6 +167,9 @@ describe('cobertura del barrido', () => {
     expect(FUENTES.map(rel)).toContain('packages/shared/src/observabilidad/logger.ts');
     // Y el CLI, que es el que más fácil se saltea las reglas: si dejara de estar barrido, este test avisa.
     expect(FUENTES.map(rel)).toContain('apps/cli/src/ingestar.ts');
+    // `packages/contabilidad` (Módulo 2, léxico + catálogo canónico): si el paquete se renombrara o
+    // quedara fuera del glob, TODAS las reglas R-A..R-I de más abajo pasarían por vacío sin avisar.
+    expect(FUENTES.map(rel)).toContain('packages/contabilidad/src/index.ts');
   });
 });
 // -----------------------------------------------------------------------------
@@ -188,8 +230,8 @@ describe('las dependencias entre paquetes no pueden hacer ciclo', () => {
    * `packages/data/scripts`. Eso creó `data → ingesta → data`. **El typecheck lo aceptó** y la dependencia
    * circular quedó ahí igual, lista para dar un `undefined` al importar en el orden equivocado.
    *
-   * La dirección correcta es una sola: `shared` ← `data` ← `ingesta`/`almacenamiento` ← `apps`. Un comando
-   * que necesita las dos capas va en `apps/`, que es la que puede depender de todo.
+   * La dirección correcta es una sola: `shared` ← `data` ← `ingesta`/`almacenamiento`/`contabilidad` ←
+   * `apps`. Un comando que necesita varias capas va en `apps/`, que es la que puede depender de todo.
    */
   it('`packages/data` no importa `packages/ingesta` ni `packages/almacenamiento`', () => {
     const deData = FUENTES.filter((r) => rel(r).startsWith('packages/data/'));
@@ -198,13 +240,13 @@ describe('las dependencias entre paquetes no pueden hacer ciclo', () => {
     const infractores = deData.filter((ruta) => {
       if (rel(ruta).includes('/tests/')) return false; // un test puede armar el escenario completo
       const c = readFileSync(ruta, 'utf8');
-      return /@sistema-contable\/(?:ingesta|almacenamiento)/.test(c);
+      return /@sistema-contable\/(?:ingesta|almacenamiento|contabilidad)/.test(c);
     });
 
     expect(
       infractores.map(rel),
-      'ciclo de paquetes: data no puede depender de ingesta ni de almacenamiento. Si el comando necesita ' +
-        'las dos capas, va en apps/.',
+      'ciclo de paquetes: data no puede depender de ingesta, almacenamiento ni contabilidad. Si el ' +
+        'comando necesita varias capas, va en apps/.',
     ).toEqual([]);
   });
 
@@ -213,10 +255,34 @@ describe('las dependencias entre paquetes no pueden hacer ciclo', () => {
       (r) => rel(r).startsWith('packages/shared/src/'),
     );
     const infractores = deShared.filter((ruta) =>
-      /@sistema-contable\/(?:data|ingesta|almacenamiento|cli)/.test(readFileSync(ruta, 'utf8')),
+      /@sistema-contable\/(?:data|ingesta|almacenamiento|contabilidad|cli)/.test(readFileSync(ruta, 'utf8')),
     );
     // `shared` es la base: si depende de algo, todo el grafo se vuelve circular.
     expect(infractores.map(rel)).toEqual([]);
+  });
+
+  /**
+   * R-B — `packages/contabilidad` (el motor de reconocimiento, capa B/C del Módulo 2) no puede
+   * importar `data`, `ingesta` ni `almacenamiento`.
+   *
+   * "Un léxico que puede leer la base es un léxico que puede aprender solo" — `05` §7, que es H-6
+   * en la raíz. Si el motor necesita un dato de la base (el padrón de socios, el plan de cuentas),
+   * lo recibe como ARGUMENTO de una función pura; no lo va a buscar.
+   */
+  it('`packages/contabilidad` no importa `data`, `ingesta` ni `almacenamiento`', () => {
+    const deContabilidad = FUENTES.filter((r) => rel(r).startsWith('packages/contabilidad/src/'));
+    expect(deContabilidad.length, 'no se está barriendo packages/contabilidad').toBeGreaterThan(0);
+
+    const infractores = deContabilidad.filter((ruta) => {
+      if (rel(ruta).includes('/tests/')) return false;
+      return /@sistema-contable\/(?:data|ingesta|almacenamiento)/.test(readFileSync(ruta, 'utf8'));
+    });
+
+    expect(
+      infractores.map(rel),
+      'un léxico que puede leer la base es un léxico que puede aprender solo (05 §7, H-6). Si tu ' +
+        'código necesita un dato de la base, recibilo como argumento de una función pura.',
+    ).toEqual([]);
   });
 });
 // -----------------------------------------------------------------------------
@@ -297,6 +363,301 @@ describe('aislamiento entre bancos: un adaptador no puede romper a otro', () => 
       'un Entrada*/Salida* fuera de registro.ts solo puede ser alias o intersection de XxxDeAdaptador ' +
         '— un objeto propio es el patrón que A1 cerró',
     ).toEqual([]);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R32 — el lector auditado es el ÚNICO camino a `movimiento_origen_crudo`', () => {
+  /**
+   * `movimiento_origen_crudo` es N2-R: guarda la fila cruda del extracto, con los CUIT y los CBU de
+   * las contrapartes. Su control es estructural — `leerFilasOrigenDeLote` exige un `ContextoAuditado`
+   * que solo `leerConAuditoria` fabrica — pero ese control protege a la FUNCIÓN, no al NOMBRE de la
+   * tabla: un `tx.consultar('select fila_origen from movimiento_origen_crudo ...')` escrito a mano en
+   * cualquier módulo la lee sin dejar rastro, y compila igual.
+   *
+   * No es hipotético: `packages/ingesta/src/resolver-cuenta.ts` ya consulta la OTRA tabla N2-R del
+   * módulo (`cuenta_bancaria_identificador`) sin pasar por su lector auditado — ahí es defendible
+   * (solo lee `cbu_hmac`, que es N1), pero la firma de `tx.consultar` no lo sabe: la misma consulta
+   * con `numero` en el `select` sería una lectura N2-R sin rastro, y el typecheck la aceptaría igual.
+   *
+   * La lista de permitidos es larga a propósito y cada entrada dice por qué: dos son el mecanismo
+   * mismo (los registros usan el NOMBRE de la tabla como clave), uno es el seed sintético (corre como
+   * dueño del esquema), uno es un comentario, y el resto son tests (`security-engineer`, ronda de
+   * revisión de la migración `0013`).
+   */
+  const PERMITIDOS_MOV_ORIGEN = [
+    'packages/data/src/ingesta/lecturas.ts',                  // el lector auditado: el único SELECT
+    'packages/ingesta/src/persistir.ts',                      // el INSERT — ingreso, no egreso
+    'packages/data/src/db/lectores-auditados.ts',             // registro: el nombre de la tabla ES la clave
+    'packages/shared/src/seguridad/clasificacion-campos.ts',  // registro de clasificación: idem
+    'packages/data/scripts/sembrar.ts',                       // truncate del seed, corre como dueño del esquema
+    'packages/ingesta/src/glosa.ts',                          // solo la nombra en un comentario
+    // Llaman a `leerFilasOrigenDeLote` a través de `leerConAuditoria`, nunca con una consulta
+    // propia — y el `recurso: 'movimiento_origen_crudo'` que le pasan al choke point es el nombre
+    // de la tabla auditada, no un bypass (migración 0013).
+    'packages/ingesta/src/reproceso/backfill-contraparte.ts',
+    'apps/cli/src/backfill-contraparte.ts',
+    'packages/data/tests/',
+    'packages/ingesta/tests/',
+    'apps/cli/tests/',
+  ];
+
+  it('ningún archivo fuera de la lista nombra `movimiento_origen_crudo`', () => {
+    expect(
+      infractores(/\bmovimiento_origen_crudo\b/, PERMITIDOS_MOV_ORIGEN),
+      'la tabla con los identificadores de las contrapartes se lee SOLO por leerFilasOrigenDeLote ' +
+        '(packages/data/src/ingesta/lecturas.ts), que exige ContextoAuditado. Si tu módulo la ' +
+        'necesita, pedí los datos por ahí; si necesitás un recorte distinto, agregá un lector ' +
+        'auditado, no una consulta suelta.',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta una infracción plantada y no confunde la tabla hermana', () => {
+    // Anti-falso-verde: un barrido que no matchea nada pasa siempre.
+    const patron = /\bmovimiento_origen_crudo\b/;
+    expect(patron.test('select fila_origen from movimiento_origen_crudo where cliente_id = $1')).toBe(true);
+    expect(patron.test('select * from movimiento_bancario_crudo')).toBe(false);
+  });
+
+  it('la lista de permitidos no tiene entradas muertas', () => {
+    // Un permitido que apunta a un archivo renombrado afloja la regla SIN ponerla en rojo: el
+    // barrido sigue verde y ya no cubre lo que decía cubrir.
+    const rutas = FUENTES.map(rel);
+    for (const p of PERMITIDOS_MOV_ORIGEN) {
+      expect(rutas.some((r) => r === p || r.startsWith(p)), `permitido inexistente: ${p}`).toBe(true);
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-C — ningún léxico de packages/contabilidad importa a otro léxico', () => {
+  /**
+   * Clon estructural del bucle de "ningún adaptador importa a otro adaptador" (arriba) — mismo
+   * argumento: un léxico que importa a otro acopla dos bancos, y un cambio de vocabulario en uno
+   * rompería al otro sin que ningún test lo note hasta que corra contra datos reales.
+   */
+  it('ningún archivo de lexico/ importa a otro de lexico/ (excepto registro.ts)', () => {
+    const lexicos = FUENTES.filter(
+      (r) => rel(r).includes('packages/contabilidad/src/lexico/') && !rel(r).endsWith('registro.ts'),
+    );
+    expect(lexicos.length, 'no se está barriendo packages/contabilidad/src/lexico/').toBeGreaterThan(0);
+
+    const infractores: string[] = [];
+    for (const ruta of lexicos) {
+      const propio = rel(ruta).split('/').at(-1)?.replace('.ts', '') ?? '';
+      const contenido = readFileSync(ruta, 'utf8');
+      for (const otro of lexicos) {
+        const nombre = rel(otro).split('/').at(-1)?.replace('.ts', '') ?? '';
+        if (nombre === propio) continue;
+        if (new RegExp(String.raw`from ['"]\./${nombre}\.ts['"]`).test(contenido)) {
+          infractores.push(`${rel(ruta)} importa ${nombre}`);
+        }
+      }
+    }
+    expect(
+      infractores,
+      'un léxico que importa a otro acopla dos bancos: un cambio de vocabulario en uno rompe al otro',
+    ).toEqual([]);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-D — un léxico es DATOS, no lógica de decisión', () => {
+  /**
+   * `08-plan-de-construccion.md` §1 / `04-imputacion-contable.md` §1.3: si un léxico pudiera llamar al
+   * matcher o al motor, tendría lógica de decisión propia, y el corte entre "capa por banco" (datos) y
+   * "capa única" (decisión) — la razón de ser de esta arquitectura — dejaría de ser cierto en el código.
+   */
+  it('ningún archivo de lexico/ importa nucleo/matcher.ts ni nucleo/motor.ts', () => {
+    const infractores = FUENTES.filter((r) => {
+      if (!rel(r).includes('packages/contabilidad/src/lexico/')) return false;
+      return /from ['"]\.\.\/nucleo\/(matcher|motor)\.ts['"]/.test(readFileSync(r, 'utf8'));
+    });
+    expect(infractores.map(rel)).toEqual([]);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-E — el motor no contiene ni una regex escrita a mano sobre la glosa (05 §3)', () => {
+  /**
+   * Regla dura de `05-motor-de-reconocimiento.md` §3: "el motor no contiene ni una regex escrita a
+   * mano sobre la glosa. Cero `includes`, cero `startsWith` sueltos." Si necesitás reconocer algo
+   * nuevo, es una ENTRADA del léxico (dato), no una condición de código.
+   *
+   * Acotado a `nucleo/` y `lexico/` — no a todo `packages/contabilidad` — porque `tests/` legítimamente
+   * usa `.includes(` sobre ARRAYS (candidatos, literales) constantemente, y ese uso no es el que esta
+   * regla existe para prohibir. La allowlist son los tres archivos MECANISMO: `normalizacion.ts` (los
+   * dos `.replace(regex)` del paso de normalización), `matcher.ts` (el único `startsWith`, el choke
+   * point del prefijo) e `indice.ts` (el `.test(/[A-Z0-9]$/)` del ancla).
+   */
+  const PERMITIDOS_TEXTO_LIBRE = [
+    'packages/contabilidad/src/nucleo/normalizacion.ts',
+    'packages/contabilidad/src/nucleo/matcher.ts',
+    'packages/contabilidad/src/nucleo/indice.ts',
+  ];
+  const PATRON_TEXTO_LIBRE = /\.includes\(|\.startsWith\(|\.endsWith\(|\.indexOf\(|\.match\(|\.search\(|\/[^/\n]{1,80}\/[gimsuy]*\.test\(/;
+
+  it('cero regex/.includes/.startsWith/.endsWith sueltos en nucleo/ o lexico/, fuera de la allowlist', () => {
+    const objetivo = FUENTES.filter((r) => {
+      const p = rel(r);
+      return (
+        (p.startsWith('packages/contabilidad/src/nucleo/') || p.startsWith('packages/contabilidad/src/lexico/')) &&
+        !PERMITIDOS_TEXTO_LIBRE.includes(p)
+      );
+    });
+    expect(objetivo.length, 'no se está barriendo packages/contabilidad/src/{nucleo,lexico}').toBeGreaterThan(5);
+
+    const infractores = objetivo.filter((ruta) => PATRON_TEXTO_LIBRE.test(readFileSync(ruta, 'utf8')));
+    expect(
+      infractores.map(rel),
+      'el motor no contiene ni una regex/comparación de texto a mano sobre la glosa (05 §3). Si ' +
+        'necesitás reconocer algo nuevo, es una ENTRADA del léxico, no una condición de código.',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta una infracción plantada y no confunde un .includes() sobre un array', () => {
+    // Anti-falso-verde. El patrón SÍ dispara sobre comparación de texto libre...
+    expect(PATRON_TEXTO_LIBRE.test("glosa.includes('CUIT')")).toBe(true);
+    expect(PATRON_TEXTO_LIBRE.test("texto.startsWith('IMP')")).toBe(true);
+    // ...y también sobre `.includes(` de un array — a propósito: por eso la regla se acota por
+    // DIRECTORIO (nucleo/lexico) y no intenta distinguir "sobre texto" de "sobre array" por sintaxis,
+    // que sería frágil. `tests/` queda fuera de este barrido por diseño, no porque el patrón no la vea.
+    expect(PATRON_TEXTO_LIBRE.test('entrada.literales.includes(literal)')).toBe(true);
+  });
+
+  it('la allowlist no tiene entradas muertas', () => {
+    const rutas = FUENTES.map(rel);
+    for (const p of PERMITIDOS_TEXTO_LIBRE) {
+      expect(rutas.includes(p), `permitido inexistente: ${p}`).toBe(true);
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-F — `clase: \'propuesta\'` solo se construye en nucleo/motor.ts', () => {
+  /**
+   * Mismo idiom que R30 (`.urlFirmada(` solo en `descarga.ts`): es lo que hace que la degradación de
+   * `pendienteDeLaura` no se pueda saltear escribiendo la clase a mano en otro archivo. Ver
+   * `tests/pendiente-laura.test.ts` para la garantía de comportamiento; esto es la garantía estructural.
+   */
+  const PERMITIDOS_PROPUESTA = [
+    'packages/contabilidad/src/nucleo/motor.ts', // el constructor — R-F en persona
+    'packages/contabilidad/src/nucleo/reconocimiento.ts', // la declaración de TIPO (`readonly clase: 'propuesta'`)
+    'packages/contabilidad/src/nucleo/lexico.ts', // docblocks que citan la frase en prosa
+    'packages/contabilidad/tests/',
+  ];
+  const PATRON_PROPUESTA = /clase:\s*'propuesta'/;
+
+  it("ningún archivo fuera de la lista construye `{ clase: 'propuesta', ... }`", () => {
+    expect(
+      infractores(PATRON_PROPUESTA, PERMITIDOS_PROPUESTA),
+      "`nucleo/motor.ts` es la única función que construye una propuesta. Si tu código necesita " +
+        "clase:'propuesta', llamá a reconocer(), no la escribas a mano — eso es lo que le permitiría a " +
+        "una entrada pendienteDeLaura saltearse la degradación.",
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta una infracción plantada', () => {
+    expect(PATRON_PROPUESTA.test("return { clase: 'propuesta', tipo, concepto }")).toBe(true);
+    expect(PATRON_PROPUESTA.test("if (r.clase === 'propuesta')")).toBe(false);
+  });
+
+  it('la allowlist no tiene entradas muertas', () => {
+    const rutas = FUENTES.map(rel);
+    for (const p of PERMITIDOS_PROPUESTA) {
+      expect(rutas.some((r) => r === p || r.startsWith(p)), `permitido inexistente: ${p}`).toBe(true);
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-G — packages/contabilidad es código puro, sin SQL', () => {
+  /**
+   * Esta etapa es código puro sin base (05 §7: "un léxico que puede leer la base es un léxico que
+   * puede aprender solo"). Una consulta acá sería la primera grieta — R-B ya prohíbe importar `data`,
+   * pero eso no impide un `tx.consultar('select ...')` con un objeto ajeno; esta regla cierra esa
+   * puerta directamente sobre el TEXTO de la consulta.
+   */
+  it('ningún archivo de packages/contabilidad/src contiene una sentencia SQL', () => {
+    const infractores = infractores_(/\b(select|insert into|update|delete from)\s/i, [
+      'packages/contabilidad/tests/', // pueden citar SQL en un comentario o mensaje de error
+    ]);
+    expect(infractores.map(rel)).toEqual([]);
+  });
+
+  // Alias local: `infractores` ya filtra ESTE_ARCHIVO; se necesita acotar además a packages/contabilidad.
+  function infractores_(patron: RegExp, permitidos: readonly string[]): string[] {
+    return FUENTES.filter((ruta) => {
+      const r = rel(ruta);
+      if (!r.startsWith('packages/contabilidad/')) return false;
+      if (permitidos.some((p) => r === p || r.startsWith(p))) return false;
+      return patron.test(readFileSync(ruta, 'utf8'));
+    });
+  }
+});
+
+// -----------------------------------------------------------------------------
+describe('R-H — EvidenciaDeMovimiento espeja movimientoBancarioCrudoSchema (árbitro mientras no exista 0014)', () => {
+  /**
+   * `nucleo/reconocimiento.ts` no puede importar `packages/ingesta/src/esquema.ts` (ciclo, R-B) así
+   * que duplica los nombres de campo a mano. Mientras no exista la migración 0014, este barrido de
+   * texto es el árbitro que evita que las dos listas diverjan sin que nadie lo note — después, el
+   * árbitro pasa a ser la base (mismo patrón que `TIPOS_CUENTA`/`TIPOS_CUENTA_ALTA`,
+   * `packages/data/tests/catalogo.test.ts`).
+   */
+  const CAMPOS_ESPEJADOS = [
+    'conceptoBanco',
+    'conceptoCompleto',
+    'conceptoBancoEstrategia',
+    'conceptoCodigo',
+    'columnaOrigen',
+  ];
+
+  it('los cinco campos de EvidenciaDeMovimiento existen tal cual en esquema.ts (packages/ingesta)', () => {
+    const esquema = readFileSync(join(RAIZ, 'packages/ingesta/src/esquema.ts'), 'utf8');
+    const reconocimiento = readFileSync(
+      join(RAIZ, 'packages/contabilidad/src/nucleo/reconocimiento.ts'),
+      'utf8',
+    );
+    for (const campo of CAMPOS_ESPEJADOS) {
+      expect(esquema.includes(campo), `"${campo}" no está en packages/ingesta/src/esquema.ts`).toBe(true);
+      expect(reconocimiento.includes(campo), `"${campo}" no está en nucleo/reconocimiento.ts`).toBe(true);
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-I — el catálogo canónico no ramifica lógica por banco (04 §1.3)', () => {
+  /**
+   * "El criterio contable se escribe UNA vez." Sin este test, en tres bancos aparece un
+   * `if (banco === 'galicia')` en el catálogo y la separación capa-por-banco/capa-única existe solo
+   * en el documento — exactamente lo que `04-imputacion-contable.md` §1.3 pide evitar.
+   *
+   * 🔴 El chequeo busca COMPARACIONES DE IGUALDAD contra un nombre de banco (`banco === 'galicia'`),
+   * NO cualquier mención textual — `catalogo.ts` legítimamente cita nombres de banco en comentarios
+   * organizativos (`// ══ Santander (P7) ══`), en `procedencia.documento` (rutas como
+   * `docs/diseno/06-formato-santander.md`, necesarias para que PROP-6 verifique la evidencia) y hasta
+   * en nombres de concepto (`retencion_iva_percepcion_macro`, por el nombre real del banco emisor). Un
+   * barrido por substring ingenuo confundiría esas menciones legítimas con la lógica que la regla
+   * existe para prohibir — verificado a mano: la primera versión de esta regla daba falso positivo
+   * contra las tres.
+   */
+  const PATRON_RAMA_POR_BANCO = /===?\s*['"](?:galicia|santander|macro|bancor)['"]/i;
+
+  it('nucleo/catalogo.ts no compara nada contra un nombre de banco', () => {
+    const contenido = readFileSync(join(RAIZ, 'packages/contabilidad/src/nucleo/catalogo.ts'), 'utf8');
+    expect(
+      PATRON_RAMA_POR_BANCO.test(contenido),
+      'el catálogo canónico es la capa ÚNICA (04 §1.3) — una comparación contra un nombre de banco acá ' +
+        'es la primera grieta de "el criterio contable se escribe una sola vez"',
+    ).toBe(false);
+  });
+
+  it('el patrón detecta una infracción plantada y no confunde una cita de documento ni un comentario', () => {
+    expect(PATRON_RAMA_POR_BANCO.test("if (banco === 'galicia') { ... }")).toBe(true);
+    expect(PATRON_RAMA_POR_BANCO.test("documento: 'docs/diseno/06-formato-santander.md'")).toBe(false);
+    expect(PATRON_RAMA_POR_BANCO.test('// ══ Santander (P7) — conceptos nuevos ══')).toBe(false);
+    expect(PATRON_RAMA_POR_BANCO.test("'retencion_iva_percepcion_macro'")).toBe(false);
   });
 });
 
