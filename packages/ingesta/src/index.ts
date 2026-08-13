@@ -13,6 +13,8 @@ export * from './adaptadores/contrato.ts';
 export * from './adaptadores/registro.ts';
 export * from './adaptadores/toolkit.ts';
 export * from './persistir.ts';
+export * from './planilla/exportar-planilla.ts';
+export * from './reproceso/recapturar-conceptos.ts';
 export * from './reproceso/backfill-contraparte.ts';
 /**
  * 🔴 **Los adaptadores se re-exportan por NOMBRE, nunca con `export *`.**

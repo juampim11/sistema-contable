@@ -531,7 +531,79 @@ copias. Decisión de superficie pública del paquete, no de este fix puntual. No
 
 ---
 
-## 4. Orden sugerido para retomar
+## 5. Export a Excel para Laura (`pnpm exportar:excel`) — deuda declarada en el propio diseño
+
+> A diferencia de las secciones 1 y 2 (auditoría retrospectiva del Módulo 1 ya construido), esto es
+> deuda que la propia tarea declaró **al diseñarse**, no algo que un agente auditor encontró después:
+> plan `adaptive-herding-pillow`, cerrado en `HANDOFF.md` 2026-08-12 (46). Va acá porque el criterio es
+> el mismo — que nadie la redescubra desde cero.
+
+### 5.1 🟡 `acceso_auditoria` no tiene columna `destinatario`
+
+ADR-0002 §A.1 exige que todo export N2-R quede auditado "con motivo **y** destinatario" — dos datos, no
+uno. La tabla `acceso_auditoria` solo tiene `motivo` (`text`, N2, append-only). `exportar-planilla.ts`
+codifica los dos adentro de esa única columna: `"<motivo_codigo>|dest:<destinatario_codigo>"`, los dos
+de vocabulario cerrado (`z.enum` en el CLI, nunca texto libre del operador).
+
+**Por qué no se corrigió acá:** agregar la columna es una migración, y esta tarea no tocaba el esquema
+de auditoría (CLAUDE.md §3.2(a) la dispararía de nuevo si se sumara sin plan propio). Además
+`acceso_auditoria` ya tiene filas históricas con `accion='export'` (`descarga.ts`) sin este campo: una
+migración real tiene que decidir si retrocompleta esas filas o las deja `NULL`.
+
+**Qué hace falta para cerrarlo:** migración + `dba-data` + `seguridad-datos-financieros` (toca el modelo
+de auditoría, dispara la matriz de §3.1) para decidir si la columna nueva reemplaza el parseo compuesto
+de `motivo` en **todos** los lugares que ya lo generan, no solo en el export nuevo.
+
+### 5.2 ✅ CERRADO (2026-08-12, misma sesión) — el TTL de 7 días ahora se calcula y se loguea
+
+`apps/cli/src/exportar-excel.ts` agrega `TTL_DIAS_RECOMENDADO = 7` y `destruccionRecomendada(generadoEn)`
+(`new Date(generadoEn)` con argumento, nunca `new Date()` a secas). El resultado `'exportado'` lleva
+`destruirAntesDe` y el evento `exportar.completado` loguea `destruir_antes_de`. Test agregado al camino
+feliz de `apps/cli/tests/exportar-excel.test.ts`. **No se tocó la leyenda "Procedencia" del workbook**
+(queda con `cliente`/`lote`/`correlacion`/`motivo`/`destinatario`, sin la fecha de destrucción) — eso
+sigue pendiente si se quiere que el recordatorio viaje con el archivo y no solo con el log; alcance menor,
+declarado, no bloqueante. **El borrado del archivo sigue siendo un acto humano** (ADR-0002 §F.3.8) — lo
+único que se automatizó es el cálculo y el recordatorio, nunca la destrucción en sí.
+
+<details>
+<summary>Diagnóstico original (antes del cierre), para trazabilidad</summary>
+
+El diseño aprobado por el usuario ("adelante con el export, con controles completos, MÁS TTL y borrado
+explícitos declarados") preveía que `pnpm exportar:excel` imprimiera/logueara una fecha de destrucción
+recomendada (`generado_en + 7 días`) en el evento `exportar.completado`, como recordatorio automático —
+así quedó descrito en el plan y en el pedido de cierre de esta misma tarea.
+
+**Verificado contra el código el 2026-08-12 (cierre de la tarea, documentador): no está implementado.**
+Ni `apps/cli/src/exportar-excel.ts` (el evento `exportar.completado` solo loguea `cliente_id`,
+`lote_id`, `banco_codigo`, `correlacion`, `filas`, `cuentas`, `archivo_nombre`, `archivo_bytes` —
+buscado en el archivo, no hay campo de fecha derivada), ni
+`packages/ingesta/src/planilla/exportar-planilla.ts`, ni `armar-libro.ts` (que sí escribe `generado_en`
+en la celda `A1` y en la leyenda "Procedencia" de `Control de saldos`, pero nunca una fecha calculada a
+partir de él) tienen ningún cálculo de TTL. Búsqueda de `ttl`/`destruc`/`7 d[ií]as` en los tres archivos
+y sus tests: cero resultados salvo el comentario que **menciona** que el export "no tiene TTL" como
+contraste con una descarga.
+
+**Consecuencia práctica:** el control sigue vigente como decisión (es un acto humano registrado, tal
+como decidió el titular — ver el procedimiento nuevo en `docs/seguridad/registro-excepciones.md`), pero
+hoy depende **enteramente** de que quien corre el export calcule `generado_en + 7 días` a mano y lo
+registre — nada en el sistema se lo recuerda ni lo verifica, y el propio archivo `.xlsx` tampoco lleva
+la fecha de destrucción en su leyenda (solo `cliente`/`lote`/`correlacion`/`motivo`/`destinatario`).
+
+**Por qué no se corrigió acá:** el documentador no escribe código de producción
+(`agents/personas/documentador.md`, "Qué NO hace"). Cerrarlo es código real (un campo derivado en el
+`logger.info` y en la leyenda del workbook) más su test.
+
+**Qué hace falta para cerrarlo:** sumar al evento `exportar.completado` un campo
+`destruye_recomendado_en` (ISO), calculado como `generadoEn + 7 días`, y agregarlo a la leyenda
+"Procedencia" de `armar-libro.ts` (para que el recordatorio viaje con el archivo, no solo con el log).
+Cambio chico, sin tocar esquema ni RLS — candidato a que lo tome `backend-dev` sin plan de §3.2 propio,
+salvo que se decida sumarlo junto con 5.1.
+
+</details>
+
+---
+
+## 6. Orden sugerido para retomar
 
 1. **Antes del cuarto banco, sí o sí:** 2.4 (entradas del contrato + regla de código), 2.1 paso 1
    (vocabulario de destinos al toolkit), 2.9 (plantilla). Son las tres que evitan que el problema se
@@ -540,3 +612,6 @@ copias. Decisión de superficie pública del paquete, no de este fix puntual. No
    período faltante que descarta 326 movimientos).
 3. **Cuando el volumen lo pida:** 1.2, 1.3, 1.4.
 4. **Con `pnpm probar` en la mano y nunca de otra forma:** 2.5, 2.6, 2.8.
+5. **5.2 (TTL calculado y logueado) ya está cerrado** (2026-08-12, misma sesión que lo abrió). Queda 5.1
+   (columna `destinatario`), que espera a una migración propia del modelo de auditoría — no bloqueante
+   para la próxima corrida real de `exportar:excel`.

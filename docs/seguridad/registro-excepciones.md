@@ -158,3 +158,58 @@ Estos tres pasos cierran la mayoría de los casos sin tocar un dato real:
 - **TTL obligatorio.** Si el fixture quedó equivalente-a-sintético puede quedar como caso de regresión;
   si conserva cualquier rastro, se destruye al cerrar el bug y se anota la fecha en la última columna.
   Una fila sin fecha de destrucción y con TTL vencido es un incidente abierto.
+
+## Exports N2-R declarados — fuera del alcance de §F.3, mismo criterio de cierre
+
+> **Por qué esto es distinto de todo lo de arriba.** §F.3 (y el registro de "Excepciones otorgadas") es
+> para **sacar un dato real de producción para reproducir un bug**: hace falta autorización previa del
+> titular, y por defecto la respuesta es no. Un export a `.xlsx` corrido con `pnpm exportar:excel`
+> (`packages/ingesta/src/planilla/`, plan `adaptive-herding-pillow`, `HANDOFF.md` 2026-08-12 (46)) es
+> otra cosa: es un entregable del propio producto para quien ya tiene rol sobre esos datos (el estudio,
+> para su propio cliente), auditado en `acceso_auditoria` con `accion='export'` y motivo+destinatario de
+> vocabulario cerrado ANTES de leer un solo movimiento. No necesita la autorización previa de §F.3. Pero
+> el archivo resultante es **N2-R** (ADR-0002 §A.2, regla 2 — un derivado hereda el nivel máximo de sus
+> insumos, y `descripcion` trae CUIT de terceros en la glosa) y sale de la base a un filesystem sin RLS,
+> así que necesita el mismo cierre de TTL/destrucción que el resto de este registro.
+
+**Decisión del titular (misma tarea):** el archivo no tiene borrado automático ni fecha de calendario
+fija en el sistema — la destrucción es un acto humano registrado, mismo criterio que ADR-0002 §F.3.8. La
+recomendación es **7 días desde `generado_en`**.
+
+✅ **Cerrado (2026-08-12, misma sesión que lo abrió): el script SÍ calcula esa fecha.** `pnpm exportar:excel`
+devuelve `destruirAntesDe` en su JSON de salida y la loguea como `destruir_antes_de` en
+`exportar.completado` (`docs/diseno/10-deuda-declarada.md` §5.2). Sigue sin escribirla en la leyenda
+"Procedencia" del propio `.xlsx` — completar la fila de abajo con el valor del log/JSON de salida, no
+recalcularla a mano.
+
+### Cómo registrar una corrida de `pnpm exportar:excel`
+
+Completar una fila después de cada corrida real (nunca antes: recién con el archivo generado hay
+`correlacion` y `generado_en` para completar la fila):
+
+1. **Motivo / Destinatario**: los códigos exactos pasados a `--motivo`/`--destinatario` — vocabulario
+   cerrado (`MOTIVOS_EXPORT`/`DESTINATARIOS_EXPORT`, `packages/ingesta/src/planilla/exportar-planilla.ts`).
+2. **Cliente / Lote**: los uuid de `--cliente`/`--lote-id` usados.
+3. **Correlación**: el uuid `correlacion` — aparece en la línea de log `exportar.completado` y en la
+   leyenda "Procedencia" de la pestaña `Control de saldos` **dentro del propio archivo** (así el archivo
+   se ata a su fila de `acceso_auditoria` sin depender de haber guardado el log:
+   `select * from acceso_auditoria where correlacion = '<uuid>'`).
+4. **Generado el**: el timestamp que trae el nombre del archivo
+   (`movimientos_<cliente8>_<banco_codigo>_<lote8>_<timestampUTC>.xlsx` — el segmento de banco puede
+   faltar si el lote no se pudo resolver antes de nombrarlo) y la celda `A1` de `Control de saldos`. El
+   nombre es una **etiqueta legible**, no una clave: la clave real de correlación es `correlacion`
+   (punto 3), nunca parsear el nombre del archivo para identificar el lote.
+5. **Se destruye el**: el valor de `destruirAntesDe` (JSON de salida) / `destruir_antes_de` (log) — ya
+   calculado por el script como `generado_en + 7 días`, no hace falta recalcularlo.
+6. **Corrido por**: quién ejecutó el comando.
+7. **Dónde quedó**: `salida/<nombre>.xlsx` y, si se copió fuera de ahí (por ejemplo para mandárselo a la
+   contadora), **también** esa copia — con el **mismo** TTL, no uno nuevo.
+8. Al llegar la fecha: borrar el archivo (y sus copias) y completar **Destruido** con la fecha real. Una
+   fila con TTL vencido y sin **Destruido** es un incidente abierto, mismo criterio que el resto de este
+   documento.
+
+| # | Fecha | Motivo | Destinatario | Cliente | Lote | Correlación | Generado el | Se destruye el | Corrido por | Dónde quedó | Destruido |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | | | | |
+
+*(fila vacía a propósito — se completa con la primera corrida real contra el piloto, no antes)*
