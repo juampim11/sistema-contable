@@ -236,6 +236,29 @@ export const ESTRATEGIAS_CONCEPTO = [
 ] as const;
 export type EstrategiaConcepto = (typeof ESTRATEGIAS_CONCEPTO)[number];
 
+/**
+ * Qué pasó con la búsqueda del/de los candidato(s) de contraparte en esta fila (migración 0013).
+ *
+ * `no_capturado` es el valor del backfill y NINGÚN adaptador lo emite: sin él, "el banco no
+ * publica ningún identificador en esta glosa" y "esta fila es anterior a 0013" se ven iguales para
+ * siempre, y el motor las cuenta juntas. Mismo tri-estado (más un cuarto valor) que
+ * `ESTRATEGIAS_CONCEPTO` de 0007.
+ *
+ * `capturado_cuenta_propia`: el único candidato CBU encontrado resultó ser una cuenta DEL PROPIO
+ * cliente (transferencia entre cuentas propias) — no se persiste como candidato de contraparte
+ * (`packages/ingesta/src/contraparte.ts`), así que sin este valor la fila se vería idéntica a "no
+ * había ningún identificador".
+ *
+ * Idéntica a `mov_crudo_contraparte_captura_chk` (migración 0013); hay test de catálogo.
+ */
+export const CAPTURAS_CONTRAPARTE = [
+  'no_capturado',
+  'sin_identificador',
+  'capturado',
+  'capturado_cuenta_propia',
+] as const;
+export type CapturaContraparte = (typeof CAPTURAS_CONTRAPARTE)[number];
+
 export const TIPOS_REFERENCIA = [
   'factura',
   'cheque',

@@ -143,6 +143,16 @@ const FUERA_DEL_MODULO_1: Readonly<Record<string, string>> = {
     'socio (aislamiento.test.ts).',
   credencial_fiscal_rotacion:
     'Bitácora de rotación de 0002, misma razón que credencial_fiscal.',
+  movimiento_contraparte_identificador:
+    'Tabla del Módulo 2 (migración 0013). `persistirCuenta` la escribe (el candidato se calcula en el ' +
+    'momento de ingerir), pero su cobertura de aislamiento propia vive en ' +
+    'packages/data/tests/aislamiento-modulo-2.test.ts — excluirla acá sin esa cobertura sería el ' +
+    '"arreglo tentador y equivocado" que dba-data señaló al revisar 0013.',
+  padron_socio:
+    'Tabla del Módulo 2 (0013). El pipeline de este escenario no la escribe (no hay alta de socio en la ' +
+    'ingesta). Cobertura de aislamiento en aislamiento-modulo-2.test.ts.',
+  padron_socio_documento:
+    'Satélite N2-R del padrón de socios (0013), misma razón que padron_socio.',
 };
 
 /** Las tablas que el pipeline de ingesta **tiene que** haber llenado en los dos clientes. */

@@ -7,11 +7,13 @@ export * from './verificacion/mutaciones.ts';
 export * from './seed/extracto-sintetico.ts';
 export * from './resolver-cuenta.ts';
 export * from './glosa.ts';
+export * from './contraparte.ts';
 export * from './seed/texto-extracto-sintetico.ts';
 export * from './adaptadores/contrato.ts';
 export * from './adaptadores/registro.ts';
 export * from './adaptadores/toolkit.ts';
 export * from './persistir.ts';
+export * from './reproceso/backfill-contraparte.ts';
 /**
  * 🔴 **Los adaptadores se re-exportan por NOMBRE, nunca con `export *`.**
  *

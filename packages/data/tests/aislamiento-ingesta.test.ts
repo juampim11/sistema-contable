@@ -119,9 +119,9 @@ beforeAll(async () => {
       const f = await tx.consultar<{ id: string }>(
         `insert into movimiento_bancario_crudo
            (cliente_id, lote_ingesta_id, cuenta_bancaria_id, fila_numero, fila_hash,
-            fecha, descripcion, importe, saldo, concepto_banco_estrategia)
+            fecha, descripcion, importe, saldo, concepto_banco_estrategia, contraparte_captura)
          values ($1, $2, $3, 1, 'mismo_hash_en_los_dos', '2026-06-15', 'CONCEPTO DE PRUEBA',
-                 -4321.00, 765432.10, 'no_publicado')
+                 -4321.00, 765432.10, 'no_publicado', 'no_capturado')
          returning id::text as id`,
         [clienteId, loteId, cuentaId],
       );
@@ -322,9 +322,9 @@ describe('la FK de TRES columnas: lo que queda en pie cuando la policy no puede 
         tx.consultar(
           `insert into movimiento_bancario_crudo
              (cliente_id, lote_ingesta_id, cuenta_bancaria_id, fila_numero, fila_hash,
-              fecha, descripcion, importe, concepto_banco_estrategia)
+              fecha, descripcion, importe, concepto_banco_estrategia, contraparte_captura)
            values ($1, $2, $3, 99, 'cruce_prohibido', '2026-06-20', 'CRUCE', -1000.00,
-                   'no_publicado')`,
+                   'no_publicado', 'no_capturado')`,
           // cliente A, lote de A, pero la CUENTA de B.
           [s.clienteA, escenario.loteA, escenario.cuentaB],
         ),
@@ -351,9 +351,9 @@ describe('la FK de TRES columnas: lo que queda en pie cuando la policy no puede 
         tx.consultar(
           `insert into movimiento_bancario_crudo
              (cliente_id, lote_ingesta_id, cuenta_bancaria_id, fila_numero, fila_hash,
-              fecha, descripcion, importe, concepto_banco_estrategia)
+              fecha, descripcion, importe, concepto_banco_estrategia, contraparte_captura)
            values ($1, $2, $3, 1, 'cuenta_no_detectada', '2026-06-20', 'X', -1.00,
-                   'no_publicado')`,
+                   'no_publicado', 'no_capturado')`,
           [s.clienteA, otroLote, escenario.cuentaA],
         ),
       ),

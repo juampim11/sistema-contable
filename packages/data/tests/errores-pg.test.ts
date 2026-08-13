@@ -78,9 +78,9 @@ async function violarCheck(): Promise<unknown> {
       await tx.consultar(
         `insert into movimiento_bancario_crudo
            (cliente_id, lote_ingesta_id, cuenta_bancaria_id, fila_numero, fila_hash,
-            fecha, descripcion, importe, moneda, concepto_banco_estrategia)
+            fecha, descripcion, importe, moneda, concepto_banco_estrategia, contraparte_captura)
          values ($1, $2, $3, 1, 'hash_r28_fila', '2026-06-15', $4, $5::numeric, 'zz',
-                 'no_publicado')`,
+                 'no_publicado', 'no_capturado')`,
         [s.clienteA, ids.lote, ids.cuenta, GLOSA_PLANTADA, IMPORTE_PLANTADO],
       );
     });
@@ -193,9 +193,9 @@ describe('el error TRADUCIDO no saca nada', () => {
         tx.consultar(
           `insert into movimiento_bancario_crudo
              (cliente_id, lote_ingesta_id, cuenta_bancaria_id, fila_numero, fila_hash,
-              fecha, descripcion, importe, concepto_banco_estrategia)
+              fecha, descripcion, importe, concepto_banco_estrategia, contraparte_captura)
            values ($1, $2, $3, 1, 'hash_duplicado_r28', '2026-06-15', 'CONCEPTO', -100.00,
-                   'no_publicado')`,
+                   'no_publicado', 'no_capturado')`,
           [s.clienteA, ids.lote, ids.cuenta],
         ),
       );

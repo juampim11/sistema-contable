@@ -100,3 +100,28 @@ export async function leerFilasOrigenDeLote(
 
   return filas.map((f) => ({ movimientoId: f.movimiento_id, filaOrigen: f.fila_origen }));
 }
+
+/**
+ * Los digests de CBU de las cuentas PROPIAS de un cliente, con el pepper GLOBAL (el mismo que usa
+ * `cuenta_bancaria_identificador.cbu_hmac` — `hmacIdentificador()`, nunca `hmacDocumento()`).
+ *
+ * Sirve para el filtro "¿este candidato de contraparte es en realidad la cuenta propia del
+ * cliente, apareciendo en una transferencia entre cuentas propias?" (regla 10, migración 0013). No
+ * exige `ContextoAuditado`: `cbu_hmac` es N1, mismo régimen que ya usa `resolver-cuenta.ts` con una
+ * consulta directa — esto no es más que extraer esa misma consulta a un solo lugar en vez de que
+ * cada consumidor la reescriba (`security-engineer`, ronda de revisión de `0013`).
+ *
+ * Trae TODOS los vigentes o no: el filtro de cuenta propia es sobre "¿alguna vez fue una cuenta
+ * de este cliente?", no sobre vigencia a una fecha — un CBU que dejó de ser propio hace dos años
+ * sigue sin ser una contraparte real si aparece en un extracto viejo.
+ */
+export async function leerDigestsDeCuentasPropias(
+  tx: Tx,
+  clienteId: string,
+): Promise<readonly Buffer[]> {
+  const filas = await tx.consultar<{ cbu_hmac: Buffer | null }>(
+    `select cbu_hmac from cuenta_bancaria_identificador where cliente_id = $1 and cbu_hmac is not null`,
+    [clienteId],
+  );
+  return filas.map((f) => f.cbu_hmac).filter((d): d is Buffer => d !== null);
+}

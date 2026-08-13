@@ -24,6 +24,7 @@ import { CLASIFICACION, exigeRolEnLectura } from '@sistema-contable/shared/segur
 import type { NombreTabla } from '@sistema-contable/shared/seguridad';
 import { leerMetadatosCredencial } from '../credenciales.ts';
 import { leerFilasOrigenDeLote, leerIdentificadoresDeCuenta } from '../ingesta/lecturas.ts';
+import { leerDocumentoDeSocio } from '../contabilidad/lecturas.ts';
 
 export type LectorAuditado = {
   /** La función real. Si no existe, esto no compila. */
@@ -44,6 +45,10 @@ export const LECTORES_AUDITADOS: Readonly<Partial<Record<NombreTabla, LectorAudi
   movimiento_origen_crudo: {
     fn: leerFilasOrigenDeLote as LectorAuditado['fn'],
     donde: 'packages/data/src/ingesta/lecturas.ts',
+  },
+  padron_socio_documento: {
+    fn: leerDocumentoDeSocio as LectorAuditado['fn'],
+    donde: 'packages/data/src/contabilidad/lecturas.ts',
   },
 };
 

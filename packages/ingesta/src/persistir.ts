@@ -32,8 +32,9 @@
  * que uno verificado.
  */
 
-import { conErroresTraducidos, type Tx } from '@sistema-contable/data';
+import { conErroresTraducidos, leerDigestsDeCuentasPropias, type Tx } from '@sistema-contable/data';
 import { logger } from '@sistema-contable/shared/observabilidad';
+import { extraerCandidatosDeContraparte } from './contraparte.ts';
 import { contieneIdentificador, depurarGlosa } from './glosa.ts';
 import type { CuentaConMovimientos, EstadoLotePersistido, Verificacion } from './esquema.ts';
 
@@ -248,11 +249,24 @@ export async function persistirCuenta(
    * las políticas de fila, así que el aislamiento entre clientes dejaría de verificarse justo en el camino
    * que escribe más datos. Es el precio del aislamiento verificable (ADR-0002, consecuencias).
    */
+  /**
+   * Los digests de las cuentas PROPIAS del cliente (`cbu_hmac`, pepper GLOBAL) — se traen UNA vez
+   * para todo el lote, no por fila: es el insumo del filtro "¿este candidato de contraparte es en
+   * realidad una cuenta propia del cliente?" que corre por movimiento más abajo. Migración 0013.
+   */
+  const digestsPropios = await leerDigestsDeCuentasPropias(tx, pedido.clienteId);
+
   let filas = 0;
   for (const m of movimientos) {
     // La glosa se depura ANTES de guardarse: los identificadores de terceros van a la satélite N2R, no a
     // `descripcion`. Es lo que sostiene que `descripcion` sea N2 (INV-13).
     const glosa = depurarGlosa(m.descripcion);
+
+    // Candidatos de contraparte (migración 0013): se calculan ACÁ, mientras el valor crudo todavía
+    // está en memoria — exposición cero, sin releer N2-R nunca. `packages/ingesta/src/contraparte.ts`
+    // es la misma función que usa el backfill del histórico; el resultado no puede depender de
+    // CUÁNDO se calcula.
+    const contraparte = extraerCandidatosDeContraparte(glosa.identificadores, pedido.clienteId, digestsPropios);
 
     /**
      * INV-14, la cláusula que solo se puede verificar acá: `conceptoBanco` tiene que salir de la glosa
@@ -292,9 +306,10 @@ export async function persistirCuenta(
          (cliente_id, lote_ingesta_id, cuenta_bancaria_id, fila_numero, fila_hash,
           fecha, fecha_valor, descripcion, importe, saldo, saldo_es_acreedor, moneda,
           concepto_codigo, referencia_externa,
-          concepto_banco, concepto_completo, concepto_banco_estrategia, pagina_pdf)
+          concepto_banco, concepto_completo, concepto_banco_estrategia, pagina_pdf,
+          contraparte_captura)
        values ($1, $2, $3, $4, $5, $6::date, $7::date, $8, $9::numeric, $10::numeric, $11, $12, $13, $14,
-               $15, $16, $17, $18)
+               $15, $16, $17, $18, $19)
        returning id::text as id`,
       [
         pedido.clienteId,
@@ -317,12 +332,26 @@ export async function persistirCuenta(
         // Con concepto y sin estrategia el esquema ya no valida, así que acá no puede llegar.
         m.conceptoBancoEstrategia ?? 'no_publicado',
         m.paginaPdf,
+        contraparte.captura,
       ],
       ),
     );
 
     const movimientoId = insertado[0]?.id;
     if (!movimientoId) throw new Error('El movimiento no devolvió id: la transacción se revierte.');
+
+    // Los candidatos de contraparte (0..N), en la MISMA transacción que el movimiento — todo o
+    // nada, igual que la satélite N2R de abajo.
+    for (const candidato of contraparte.candidatos) {
+      await conErroresTraducidos(m.filaNumero, () =>
+        tx.consultar(
+        `insert into movimiento_contraparte_identificador
+           (cliente_id, movimiento_id, clase, identificador_hmac, pepper_id)
+         values ($1, $2, $3, $4, $5)`,
+        [pedido.clienteId, movimientoId, candidato.clase, candidato.hmac, candidato.pepperId],
+        ),
+      );
+    }
 
     /**
      * La fila cruda va a la satélite N2R.

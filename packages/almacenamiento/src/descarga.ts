@@ -54,6 +54,19 @@ export const ROLES_QUE_DESCARGAN = ['socio', 'contador'] as const;
  */
 export const UMBRAL_DESCARGAS_POR_HORA = 20;
 
+/**
+ * Umbral de LECTURAS por usuario y por hora (`accion:'lectura'` — hoy, solo el backfill de
+ * contraparte de la migración 0013, `apps/cli/src/backfill-contraparte.ts`).
+ *
+ * Deliberadamente MENOR que `UMBRAL_DESCARGAS_POR_HORA` y con su propio contador, no el mismo: una
+ * "descarga" es un PDF entero que sale del sistema hacia un humano; una "lectura" de este tipo es
+ * una consulta a la satélite N2R de movimientos, acotada a un lote, y hoy el único caller legítimo
+ * la llama a lo sumo unas pocas veces en toda su vida (un lote por corrida, corrida a mano). Sumarla
+ * al mismo contador que las descargas produciría una alerta que menciona "25 descargas" cuando en
+ * realidad hubo 3 descargas y 22 lecturas — el mensaje que nadie mira es el eslabón que se rompe.
+ */
+export const UMBRAL_LECTURAS_POR_HORA = 5;
+
 export type PedidoDeDescarga = {
   readonly clienteId: string;
   readonly clave: string;
@@ -145,8 +158,12 @@ export async function emitirUrlDeDescarga(
  * No lanza ni bloquea. Un fallo en la señal de volumen **no puede** impedir una descarga legítima, así que
  * el error se traga con su código y se sigue: perder el aviso es malo, romper el trabajo del día de cierre
  * por un problema de observabilidad es peor.
+ *
+ * **Exportada** (plan `adaptive-herding-pillow`): `packages/almacenamiento/src/lectura.ts` es un segundo
+ * camino de salida de un objeto de storage, y sin esta llamada la señal de H-8 quedaría muerta ahí — el
+ * umbral solo saltaría cuando alguien pidiera una URL firmada por el camino de siempre.
  */
-async function avisarSiElVolumenEsAnomalo(tx: Tx, clienteId: string): Promise<void> {
+export async function avisarSiElVolumenEsAnomalo(tx: Tx, clienteId: string): Promise<void> {
   try {
     const filas = await tx.consultar<{ n: string }>(
       `select count(*)::text as n from acceso_auditoria
@@ -165,5 +182,35 @@ async function avisarSiElVolumenEsAnomalo(tx: Tx, clienteId: string): Promise<vo
     }
   } catch {
     logger.warn('descarga.volumen_no_evaluado', { cliente_id: clienteId });
+  }
+}
+
+/**
+ * La misma señal que `avisarSiElVolumenEsAnomalo`, pero para `accion:'lectura'` — contador y
+ * evento propios, nunca el mismo contador que las descargas (ver `UMBRAL_LECTURAS_POR_HORA`).
+ *
+ * Primer emisor real: el backfill de contraparte (migración 0013), que lee la satélite N2R de
+ * movimientos por lote vía `leerConAuditoria`. Antes de esta función, ningún camino de
+ * `accion:'lectura'` del repo tenía ninguna señal de volumen — quedaba en la auditoría, que
+ * contesta la pregunta DESPUÉS del hecho, no MIENTRAS pasa.
+ */
+export async function avisarSiLasLecturasSonAnomalas(tx: Tx, clienteId: string): Promise<void> {
+  try {
+    const filas = await tx.consultar<{ n: string }>(
+      `select count(*)::text as n from acceso_auditoria
+        where user_id = app.current_user_id()
+          and accion = 'lectura'
+          and ocurrido_en > now() - interval '1 hour'`,
+    );
+    const n = Number(filas[0]?.n ?? '0');
+    if (n > UMBRAL_LECTURAS_POR_HORA) {
+      logger.warn('lectura.volumen_anomalo', {
+        cliente_id: clienteId,
+        lecturas_ultima_hora: n,
+        umbral: UMBRAL_LECTURAS_POR_HORA,
+      });
+    }
+  } catch {
+    logger.warn('lectura.volumen_no_evaluado', { cliente_id: clienteId });
   }
 }

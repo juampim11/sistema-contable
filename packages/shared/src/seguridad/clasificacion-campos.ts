@@ -402,6 +402,146 @@ export const CLASIFICACION = {
           'sistema dice esto" y "el sistema dice esto, y acá está de dónde lo sacó".',
       },
       referencia_externa: { nivel: 'N2', exportable: true },
+      contraparte_captura: {
+        nivel: 'N1',
+        exportable: true,
+        nota:
+          'Unión cerrada que declara si el backfill de contraparte (migración 0013) corrió sobre ' +
+          'esta fila y con qué resultado — mismo patrón que `concepto_banco_estrategia` de la 0007. ' +
+          'NO identifica a nadie: es vocabulario del producto. `capturado_cuenta_propia` es lo que ' +
+          'le permite a la regla 10 (transferencia entre cuentas del mismo titular) resolver SIN ' +
+          'comparar HMAC entre el espacio derivado por cliente y el global en tiempo de ejecución ' +
+          'del motor — ver la nota de `movimiento_contraparte_identificador.hmac`.',
+      },
+      created_at: MARCA_TIEMPO,
+    },
+  },
+
+  /**
+   * Los candidatos de contraparte de cada movimiento (migración 0013). 0..N filas por movimiento:
+   * ninguno está declarado como "la contraparte real" — elegir es del motor (capa C), no de la
+   * ingesta.
+   */
+  movimiento_contraparte_identificador: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      movimiento_id: UUID_INTERNO,
+      clase: {
+        nivel: 'N1',
+        exportable: true,
+        nota:
+          'Forma del identificador candidato (`cuit`|`dni`|`cbu`), no su valor — hecho de la ' +
+          'EXTRACCIÓN, mismo criterio que `concepto_completo`. NO lleva `cuil`: un CUIT y un CUIL ' +
+          'son el mismo número y `RE_CUIT` es un solo patrón para los dos, así que ningún ' +
+          'extractor puede asignar esa etiqueta por forma — un valor que nadie puede producir es ' +
+          'una mentira en el esquema.',
+      },
+      identificador_hmac: {
+        nivel: 'N2',
+        exportable: false,
+        nota:
+          'Seudónimo estable del identificador de un TERCERO que nunca consintió nada. Mismo ' +
+          'mecanismo que `cuenta_bancaria_identificador.cbu_hmac` (N1), un escalón más arriba por ' +
+          'ser de un tercero y no del titular: irreversible pero COMPARABLE — la propiedad que ' +
+          'pone a `fila_hash` en N2 — y publicarlo permite preguntar "¿tenés esta operación?" y ' +
+          'encadenar todos los movimientos de una misma contraparte DENTRO del cliente. El pepper ' +
+          'derivado por cliente (hmacDocumento) cierra la correlación ENTRE clientes, no la de ' +
+          'adentro; por eso sigue N2 y no baja a N1. Se mantiene en N2 y NO en N2R a propósito: ' +
+          'si fuera N2R, `tablasQueExigenRolEnLectura()` sumaría esta tabla y toda pasada del ' +
+          'motor pasaría al régimen auditado — el ruido que la enmienda 1 del Módulo 1 existe ' +
+          'para evitar.',
+      },
+      pepper_id: {
+        nivel: 'N1',
+        exportable: false,
+        nota:
+          'Versión del pepper GLOBAL del que se derivó el efectivo de esta fila, NUNCA el pepper ' +
+          'ni parte de él. Vive por fila —no en el movimiento— porque cada candidato se ' +
+          'backfillea o se rota por separado, y durante una rotación conviven v1 y v2 del mismo ' +
+          'movimiento.',
+      },
+      created_at: MARCA_TIEMPO,
+    },
+  },
+
+  /**
+   * Padrón de socios por cliente (migración 0013), con vigencia. Es contra esto que el motor
+   * decide Proveedores/Deudores vs. Cuenta Particular. Partida en dos tablas: esta (N2, sin
+   * columnas N2-R, consultada en cada pasada) y `padron_socio_documento` (N2-R, el documento en
+   * claro, satélite).
+   */
+  padron_socio: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      denominacion: {
+        nivel: 'N2',
+        exportable: true,
+        nota:
+          'Nombre o razón social del socio, mismo criterio que `tenant_node.nombre`. Se mantiene ' +
+          'en N2 por el check `padron_socio_denominacion_sin_identificador_chk` (puerta de ' +
+          'admisión, no confianza): sin él, cargar un documento ahí por error dejaría el dato en ' +
+          'claro de un tercero en una columna que se lee sin rol y sin auditoría.',
+      },
+      documento_tipo: {
+        nivel: 'N1',
+        exportable: true,
+        nota:
+          'Etiqueta documental (`cuit`|`cuil`), sin `dni` — un DNI no identifica a un socio ante ' +
+          'ningún organismo. NO entra tal cual en el material hasheado: `cuit` y `cuil` canonizan ' +
+          'al mismo dominio de hash (`hmacDocumento`), porque son el mismo número.',
+      },
+      documento_hmac: {
+        nivel: 'N2',
+        exportable: false,
+        nota:
+          'Comparable, no reversible: la clave contra la que el motor resuelve "¿esta contraparte ' +
+          'es un socio?" sin leer ningún documento en claro. Pepper derivado por cliente.',
+      },
+      documento_ultimos4: { nivel: 'N2', enmascarar: 'ultimos4', exportable: true },
+      pepper_id: {
+        nivel: 'N1',
+        exportable: false,
+        nota: 'Versión del pepper global del que se derivó el efectivo. Ver la nota homónima de ' +
+          '`movimiento_contraparte_identificador`.',
+      },
+      vigente_desde: {
+        nivel: 'N2',
+        exportable: true,
+        nota:
+          'Vigencia de una RELACIÓN SOCIETARIA ("desde cuándo esta persona es socia de este ' +
+          'cliente"), no de un identificador técnico — por eso es N2 y no N1 como ' +
+          '`cuenta_bancaria_identificador.vigente_desde`. Un socio entra y sale, y sin vigencia ' +
+          'todos los retiros van al socio equivocado y el asiento cuadra igual.',
+      },
+      vigente_hasta: { nivel: 'N2', exportable: true },
+      created_at: MARCA_TIEMPO,
+    },
+  },
+
+  /**
+   * Satélite N2-R de `padron_socio`: el documento en claro, un renglón por alta, inmutable. Existe
+   * para que el pepper se pueda rotar y para que una persona verifique lo que cargó — el motor
+   * NUNCA la consulta.
+   */
+  padron_socio_documento: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      socio_id: UUID_INTERNO,
+      documento: {
+        nivel: 'N2R',
+        enmascarar: 'cuit_parcial',
+        exportable: true,
+        nota:
+          'El documento en claro de un tercero — mismo régimen que ' +
+          '`movimiento_origen_crudo.fila_origen`. Se lee en un acto puntual (alta o corrección de ' +
+          'un socio), nunca por pasada del motor.',
+      },
       created_at: MARCA_TIEMPO,
     },
   },

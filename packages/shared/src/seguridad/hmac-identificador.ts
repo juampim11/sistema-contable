@@ -22,10 +22,42 @@
  * hasheado; uno que hace falta para **consultar afuera** se guarda entero, N2R, con rol y auditoría.*
  */
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, hkdfSync, timingSafeEqual } from 'node:crypto';
 
 /** Longitud del digest. 32 bytes es lo que da sha256 y no hay razón para truncarlo. */
 const LARGO_DIGEST = 32;
+
+/**
+ * Las tres formas de identificador que puede traer una glosa bancaria (migración 0013).
+ *
+ * `packages/ingesta/src/glosa.ts` (`PATRONES`) nunca produce una etiqueta distinta de estas tres:
+ * el CUIT y el CUIL son el mismo número por forma (`RE_CUIT` es un solo patrón para los dos) y la
+ * extracción los junta en el bucket `cuit`. Un cuarto valor `'cuil'` sería una etiqueta que ningún
+ * camino de extracción puede producir — una mentira en el esquema.
+ *
+ * Idéntica a `mov_contraparte_clase_chk` (migración 0013); hay test de catálogo. Vive acá y no en
+ * `packages/ingesta` porque `packages/contabilidad` (capa C, motor de reconocimiento) necesita el
+ * tipo y no puede depender de `ingesta` ni de `data`.
+ */
+export const CLASES_IDENTIFICADOR_CONTRAPARTE = ['cuit', 'dni', 'cbu'] as const;
+export type ClaseIdentificador = (typeof CLASES_IDENTIFICADOR_CONTRAPARTE)[number];
+
+/**
+ * Los tipos de documento con los que se identifica a un SOCIO — subconjunto de
+ * `CLASES_IDENTIFICADOR_CONTRAPARTE` menos `cbu` y `dni`, más `cuil` como ETIQUETA (lo que la
+ * contadora tipeó al cargar el padrón). `dni` queda afuera: no identifica a un socio ante ningún
+ * organismo, y admitirlo abriría el padrón a un documento que después no matchea nada de lo que
+ * publica un banco en una glosa.
+ *
+ * `hmacDocumento` (abajo) canoniza `'cuit'` y `'cuil'` al MISMO dominio de hash: son el mismo
+ * número, y si no canonizaran, un socio cargado como `cuil` nunca matchearía un candidato que la
+ * extracción etiquetó `cuit` (o viceversa) — la etiqueta documental existe para mostrarse en
+ * pantalla, no para particionar el espacio de hash.
+ *
+ * Idéntica a `padron_socio_documento_tipo_chk`; hay test de catálogo.
+ */
+export const TIPOS_DOCUMENTO_SOCIO = ['cuit', 'cuil'] as const;
+export type TipoDocumentoSocio = (typeof TIPOS_DOCUMENTO_SOCIO)[number];
 
 /**
  * Normaliza el identificador antes de hashear.
@@ -101,6 +133,107 @@ export function hmacIdentificador(valor: string): Buffer {
 export function hmacIguales(a: Buffer, b: Buffer): boolean {
   if (a.length !== LARGO_DIGEST || b.length !== LARGO_DIGEST) return false;
   return timingSafeEqual(a, b);
+}
+
+// Misma razón que en `packages/data/src/db/auditoria.ts`: forma de uuid, sin exigir versión ni
+// variante RFC — `shared` no puede depender de `zod` para esto sin sumar una dependencia solo para
+// un regex.
+const RE_UUID_CLIENTE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Memoiza el pepper derivado por `(pepperId, clienteId)`: 1830+ derivaciones en un solo backfill,
+ *  y HKDF no es gratis. Sin exposición nueva — el pepper global ya vive en memoria del proceso. */
+const cachePepperDerivado = new Map<string, Buffer>();
+
+/**
+ * Deriva un pepper POR CLIENTE a partir del pepper global del entorno, vía HKDF (RFC 5869).
+ *
+ * ## Por qué existe
+ *
+ * `hmacIdentificador()` usa un pepper único para todo el despliegue: el mismo CUIT de contraparte
+ * produce el mismo digest en movimientos de clientes distintos del mismo estudio. Un `socio` con
+ * membership en varios clientes podría, sin ver un solo CUIT en claro, notar que dos clientes sin
+ * relación entre sí comparten una contraparte — minería de datos cruzada entre clientes, decisión
+ * de negocio explícita para NO permitirla (plan `adaptive-herding-pillow`, Módulo 2).
+ *
+ * ## Por qué NO se exporta
+ *
+ * Ningún consumidor de este módulo recibe jamás el pepper, derivado o no: `pepperDelEntorno()` es
+ * privado desde el día uno, y la API pública recibe el VALOR a hashear, nunca la clave
+ * (`hmacIdentificador(valor)`). Exportar un `Buffer` de material de clave lo pondría en manos de
+ * `apps/cli` y `packages/ingesta`, en una variable que se puede loguear, serializar en un mensaje
+ * de error o pasar por un objeto que después cruza `redactar()` — que tapa por NOMBRE de clave, y
+ * `pepper` no está en `CLAVES_SENSIBLES_EXTERNAS`.
+ *
+ * ## El guard de `clienteId`, el más importante de los tres
+ *
+ * HKDF no falla si `info` está vacío o es basura: devuelve una clave perfectamente válida, LA
+ * MISMA para cualquier entrada de `info` inválida. Si `clienteId` fuera `''` por un bug de
+ * llamador, la derivación colapsaría a un único pepper compartido — reintroduciendo el pepper
+ * global en silencio, sin que nada se ponga rojo. Por eso se exige forma de uuid antes de derivar,
+ * no después.
+ */
+function pepperDerivadoPorCliente(clienteId: string): Buffer {
+  if (!RE_UUID_CLIENTE.test(clienteId)) {
+    throw new Error(
+      `pepperDerivadoPorCliente necesita un clienteId con forma de uuid, recibió "${clienteId}". ` +
+        'Un valor vacío o inválido no rompe HKDF: produce la MISMA clave para cualquier cliente, y ' +
+        'eso reintroduce el pepper global en silencio.',
+    );
+  }
+
+  const pepperId = pepperIdActual();
+  const clave = `${pepperId}:${clienteId.toLowerCase()}`;
+  const cacheada = cachePepperDerivado.get(clave);
+  if (cacheada) return cacheada;
+
+  const ikm = pepperDelEntorno();
+  const salt = Buffer.from('sistema-contable/contraparte/hkdf/v1', 'utf8');
+  // `pepperId` viaja en el `info`, no solo en la columna que lo acompaña: si no dependiera de él,
+  // alguien podría bumpear `IDENTIFICADOR_PEPPER_ID` sin cambiar el secreto y obtener una corrida
+  // "rotada" con los mismos digests bajo una etiqueta nueva — una rotación que parece hecha y no
+  // rotó nada. Con el id en el material, un `pepper_id` nuevo produce digests nuevos siempre.
+  const info = Buffer.from(`contraparte:${pepperId}:${clienteId.toLowerCase()}`, 'utf8');
+  const derivado = Buffer.from(hkdfSync('sha256', ikm, salt, info, LARGO_DIGEST));
+
+  cachePepperDerivado.set(clave, derivado);
+  return derivado;
+}
+
+/**
+ * Colapsa la etiqueta del llamador al DOMINIO de hash. `cuit` y `cuil` son el mismo número —
+ * misma estructura de 11 dígitos, mismo espacio de prefijos AFIP— así que canonizan al mismo
+ * dominio: si no lo hicieran, un socio cargado como `cuil` en el padrón nunca matchearía un
+ * candidato que la extracción de la glosa etiquetó `cuit` (o viceversa), en silencio.
+ */
+function dominioDeHash(tipo: ClaseIdentificador | TipoDocumentoSocio): 'cuit_cuil' | 'dni' | 'cbu' {
+  if (tipo === 'dni') return 'dni';
+  if (tipo === 'cbu') return 'cbu';
+  return 'cuit_cuil';
+}
+
+/**
+ * HMAC de un identificador de CONTRAPARTE (documento o CBU de un tercero), con pepper DERIVADO POR
+ * CLIENTE — nunca el pepper global de `hmacIdentificador()`.
+ *
+ * Usada por `movimiento_contraparte_identificador.hmac` y `padron_socio.documento_hmac`
+ * (migración 0013). El `tipo` entra como etiqueta de DOMINIO en el material hasheado
+ * (`` `${dominio}:${normalizado}` ``), nunca en una columna separada: un CUIT y un DNI que
+ * compartieran los mismos dígitos —hoy imposible por longitud, pero un atajo futuro podría
+ * intentarlo— dan digests distintos siempre.
+ *
+ * Lanza sobre el mismo caso que `hmacIdentificador`: identificador vacío tras normalizar.
+ */
+export function hmacDocumento(
+  tipo: ClaseIdentificador | TipoDocumentoSocio,
+  valor: string,
+  clienteId: string,
+): Buffer {
+  const normalizado = normalizarIdentificador(valor);
+  if (normalizado.length === 0) {
+    throw new Error('El identificador no tiene ni un dígito: no se puede hashear para búsqueda.');
+  }
+  const material = `${dominioDeHash(tipo)}:${normalizado}`;
+  return createHmac('sha256', pepperDerivadoPorCliente(clienteId)).update(material, 'utf8').digest();
 }
 
 /**

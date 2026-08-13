@@ -33,6 +33,7 @@ import { LECTORES_AUDITADOS, tablasSinLectorAuditado } from '../src/db/lectores-
  */
 import {
   ATRIBUCIONES_ANEXO,
+  CAPTURAS_CONTRAPARTE,
   ESTADOS_LOTE,
   ESTADOS_VERIFICACION,
   ESTRATEGIAS_CONCEPTO,
@@ -41,6 +42,7 @@ import {
   RELACIONES_ANEXO,
   TIPOS_CUENTA,
 } from '../../ingesta/src/esquema.ts';
+import { CLASES_IDENTIFICADOR_CONTRAPARTE, TIPOS_DOCUMENTO_SOCIO } from '@sistema-contable/shared/seguridad';
 import { clienteDuenio } from './ayuda.ts';
 
 let db: Client;
@@ -701,6 +703,30 @@ const DOMINIOS_CERRADOS: DominioCerrado[] = [
     constante: 'RELACIONES_ANEXO',
     valores: RELACIONES_ANEXO,
     migracion: '0008',
+  },
+  {
+    check: 'mov_crudo_contraparte_captura_chk',
+    tabla: 'movimiento_bancario_crudo',
+    columna: 'contraparte_captura',
+    constante: 'CAPTURAS_CONTRAPARTE',
+    valores: CAPTURAS_CONTRAPARTE,
+    migracion: '0013',
+  },
+  {
+    check: 'mov_contraparte_clase_chk',
+    tabla: 'movimiento_contraparte_identificador',
+    columna: 'clase',
+    constante: 'CLASES_IDENTIFICADOR_CONTRAPARTE',
+    valores: CLASES_IDENTIFICADOR_CONTRAPARTE,
+    migracion: '0013',
+  },
+  {
+    check: 'padron_socio_documento_tipo_chk',
+    tabla: 'padron_socio',
+    columna: 'documento_tipo',
+    constante: 'TIPOS_DOCUMENTO_SOCIO',
+    valores: TIPOS_DOCUMENTO_SOCIO,
+    migracion: '0013',
   },
 ];
 
