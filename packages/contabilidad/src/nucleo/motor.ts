@@ -6,6 +6,7 @@ import { reconocerPorTexto } from './matcher.ts';
 import type { Lado } from './tipos.ts';
 import type { PendienteDeLaura } from './lexico.ts';
 import type { EvidenciaDeMovimiento, Reconocimiento } from './reconocimiento.ts';
+import type { ResolucionDeContraparte } from './contrapartida.ts';
 
 const CACHE_INDICES = new Map<string, IndiceDeLexico>();
 
@@ -30,8 +31,11 @@ function pendienteDe(fila: FilaDelCatalogo, entradaPendiente: PendienteDeLaura |
 }
 
 /**
- * `reconocer()` — 🔴 el ÚNICO archivo del paquete que construye `clase: 'propuesta'` (R-F). Nada más
- * en el repo puede saltearse la degradación de `pendienteDeLaura` escribiendo la clase a mano.
+ * `motor.ts` tiene 🔴 DOS constructores de `clase: 'propuesta'` (R-F, `PERMITIDOS_PROPUESTA` en
+ * `reglas-de-codigo.test.ts`) — `reconocer()` (capa B, reconocimiento de concepto) y
+ * `aplicarContrapartida()` (capa C, resolución de contrapartida), más abajo. Nada FUERA de este
+ * archivo puede construir `propuesta` — no es "el único archivo" en el sentido de que haya uno
+ * solo, es el único LUGAR donde el invariante R-F vive, con dos entradas.
  *
  * Puro: no lee la base, no recibe conexión ni `Tx`. `lexico` se pasa como argumento (no se importa el
  * registro acá) para que el test pueda ejercitar el motor con un léxico sintético sin depender de
@@ -115,6 +119,59 @@ export function reconocer(evidencia: EvidenciaDeMovimiento, indiceDelBanco: Indi
     queDecide,
     ...(pendiente ? { pendienteDeLaura: pendiente } : {}),
   };
+}
+
+/**
+ * Segundo constructor de `clase: 'propuesta'` de este archivo (capa C — ver el docblock de
+ * `reconocer()` arriba). PURA: no toca ningún `Reconocimiento` que no sea `decision_humana` con
+ * `queDecide: 'distinguir_tercero_de_socio'` — pasa el resto sin cambios, identidad estructural.
+ *
+ * Reglas de promoción (`04-imputacion-contable.md`, `contador-dominio` Ronda 1): `lado === 'debe'`
+ * → 12b/12a; `lado === 'haber'` → 13b/13a. Los otros 5 estados de `ResolucionDeContraparte` nunca
+ * promueven — se quedan en `decision_humana`, con la evidencia adjunta para que la persona vea
+ * POR QUÉ.
+ */
+export function aplicarContrapartida(
+  reconocimiento: Reconocimiento,
+  resolucion: ResolucionDeContraparte,
+): Reconocimiento {
+  if (reconocimiento.clase !== 'decision_humana') return reconocimiento;
+  if (reconocimiento.queDecide !== 'distinguir_tercero_de_socio') return reconocimiento;
+
+  const { concepto, polaridad, lado, via, evidencia } = reconocimiento;
+
+  switch (resolucion.estado) {
+    case 'es_socio':
+      return {
+        clase: 'propuesta',
+        tipo: lado === 'debe' ? 'retiro_de_socio' : 'aporte_de_socio',
+        concepto,
+        polaridad,
+        lado,
+        via,
+        evidencia,
+        evidenciaContrapartida: resolucion,
+      };
+
+    case 'es_tercero_padron_completo':
+      return {
+        clase: 'propuesta',
+        tipo: lado === 'debe' ? 'pago_a_proveedor_transferencia' : 'cobranza_de_cliente',
+        concepto,
+        polaridad,
+        lado,
+        via,
+        evidencia,
+        evidenciaContrapartida: resolucion,
+      };
+
+    case 'sin_match_padron_incompleto':
+    case 'sin_candidatos':
+    case 'pepper_desalineado':
+    case 'multiples_socios':
+    case 'socio_fuera_de_vigencia':
+      return { ...reconocimiento, evidenciaContrapartida: resolucion };
+  }
 }
 
 export { construirIndice };

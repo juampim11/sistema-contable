@@ -6,4 +6,5 @@ export * from './lexico/registro.ts';
 export * from './nucleo/reconocimiento.ts';
 export * from './nucleo/indice.ts';
 export * from './nucleo/matcher.ts';
+export * from './nucleo/contrapartida.ts';
 export * from './nucleo/motor.ts';
