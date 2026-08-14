@@ -6,6 +6,61 @@
 
 ---
 
+## 2026-08-14 (53) — 🔴 `0014` APLICADA AL PILOTO, con confirmación explícita del titular. Escrito EN EL MOMENTO.
+
+**Herramienta:** Claude Code. Entrada corta y deliberadamente separada de la (52): su único objetivo es
+que la aplicación al piloto quede registrada **en el acto**, no al cerrar la tarea. El hueco entre
+aplicar y registrar es exactamente donde se metieron los tres olvidos anteriores (0011, 0012, 0013).
+
+### El hecho
+
+```
+ENV_FILE=.env.piloto pnpm db:migrate
+  + 0014_reconocimiento_persistido.sql … aplicada
+
+select nombre, aplicada_en, hash from _migraciones where nombre like '0014%';
+               nombre               |         aplicada_en          |       hash
+ 0014_reconocimiento_persistido.sql | 2026-08-14 19:04:07.64428+00 | 441a375297deb38f
+```
+
+**Hash idéntico al del archivo local** (`441a375297deb38f`, sha256 normalizado a LF truncado a 16, el
+mismo algoritmo de `migrar.ts`) — verificado recalculándolo sobre el archivo, no asumido. Sin drift.
+
+**Estado de los dos entornos, medido:**
+
+| Entorno | Puerto | Migraciones | Datos |
+|---|---|---|---|
+| local | 5442 | hasta **0014** | 2 lotes, 2 movimientos (fixtures sintéticos) |
+| piloto | 5443 | hasta **0014** | 3 lotes, **1830 movimientos reales** |
+
+### Por qué se aplicó al piloto y no se probó en local
+
+El pedido original era correr el CLI nuevo contra un lote real y, si local no tenía uno, **ingerir un
+PDF real de banco contra la base local**. Se frenó antes de tocar nada: eso choca con una regla dura.
+
+- `ADR-0002` §A.1 clasifica el extracto crudo como **N2-R** y los movimientos/importes/descripciones
+  como **N2**. Su tabla dice, literal: N2 en entorno de prueba → *"No — solo sintético"*; N2-R →
+  *"Nunca"*. Es `CLAUDE.md` §1.4, bajo el título "reglas duras (no negociables)".
+- `ADR-0002` §F.1: *"Los extractos de prueba se construyen desde la especificación del formato, **no
+  desde el archivo de un cliente**"*.
+- Y el precedente citado apuntaba al otro lado: la verificación equivalente de Capa C
+  (`resolver-contrapartida.ts`) **no** corrió contra local — `HANDOFF` (51) dice *"verificado DIRECTO
+  contra `sistema-contable-postgres-piloto` (puerto 5443)"*. El piloto existe, con su compose, su
+  volumen y su `APP_ENTORNO` propios, precisamente para que el dato real no toque local.
+- Problema práctico además: `sembrar()` hace `truncate … cascade` sobre local en cada corrida de
+  tests. Dato real ahí duraría hasta el próximo `pnpm verificar`.
+
+El titular, consultado con las cuatro opciones sobre la mesa, **confirmó explícitamente** aplicar 0014
+al piloto y correr ahí, en dry-run primero, sin escribir nada todavía.
+
+### Lo que sigue, y lo que NO se hizo
+
+`pnpm reconocer:lote` en **DRY-RUN** contra uno de los tres lotes reales. **No se escribió ninguna fila
+en el piloto**: la tabla `reconocimiento_movimiento` existe ahí y está **vacía**. La corrida con
+`--aplicar` queda pendiente de una decisión del titular a la vista del resultado del dry-run.
+
+---
+
 ## 2026-08-14 (52) — Módulo 2: migración `0014` (reconocimiento persistido) + trinquete de `VERSION_DEL_MOTOR`. Aplicada a **LOCAL únicamente**. `pnpm verificar` en verde. Comiteado en `feat/persistir-reconocimiento`, sin mergear.
 
 **Herramienta:** Claude Code. Plan `replicated-zooming-pine` (CLAUDE.md §3.2, disparadores (a), (b) y (d)).
