@@ -463,6 +463,59 @@ describe('0014 — aislamiento y forma de reconocimiento_movimiento', () => {
     expect(activos, 'quedó más de un reconocimiento vigente para el mismo movimiento').toHaveLength(1);
   });
 
+  /**
+   * 🔴 EL TEST QUE FALTABA, y el defecto que destapó. Hallazgo INDEPENDIENTE de `qa-funcional` y
+   * `code-reviewer` en la Ronda 3 — los dos llegaron al mismo lugar por caminos distintos.
+   *
+   * Escenario real de los próximos días: se corre `--aplicar` con `padron_socio` vacío y los ~1148
+   * `distinguir_tercero_de_socio` se persisten como `decision_humana`. Después la contadora carga el
+   * padrón con `pnpm alta:socio`. Se vuelve a correr: capa C ahora resuelve `es_socio` y
+   * `aplicarContrapartida` PROMUEVE a `propuesta` — pero el léxico no cambió, así que el digest es EL
+   * MISMO.
+   *
+   * El no-op comparaba SOLO el digest, así que devolvía `no_op` y la promoción no se escribía nunca.
+   * El reporte imprimía `noOp: 1830, creados: 0` y PARECÍA que había salido bien: fail-open y
+   * silencioso, el mismo modo de falla que `version.ts` describe para un contador manual, un nivel
+   * más arriba.
+   *
+   * La base estaba bien diseñada: `uq_recon_determinante` lleva `es_propuesta` como cuarta columna
+   * justamente para admitir esta fila (hallazgo de `dba-data`, Ronda 2). El corto-circuito de la
+   * aplicación la anulaba antes de llegar al INSERT.
+   *
+   * Por qué no lo agarró la primera tanda de tests: los 11 usaban `propuestaDe()` con la MISMA clase
+   * las dos veces, así que verificaban "mismo digest + mismo contenido" y nunca "mismo digest + clase
+   * distinta".
+   */
+  it('🔴 mismo digest pero clase DISTINTA (promoción de capa C) NO es no-op: supersede', async () => {
+    const capaB: PedidoDePersistirReconocimiento = {
+      ...propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A),
+      clase: 'decision_humana',
+      tipo: 'pago_a_proveedor_transferencia',
+      queDecide: 'distinguir_tercero_de_socio',
+    };
+    const primera = await persistir(USUARIOS.contadorA, capaB);
+    expect(primera.estado).toBe('creado');
+
+    // Mismo digest, clase promovida — exactamente lo que produce capa C tras cargar el padrón.
+    const capaC: PedidoDePersistirReconocimiento = {
+      ...propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A),
+      tipo: 'retiro_de_socio',
+    };
+    const segunda = await persistir(USUARIOS.contadorA, capaC);
+
+    expect(
+      segunda.estado,
+      'la promoción de capa C se perdió: el no-op comparó solo el digest e ignoró la clase',
+    ).toBe('supersedido');
+
+    const activos = await conUsuario(USUARIOS.contadorA, (tx) =>
+      leerReconocimientosActivos(tx, { clienteId: s.clienteA, loteIngestaId: escenario.loteA }),
+    );
+    expect(activos).toHaveLength(1);
+    expect(activos[0]?.clase, 'la fila vigente tiene que ser la promovida').toBe('propuesta');
+  });
+
+
   it('🔴 con un digest NUEVO se supersede: el viejo no se borra y queda UNO solo vigente', async () => {
     await persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A));
     const r = await persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_B));

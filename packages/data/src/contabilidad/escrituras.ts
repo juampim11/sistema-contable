@@ -272,8 +272,8 @@ export async function persistirReconocimiento(
   pedido: PedidoDePersistirReconocimiento,
 ): Promise<ResultadoDePersistirReconocimiento> {
   const activas = await conErroresTraducidos(undefined, () =>
-    tx.consultar<{ id: string; motor_digest: string }>(
-      `select id::text as id, motor_digest
+    tx.consultar<{ id: string; motor_digest: string; clase: string }>(
+      `select id::text as id, motor_digest, clase
          from reconocimiento_movimiento
         where cliente_id = $1 and movimiento_id = $2 and superseded_por is null
         for update`,
@@ -282,7 +282,25 @@ export async function persistirReconocimiento(
   );
   const activa = activas[0];
 
-  if (activa && activa.motor_digest === pedido.motorDigest) {
+  // 🔴 EL NO-OP COMPARA DIGEST **Y CLASE**, no solo el digest. Hallazgo independiente de
+  // `qa-funcional` y `code-reviewer` (Ronda 3): capa C corre con el MISMO léxico y por lo tanto el
+  // mismo digest que capa B, así que comparar solo el digest hacía que la PROMOCIÓN de capa C
+  // —`decision_humana` → `propuesta` tras cargar el padrón— devolviera `no_op` y no se escribiera
+  // NUNCA. El reporte imprimía `noOp: N, creados: 0` y parecía que había salido bien: fail-open y
+  // silencioso, el mismo modo de falla que `version.ts` describe para un contador manual.
+  //
+  // La base ya estaba bien: `uq_recon_determinante` lleva `es_propuesta` como cuarta columna
+  // justamente para admitir esa fila. Era el corto-circuito de acá el que la anulaba antes del
+  // INSERT. Con `clase` en la comparación, la promoción entra por el camino UPDATE→INSERT y el
+  // caso que el DDL declara fail-closed (mismo digest, misma clase, padrón distinto) sigue siendo
+  // ruidoso.
+  //
+  // ⚠️ LO QUE ESTO NO CUBRE, declarado: el determinante cubre el CÓDIGO, no la ENTRADA, y la
+  // entrada es MUTABLE — `recapturar-conceptos.ts` y `backfill-contraparte.ts` hacen UPDATE sobre
+  // `movimiento_bancario_crudo`. Un reproceso que cambie `concepto_banco` sin cambiar la clase
+  // (por ejemplo `concepto_no_catalogado` → `ambiguo`, las dos `sin_reconocer`) sigue dando no-op
+  // con la interpretación vieja intacta. Es el productor que le falta a `recalculo_disponible`.
+  if (activa && activa.motor_digest === pedido.motorDigest && activa.clase === pedido.clase) {
     return { estado: 'no_op', reconocimientoId: activa.id };
   }
 

@@ -203,6 +203,15 @@ export type ReporteDeReconocimiento = {
   readonly estado: 'reportado';
   readonly aplicado: boolean;
   readonly porClase: Record<string, number>;
+  /** 🔴 El reparto, que el agregado por clase esconde. `qa-funcional` (Ronda 3): "los tres números
+   *  son idénticos si la cola son 1481 preguntas distintas o si son cuatro preguntas repetidas".
+   *  Y `tech-lead` lo necesita para decidir si el delta contra la proyección del corpus es el signo
+   *  de `importe` (`reversa_incoherente`) o el truncado de Galicia (`ambiguo`/`concepto_no_catalogado`). */
+  readonly porQueDecide: Record<string, number>;
+  readonly porMotivo: Record<string, number>;
+  /** Cruce con el centinela de captura de contraparte: cuántos de los `distinguir_tercero_de_socio`
+   *  NO tienen ningún candidato, o sea el PISO IRREDUCIBLE de la cola que ningún padrón baja. */
+  readonly contrapartidaSinCandidato: number;
   readonly digestsPorBanco: Record<string, string>;
   /** Movimientos de un banco sin léxico registrado: se saltan, pero CONTADOS — sin esto el total no
    *  reflejaría el tamaño real del lote sin que el operador se entere. */
@@ -249,6 +258,9 @@ export async function reconocerLote(
 
     const pedidos: PedidoDePersistirReconocimiento[] = [];
     const porClase: Record<string, number> = { propuesta: 0, decision_humana: 0, sin_reconocer: 0 };
+    const porQueDecide: Record<string, number> = {};
+    const porMotivo: Record<string, number> = {};
+    let contrapartidaSinCandidato = 0;
     let sinLexico = 0;
     let yaVigentesConEsteDigest = 0;
 
@@ -278,6 +290,15 @@ export async function reconocerLote(
       }
 
       porClase[final.clase] = (porClase[final.clase] ?? 0) + 1;
+      if (final.clase === 'decision_humana') {
+        porQueDecide[final.queDecide] = (porQueDecide[final.queDecide] ?? 0) + 1;
+        if (final.queDecide === 'distinguir_tercero_de_socio' && ev.contraparteCaptura !== 'capturado') {
+          contrapartidaSinCandidato += 1;
+        }
+      }
+      if (final.clase === 'sin_reconocer') {
+        porMotivo[final.motivo] = (porMotivo[final.motivo] ?? 0) + 1;
+      }
 
       if (digestVigentePorMovimiento.get(ev.movimientoId) === digest) {
         yaVigentesConEsteDigest += 1;
@@ -297,6 +318,9 @@ export async function reconocerLote(
     const base = {
       estado: 'reportado' as const,
       porClase,
+      porQueDecide,
+      porMotivo,
+      contrapartidaSinCandidato,
       digestsPorBanco,
       sinLexico,
       yaVigentesConEsteDigest,
