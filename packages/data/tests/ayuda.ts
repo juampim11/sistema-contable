@@ -87,7 +87,13 @@ export async function sembrar(): Promise<Sembrado> {
       // Las tablas del Módulo 1 van primero por dependencia, aunque `cascade` las alcanzaría igual:
       // nombrarlas hace que agregar una tabla nueva y olvidarla se note al fallar el truncate, no dos
       // suites después con filas de una corrida anterior.
-      'truncate movimiento_origen_crudo, movimiento_bancario_crudo, lote_ingesta_cuenta, ' +
+      // Las del Módulo 2 (0013/0014) van primero que las del Módulo 1: `reconocimiento_candidato`
+      // cuelga de `reconocimiento_movimiento`, que cuelga de `movimiento_bancario_crudo` con
+      // `on delete restrict`. Nombrarlas no es redundante con `cascade` — es lo que hace que
+      // agregar una tabla nueva y olvidarla se note acá y no dos suites después.
+      'truncate reconocimiento_candidato, reconocimiento_movimiento, ' +
+        'movimiento_contraparte_identificador, padron_socio_documento, padron_socio, ' +
+        'movimiento_origen_crudo, movimiento_bancario_crudo, lote_ingesta_cuenta, ' +
         'lote_ingesta, cuenta_bancaria_identificador, cuenta_bancaria, banco, ' +
         'credencial_fiscal_rotacion, credencial_fiscal, acceso_auditoria, membership, ' +
         'tenant_node cascade',

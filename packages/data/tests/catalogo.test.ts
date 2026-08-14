@@ -43,6 +43,16 @@ import {
   TIPOS_CUENTA,
 } from '../../ingesta/src/esquema.ts';
 import { CLASES_IDENTIFICADOR_CONTRAPARTE, TIPOS_DOCUMENTO_SOCIO } from '@sistema-contable/shared/seguridad';
+import { CONCEPTOS_CANONICOS } from '../../contabilidad/src/nucleo/catalogo.ts';
+import {
+  CLASES_RECONOCIMIENTO,
+  LADOS,
+  MOTIVOS_SIN_RECONOCER,
+  POLARIDADES,
+  QUE_DECIDE,
+  TIPOS_MOVIMIENTO,
+  VIAS_EVIDENCIA,
+} from '../../contabilidad/src/nucleo/tipos.ts';
 import { clienteDuenio } from './ayuda.ts';
 
 let db: Client;
@@ -727,6 +737,74 @@ const DOMINIOS_CERRADOS: DominioCerrado[] = [
     constante: 'TIPOS_DOCUMENTO_SOCIO',
     valores: TIPOS_DOCUMENTO_SOCIO,
     migracion: '0013',
+  },
+  // -- 0014: los OCHO dominios del motor de reconocimiento -------------------------------------
+  // `reconocimiento_forma_chk` NO está acá a propósito: lleva un `case` y no matchea
+  // `FORMA_DOMINIO_CERRADO` (verificado contra pg_constraint). Su árbitro es
+  // `packages/contabilidad/tests/forma-persistible.test.ts`, que lo ata a `motor.ts`.
+  {
+    check: 'reconocimiento_clase_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'clase',
+    constante: 'CLASES_RECONOCIMIENTO',
+    valores: CLASES_RECONOCIMIENTO,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_tipo_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'tipo',
+    constante: 'TIPOS_MOVIMIENTO',
+    valores: TIPOS_MOVIMIENTO,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_concepto_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'concepto',
+    constante: 'CONCEPTOS_CANONICOS',
+    valores: CONCEPTOS_CANONICOS,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_polaridad_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'polaridad',
+    constante: 'POLARIDADES',
+    valores: POLARIDADES,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_lado_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'lado',
+    constante: 'LADOS',
+    valores: LADOS,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_via_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'via',
+    constante: 'VIAS_EVIDENCIA',
+    valores: VIAS_EVIDENCIA,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_decide_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'que_decide',
+    constante: 'QUE_DECIDE',
+    valores: QUE_DECIDE,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_motivo_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'motivo_codigo',
+    constante: 'MOTIVOS_SIN_RECONOCER',
+    valores: MOTIVOS_SIN_RECONOCER,
+    migracion: '0014',
   },
 ];
 

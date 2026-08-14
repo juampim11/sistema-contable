@@ -666,6 +666,88 @@ export const CLASIFICACION = {
       created_at: MARCA_TIEMPO,
     },
   },
+
+  /**
+   * El resultado del motor de reconocimiento (migración 0014). Qué dijo el motor sobre un
+   * movimiento, con qué versión del código (`motor_digest`) y qué fila lo reemplazó.
+   *
+   * 🔴 NINGUNA columna N2-R, a propósito: la evidencia guarda el `id` de la entrada del léxico —que
+   * es CÓDIGO, N0— y nunca el texto que matcheó (05 §6). Es lo que mantiene a esta tabla fuera del
+   * régimen de lectura auditada, y es requisito de que la cola de revisión sea usable: se lista
+   * entera, todos los meses. Auditar cada pasada sería el ruido de ADR-0002 H-8.
+   */
+  reconocimiento_movimiento: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      movimiento_id: UUID_INTERNO,
+      superseded_por: UUID_INTERNO,
+      motor_digest: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Identidad del ARTEFACTO DE CÓDIGO que produjo la fila (digestDeBanco), no dato del cliente.',
+      },
+      clase: { nivel: 'N1', exportable: true, nota: 'Vocabulario de proceso: qué trabajo le queda a la persona.' },
+      es_propuesta: { nivel: 'N1', exportable: true, nota: 'Generada de `clase`. Destino de la FK de asiento_propuesto (0016+).' },
+      tipo: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Clasificación contable de ESTA transacción de ESTE cliente — mismo nivel que asientos y partidas (ADR-0002 §A.1).',
+      },
+      concepto: { nivel: 'N2', exportable: true, nota: 'Ídem `tipo`: es la interpretación del movimiento del cliente.' },
+      polaridad: { nivel: 'N1', exportable: true, nota: 'Hecho estructural (normal/reversa), mismo tier que saldo_es_acreedor.' },
+      lado: { nivel: 'N1', exportable: true, nota: 'Hecho estructural: sale de columnaOrigen (04 §2).' },
+      via: { nivel: 'N1', exportable: true, nota: 'Cuál matcher resolvió — hecho del PROCESO, mismo tier que concepto_banco_estrategia.' },
+      que_decide: { nivel: 'N1', exportable: true, nota: 'Vocabulario cerrado sobre qué falta decidir, mismo tier que motivo_codigo.' },
+      motivo_codigo: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'MotivoSinReconocer, vocabulario cerrado. `_codigo` y no `motivo` a secas: ADR-0002 §C.0.bis documenta que ese nombre ya costó una vez.',
+      },
+      evidencia_entrada_lexico_id: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Id del léxico (código N0), pero determina el concepto del movimiento del cliente tan directamente como la columna `concepto`: se clasifica por lo que revela, no por la forma.',
+      },
+      evidencia_caracteres_matcheados: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Acotado por el largo del LITERAL del léxico (N0), no por el de la glosa. Si un matcher futuro lo hiciera el largo de la glosa, pasa a ser un oráculo sobre texto del cliente y hay que reclasificarlo.',
+      },
+      evidencia_hubo_cola: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Es `entrada.matcheo.modo === prefijo_con_cola`: propiedad de la ENTRADA DEL LÉXICO, no de la glosa. La cola en sí (el nombre de la contraparte) está prohibida por 05 §6.',
+      },
+      recalculo_disponible: { nivel: 'N1', exportable: true, nota: 'Booleano de workflow. Sin productor todavía.' },
+      created_at: MARCA_TIEMPO,
+    },
+  },
+
+  /**
+   * Satélite 0..N de `reconocimiento_movimiento` (migración 0014): las entradas del léxico a las
+   * que apuntaba un reconocimiento que no se pudo resolver. Ids de código, nunca texto.
+   */
+  reconocimiento_candidato: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      reconocimiento_id: UUID_INTERNO,
+      reconocimiento_clase: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Generada CONSTANTE (`sin_reconocer`). Mitad hija de la FK de tres columnas: no se puede escribir ni con el valor correcto.',
+      },
+      entrada_lexico_id: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Mismo criterio que reconocimiento_movimiento.evidencia_entrada_lexico_id.',
+      },
+      created_at: MARCA_TIEMPO,
+    },
+  },
 } as const satisfies Record<string, ClasificacionTabla>;
 
 export type NombreTabla = keyof typeof CLASIFICACION;
