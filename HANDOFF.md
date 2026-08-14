@@ -6,6 +6,139 @@
 
 ---
 
+## 2026-08-14 (52) — Módulo 2: migración `0014` (reconocimiento persistido) + trinquete de `VERSION_DEL_MOTOR`. Aplicada a **LOCAL únicamente**. `pnpm verificar` en verde. Comiteado en `feat/persistir-reconocimiento`, sin mergear.
+
+**Herramienta:** Claude Code. Plan `replicated-zooming-pine` (CLAUDE.md §3.2, disparadores (a), (b) y (d)).
+Cierra la pieza que `HANDOFF` (51) dejó explícitamente afuera: el motor recalculaba todo en cada corrida
+y no escribía nada.
+
+### 🔴 En qué entorno quedó aplicada la migración (sección propia, por pedido explícito del usuario)
+
+**`0014_reconocimiento_persistido.sql` está aplicada a la base LOCAL de desarrollo**
+(`sistema-contable-postgres`, puerto 5442) — donde corren los tests — **y NO al piloto**. Confirmado con
+`pnpm db:migrate`: `+ 0014_reconocimiento_persistido.sql … aplicada`.
+
+Al piloto se aplica **solo cuando el usuario lo confirme explícitamente**, y esa confirmación se escribe
+en esta bitácora **en el momento**, no después. Es la regla que el usuario dictó al aprobar el plan, sin
+que se la pidieran — señal de que las tres repeticiones anteriores (0011, 0012, 0013) le costaron. El
+hueco entre aplicar y registrar es exactamente donde se metieron esos tres olvidos.
+
+### Las decisiones del usuario que fijaron el alcance
+
+| Decisión | Resuelto |
+|---|---|
+| Numeración | `0014` = reconocimiento; `0015` = contrapartida + manifestación. **Reasigna** lo que decía `HANDOFF` (49) (que daba 0014 al plan de cuentas) |
+| Versionado | **`motor_digest` calculado por banco**, no contadores manuales |
+| `reconocimiento_concepto_chk` | **CHECK** con los 71 valores; se asume una migración por banco nuevo |
+| Nombre de la tabla de 0015 | **`padron_manifestacion` / `manifestado_por`** (corrección de `contador-dominio`: "atestación" connota un tercero que da fe sobre algo ajeno) |
+
+### Convocatoria — 2 rondas, 9 agentes
+
+**Ronda 1 (diseño, antes de una línea de código):** `arquitecto-software`, `dba-data`,
+`seguridad-datos-financieros`, `security-engineer`, `contador-dominio`, `plan-cuentas-multicliente`,
+`motor-conciliacion-contable`. **Ronda 2 (implementación):** `dba-data` (DDL exacto), `backend-dev`
+(gate + capa de escritura).
+
+**Lo que la Ronda 1 cambió, y que no habría aparecido sin ella:**
+
+- 🔴 `arquitecto-software` objetó `catalogo_version` como contador **global**: invalidaría todos los
+  reconocimientos de Galicia el día que entre un banco nuevo con conceptos que ningún léxico de Galicia
+  alcanza. Y agravó el hallazgo original: `motor.ts:52` pasa `ladoEsperadoDe` **al matcher**, así que el
+  catálogo determina también los **negativos**. Resultado: digest **por banco**, calculado, por exclusión.
+- 🔴 El mismo agente objetó que P0, como estaba escrito, **"no es el paso revertible más chico: es un
+  no-op con forma de paso"** — constantes que nadie lee difieren el 100 % del riesgo al commit siguiente.
+  P0 pasó a ser la función de digest **con cinco predicciones falsables**.
+- 🔴 `seguridad-datos-financieros`: `socio_id` debe ser **N2, no N1** — con N1 el tipo `ColumnaSensible`
+  **compila** `logger.info(…, { socioId })` y el redactor no lo intercepta. (Aplica a 0015.)
+- 🔴 `motor-conciliacion-contable`: `reconocimiento_forma_chk` debe ser condicional por
+  **`(clase, motivo_codigo)`**, no nulidad grupal. Verificado con grep: la evidencia está ausente en
+  `sin_evidencia_de_concepto`/`ambiguo`/`concepto_no_catalogado` y presente en
+  `concepto_sin_tipo_asignado`/`reversa_incoherente`. Nulidad grupal daría verde a un `ambiguo` con
+  evidencia adjunta — una prueba, en la cola de la contadora, de un match que el motor no hizo.
+- 🔴 `dba-data`: la FK de supersesión con dos columnas solo garantiza el cliente; con tres, también el
+  **movimiento**.
+- `contador-dominio`: cada corrida debe **insertar** una manifestación nueva, nunca reutilizar la más
+  reciente — si no, una de hace seis meses autoriza convertir en proveedor a la contraparte del socio 45.
+- `plan-cuentas-multicliente` ratificó el límite acto-vs-atributo: **el ADR inexistente de
+  `ADR-0001` §5.2 no es prerrequisito bloqueante**.
+
+### 🔴 El defecto que `dba-data` encontró EJECUTANDO, no leyendo (Ronda 2)
+
+`uq_recon_determinante` con solo `motor_digest` **era insatisfacible**. Capa C corre con el mismo léxico
+y por lo tanto el **mismo digest** que capa B, así que la fila de la promoción colisionaría siempre
+contra su predecesora: **la capa C entera no podría persistir**. Resuelto sin columna nueva —
+`es_propuesta`, la generada que ya existía para `05` §5.1, entra como cuarta columna de la unicidad.
+Verificado contra una base descartable creada desde template y borrada al terminar.
+
+**Límite declarado en el propio DDL:** dos corridas de capa C con el mismo digest y **padrón distinto**
+colisionan y la segunda es rechazada. Es **fail-closed y ruidoso**, correcto hoy; `0015` reemplaza esa
+unicidad cuando exista el determinante del padrón.
+
+### Tres errores del plan aprobado, corregidos tras verificarlos contra el código
+
+1. 🔴 El plan decía "retirar R-H y R-H bis" porque el repo las declara *"árbitro mientras no exista
+   0014"*. **Ese comentario del repo es falso** y el plan lo copió: R-H espeja la **entrada** del motor
+   contra el esquema de Módulo 1, y 0014 persiste la **salida**. Retirarlas borraría dos reglas vivas.
+2. 🔴 `retiro_de_socio` y `aporte_de_socio` están marcados `sin_evidencia_en_el_roster` y sin embargo
+   `motor.ts:147` los produce vía capa C. Un check derivado de los "habilitados" **rechazaría toda la
+   capa C**. El check va sobre los 31.
+3. 🔴 `version` dentro de `CONCEPTOS_CANONICOS` rompe el `as const satisfies` de `catalogo.ts:1392`,
+   que **es** la garantía PROP-1 por compilador. Va como constante hermana.
+
+### Y un falso verde en el test propio, encontrado por mutación
+
+La primera versión de la predicción (4) de P0 —"agregar un concepto de Santander no mueve el digest de
+Galicia"— **pasaba en verde con el digest mutado a global**. Ampliar un léxico no agrega filas al
+catálogo, así que no ejercía nada. Reescrita sobre la propiedad que sí sostiene el escenario: *la
+proyección de un banco no puede contener un concepto que ese banco no alcanza*. Re-mutada: ahora la mata.
+Sin mutar, P0 habría cerrado con un test decorativo en su punto más importante.
+
+### Qué se construyó
+
+**Nuevo:** `packages/contabilidad/src/nucleo/version.ts` (proyección semántica + `digestDeBanco`) +
+`tests/version.test.ts` (8) · `packages/data/migrations/0014_reconocimiento_persistido.sql`
+(`reconocimiento_movimiento` + `reconocimiento_candidato`) ·
+`packages/contabilidad/scripts/version-del-motor.ts` (el trinquete) + `tests/version-del-motor.test.ts`
+(13, siete de ellos ejercitando el **rojo**) + `version-del-motor.json` (libro append-only) ·
+`tests/dominios-cerrados.test.ts` (18).
+
+**Modificado:** `nucleo/tipos.ts` (`CLASES_RECONOCIMIENTO` nueva; se borraron las notas
+"TODAVÍA NO TIENE CHECK") · `nucleo/reconocimiento.ts` (el discriminante ahora se **deriva** con
+`Extract`) · `clasificacion-campos.ts` (las 2 tablas, todas sus columnas) · `catalogo.test.ts` (8 filas
+en `DOMINIOS_CERRADOS`) · `aislamiento-modulo-1.test.ts` + `tests/ayuda.ts` (truncate) · `package.json`.
+**Borrado:** `tests/dominios-pendientes.test.ts`, reemplazado por `dominios-cerrados.test.ts`, que cubre
+la dirección **código → base** que nunca tuvo guard.
+
+### Medido
+
+`pnpm verificar` en verde: **56 archivos, 1325 tests, 0 fallas** (7 `todo` preexistentes). Base al
+arrancar: 54 / 1287. Los 8 dominios cerrados verificados contra `pg_constraint` con el patrón anclado
+real del gate — `reconocimiento_forma_chk` correctamente **fuera** (lleva un `case`).
+
+### Lo que falta para cerrar 0014
+
+La **capa de escritura**: `nucleo/persistible.ts` (`aFilaPersistible` + `ReconocimientoFinal`),
+`escrituras.ts`/`lecturas.ts` en `packages/data`, la regla **R-K** que vigila el espejo plano, los tests
+de aislamiento de las dos tablas nuevas, y el CLI. `backend-dev` ya entregó el diseño completo.
+
+### Deuda declarada
+
+- 🔴 **`EntradaLexico['id']` es `string` a secas**, así que la protección que pidió
+  `seguridad-datos-financieros` ("aceptar solo el tipo literal") **es vacua tal como se escribió**. Se
+  cierra en la capa de escritura con marca de tipo + `Set.has` de **pertenencia** + el id que no entra
+  por parámetro. Y el error **no lleva el valor**: si vino de la glosa, meterlo en el mensaje lo filtra
+  al log.
+- **`recalculo_disponible` no tiene productor** y la regla de `05` §5.2 (*"un reconocimiento con decisión
+  humana **registrada** no se recalcula solo"*) es **vacua** hoy: no existe tabla de decisiones
+  registradas. Disparador: la guarda tiene que existir **antes** que la cola de revisión.
+- **`on delete restrict` cambia el comportamiento de la re-ingesta** — borrar un movimiento ya
+  reconocido, o su lote, ahora falla. Confirmado por el titular como coherente con "reprocesar, no
+  editar".
+- **La tabla de presencia de evidencia por motivo es una foto de `motor.ts` de hoy** y nada la ata. El
+  test que la ataría (`forma-persistible.test.ts`) va con la capa de escritura.
+
+---
+
 ## 2026-08-13 (51) — Módulo 2, Capa C: resolución de contrapartida (socio vs. tercero). `pnpm verificar` en verde. **Sin commitear** (rama `feat/capa-c-contrapartida`, el usuario commitea después).
 
 **Herramienta:** Claude Code. Plan `adaptive-herding-pillow` (reescrito para esta etapa — reemplaza al
