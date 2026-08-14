@@ -161,3 +161,233 @@ export async function bajaDeSocio(
   logger.info('alta_socio.baja', { cliente_id: pedido.clienteId, socio_id: id });
   return { socioId: id };
 }
+
+
+// -----------------------------------------------------------------------------
+// Reconocimiento del motor (migración 0014) — append-oriented, con supersesión
+// -----------------------------------------------------------------------------
+
+/**
+ * Espejo PLANO de `FilaDeReconocimiento` (`packages/contabilidad/src/nucleo/persistible.ts`). NO se
+ * importa: R-A lo prohíbe con un barrido de TEXTO, así que `import type` tampoco sirve.
+ *
+ * Eso no reabre la discusión de la Ronda 1: el mapeo del TIPO SUMA vive del otro lado y lo arbitra el
+ * compilador (`switch` exhaustivo con `never`). Lo que queda acá es la lista de parámetros del SQL,
+ * exactamente como `PedidoDeAltaDeSocio`. El adaptador entre los dos vive en `apps/cli` —la única capa
+ * que importa los dos paquetes, mismo precedente que `comoSocioDelPadron`— y **R-K**
+ * (`packages/data/tests/reglas-de-codigo.test.ts`) vigila que las dos listas de nombres no diverjan:
+ * sin esa regla, un campo agregado de un solo lado deja al adaptador compilando y a la columna sin
+ * escribirse nunca.
+ *
+ * Los dominios van como `string`: este paquete no puede importar las uniones, y el árbitro pasa a ser
+ * la base — es el traspaso que `nucleo/tipos.ts` anticipa ("hasta 0014 el árbitro era el test de
+ * dominios pendientes"). Los ocho `check` de 0014 más `DOMINIOS_CERRADOS` reatan las uniones de
+ * TypeScript a las columnas.
+ */
+export type PedidoDePersistirReconocimiento = {
+  readonly clienteId: string;
+  readonly movimientoId: string;
+  /**
+   * 🔴 uuid generado EN EL CLIENTE (`randomUUID()`), nunca `default gen_random_uuid()`. El plan de
+   * transacción lo exige: la supersesión escribe `superseded_por = <este uuid>` ANTES de que la fila
+   * exista, y para eso hay que conocerlo de antemano.
+   */
+  readonly reconocimientoId: string;
+  readonly motorDigest: string;
+  readonly clase: string;
+  readonly tipo: string | null;
+  readonly concepto: string | null;
+  readonly polaridad: string | null;
+  readonly lado: string | null;
+  readonly via: string | null;
+  readonly queDecide: string | null;
+  readonly motivoCodigo: string | null;
+  readonly entradaLexicoId: string | null;
+  readonly caracteresMatcheados: number | null;
+  readonly huboCola: boolean | null;
+  readonly candidatos: readonly string[];
+};
+
+export type ResultadoDePersistirReconocimiento =
+  | { readonly estado: 'no_op'; readonly reconocimientoId: string }
+  | { readonly estado: 'creado'; readonly reconocimientoId: string }
+  | { readonly estado: 'supersedido'; readonly reconocimientoId: string; readonly anteriorId: string };
+
+export const CODIGO_DIGEST_YA_EN_LA_CADENA = 'RECON_DIGEST_YA_SUPERSEDIDO' as const;
+
+/**
+ * 🔴 Cuando el digest nuevo coincide con una fila YA SUPERSEDIDA del mismo movimiento. Pasa de verdad:
+ * se revierte un cambio del léxico y el digest vuelve a un valor histórico. Las tres salidas posibles
+ * son malas, y por eso el motor NO elige — se detiene con un código:
+ *
+ *   - no-op → deja ACTIVO el reconocimiento equivocado, que es lo contrario de lo que se pidió
+ *   - insertar igual → viola `uq_recon_determinante`
+ *   - "des-supersedir" el viejo → muta la cadena append-oriented y rompe su linealidad
+ *
+ * Es la misma forma de "la ausencia se representa, no se rellena" que gobierna todo este módulo: hay
+ * una decisión que el motor no puede tomar, y la representa en vez de adivinarla.
+ */
+export class ReconocimientoDigestYaEnLaCadenaError extends Error {
+  // Asignadas a mano, no como parameter properties (type-stripping de Node).
+  readonly codigo = CODIGO_DIGEST_YA_EN_LA_CADENA;
+  readonly clienteId: string;
+  readonly movimientoId: string;
+
+  constructor(clienteId: string, movimientoId: string) {
+    super(
+      'El digest del motor ya figura en la cadena de reconocimientos de este movimiento, en una fila ' +
+        'superseded. Volver a un digest histórico (por ejemplo revirtiendo un cambio del léxico) es ' +
+        'una decisión humana, no un reproceso. ' +
+        `cliente ${clienteId}, movimiento ${movimientoId}.`,
+    );
+    this.name = 'ReconocimientoDigestYaEnLaCadenaError';
+    this.clienteId = clienteId;
+    this.movimientoId = movimientoId;
+  }
+}
+
+/**
+ * Persiste UN reconocimiento. Se escribe UNA sola vez, DESPUÉS de las dos capas (B y C): la tabla es
+ * append-oriented y capa C reescribe `clase` y `tipo` — un cambio de `clase` flipearía la columna
+ * generada `es_propuesta` y satisfaría en silencio la FK de tres columnas que `05` §5.1 diseñó para
+ * impedirlo. Del lado del motor eso lo hace estructural `ReconocimientoFinal`.
+ *
+ * 🔴 El orden de las cuatro consultas NO es intercambiable:
+ *
+ *   1. lock de la fila ACTIVA (`for update`) — serializa dos reprocesos concurrentes del mismo
+ *      movimiento. Sin él, los dos leen "no hay activa" y los dos insertan.
+ *   2. no-op: mismo digest ⇒ cero filas escritas (`05` §5.2). Va ANTES del paso 3 a propósito: si se
+ *      dejara al `on conflict do nothing` del insert, el paso 3 ya habría dejado la FK diferida
+ *      apuntando a una fila que nunca va a existir, y la transacción entera abortaría en el `commit`
+ *      con un error de FK — correcto pero ilegible.
+ *   3. supersesión ANTES del insert: al revés, las dos filas quedarían activas a la vez y el índice
+ *      único parcial `where superseded_por is null` dispara en el acto (un índice no es diferible).
+ *      Acá la FK apunta a una fila inexistente: por eso `fk_recon_superseded` es DEFERRABLE.
+ *   4. insert. El `on conflict do nothing` es la guarda de carrera; si dispara, el digest ya está en
+ *      la cadena y se corta con código.
+ */
+export async function persistirReconocimiento(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoDePersistirReconocimiento,
+): Promise<ResultadoDePersistirReconocimiento> {
+  const activas = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string; motor_digest: string }>(
+      `select id::text as id, motor_digest
+         from reconocimiento_movimiento
+        where cliente_id = $1 and movimiento_id = $2 and superseded_por is null
+        for update`,
+      [pedido.clienteId, pedido.movimientoId],
+    ),
+  );
+  const activa = activas[0];
+
+  if (activa && activa.motor_digest === pedido.motorDigest) {
+    return { estado: 'no_op', reconocimientoId: activa.id };
+  }
+
+  if (activa) {
+    const cerradas = await conErroresTraducidos(undefined, () =>
+      tx.consultar<{ id: string }>(
+        `update reconocimiento_movimiento
+            set superseded_por = $3
+          where cliente_id = $1 and id = $2 and superseded_por is null
+          returning id::text as id`,
+        [pedido.clienteId, activa.id, pedido.reconocimientoId],
+      ),
+    );
+    // H-14: RLS sin match da 0 filas, no excepción.
+    if (!cerradas[0]?.id) throw new Error('La supersesión no devolvió id.');
+  }
+
+  const creadas = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string }>(
+      `insert into reconocimiento_movimiento
+         (cliente_id, id, movimiento_id, motor_digest, clase, tipo, concepto, polaridad, lado, via,
+          que_decide, motivo_codigo, evidencia_entrada_lexico_id, evidencia_caracteres_matcheados,
+          evidencia_hubo_cola)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       on conflict (cliente_id, movimiento_id, motor_digest, es_propuesta) do nothing
+       returning id::text as id`,
+      [
+        pedido.clienteId,
+        pedido.reconocimientoId,
+        pedido.movimientoId,
+        pedido.motorDigest,
+        pedido.clase,
+        pedido.tipo,
+        pedido.concepto,
+        pedido.polaridad,
+        pedido.lado,
+        pedido.via,
+        pedido.queDecide,
+        pedido.motivoCodigo,
+        pedido.entradaLexicoId,
+        pedido.caracteresMatcheados,
+        pedido.huboCola,
+      ],
+    ),
+  );
+  const id = creadas[0]?.id;
+  if (!id) throw new ReconocimientoDigestYaEnLaCadenaError(pedido.clienteId, pedido.movimientoId);
+
+  for (const entradaLexicoId of pedido.candidatos) {
+    const fila = await conErroresTraducidos(undefined, () =>
+      tx.consultar<{ id: string }>(
+        `insert into reconocimiento_candidato (cliente_id, reconocimiento_id, entrada_lexico_id)
+         values ($1, $2, $3)
+         returning id::text as id`,
+        [pedido.clienteId, id, entradaLexicoId],
+      ),
+    );
+    if (!fila[0]?.id) throw new Error('El candidato del reconocimiento no devolvió id.'); // H-14
+  }
+
+  return activa
+    ? { estado: 'supersedido', reconocimientoId: id, anteriorId: activa.id }
+    : { estado: 'creado', reconocimientoId: id };
+}
+
+export type ResumenDePersistencia = {
+  readonly creados: number;
+  readonly supersedidos: number;
+  readonly noOp: number;
+};
+
+/**
+ * El lote entero en UNA transacción, y UNA línea de log al final.
+ *
+ * 🔴 Deliberadamente NO hay `logger.info` por movimiento: un lote son miles de filas y ese log es
+ * exactamente el ruido que ADR-0002 H-8 existe para evitar — un rastro donde todo es interesante no
+ * deja ver nada. Mismo criterio que `leerPadronDeSocios`, que no se audita fila por fila. La línea
+ * final lleva conteos y el digest (identidad de CÓDIGO, N1); nunca `tipo` ni `concepto`, que son la
+ * interpretación del movimiento de un cliente y están clasificados N2.
+ */
+export async function persistirReconocimientos(
+  tx: Tx,
+  ctx: ContextoAuditado,
+  args: { readonly clienteId: string; readonly loteIngestaId: string; readonly motorDigest: string },
+  pedidos: readonly PedidoDePersistirReconocimiento[],
+): Promise<ResumenDePersistencia> {
+  let creados = 0;
+  let supersedidos = 0;
+  let noOp = 0;
+
+  for (const pedido of pedidos) {
+    const r = await persistirReconocimiento(tx, ctx, pedido);
+    if (r.estado === 'creado') creados += 1;
+    else if (r.estado === 'supersedido') supersedidos += 1;
+    else noOp += 1;
+  }
+
+  logger.info('reconocimiento.persistido', {
+    cliente_id: args.clienteId,
+    lote_ingesta_id: args.loteIngestaId,
+    motor_digest: args.motorDigest,
+    creados,
+    supersedidos,
+    no_op: noOp,
+  });
+
+  return { creados, supersedidos, noOp };
+}

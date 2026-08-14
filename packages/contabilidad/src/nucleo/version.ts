@@ -56,7 +56,7 @@ import type { LexicoDeBanco } from './lexico.ts';
  * resultado (`pnpm motor:version:aceptar --sin-bump --motivo "…"`), que queda commiteada y la lee una
  * persona en el diff. Ver `scripts/version-del-motor.ts`.
  */
-export const VERSION_DEL_MOTOR = 1;
+export const VERSION_DEL_MOTOR = 2;
 
 /**
  * Las claves que son EVIDENCIA, no decisión. Cambiarlas no puede alterar lo que `reconocer()`

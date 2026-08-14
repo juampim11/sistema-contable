@@ -17,6 +17,23 @@
         "reconocimiento.ts": "614150d86ac9fd0a",
         "tipos.ts": "27b02d85a401ce3c"
       }
+    },
+    {
+      "version": 2,
+      "aceptada_en": "2026-08-14",
+      "bump": true,
+      "motivo": "entra nucleo/persistible.ts: decide QUE se escribe para un digest dado, asi que forma parte del motor",
+      "archivos": {
+        "contrapartida.ts": "561dad02eb9cb542",
+        "indice.ts": "c93529e3a0044adb",
+        "lexico.ts": "e3ebbde02837b6c7",
+        "matcher.ts": "0a15006f1992cf32",
+        "motor.ts": "84013b228ebec162",
+        "normalizacion.ts": "17d7ecc738aad461",
+        "persistible.ts": "5f4c60577c86fdc1",
+        "reconocimiento.ts": "614150d86ac9fd0a",
+        "tipos.ts": "27b02d85a401ce3c"
+      }
     }
   ]
 }

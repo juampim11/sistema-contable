@@ -35,7 +35,8 @@
     "recapturar:conceptos": "node apps/cli/src/recapturar-conceptos.ts",
     "backfill:contraparte": "node apps/cli/src/backfill-contraparte.ts",
     "alta:socio": "node apps/cli/src/alta-socio.ts",
-    "resolver:contrapartida": "node apps/cli/src/resolver-contrapartida.ts"
+    "resolver:contrapartida": "node apps/cli/src/resolver-contrapartida.ts",
+    "reconocer:lote": "node apps/cli/src/reconocer-lote.ts"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

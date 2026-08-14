@@ -543,12 +543,18 @@ describe('R-F — `clase: \'propuesta\'` solo se construye en nucleo/motor.ts', 
    */
   const PERMITIDOS_PROPUESTA = [
     'packages/contabilidad/src/nucleo/motor.ts', // el constructor — R-F en persona
-    'packages/contabilidad/src/nucleo/reconocimiento.ts', // la declaración de TIPO (`readonly clase: 'propuesta'`)
+    'packages/contabilidad/src/nucleo/reconocimiento.ts', // docblock del tipo; el discriminante ya se deriva con `Extract`
     'packages/contabilidad/src/nucleo/lexico.ts', // docblocks que citan la frase en prosa
     'packages/contabilidad/tests/',
     // Test del CLI de dry-run de capa C (P6, adaptive-herding-pillow): construye Reconocimiento
     // sintéticos para probar agregarMatriz() sin base — mismo motivo que packages/contabilidad/tests/.
     'apps/cli/tests/resolver-contrapartida.test.ts',
+    // Aislamiento de 0014: construye el PEDIDO de persistencia a mano —no un `Reconocimiento`— para
+    // ejercitar los constraints de la base (forma, FK de tres columnas, digest mal formado) sin pasar
+    // por el motor. Mismo motivo que la línea de arriba: el riesgo que R-F cubre —saltear la
+    // degradación de `pendienteDeLaura` en código de producción— no existe en un test que apunta
+    // justamente a que la base rechace las filas mal formadas.
+    'packages/data/tests/aislamiento-modulo-2.test.ts',
   ];
   const PATRON_PROPUESTA = /clase:\s*'propuesta'/;
 
@@ -780,5 +786,60 @@ describe('la marca PadronConsultado se construye en UN solo lugar (Ronda 1, segu
   });
 });
 
+// -----------------------------------------------------------------------------
+describe('R-K — FilaDeReconocimiento espeja PedidoDePersistirReconocimiento (0014)', () => {
+  /**
+   * `packages/data` no puede importar `contabilidad` (R-A, y el barrido es de TEXTO: `import type`
+   * tampoco pasa), así que la lista de campos vive en dos archivos.
+   *
+   * El MAPEO del tipo suma NO está duplicado —vive solo en `nucleo/persistible.ts` y lo arbitra el
+   * compilador con un `switch` exhaustivo— pero la lista de NOMBRES sí, y una deriva ahí es
+   * silenciosa: si `contabilidad` agrega un campo y `data` no, el adaptador de `apps/cli` sigue
+   * compilando y la columna nueva no se escribe nunca. Nada se pone rojo.
+   *
+   * Mismo mecanismo que R-H y R-H bis, y acá el substring alcanza de verdad: es una lista plana de
+   * nombres fijos, no una unión discriminada. (Eso es exactamente lo que `arquitecto-software`
+   * objetaba en la Ronda 1 — un espejo sobre un tipo suma NO es verificable así, y por eso el mapeo
+   * se movió a `packages/contabilidad`.)
+   */
+  const CAMPOS_ESPEJADOS = [
+    'clase',
+    'tipo',
+    'concepto',
+    'polaridad',
+    'lado',
+    'via',
+    'queDecide',
+    'motivoCodigo',
+    'entradaLexicoId',
+    'caracteresMatcheados',
+    'huboCola',
+    'candidatos',
+  ];
 
+  const PERSISTIBLE = join(RAIZ, 'packages/contabilidad/src/nucleo/persistible.ts');
+  const ESCRITURAS = join(RAIZ, 'packages/data/src/contabilidad/escrituras.ts');
 
+  it('cada campo de FilaDeReconocimiento existe tal cual en el pedido de packages/data', () => {
+    const persistible = readFileSync(PERSISTIBLE, 'utf8');
+    const escrituras = readFileSync(ESCRITURAS, 'utf8');
+
+    for (const campo of CAMPOS_ESPEJADOS) {
+      expect(persistible.includes(campo), `«${campo}» no está en nucleo/persistible.ts`).toBe(true);
+      expect(
+        escrituras.includes(campo),
+        `«${campo}» no está en data/src/contabilidad/escrituras.ts — el campo existe del lado del ` +
+          'motor y su columna no se escribe nunca',
+      ).toBe(true);
+    }
+  });
+
+  it('la lista de campos espejados no está muerta: los dos archivos existen y son grandes', () => {
+    // Anti-falso-verde: si una ruta se rompe, `readFileSync` explota; si el archivo quedara vacío,
+    // todos los `includes` darían false y el test de arriba ya sería rojo. Esto cubre el caso
+    // intermedio: un archivo que existe pero perdió el tipo.
+    expect(readFileSync(PERSISTIBLE, 'utf8')).toContain('FilaDeReconocimiento');
+    expect(readFileSync(ESCRITURAS, 'utf8')).toContain('PedidoDePersistirReconocimiento');
+    expect(CAMPOS_ESPEJADOS.length).toBeGreaterThan(8);
+  });
+});
