@@ -1,0 +1,22 @@
+{
+  "_comentario": "Trinquete de VERSION_DEL_MOTOR. Cada entrada es una huella de packages/contabilidad/src/nucleo/*.ts (sha256 normalizado a LF, 16 hex), APENDADA nunca reescrita. El gate vive en packages/contabilidad/tests/version-del-motor.test.ts. Se apenda con pnpm motor:version:aceptar; una entrada con \"bump\": false declara que ese cambio de codigo NO puede alterar ningun resultado persistido, y su \"motivo\" es lo que revisa una persona en el diff del PR.",
+  "algoritmo": "sha256-lf-16",
+  "entradas": [
+    {
+      "version": 1,
+      "aceptada_en": "2026-08-14",
+      "bump": false,
+      "motivo": "linea de base del trinquete: primera huella de nucleo/ commiteada, VERSION_DEL_MOTOR=1, sin cambio de comportamiento",
+      "archivos": {
+        "contrapartida.ts": "561dad02eb9cb542",
+        "indice.ts": "c93529e3a0044adb",
+        "lexico.ts": "e3ebbde02837b6c7",
+        "matcher.ts": "0a15006f1992cf32",
+        "motor.ts": "84013b228ebec162",
+        "normalizacion.ts": "17d7ecc738aad461",
+        "reconocimiento.ts": "614150d86ac9fd0a",
+        "tipos.ts": "27b02d85a401ce3c"
+      }
+    }
+  ]
+}

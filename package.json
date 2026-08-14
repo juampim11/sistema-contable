@@ -21,6 +21,8 @@
     "verificar": "pnpm typecheck && pnpm barrido && pnpm fixtures:verificar && pnpm test",
     "barrido": "node tools/barrido-fuga.ts",
     "barrido:aceptar": "node tools/barrido-fuga.ts --aceptar",
+    "motor:version": "node packages/contabilidad/scripts/version-del-motor.ts",
+    "motor:version:aceptar": "node packages/contabilidad/scripts/version-del-motor.ts --aceptar",
     "hooks:instalar": "git config core.hooksPath .githooks",
     "fixtures:generar": "node tools/generar-fixtures.ts",
     "fixtures:verificar": "node tools/verificar-fixtures.ts",

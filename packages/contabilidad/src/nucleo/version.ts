@@ -42,11 +42,19 @@ import type { LexicoDeBanco } from './lexico.ts';
 /**
  * Versión del CÓDIGO del motor — lo único que no se puede derivar de los datos.
  *
- * Cubre `matcher.ts`, `normalizacion.ts`, `indice.ts` y `motor.ts`: un cambio en cualquiera de esos
- * cuatro puede alterar el resultado sin tocar un solo dato. Es un contador manual, y su olvido es el
- * modo de falla conocido — por eso NO se deja librado a la disciplina: el gate compara el hash real
- * de esos cuatro archivos contra el artefacto commiteado (`version-del-motor.json`), y un cambio sin
- * bump se pone ROJO. Mismo idiom que `tools/barrido-aceptados.json` y que el hash de `migrar.ts`.
+ * Cubre TODO `nucleo/` salvo `catalogo.ts` (son DATOS, ya cubiertos por `digestDeBanco` POR BANCO) y
+ * este mismo archivo (es el que mide). 🔴 POR EXCLUSIÓN, no por inclusión — el mismo argumento que
+ * `CLAVES_DE_EVIDENCIA`, unos renglones más abajo: con una lista de nombres, un archivo nuevo de
+ * `nucleo/` nace OLVIDADO. La lista de cuatro que decía este docblock ya se quedaba corta contra
+ * `contrapartida.ts`, cuya regla de uniformidad de pepper YA cambió una vez y decide la `clase` y el
+ * `tipo` de la fila que `0014` persiste.
+ *
+ * Es un contador manual, y su olvido es el modo de falla conocido — por eso no se deja librado a la
+ * disciplina: `tests/version-del-motor.test.ts` compara la huella real contra el artefacto
+ * commiteado (`version-del-motor.json`) y un cambio sin aceptar se pone ROJO. La aceptación es un
+ * TRINQUETE: exige bump, o una declaración escrita de por qué ese cambio no puede alterar ningún
+ * resultado (`pnpm motor:version:aceptar --sin-bump --motivo "…"`), que queda commiteada y la lee una
+ * persona en el diff. Ver `scripts/version-del-motor.ts`.
  */
 export const VERSION_DEL_MOTOR = 1;
 
