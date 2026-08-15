@@ -3,7 +3,14 @@
 # el historial y listo (ADR-0002 §E.4.8). Esta lista existe para no llegar a eso.
 .env
 .env.*
-!.env.example
+# 🔴 `!.env.example` ESTUVO ACÁ y es el incidente #3 (`docs/seguridad/registro-incidentes.md`).
+# La excepción tenía sentido — un archivo de ejemplo documenta qué variables hacen falta — pero el
+# archivo se llenó de valores REALES, no de marcadores, y viajó a `origin/main` de un repositorio
+# PÚBLICO con la contraseña del dueño del esquema (superusuario) y la de `app_job` (BYPASSRLS).
+# Las mismas que seguían vivas en el piloto.
+# La excepción no vuelve mientras el archivo tenga valores: si algún día se quiere de nuevo un
+# template trackeado, va con marcadores (`<poner-una-contraseña>`) y con un gate que lo verifique.
+.env.example
 *.pem
 *.key
 *.crt
