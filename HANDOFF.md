@@ -6,6 +6,87 @@
 
 ---
 
+## 2026-08-15 (57) — `0016_path_coherente.sql` aplicada al **PILOTO**, con confirmación explícita del titular. Verificada sin drift y con el trigger **disparando**.
+
+**Herramienta:** Claude Code. Se escribe **en el momento**, como manda §4 — es la lección que ya se
+pagó dos veces (`0011` y `0012` quedaron solo en local).
+
+**Confirmación del titular, textual:** *"Aplicá 0016 al piloto — runbook de HANDOFF(56), verificando
+el hash 5292b9775d3b5cd6 contra el archivo local antes de correr nada, y el chequeo de coherencia
+antes y después como está previsto. Confirmalo en HANDOFF en el momento, como siempre. **#3 queda
+para mañana, sin excepción.**"*
+
+🔴 **El incidente #3 (credenciales en repo público) NO se tocó.** Sigue abierto y sin rotar, por
+decisión explícita. Es lo primero de mañana.
+
+---
+
+### 1. Antes de correr nada
+
+| Verificación | Resultado |
+|---|---|
+| Hash del archivo local vs. el autorizado | `5292b9775d3b5cd6` = `5292b9775d3b5cd6` ✅ |
+| Base y usuario | `sistema_contable_piloto`, dueño del esquema |
+| Última migración aplicada | `0015_search_path_pg_temp.sql` |
+| ¿`0016` ya estaba? | **No** |
+| `app.verificar_coherencia_path()` **antes** | **0** |
+| Nodos | 1 estudio + 3 clientes — **coincide con `HANDOFF` (45)** |
+| Triggers en `tenant_node` | 3 |
+
+### 2. Después
+
+| Verificación | Resultado |
+|---|---|
+| Hash registrado en piloto vs. en local | `5292b9775d3b5cd6` = `5292b9775d3b5cd6` — **sin drift** |
+| `app.verificar_coherencia_path()` **después** | **0** |
+| Trigger nuevo | `trg_tenant_node_path_coherente`: `constraint=true deferrable=true initdeferred=true` |
+| Triggers en `tenant_node` | 4 (los 3 de antes + el nuevo; **ninguno reemplazado**) |
+| `search_path` de `app.exigir_path_coherente()` | `pg_catalog, public, app, pg_temp` — **cumple R10** (incidente #1) |
+| Nodos | 1 estudio + 3 clientes — **sin cambios** |
+
+### 3. 🔴 Y que DISPARA, no que existe
+
+Verificar que el trigger *está* es exactamente el chequeo de presencia que R13 y R10 hacían mientras
+el agujero seguía abierto. Así que se probó el comportamiento **en el piloto mismo**:
+
+```
+DISPARO -> tenant_node <uuid de la sonda>: path incoherente con parent_id
+filas sonda que quedaron: 0 (limpio)
+INCOHERENCIAS finales   : 0
+```
+
+**Cómo se hizo sin riesgo, y queda escrito para que se pueda auditar:** se insertó un nodo **nuevo**
+(`ZZZ SONDA 0016`) dentro de una transacción que **siempre termina en `rollback`**, se le forzó un
+`path` incoherente con el GUC `app.reparentando` prendido, y se hizo `set constraints all immediate`
+para forzar el chequeo diferido. **Ninguna fila de cliente se leyó, modificó ni borró.** El único
+efecto residual es un valor consumido de la secuencia de `nid`. Verificado después del rollback: cero
+filas sonda, cero incoherencias.
+
+### 4. Lo que NO se hizo, declarado
+
+- **No se ejecutó el ataque completo contra el piloto.** Habría requerido el `user_id` de un socio
+  real y un `update` sobre un nodo de cliente real. El mecanismo ya está probado en local con las 4
+  mutaciones, la migración es **byte por byte la misma** (hash verificado en las dos puntas), y la
+  sonda de arriba prueba que el trigger dispara acá. Se prefirió no simular una escalada sobre datos
+  de un cliente.
+- **`0016` no cierra el incidente #2 en `registro-incidentes.md`.** El control existe y está
+  verificado en las dos bases, y **R36** ya está numerada en `ADR-0002` §B.1 — o sea que la regla 3 de
+  esa bitácora está satisfecha. Se deja el cierre formal para la ronda de revisión, por la lección de
+  la entrada (55): **la marca de «cerrado» del #1 se puso una vez con la regla escrita pero sin pasar
+  por revisión, y estaba mal.** No se repite el atajo.
+- **Nada pusheado.** 80 commits locales; la rama no tiene upstream.
+
+### Estado
+
+Local y piloto **al mismo nivel de esquema** (`0016`), las dos con 0 incoherencias. `pnpm verificar`:
+59 archivos, 1360 tests, 0 fallas.
+
+**Mañana, en orden:** (1) incidente **#3** — rotar las cuatro credenciales, que es lo más grave que
+hay abierto; (2) cerrar formalmente el **#2**; (3) `0017`, el determinante de idempotencia, que sigue
+frenado.
+
+---
+
 ## 2026-08-15 (56) — 🔴 Incidente **#3**: credenciales en un repo PÚBLICO. Incidente **#2** con fix listo en local (`0016`), sin aplicar al piloto. Todo esperando confirmación.
 
 **Herramienta:** Claude Code. **Nada de esto está pusheado ni aplicado al piloto.** Las dos acciones
