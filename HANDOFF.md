@@ -6,6 +6,155 @@
 
 ---
 
+## 2026-08-15 (55) — Ronda de cierre del incidente #1: R10 estuvo mal **dos veces**. Cerrado en la tercera redacción. Y aparece el **incidente #2**.
+
+**Herramienta:** Claude Code. Cierra la entrada (54), que quedó diciendo "incidente #1 **NO cerrado**"
+— hoy está **cerrado**, y esta entrada es la que lo dice. Ronda completa: `qa-automation` (worktree
+aislado + base descartable), `tester`, `code-reviewer`.
+
+---
+
+### 1. 🔴 Lo más importante: la regla que cerraba el incidente estaba mal, y la primera corrección también
+
+La entrada (54) dejó R10 reescrita como *"`search_path` **terminado** en `pg_temp`"*. **También estaba
+mal.** `qa-automation` lo encontró por mutación, y se verificó de forma independiente con
+`current_schemas(true)` contra Postgres real:
+
+```
+search_path = pg_catalog, public, app, pg_temp  ->  pg_catalog | public | app | pg_temp_N   SEGURO
+search_path = pg_temp, public, app, pg_temp     ->  pg_catalog | pg_temp_N | public | app   VULNERABLE
+search_path = pg_temp                           ->  pg_catalog | pg_temp_N                  VULNERABLE
+```
+
+**PostgreSQL resuelve por PRIMERA aparición** y descarta las repetidas. Las dos configuraciones
+vulnerables **terminan** en `pg_temp` — o sea que la R10 corregida las daba **verde**, y las dos leen
+la trampa plantada exactamente igual que el patrón pre-`0015` (medido: 777 filas de una temporal, con
+el cuerpo sin calificar).
+
+Es **la misma falla que motivó la reescritura, cometida de nuevo un renglón más abajo**: medir la
+*forma* del `search_path` en vez de su *efecto*. Tres redacciones de la misma regla, dos malas.
+
+**Enunciado final (R10):** la **primera** aparición de `pg_temp` es la **última posición**, y hay al
+menos **dos** elementos. Sobre `prokind in ('f','p')` — una `procedure` tiene cuerpo y lee relaciones
+igual que una función. Exención de `current_user_id()` nominada por **esquema + nombre + aridad**, no
+por `proname` suelto.
+
+**Consecuencia de proceso, y va escrita porque es el aprendizaje real:** la marca de `Cerrado: SÍ` del
+incidente #1 se puso con la regla **escrita pero no mutada**. Eso es, literalmente, el error que el
+propio incidente documenta. La fila de `registro-incidentes.md` lo dice con esas palabras: *"la primera
+marca de cerrado fue prematura"*. **Una regla no cuenta como control hasta que se probó rompiéndola.**
+
+### 2. Las 10 mutaciones que quedaban verdes
+
+40 mutaciones contra base propia (migraciones `0001`→`0015` de cero). Diez verdes indebidas al empezar,
+**cero al final**. Además de las dos de arriba:
+
+| Mutación | Por qué importaba |
+|---|---|
+| `grant temporary … to app_request_dev` | 🔴 R10 bis enumeraba `app_request`/`app_job`/`app_firmador` — pero `app_request` es el rol de **grupo** y el que **abre la conexión** es el de login (`APP_DB_USER`). Vector entero reabierto, gate verde. Verificado end-to-end: la sesión creaba `pg_temp.membership` sin ruido. Ahora se barre el clúster: todo rol **no superusuario**, con guarda de vacuidad |
+| Rol nuevo con `TEMPORARY` | Mismo agujero, por el lado del rol que se cree mañana |
+| `public.current_user_id()` con patrón malo | La exención iba por `proname` suelto: exentaba a cualquier función **llamada** así, en cualquier esquema |
+| Sobrecarga `app.current_user_id(text)` | Ídem, por aridad |
+| `create procedure` con patrón malo | `prokind = 'f'` dejaba fuera toda una clase de objeto |
+| Función en esquema nuevo (`reportes`) | El `in ('app','public')` de R10 era una **premisa muda**. Se hizo explícita en **R10 ter**: si aparece un esquema, hay que decidir a mano si entra |
+| Vista y matview en `app` (no `public`) | R8/R9 miraban solo `public`, y `app` es donde vive la plomería de tenancía |
+| Vista con `security_invoker = on` | **Falso positivo**: `reloptions` guarda el booleano tal cual se escribió, y R8 marcaba en rojo una vista **segura**. Un test que grita cuando no pasa nada es un test que alguien apaga |
+
+### 3. `pg-temp-shadowing.test.ts` — la primera cobertura **conductual** del vector
+
+R10/R10 bis/R10 ter son **estáticos**: prueban que el `search_path` está escrito como queremos, no que
+Postgres resuelva los nombres donde creemos. `0001_aislamiento.test.sql` no menciona `pg_temp` en sus
+419 líneas. **No había una sola prueba de comportamiento**, que es exactamente por qué la regla estática
+pudo estar verde con el esquema explotable.
+
+El archivo nuevo planta la trampa de verdad, desde la sesión del **dueño** (después de `0015` §2 ningún
+rol de aplicación puede plantar nada, y el dueño es además el peor caso: las `security definer` corren
+con sus privilegios). Cuatro casos, cada uno con **control de vacuidad exacto** antes de la aserción —
+un test que "no encuentra fuga" porque nunca plantó la trampa es el bug que el archivo existe para no
+repetir. Mutado: **7/7 en rojo**, cada fallo nombra su caso.
+
+> Nota de método, del propio `qa-automation`: su primera corrida del test conductual dio **7/7 verde**
+> porque el script de mutación no había reemplazado el `search_path`. O sea que **el harness de
+> mutación también necesitó verificarse**. Lo reporta él mismo; queda escrito porque es el tipo de
+> detalle que no se cuenta y después nadie sabe cuánto valía la medición.
+
+### 4. `tester`: `0015` sobrevive los seis vectores
+
+- **Shadowing por otra vía** (relación, tipo, función, operador): `app_request_dev` **no tiene `CREATE`
+  en ningún esquema**, ni `create schema`, ni `TEMPORARY`. No puede fabricar el objeto que secuestraría
+  nada.
+- **Re-conceder `TEMPORARY`** — el más importante: con el privilegio devuelto **y la trampa plantada**,
+  las funciones dieron baseline. Prueba que **la mitad (a) —calificar el esquema en los cuerpos—
+  defiende sola**; el `revoke` es defensa en profundidad, no el único muro. Antes esto era una
+  afirmación del encabezado de la migración; ahora está medido.
+- **`current_user_id()` sin `SET`**: no se pudo romper. Con `search_path` de sesión hostil devolvió el
+  valor correcto — anidada, gobierna el `SET` de la función externa; y solo lee `current_setting`
+  (función: `pg_temp` nunca se busca) y castea a `uuid` (tipo: sí se buscaría, pero el atacante no
+  puede crear uno sin `TEMPORARY` ni `CREATE`). **La exención declarada es correcta.**
+- **`reparentar_nodo` / `verificar_coherencia_path`**: `permission denied` con el rol de aplicación.
+  Sin `set role`, sin `security definer` intermedio.
+
+### 5. `code-reviewer`: el SQL se mergea tal cual
+
+Comparó los **siete cuerpos sentencia por sentencia** contra `0001_tenancy.sql`: la única diferencia es
+la calificación del esquema y la cláusula `SET`. Volatilidad, `security definer` y nombres de parámetro
+correctamente re-declarados; `exigir_nodo_cliente` **sigue sin** `security definer`, que era
+intencional. Verificó por su cuenta —sin creerle al reporte anterior— que el `revoke` no rompe ningún
+llamador legítimo. Y confirmó las cinco exclusiones de la documentación: cero datos del piloto, `<un
+usuario real>` como marcador, y **nunca** "no se explotó".
+
+Un racional suyo que corrige el encabezado de `0015`: el comentario dice que `pg_catalog` va primero
+*"no por prolijidad"*, y **eso es falso** — `pg_catalog` ya se busca implícito antes. Lo único que
+neutraliza el secuestro de **tipos** es listar `pg_temp` explícitamente. El comportamiento es correcto;
+el porqué está mal atribuido, y es justo el comentario que alguien podría leer para sacar `pg_temp` del
+path. **Pendiente de corregir** (§7).
+
+### 6. 🔴 Incidente **#2**: `tenant_node.path` se edita a mano con un GUC que prende el atacante
+
+`tester`, atacando el **estado post-fix**, encontró un agujero distinto y pre-existente. Ya está
+asentado en `docs/seguridad/registro-incidentes.md` como incidente **#2**, `Cerrado: NO`.
+
+`app.rechazar_path_manual()` (`0001_tenancy.sql:131-144`) deja editar el `path` cuando el GUC
+`app.reparentando` vale `'on'` — y es un *customized option* de namespace, que **cualquier sesión
+prende** con `set_config`, sin privilegio asociado. No es un control de autorización: es una bandera que
+enciende el propio atacante. La policy `tenant_node_wr` valida **quién** escribe y **qué padre**
+declara, nunca **el valor** del `path`. Y `accessible_tenant_ids()` resuelve el subárbol **por path**.
+
+Es **H-1 reabierta por la puerta que el propio trigger dejó**: el comentario de `0001:118-125` describe
+esta misma fuga con todas las letras. **Agravante:** `reparentar_nodo()` aborta si el árbol queda
+incoherente; por esta vía el `path` corrupto **queda escrito**.
+
+Alcance medido, sin sobrevender: requiere rol `socio`/`admin_plataforma` (un `contador` recibe
+`UPDATE 0`), y la dirección es **push, no pull** — el socio empuja un cliente **propio** al subárbol
+ajeno, exponiendo **ese** cliente. Detección: a diferencia del #1, **acá sí hay rastro**
+(`verificar_coherencia_path()`), y dio **0 en las dos bases**.
+
+**Plan formal propio en curso**, con `dba-data` + `seguridad-datos-financieros` + `security-engineer`.
+
+### 7. Pendiente, y por qué no entró acá
+
+- **Corregir el racional de `pg_catalog`** en el encabezado de `0015` (§5). Es texto, no comportamiento.
+- **Contención del #1 declarada y no hecha**: rotar la contraseña de `app_request_dev`, y el **dueño del
+  esquema es superusuario** en las dos bases — que la entrada (54) llama *"la segunda mitad del
+  impacto"*. `code-reviewer` marca, con razón, que el registro no las menciona en "Acciones".
+- **`pnpm db:seed` está roto contra una base desde cero** (hallazgo lateral de `qa-automation`): la
+  lista enumerada de `truncate` de `sembrar.ts` no incluye `movimiento_contraparte_identificador`, que
+  agregó `0013`. `tests/ayuda.ts` sí la tiene, por eso la suite corre y el runbook no. El diseño
+  enumerado-sin-`cascade` funcionó como se pensó: el olvido es **ruidoso**.
+- **Nada verifica que `0015` esté aplicada al piloto.** El gate no se conecta al piloto. Es la lección
+  que ya se pagó con `0011` y `0012`.
+- **`current_user_id()` sigue exenta sin test propio.** Lo correcto sería afirmar que **se sigue
+  inlineando**: si mañana alguien le agrega un `SET` "por simetría", el +75 % sobre el predicado de RLS
+  de toda tabla de dominio entra sin ruido.
+
+### Estado
+
+`pnpm verificar`: **58 archivos, 1355 tests, 0 fallas** (venía de 57/1350). Incidente **#1 cerrado**;
+incidente **#2 abierto** con plan formal en curso. `0016` (determinante de idempotencia) **sigue
+frenado**.
+
+---
+
 ## 2026-08-15 (54) — 🔴 CRÍTICO: escalada de privilegios por shadowing de `pg_temp` en las funciones de tenancía. `0015_search_path_pg_temp.sql` aplicada a **local Y piloto**. Incidente #1 abierto, **NO cerrado**.
 
 **Herramienta:** Claude Code. Plan `replicated-zooming-pine` (reescrito para esto; CLAUDE.md §3.2,

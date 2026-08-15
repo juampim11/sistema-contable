@@ -308,23 +308,45 @@ describe('R7/R8/R9 — owner, vistas y materializadas', () => {
     expect(conAppJob).toEqual([]);
   });
 
+  /**
+   * 🔴 Dos correcciones, las dos medidas contra la primera vista que se cree:
+   *
+   *   1. **Alcance `app` además de `public`.** Una vista en `app` sobre datos de dominio pasaba
+   *      VERDE (medido). Y `app` es justamente donde vive la plomería de tenancía, o sea el lugar
+   *      más plausible para un `app.v_movimientos_del_cliente`.
+   *   2. **`reloptions` guarda el booleano TAL CUAL se escribió.** `security_invoker = on` queda
+   *      `{security_invoker=on}` y `= 1` queda `{security_invoker=1}` (medido): la comparación
+   *      contra el literal `'security_invoker=true'` marcaba en ROJO una vista SEGURA. Un test que
+   *      grita cuando no pasa nada es un test que alguien apaga.
+   *
+   * Lo que NO hace falta cubrir acá, y también se midió: una vista no es vulnerable al shadowing de
+   * `pg_temp`. La regla de reescritura guarda el OID resuelto al CREAR, así que una trampa plantada
+   * después no la toca; y si la trampa ya está al crearla, PostgreSQL falla fuerte
+   * (`cannot create temporary relation in non-temporary schema`), no la enlaza en silencio.
+   */
   it('R8: toda vista sobre dominio usa security_invoker', async () => {
     const { rows } = await db.query<{ nombre: string; opciones: string[] | null }>(
-      `select c.relname as nombre, c.reloptions as opciones
+      `select n.nspname || '.' || c.relname as nombre, c.reloptions as opciones
          from pg_class c join pg_namespace n on n.oid = c.relnamespace
-        where c.relkind = 'v' and n.nspname = 'public'`,
+        where c.relkind = 'v' and n.nspname in ('public', 'app')`,
     );
-    const mal = rows
-      .filter((f) => !(f.opciones ?? []).some((o) => o.replace(/\s/g, '') === 'security_invoker=true'))
-      .map((f) => f.nombre);
-    expect(mal, 'vistas sin security_invoker=true').toEqual([]);
+    const encendido = (o: string): boolean => {
+      const i = o.indexOf('=');
+      if (i < 0) return false;
+      return (
+        o.slice(0, i).trim() === 'security_invoker' &&
+        ['true', 'on', '1', 'yes'].includes(o.slice(i + 1).trim().toLowerCase())
+      );
+    };
+    const mal = rows.filter((f) => !(f.opciones ?? []).some(encendido)).map((f) => f.nombre);
+    expect(mal, 'vistas sin security_invoker: se ejecutan con los privilegios del DUEÑO').toEqual([]);
   });
 
   it('R9: no hay vistas materializadas sobre dominio (no admiten policies de RLS)', async () => {
     const { rows } = await db.query<{ nombre: string }>(
-      `select c.relname as nombre from pg_class c
+      `select n.nspname || '.' || c.relname as nombre from pg_class c
          join pg_namespace n on n.oid = c.relnamespace
-        where c.relkind = 'm' and n.nspname = 'public'`,
+        where c.relkind = 'm' and n.nspname in ('public', 'app')`,
     );
     expect(rows.map((f) => f.nombre), 'materializadas: el contenido queda cross-tenant').toEqual([]);
   });
@@ -350,33 +372,56 @@ describe('R10/R11 — funciones SECURITY DEFINER', () => {
    *      plantilla de ADR-0001 §5 y vive en 15 tablas de dominio. Un R10 acotado a `prosecdef`
    *      seguiría verde con ella desprotegida: la misma falla, movida un renglón.
    *
-   * El parseo va por `string_to_array` + último elemento + `btrim`, no por `like '%pg_temp'`: ese
-   * `like` se rompe con comillas o espacios, y `proconfig` guarda la forma canónica.
+   * El parseo va por `string_to_array` + posición + `btrim`, no por `like '%pg_temp'`: ese `like` se
+   * rompe con comillas o espacios. Medido: `proconfig` guarda la forma CANÓNICA — `set search_path =
+   * 'pg_catalog', "public" ,  app ,  "pg_temp"` queda `search_path=pg_catalog, public, app, pg_temp`,
+   * así que comillas y espacios de más no llegan hasta acá. Lo que sí llega, y el `like` no veía, es
+   * `"a,pg_temp"` (un solo esquema con una coma adentro): sigue dando ROJO, y tiene que darlo.
+   *
+   * ⚠️ **"Termina en pg_temp" NO alcanza y esa fue la segunda versión equivocada de esta regla.**
+   * PostgreSQL resuelve por PRIMERA aparición, así que `pg_temp, public, app, pg_temp` deja pg_temp
+   * PRIMERO y `search_path = pg_temp` también. Los dos pasaban verde y los dos leen la trampa —
+   * verificado leyendo 777 filas plantadas, exactamente igual que el patrón pre-0015. La condición
+   * es: la primera aparición de `pg_temp` tiene que ser el ÚLTIMO elemento, y no el único.
    */
-  it('R10: toda función de app/public neutraliza pg_temp (search_path terminado en pg_temp)', async () => {
+  it('R10: toda función de app/public neutraliza pg_temp (primera aparición de pg_temp = último elemento)', async () => {
     const { rows } = await db.query<{ nombre: string; search_path_actual: string }>(
       `select n.nspname || '.' || p.proname as nombre,
               coalesce(sp.valor, '(sin search_path)') as search_path_actual
          from pg_proc p
          join pg_namespace n on n.oid = p.pronamespace
          left join lateral (
+           -- Si alguna vez hubiera dos entradas 'search_path=', la que aplica en runtime es la
+           -- ULTIMA (se aplican en orden). 'limit 1' sin 'order by' tomaba una cualquiera.
            select right(c, -length('search_path=')) as valor
-             from unnest(coalesce(p.proconfig, '{}'::text[])) c
-            where c like 'search_path=%' limit 1
+             from unnest(coalesce(p.proconfig, '{}'::text[])) with ordinality as e(c, i)
+            where c like 'search_path=%'
+            order by i desc limit 1
          ) sp on true
          left join lateral (
-           select btrim(e) as ultimo
-             from unnest(string_to_array(sp.valor, ',')) with ordinality as t(e, i)
-            order by i desc limit 1
-         ) u on true
+           select count(*) as elementos,
+                  min(i) filter (where btrim(t) = 'pg_temp') as primer_pg_temp
+             from unnest(string_to_array(sp.valor, ',')) with ordinality as u(t, i)
+         ) pos on true
         where n.nspname in ('app', 'public')
-          and p.prokind = 'f'
+          -- 'p' = PROCEDURE. Una procedure tiene cuerpo y lee relaciones igual que una funcion:
+          -- acotar a 'f' dejaba fuera de R10 a toda una clase de objeto. ('a'/'w' no tienen cuerpo.)
+          and p.prokind in ('f', 'p')
           -- EXENCION UNICA Y DOCUMENTADA: app.current_user_id() no lee ninguna relacion ni tipo
           -- (solo current_setting), y pg_temp NUNCA se busca para nombres de funcion. Y una
           -- clausula SET inhabilitaria su inlining dentro de has_role_on y de las policies:
           -- +75 % medido (131 -> ~230 us) sobre el predicado de RLS de TODA tabla de dominio.
-          and p.proname <> 'current_user_id'
-          and coalesce(u.ultimo, '') <> 'pg_temp'
+          -- Va CALIFICADA por esquema y aridad: exentar por 'proname' suelto exime tambien a
+          -- public.current_user_id() y a cualquier sobrecarga app.current_user_id(<args>).
+          and not (n.nspname = 'app' and p.proname = 'current_user_id' and p.pronargs = 0)
+          -- 🔴 NO alcanza con que pg_temp sea el ULTIMO elemento: PostgreSQL resuelve por PRIMERA
+          -- aparicion ('recomputeNamespacePath' descarta las repetidas), asi que
+          -- 'pg_temp, public, app, pg_temp' deja pg_temp PRIMERO — verificado con current_schemas()
+          -- y con la trampa plantada: la funcion lee la temporal, igual que el patron pre-0015.
+          -- La condicion correcta es que la PRIMERA aparicion sea tambien la ULTIMA POSICION, y que
+          -- haya algo ANTES (con 'search_path = pg_temp' a secas, pg_temp es primero y ultimo a la
+          -- vez: tambien lee la trampa, y tambien pasaba verde).
+          and (coalesce(pos.primer_pg_temp, 0) <> pos.elementos or pos.elementos < 2)
         order by 1`,
     );
     expect(
@@ -390,18 +435,52 @@ describe('R10/R11 — funciones SECURITY DEFINER', () => {
    * La otra mitad del cierre de 0015, y la que sobrevive a una función nueva mal escrita: sin
    * privilegio `TEMPORARY` no se puede crear el objeto que shadowea.
    */
-  it('R10 bis: ningún rol de aplicación puede crear tablas temporales', async () => {
+  it('R10 bis: ningún rol NO superusuario puede crear tablas temporales', async () => {
+    /**
+     * 🔴 La lista de tres nombres literales dejaba afuera al rol que la aplicación USA de verdad:
+     * `app_request` es el rol de GRUPO, pero el que se conecta es el de login del entorno
+     * (`APP_DB_USER`, hoy `app_request_dev`). Un `grant temporary` directo sobre él reabría el
+     * vector entero — verificado: la sesión creaba `pg_temp.membership` sin ruido — y este test
+     * seguía verde. Lo mismo con cualquier rol nuevo (`app_rls_owner` ya existe y tampoco estaba).
+     *
+     * La regla real no es "estos tres roles": es que en ESTA base nadie salvo un superusuario
+     * pueda crear un objeto temporal. Se barre el clúster entero, así un rol nuevo entra solo.
+     */
     const { rows } = await db.query<{ rol: string; puede: boolean }>(
       `select rolname as rol,
               has_database_privilege(rolname, current_database(), 'TEMPORARY') as puede
          from pg_roles
-        where rolname in ('app_request', 'app_job', 'app_firmador')`,
+        where not rolsuper and rolname not like 'pg\\_%'
+        order by 1`,
     );
+    expect(rows.length, 'el barrido de roles no puede quedar vacío: sería verde por vacuidad').toBeGreaterThan(0);
     expect(
       rows.filter((r) => r.puede).map((r) => r.rol),
       'un rol de aplicación con TEMPORARY puede plantar una relación en pg_temp y secuestrar lo que ' +
         'lea cualquier función que no la califique. Ver 0015 §2.',
     ).toEqual([]);
+  });
+
+  /**
+   * 🔴 R10 declara su alcance en el `where`: `nspname in ('app','public')`. Ese `in` es correcto HOY
+   * porque son los dos únicos esquemas de dominio — pero es una premisa muda: el día que alguien
+   * cree `reportes` o `analitica`, R10 sigue verde con toda la clase de bug adentro (medido: función
+   * en esquema nuevo con `search_path = public, app` → R10 VERDE).
+   *
+   * Este test hace la premisa explícita: si aparece un esquema, hay que decidir a mano si entra al
+   * barrido de R10 y agregarlo acá. Es el mismo patrón que el `toEqual` exacto de R11.
+   */
+  it('R10 ter: los únicos esquemas de dominio son los que R10 barre', async () => {
+    const { rows } = await db.query<{ nombre: string }>(
+      `select nspname as nombre from pg_namespace
+        where nspname not like 'pg\\_%' and nspname <> 'information_schema'
+        order by 1`,
+    );
+    expect(
+      rows.map((f) => f.nombre),
+      'esquema nuevo: R10 solo barre app y public. Agregalo al `in` de R10 y a esta lista, o ' +
+        'documentá por qué queda afuera. Ver 0015 y el incidente #1.',
+    ).toEqual(['app', 'public']);
   });
 
   it('R11: las únicas SECURITY DEFINER son las dos que leen tenancía', async () => {

@@ -120,7 +120,7 @@ Redactadas para que un test o `code-reviewer` las chequee sin criterio humano. T
 | **R7** | Ninguna relación tiene como **owner** un rol con `BYPASSRLS`. | `pg_class` ⋈ `pg_roles` → 0 filas. | ⏳ pendiente |
 | **R8** | Toda vista sobre tablas con RLS se crea con `security_invoker = true`. Si el Postgres objetivo no lo soporta, **prohibidas las vistas sobre dominio**. | `pg_class.reloptions`. | ⏳ pendiente |
 | **R9** | **Prohibidas las vistas materializadas sobre tablas de dominio.** Una matview **no admite policies**: su contenido queda cross-tenant. Para materializar un agregado, se usa una **tabla real con columna de tenant + RLS**, refrescada por evento. | `pg_class where relkind='m'` → 0 (o whitelist N0). | ⏳ pendiente |
-| **R10** | **Toda función de `app`/`public` —`security definer` Y `invoker`— declara `search_path` terminado en `pg_temp`.** Única exención: una función que no lea ninguna relación **ni declare ningún tipo** (hoy, solo `app.current_user_id()`), y va nominada en el test. | `pg_proc.proconfig`: último elemento del `search_path` = `pg_temp`. Más `has_database_privilege(rol, db, 'TEMPORARY')` = `false` para los roles de aplicación (R10 bis). | ✅ **verificado**, reescrita por el incidente #1 |
+| **R10** | **Toda función o procedure de `app`/`public` —`security definer` Y `invoker`— declara un `search_path` donde `pg_temp` aparece una sola vez, en la última posición, y no es el único elemento.** Única exención: una función que no lea ninguna relación **ni declare ningún tipo** (hoy, solo `app.current_user_id()`), nominada en el test **por esquema, nombre y aridad** — no por nombre suelto. | `pg_proc.proconfig`: la **primera** aparición de `pg_temp` es la **última posición**, y hay al menos dos elementos. Sobre `prokind in ('f','p')`. Más `has_database_privilege(rol, db, 'TEMPORARY')` = `false` para **todo rol no superusuario** de la base (R10 bis), y `app`/`public` como los **únicos** esquemas de dominio (R10 ter). | ✅ **verificado**, reescrita **dos veces** por el incidente #1 |
 | **R11** | Las únicas `security definer` permitidas son `app.accessible_tenant_ids()` y `app.has_role_on()` (leen **tenancía**, no dominio). Otra requiere ADR. | Whitelist por nombre. | ✅ cumplido hoy; test pendiente |
 | **R12** | **FK compuestas tenant-consistentes**: el hijo referencia `(cliente_id, id)` del padre, con `unique (cliente_id, id)` en el padre. Es la **única** integridad de tenant que sobrevive a `BYPASSRLS` y a `COPY`. | Por cada FK entre dos tablas con tenant, la FK incluye la columna de tenant en ambos lados. | ⏳ pendiente — **entra con el Módulo 1** |
 | **R13** | `tenant_node.path` coherente con `parent_id` **siempre**: trigger en `insert` **y** en `update of parent_id`; el `path` no se edita a mano. | Trigger + `app.verificar_coherencia_path()` en CI **y como job en producción**. | ✅ **implementado y verificado** (P1-A/B/C/D) — era el bug H-1 |
@@ -150,8 +150,29 @@ Redactadas para que un test o `code-reviewer` las chequee sin criterio humano. T
 > sobre el predicado de RLS de toda tabla de dominio. No la necesita porque `pg_temp` **nunca** se
 > busca para nombres de función.
 >
+> 🔴 **Segunda reescritura, el mismo día, por la misma causa.** La primera versión de esta regla
+> corregida decía *"`search_path` **terminado** en `pg_temp`"*. También estaba mal, y `qa-automation`
+> lo encontró por mutación: **PostgreSQL resuelve por PRIMERA aparición** y descarta las repetidas.
+> Medido con `current_schemas(true)`:
+>
+> ```
+> search_path = pg_catalog, public, app, pg_temp  →  pg_catalog | public | app | pg_temp_N   SEGURO
+> search_path = pg_temp, public, app, pg_temp     →  pg_catalog | pg_temp_N | public | app   VULNERABLE
+> search_path = pg_temp                           →  pg_catalog | pg_temp_N                  VULNERABLE
+> ```
+>
+> Los dos vulnerables **terminan** en `pg_temp` y pasaban verde, leyendo la trampa plantada igual que
+> el patrón pre-`0015`. Por eso la regla dice **primera aparición = última posición, y al menos dos
+> elementos**: "termina en" describe la *forma* del `search_path`; lo que hay que garantizar es su
+> *efecto*. Es literalmente la misma falla que motivó la reescritura, cometida de nuevo un renglón
+> más abajo — y la evidencia más fuerte que tenemos de que **el corolario de acá abajo no es un
+> adorno retórico**.
+>
 > Corolario para quien escriba la próxima regla: **una regla verificable que mide lo que es fácil de
 > medir, en vez de lo que hay que garantizar, es peor que no tenerla** — porque además da confianza.
+> Y el único método que lo detecta a tiempo es la **prueba por mutación**: las dos versiones malas de
+> R10 se veían perfectamente razonables leyéndolas, y las dos cayeron al primer intento de romperlas
+> a propósito.
 
 ### B.2. Contexto de tenant, pooling y roles de base
 
