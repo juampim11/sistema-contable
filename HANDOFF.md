@@ -6,6 +6,114 @@
 
 ---
 
+## 2026-08-15 (58) — Incidente **#3**: credenciales del piloto **ROTADAS y verificadas**. Y el conjunto expuesto no eran 4: son **9**.
+
+**Herramienta:** Claude Code. Escrita en el momento, con confirmación explícita del titular.
+**Ninguna contraseña se transcribe acá** — se nombran las variables, igual que en las entradas
+anteriores.
+
+---
+
+### 1. 🔴 Antes de rotar: el conjunto expuesto es más grande de lo que decía la instrucción
+
+Se pidió rotar **4**. Comparando `origin/main:.env.example` contra `.env.piloto`, valor por valor y
+sin imprimirlos, resultaron **9 idénticas**:
+
+| Variable | ¿Idéntica a `origin/main`? | Rotada ahora |
+|---|---|---|
+| `POSTGRES_PASSWORD` (dueño del esquema, **superusuario**) | 🔴 sí | ✅ |
+| `APP_DB_PASSWORD` | 🔴 sí | ✅ |
+| `JOB_DB_PASSWORD` (**BYPASSRLS**) | 🔴 sí | ✅ |
+| `MINIO_ROOT_PASSWORD` | 🔴 sí | ✅ |
+| `S3_LECTURA_ACCESS_KEY_ID` / `S3_LECTURA_SECRET_ACCESS_KEY` | 🔴 sí | ❌ **pendiente** |
+| `S3_ESCRITURA_ACCESS_KEY_ID` / `S3_ESCRITURA_SECRET_ACCESS_KEY` | 🔴 sí | ❌ **pendiente** |
+| `CRON_SECRET` | 🔴 sí | ❌ **pendiente** |
+| `IDENTIFICADOR_PEPPER` | **no** — distinta | — |
+
+**La buena noticia es la última fila, y es la que más importaba.** `IDENTIFICADOR_PEPPER` es el
+pepper del HMAC de identificadores: si hubiera sido la misma, cualquiera podría recalcular el HMAC de
+un CUIT y correlacionar contrapartes entre entornos. **Se generó por entorno, como correspondía.**
+`IDENTIFICADOR_PEPPER_ID` ni siquiera existe en `origin/main`.
+
+**Las 5 que faltan quedan como pendiente explícito**, no como olvido: las claves S3 son cuentas de
+servicio de MinIO (mecanismo distinto — `mc admin`, no `alter role`) y `CRON_SECRET` no tiene
+consumidor cableado todavía. Se rotó lo autorizado; el resto se decide con el titular.
+
+### 2. Paso a paso de lo que se corrió, y contra qué
+
+**Base: `sistema_contable_piloto`, puerto 5443. Contenedor `sistema-contable-postgres-piloto`.**
+
+1. **Respaldo** de `.env.piloto` al scratchpad de la sesión, antes de tocar nada — para poder volver
+   atrás si la rotación fallaba a mitad de camino.
+2. **Dueño del esquema** (`POSTGRES_PASSWORD`): conectando con la credencial **vieja**, que todavía
+   autenticaba, se corrió `alter role %I password %L` armado con `format()` **del lado del servidor**
+   — ni el nombre del rol ni la contraseña se interpolan desde el cliente.
+3. **Reescritura de `.env.piloto`**: las 4 claves **más los 3 `DATABASE_URL*`**, que embeben la
+   contraseña adentro del DSN. Contraseñas nuevas de 24 bytes aleatorios en `base64url` (sin relleno:
+   seguras dentro de un DSN, sin escapes).
+4. **`app_request_dev` y `app_job`**: `ENV_FILE=.env.piloto pnpm db:setup`, que es el script del
+   propio repo. Su salida confirma el invariante de siempre: `app_request_dev` **no** saltea RLS,
+   solo `app_job` tiene `saltea_rls = true`.
+5. **MinIO**: 🔴 **el contenedor es COMPARTIDO** entre local y piloto — `docker-compose.piloto.yml`
+   solo define Postgres, y los dos `.env` apuntan al mismo `sistema-contable-minio` en el 9010. Así
+   que rotar la root del piloto **obliga** a mover también la de `.env` (local), o al reiniciar queda
+   una de las dos desincronizada. Se propagó el mismo valor a `.env` (con respaldo) y se recreó el
+   contenedor con `docker compose up -d minio`.
+
+### 3. Verificación — en las dos direcciones
+
+**Postgres:**
+
+```
+--- credenciales NUEVAS: deben autenticar ---
+   dueño del esquema (nueva)          AUTENTICA
+   app_request_dev (nueva)            AUTENTICA
+   app_job (nueva)                    AUTENTICA
+--- credenciales VIEJAS: NO deben autenticar ---
+   dueño del esquema (vieja)          rechazada (password authentication failed)
+   app_request_dev (vieja)            rechazada (password authentication failed)
+   app_job (vieja)                    rechazada (password authentication failed)
+```
+
+**MinIO** (SigV4 contra el endpoint real, no inspección de configuración):
+
+```
+   root NUEVA                       AUTENTICA (HTTP 200)
+   root VIEJA                       rechazada (HTTP 403)
+   clave de servicio: lectura       AUTENTICA (HTTP 200)
+   clave de servicio: escritura     AUTENTICA (HTTP 200)
+```
+
+Las cuentas de servicio siguen funcionando, como se esperaba: viven en el volumen de IAM y son
+independientes de la root. **Eso también significa que rotar la root NO las rota** — de ahí el
+pendiente del punto 1.
+
+`pnpm verificar` después de todo: **59 archivos, 1360 tests, 0 fallas.**
+
+### 4. 🔴 Lo que la rotación NO cubre, y hay que decirlo
+
+- **Local no se rotó.** `POSTGRES_PASSWORD`, `APP_DB_PASSWORD`, `JOB_DB_PASSWORD`, las 4 claves S3 y
+  `CRON_SECRET` de `.env` **siguen siendo las commiteadas**. El alcance pedido era el piloto. Pero
+  E-1 dice que el entorno local se trata como productivo a los efectos de los controles, y por local
+  ya pasó material real: **queda como pendiente, no como decisión tomada.**
+- **La exposición pasada no se cierra.** Regla 4: un secreto commiteado es público para siempre. La
+  rotación corta el **uso futuro**. Lo que estuvo en `origin/main` desde el 2026-08-10 estuvo, y no
+  hay forma de saber quién lo clonó.
+- **El incidente #3 sigue ABIERTO** en `registro-incidentes.md`: falta la regla verificable numerada
+  en `ADR-0002` §B —que tendrá que cubrir la **clase** (ningún valor de credencial en un archivo
+  trackeado), no este archivo— y faltan las 5 credenciales del punto 1.
+
+### Estado
+
+| | |
+|---|---|
+| Piloto | 4 credenciales rotadas y verificadas en las dos direcciones |
+| Local | MinIO rotado (contenedor compartido); **Postgres y S3 sin rotar** |
+| `.env.example` | fuera del tracking, comiteado en `a9303bb` |
+| Push | **pendiente de decisión** — ver la entrada siguiente cuando exista |
+
+---
+
 ## 2026-08-15 (57) — `0016_path_coherente.sql` aplicada al **PILOTO**, con confirmación explícita del titular. Verificada sin drift y con el trigger **disparando**.
 
 **Herramienta:** Claude Code. Se escribe **en el momento**, como manda §4 — es la lección que ya se
