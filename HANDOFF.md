@@ -6,6 +6,91 @@
 
 ---
 
+## 2026-08-15 (59) — Incidente **#3**: rotado también **LOCAL** + los secretos S3 y `CRON_SECRET` de los dos entornos. **Ningún secreto del repo público sigue siendo válido en ningún lado.**
+
+**Herramienta:** Claude Code. Escrita en el momento. **Ninguna credencial se transcribe.**
+
+Cierra el pendiente que la entrada (58) había dejado declarado, y por una razón concreta: al ir a
+pushear el fix de `.env.example` apareció que **publicar la documentación de los incidentes en un
+repo público sería un cartel apuntando a credenciales que todavía funcionaban**. La exposición era
+pasiva; documentarla la señalizaba. El titular decidió rotar local **antes** de publicar nada.
+
+---
+
+### 1. Qué se rotó ahora
+
+| Variable | Entorno | Mecanismo |
+|---|---|---|
+| `POSTGRES_PASSWORD` (dueño, **superusuario**) | local | `alter role %I password %L` armado con `format()` **del lado del servidor** |
+| `APP_DB_PASSWORD`, `JOB_DB_PASSWORD` | local | `pnpm db:setup` (el script del repo) |
+| `S3_LECTURA_SECRET_ACCESS_KEY` | **local Y piloto** | `docker compose up minio-init` (`mc admin user add`) |
+| `S3_ESCRITURA_SECRET_ACCESS_KEY` | **local Y piloto** | ídem |
+| `CRON_SECRET` | local y piloto, **distinto en cada uno** | valor nuevo, sin sistema externo |
+
+Más los 3 `DATABASE_URL*` de local, que embeben la contraseña dentro del DSN.
+
+🔴 **Los secretos S3 se rotan en los DOS entornos a la vez, y no es una elección: MinIO es un
+contenedor compartido** (`sistema-contable-minio`, puerto 9010, al que apuntan los dos `.env`). Ya
+había pasado lo mismo con la root en la entrada (58).
+
+### 2. Decisión de diseño: los `ACCESS_KEY_ID` **no** se rotaron, y es a propósito
+
+`S3_LECTURA_ACCESS_KEY_ID` y `S3_ESCRITURA_ACCESS_KEY_ID` (`app_lectura_dev`, `app_escritura_dev`)
+son **nombres de usuario** de MinIO, no secretos. Rotarlos habría creado usuarios **nuevos** y dejado
+los **viejos vivos**, con su secreto expuesto, salvo que además se los borre — estrictamente peor que
+no tocarlos. Lo que revoca de verdad es el **secreto**, y eso sí se rotó.
+
+Por eso un barrido ingenuo *"¿alguna clave sigue coincidiendo con `origin/main`?"* devuelve esos dos
+nombres en verde-rojo. **Es esperado y correcto.** Ningún **secreto** coincide.
+
+### 3. Verificación — en las dos direcciones, contra `origin/main`
+
+Las "viejas" que se probaron **no son las del respaldo: son las que están hoy en `origin/main`**, que
+es lo que un tercero tendría.
+
+```
+--- Postgres LOCAL: nuevas ---
+   dueño del esquema (nueva)              AUTENTICA
+   app_request_dev (nueva)                AUTENTICA
+   app_job (nueva)                        AUTENTICA
+--- Postgres LOCAL: las de origin/main NO deben autenticar ---
+   dueño (la commiteada)                  rechazada (password authentication failed)
+   app_request_dev (la commiteada)        rechazada (password authentication failed)
+   app_job (la commiteada)                rechazada (password authentication failed)
+--- S3 (MinIO compartido), SigV4 contra el endpoint real ---
+   lectura (nueva)                        AUTENTICA (HTTP 200)
+   escritura (nueva)                      AUTENTICA (HTTP 200)
+   lectura (la commiteada)                rechazada (HTTP 403)
+   escritura (la commiteada)              rechazada (HTTP 403)
+```
+
+`pnpm verificar` después de todo: **59 archivos, 1360 tests, 0 fallas.**
+
+### 4. Estado del incidente #3
+
+| | |
+|---|---|
+| **Piloto** | dueño, `app_request_dev`, `app_job`, MinIO root, secretos S3, `CRON_SECRET` — **rotados** |
+| **Local** | dueño, `app_request_dev`, `app_job`, MinIO root, secretos S3, `CRON_SECRET` — **rotados** |
+| **Ningún secreto de `origin/main` sigue siendo válido** | verificado en las dos direcciones, en los dos entornos |
+| `.env.example` | fuera del tracking (`a9303bb`) |
+
+**Sigue ABIERTO igual**, y por dos motivos que no se cierran rotando:
+
+1. **Regla 4: la exposición pasada no se revierte.** Lo que estuvo en `origin/main` desde el
+   2026-08-10 estuvo. Rotar corta el **uso futuro**; no hay forma de saber quién clonó.
+2. **Falta la regla verificable numerada** en `ADR-0002` §B, que tiene que cubrir la **clase**
+   —ningún valor de credencial en un archivo trackeado— y no este archivo. Regla 3 de la bitácora.
+
+**Decisión pendiente, aparte:** reescribir el historial de git. El titular lo dejó explícitamente
+fuera de esta tanda.
+
+**Y la publicación de la documentación de los tres incidentes también quedó pendiente**, con la misma
+lógica: el repo es público, y qué se publica de un incidente merece su propia decisión, no ir
+arrastrado por la urgencia de sacar un archivo del tracking.
+
+---
+
 ## 2026-08-15 (58) — Incidente **#3**: credenciales del piloto **ROTADAS y verificadas**. Y el conjunto expuesto no eran 4: son **9**.
 
 **Herramienta:** Claude Code. Escrita en el momento, con confirmación explícita del titular.
