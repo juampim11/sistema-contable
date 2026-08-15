@@ -232,9 +232,46 @@ Redactadas para que un test o `code-reviewer` las chequee sin criterio humano. T
 | **R30** | Ningún dato ≥ N2 en **URL, path, query string ni nombre de archivo** (termina en access logs, historial, `Referer`, logs de CDN). La clave del objeto en storage es `cliente/<uuid>/<tipo>/<uuid>` — **nunca** CUIT, razón social ni el nombre original del archivo. | Test de contrato de rutas + barrido del módulo de storage. | ✅ decidido en ADR-0000 §3.3; test pendiente |
 | **R31** | El acceso a objetos pasa por un **único emisor** de URL firmada que (a) verifica membresía, (b) escribe auditoría, (c) usa TTL en minutos. Bucket privado, sin listado. | Test de que `getSignedUrl` no se invoca fuera de ese módulo; un GET sin firma da 403 y la firma vencida deja de servir. | ⏳ pendiente |
 | **R32** | Toda lectura y export de N2-R y todo uso de N3 escribe en **`acceso_auditoria`**, que es **append-only**. | `has_table_privilege('app_request','acceso_auditoria','UPDATE'/'DELETE')` = false. | ✅ **tabla creada y verificada** (T13 + P1-0: ni `app_job` puede borrarla). El cableado del choke point es pendiente |
-| **R33** | Ningún secreto en el repo. Escaneo de secretos en pre-commit **y** en CI. `.env*` gitigneado salvo `.env.example`, que tiene **solo nombres**. | Secret scanning en el pipeline. | ⚠️ `.env.example` existe con valores **de desarrollo evidentes**; falta el escaneo en CI y el `.gitignore` |
+| **R33** | Ningún secreto en el repo. Escaneo de secretos en pre-commit **y** en CI. `.env*` gitigneado salvo `.env.example`, que tiene **solo nombres**. | Secret scanning en el pipeline. | ❌ **insuficiente — reemplazada por R37** (incidente #3). La regla **nombraba la excepción que resultó ser el vector** (*"salvo `.env.example`"*), su condición (*"solo nombres"*) no se chequeaba en ningún lado, y su propio campo de estado decía «existe con valores de desarrollo evidentes» — o sea que **el defecto estuvo escrito, en esta tabla, todo el tiempo** |
 | **R34** | Ningún comando destructivo o de seed corre contra un host fuera de la allowlist de entornos no productivos; ningún `DATABASE_URL` de producción en `.env` local. | El comando aborta si el host del DSN no está en la allowlist. | ⏳ pendiente |
 | **R35** | Mandar algo ≥ N2 a un servicio externo requiere entrada en `docs/seguridad/registro-terceros.md` con qué se manda, con qué base y quién lo autorizó. | La lista de destinos de red permitidos es explícita; una URL externa nueva sin entrada → falla. | ✅ registro creado (vacío) |
+| **R37** | **Ningún archivo TRACKEADO contiene un valor de credencial** — se llame como se llame. Tres formas: **(a)** ningún archivo con forma de entorno (`.env`, `.env.<lo que sea>`) está trackeado; **(b)** ningún archivo trackeado contiene una URL con credenciales embebidas (`<esquema>://<usuario>:<secreto>@`); **(c)** ninguna clave `UPPER_SNAKE` de nombre secreto se asigna a un literal que no sea marcador. Los permitidos de (c) llevan **motivo escrito** y no pueden apuntar a un archivo que ya no existe. 🔴 **Y ningún permitido exime de lo siguiente: un literal que coincida con un valor de un `.env*` real de la máquina es violación siempre.** | `tools/barrido-credenciales.test.ts` sobre **`git ls-files`** — lo que importa es qué está *trackeado*, que es lo único que puede viajar a un remoto. Cada forma se prueba **plantándola en un repositorio git sintético** y exigiendo que el barrido la nombre; más control de vacuidad (`> 100` archivos vistos). | ✅ **verificado** — cerrado por mutación, 3 contra el repo real y 7 sintéticas |
+| **R37 bis** | **`.gitignore` no tiene ninguna negación (`!`) que vuelva a admitir un archivo de entorno.** | `negacionesDeEnv()` = `[]`, y el test comprueba que **sí** detecta una reintroducida. | ✅ **verificado** |
+
+> 🔴 **Por qué R37 reemplaza a R33, y por qué mide la clase y no el archivo (incidente #3, 2026-08-15).**
+>
+> R33 decía lo correcto —*"ningún secreto en el repo"*— y **nombraba en su propio enunciado la
+> excepción que fue el vector**: *"`.env*` gitigneado **salvo `.env.example`**, que tiene solo
+> nombres"*. Las dos mitades fallaron a la vez. La excepción existía porque un archivo de ejemplo es
+> útil; la condición que la volvía segura —*"solo nombres"*— **no se chequeaba en ningún lado**. Y el
+> campo de estado de R33 decía, textualmente, *"`.env.example` existe con valores de desarrollo
+> evidentes"*: **el defecto estuvo escrito en esta misma tabla durante toda la vida del repo**, y
+> nadie lo leyó como lo que era.
+>
+> Es la tercera vez en un día que aparece el mismo patrón —R10 dos veces, R13, ahora R33—, y con una
+> vuelta de tuerca peor: acá la regla ni siquiera pasaba verde por medir mal, **pasaba amarillo
+> admitiendo la falla**. Un estado ⚠️ que nadie convierte en trabajo es un ✅ con más letras.
+>
+> Las tres decisiones de forma de R37, y las tres salen de eso:
+>
+> 1. **Barre `git ls-files`, no el filesystem.** La pregunta no es *"¿qué archivos hay?"* sino *"¿qué
+>    está trackeado?"* — lo único que puede viajar a un remoto. Un archivo con secretos en disco pero
+>    ignorado no es el incidente; uno trackeado sí.
+> 2. **No mira nombres de archivo: mira contenido.** Ignorar `.env.example` cierra **el caso**. La
+>    **clase** es *"un archivo que documenta variables se fue llenando de valores"*, y eso pasa igual
+>    en un `docker-compose.yml`, un workflow de CI, un `.md` del runbook o un script de despliegue.
+>    Al correrla por primera vez, R37 encontró credenciales en **cuatro archivos más** — ninguno se
+>    llamaba `.env`.
+> 3. 🔴 **El cruce con los `.env*` vivos, que no se puede permitir por allowlist.** Ésta es la falla
+>    del #3 en una línea: el valor "de ejemplo" y la credencial **viva del piloto** eran la misma
+>    cadena. Un literal descartable de CI es aceptable; el mismo literal siendo además la credencial
+>    de un entorno real, no — y esa distinción **ninguna lista de excepciones tiene derecho a
+>    hacerla**. Es el equivalente del `revoke temporary` de `0015`: la mitad que cierra la clase
+>    entera, no el caso.
+>
+> Corolario, para no repetirlo una quinta vez: **el campo de estado de esta tabla es parte de la
+> regla, no una nota al pie.** Un ⚠️ que describe una violación concreta es un incidente que todavía
+> no se abrió.
 
 ---
 
