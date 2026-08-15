@@ -123,10 +123,42 @@ Redactadas para que un test o `code-reviewer` las chequee sin criterio humano. T
 | **R10** | **Toda función o procedure de `app`/`public` —`security definer` Y `invoker`— declara un `search_path` donde `pg_temp` aparece una sola vez, en la última posición, y no es el único elemento.** Única exención: una función que no lea ninguna relación **ni declare ningún tipo** (hoy, solo `app.current_user_id()`), nominada en el test **por esquema, nombre y aridad** — no por nombre suelto. | `pg_proc.proconfig`: la **primera** aparición de `pg_temp` es la **última posición**, y hay al menos dos elementos. Sobre `prokind in ('f','p')`. Más `has_database_privilege(rol, db, 'TEMPORARY')` = `false` para **todo rol no superusuario** de la base (R10 bis), y `app`/`public` como los **únicos** esquemas de dominio (R10 ter). | ✅ **verificado**, reescrita **dos veces** por el incidente #1 |
 | **R11** | Las únicas `security definer` permitidas son `app.accessible_tenant_ids()` y `app.has_role_on()` (leen **tenancía**, no dominio). Otra requiere ADR. | Whitelist por nombre. | ✅ cumplido hoy; test pendiente |
 | **R12** | **FK compuestas tenant-consistentes**: el hijo referencia `(cliente_id, id)` del padre, con `unique (cliente_id, id)` en el padre. Es la **única** integridad de tenant que sobrevive a `BYPASSRLS` y a `COPY`. | Por cada FK entre dos tablas con tenant, la FK incluye la columna de tenant en ambos lados. | ⏳ pendiente — **entra con el Módulo 1** |
-| **R13** | `tenant_node.path` coherente con `parent_id` **siempre**: trigger en `insert` **y** en `update of parent_id`; el `path` no se edita a mano. | Trigger + `app.verificar_coherencia_path()` en CI **y como job en producción**. | ✅ **implementado y verificado** (P1-A/B/C/D) — era el bug H-1 |
+| **R13** | `tenant_node.path` coherente con `parent_id` **siempre**: trigger en `insert` **y** en `update of parent_id`; el `path` no se edita a mano. | Trigger + `app.verificar_coherencia_path()` en CI **y como job en producción**. | ⚠️ **insuficiente — reemplazada por R36** (incidente #2). Medía **presencia** del trigger y **estado actual** del árbol; ninguna de las dos cosas es una garantía de **alcanzabilidad**. Estuvo ✅ toda la vida del esquema con el agujero adentro |
+| **R36** | **El `path` de `tenant_node` no se puede dejar incoherente, por ninguna vía y bajo ningún GUC.** Toda transacción que deje una fila con `path <> coalesce(padre.path‖'.','') ‖ nid` **aborta en el commit** — aunque el escritor tenga rol `socio`/`admin_plataforma`, aunque prenda `app.reparentando`, y **aunque la RLS le oculte la fila que acaba de escribir**. El chequeo se **difiere al commit** (el reparentado tiene un estado intermedio incoherente por diseño), **re-lee el estado final** y trata **«no puedo leer la fila» como violación**, nunca como no-op. | **Se ejecuta el ataque**, no se inspecciona el catálogo: `packages/data/tests/path-coherente.test.ts`, con `app_request` y contexto de un `socio`. Cinco casos, incluido el **positivo** (`reparentar_nodo()` sobre un subárbol con descendientes **debe seguir pasando**). | ✅ **verificado** — `0016_path_coherente.sql`, cerrado por mutación (4 mutaciones, 4 atrapadas) |
 | **R14** | Toda migración que crea una tabla con tenant incluye, en la misma migración: RLS enable+force, policies, índice, FK compuesta si aplica, y entrada en el registro de clasificación. | No se lee el diff: CI **aplica todas las migraciones sobre base limpia y corre R1–R13**. | ✅ el ciclo ya corre a mano (§C.0); falta cablearlo en CI |
 | **R15** | **No hay super-raíz por encima de los estudios.** Cada estudio es raíz. Una super-raíz mete a todos los estudios en un subárbol: una policy mal escrita filtra el SaaS entero. | `tenant_node where tipo='estudio' and parent_id is not null` → 0. | ✅ **verificado** (T14) |
 
+> 🔴 **Por qué R36 se chequea ejecutando el ataque y no mirando el catálogo (incidente #2, 2026-08-15).**
+>
+> La tentación es escribir *"existe el trigger `trg_tenant_node_path_coherente` sobre `tenant_node`"*.
+> Esa regla habría pasado **verde con tres implementaciones rotas distintas**, las tres construidas
+> durante este análisis:
+>
+> 1. la que valida dentro del `before update of path` que ya existía — **rompe `reparentar_nodo()`**,
+>    incluso para un nodo hoja, y nadie se entera hasta la primera mudanza real de un cliente;
+> 2. la que valida `NEW` en vez de re-leer la fila — ídem, porque un `AFTER` diferido ve la tupla del
+>    **evento**, no la final;
+> 3. 🔴 la que trata `not found` como *"nada que validar"* — **deja pasar el ataque completo**, porque
+>    el atacante **se auto-oculta la fila que acaba de escribir**: el `path` que planta saca la fila de
+>    su propio subárbol, `accessible_tenant_ids()` deja de devolverla, y el trigger —que es `invoker`—
+>    recibe `found = false`. **Medido.**
+>
+> Las tres tienen el trigger, con el nombre correcto, enganchado a la tabla correcta. **La regla mide
+> el comportamiento o no mide nada.** Y **el caso legítimo es parte de la regla**, no un extra: un
+> control que sólo prohíbe pasa todos los tests negativos y rompe la operación — de las cuatro
+> mutaciones probadas, **dos se detectan únicamente por el caso positivo**.
+>
+> La generalización que le faltaba al corolario de R10: **una aserción sobre la presencia de un
+> control, o sobre el estado actual, nunca es una aserción sobre una garantía. La garantía es sobre
+> alcanzabilidad.** Eso es lo que R13 no medía, y por eso estuvo ✅ toda la vida del esquema.
+>
+> **Y una regla de clase que sale de acá, todavía sin adoptar como número:** un GUC puede transportar
+> **identidad** —`app.user_id` no concede nada por sí mismo, todo sale de filas de `membership`, y
+> ante valor ausente falla cerrado— pero **nunca autorización**. `app.reparentando` apagaba un control
+> directamente, y su interruptor estaba del lado del vigilado. Barrido: en todo el repo hay
+> exactamente **dos** GUC de namespace y no hay un tercero. Adoptarla como regla numerada exige antes
+> decidir si el GUC se elimina o queda como ergonomía — con `0016` ya no protege nada.
+>
 > 🔴 **Por qué R10 está redactada así, y no como estaba (incidente #1, 2026-08-15).**
 >
 > La versión anterior decía *"toda función `security definer` fija `search_path`"* y el test miraba
