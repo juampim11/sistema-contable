@@ -3,7 +3,12 @@
 # el historial y listo (ADR-0002 §E.4.8). Esta lista existe para no llegar a eso.
 .env
 .env.*
-!.env.example
+# `!.env.example` estuvo acá y se quitó a propósito: un archivo de ejemplo documenta qué variables
+# hacen falta, pero en la práctica se fue llenando de valores en vez de marcadores, y un archivo de
+# ejemplo trackeado es el camino más corto para que un valor real termine en el repo.
+# Para que la excepción vuelva hacen falta las dos cosas: marcadores del tipo `<poner-una-clave>`,
+# y un gate que verifique que no hay valores. Sin eso, no vuelve.
+.env.example
 *.pem
 *.key
 *.crt
