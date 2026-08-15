@@ -6,6 +6,123 @@
 
 ---
 
+## 2026-08-15 (56) — 🔴 Incidente **#3**: credenciales en un repo PÚBLICO. Incidente **#2** con fix listo en local (`0016`), sin aplicar al piloto. Todo esperando confirmación.
+
+**Herramienta:** Claude Code. **Nada de esto está pusheado ni aplicado al piloto.** Las dos acciones
+—rotar credenciales y aplicar `0016`— esperan confirmación explícita del titular. Orden acordado para
+mañana: **primero el #3, después el #2.**
+
+---
+
+### 1. 🔴 Incidente #3 — la credencial commiteada es la credencial viva, y el repo es público
+
+Apareció al verificar, a pedido del titular, tres preguntas puntuales sobre algo que yo había traído
+al pasar como simple contención del #2. Las tres respuestas lo convirtieron en un incidente propio, y
+**más grave que los dos anteriores**:
+
+| Pregunta | Respuesta medida |
+|---|---|
+| ¿`.env.example` está ignorado o trackeado? | **Trackeado.** `.gitignore` tenía un `!.env.example` **explícito**; es el único `.env*` trackeado |
+| ¿Llegó al remoto? | **Sí**, en `ff2d992` (2026-08-10), que está en `origin/main`. Y el repositorio es **PÚBLICO** |
+| ¿Sigue vigente o quedó obsoleta? | **Vigente.** Comparadas sin transcribir valores contra `.env.piloto`: idénticas. Confirmado además **por autenticación real** contra la base del piloto |
+
+**Lo que importa no es la credencial de la aplicación.** `POSTGRES_PASSWORD` es el **dueño del esquema,
+que además es superusuario en las dos bases** —ignora la RLS siempre, forzada o no, y no necesita
+ningún vector— y `JOB_DB_PASSWORD` tiene **`BYPASSRLS`**. Contra cualquiera de esas dos, **todo el
+trabajo de aislamiento de esta sesión es irrelevante**. `app_request` es la **menos** grave de las
+cuatro.
+
+**Mitigante medido, y es la única razón por la que no es una emergencia del minuto:** el piloto se
+publica **solo en loopback** (`127.0.0.1:5443`, `docker-compose.piloto.yml:60`). **La credencial es
+pública; el puerto no.**
+
+**Hecho y comiteado, SIN pushear** (`a9303bb`): `git rm --cached .env.example` + se sacó la negación
+del `.gitignore`, con el porqué escrito ahí mismo. El archivo **sigue en disco**, no se pierde.
+
+🔴 **Esto NO cierra la exposición.** Regla 4 de `registro-incidentes.md`: un secreto commiteado es
+público para siempre. Está en el historial de un repo público desde el 2026-08-10. Sacarlo del
+tracking corta el sangrado; **el pasado no se cierra**. Lo que corta el uso futuro es la **rotación**.
+
+**Para decidir mañana:** un `.env.example` no trackeado deja al runbook sin su template, que es la
+razón por la que el archivo existía. La alternativa es mantenerlo trackeado **con marcadores** más un
+gate que verifique que no tenga valores.
+
+### 2. Incidente #2 — `0016_path_coherente.sql`, aplicada a LOCAL y verificada
+
+Panel completo: `dba-data`, `seguridad-datos-financieros`, `security-engineer`.
+
+**El fix es un `constraint trigger` diferido**, y las tres decisiones de forma están **medidas**:
+
+1. **Diferido al commit, no inmediato.** `reparentar_nodo()` reescribe el `path` del subárbol **antes**
+   de mover el `parent_id`: hay un estado intermedio incoherente **por diseño**, y un chequeo inmediato
+   aborta ahí incluso con cero descendientes. Además un `BEFORE ROW` no ve las filas que el mismo
+   `UPDATE` modificó. Resultado: **`reparentar_nodo()` no se toca, ni una línea.**
+2. **Re-lee la fila, no usa `NEW`.** Un `AFTER` diferido ve la tupla del **evento**, no la final.
+3. 🔴 **`not found` es VIOLACIÓN, no no-op.** El punto que cierra el incidente, y el que no se ve
+   leyendo el código: el trigger es `invoker`, la RLS le aplica, y el ataque consiste justamente en
+   escribir un `path` que saca la fila del subárbol propio. **Medido: el trigger recibe
+   `found = false`.** El atacante **se auto-oculta la prueba**.
+
+El GUC y `rechazar_path_manual()` quedan tal cual, degradados a lo que debieron ser siempre: el mensaje
+temprano y claro. Una excepción a la **prohibición**, no a la **integridad**.
+
+**Cerrado por mutación, 4 de 4 atrapadas** (`packages/data/tests/path-coherente.test.ts`):
+
+| Mutación | Resultado |
+|---|---|
+| Borrar el trigger | casos 1,2,3,4,5 rojo |
+| `not deferrable` (chequeo inmediato) | **solo caso 4** rojo |
+| Validar `NEW` en vez de re-leer | **solo caso 4** rojo |
+| `not found` como no-op (falla abierta) | **caso 1** rojo |
+
+**Las dos del medio se detectan ÚNICAMENTE por el caso positivo** — cierran el agujero **rompiendo la
+mudanza de un cliente entre estudios**. Por eso el caso legítimo es parte de la regla y no un extra.
+
+**R36** en `ADR-0002` §B.1, y **R13 marcada como insuficiente**: decía *"el `path` no se edita a mano"*
+con estado ✅, y estuvo verde toda la vida del esquema con el agujero adentro. Medía **presencia** del
+trigger y **estado actual** del árbol; ninguna de las dos es una garantía de **alcanzabilidad**. Esa es
+la generalización que le faltaba al corolario de R10.
+
+**Descartada la alternativa declarativa** (`path` como columna generada + FK compuesta con
+`on update cascade`), y va a la deuda declarada **con sus números**: es estructuralmente superior —el
+executor rechaza el `update`, no un trigger evadible— pero cuesta **+9 a +25 % en `has_role_on()`**, que
+es el predicado de RLS de **toda** tabla de dominio, para blindar una operación que **hoy no tiene un
+solo call-site**. Mismo criterio con que `0015` rechazó tocar `current_user_id()` por +75 %.
+
+### 3. 🔴 Runbook del piloto — listo para copiar y pegar, NO ejecutado
+
+```bash
+# 1. Verificar que el piloto está donde se cree que está (0015 aplicada, 0016 no)
+ENV_FILE=.env.piloto pnpm db:migrate --dry-run   # o el equivalente de inspección
+# 2. Aplicar
+ENV_FILE=.env.piloto pnpm db:migrate
+# 3. Verificar sin drift: el hash debe coincidir con el de local
+#    0016_path_coherente.sql -> sha256[0:16] = 5292b9775d3b5cd6
+# 4. Confirmar el estado del árbol ANTES y DESPUÉS
+#    select count(*) from app.verificar_coherencia_path();   -- debe dar 0 en los dos momentos
+```
+
+**Y escribir el resultado en `HANDOFF` en el momento**, no después — es la lección que ya se pagó dos
+veces (`0011`, `0012` quedaron solo en local).
+
+### 4. Estado y pendientes
+
+`pnpm verificar`: **59 archivos, 1360 tests, 0 fallas** (venía de 58/1355).
+
+| Pendiente | Nota |
+|---|---|
+| 🔴 **Rotar las 4 credenciales del piloto** (#3) | Espera confirmación. **Primero en el orden de mañana** |
+| 🔴 **Aplicar `0016` al piloto** (#2) | Espera confirmación |
+| **Pushear** | 79 commits locales. La rama **no tiene upstream**: nada se pushea por accidente |
+| Contención alternativa del #2 | `revoke update on tenant_node from app_request`. Medido: **cero** `update` sobre esa tabla en todo el TS. Con `0016` aplicado ya no hace falta, pero sigue siendo defensa en profundidad |
+| Dueño del esquema superusuario | Sigue abierto, y es la **segunda mitad del impacto** del #1. Plan propio con `devops` |
+| Corregir el racional de `pg_catalog` en `0015` | Texto, no comportamiento (`code-reviewer`) |
+| `pnpm db:seed` roto desde cero | Falta `movimiento_contraparte_identificador` en el `truncate` de `sembrar.ts` |
+| Regla de clase del GUC | *Un GUC transporta identidad, nunca autorización.* Adoptarla como número exige decidir antes si el GUC se elimina — con `0016` ya no protege nada |
+| `0017` (determinante de idempotencia) | **Sigue frenado.** Se corre de `0016` a `0017` |
+
+---
+
 ## 2026-08-15 (55) — Ronda de cierre del incidente #1: R10 estuvo mal **dos veces**. Cerrado en la tercera redacción. Y aparece el **incidente #2**.
 
 **Herramienta:** Claude Code. Cierra la entrada (54), que quedó diciendo "incidente #1 **NO cerrado**"
