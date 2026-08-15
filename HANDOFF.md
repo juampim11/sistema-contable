@@ -6,6 +6,128 @@
 
 ---
 
+## 2026-08-15 (60) — Incidente **#3 CERRADO** con **R37**, la regla de clase. Y aparece la cuarta regla que estuvo verde con su propia falla adentro.
+
+**Herramienta:** Claude Code. Cierra el incidente #3: credenciales rotadas (58/59), `.env.example`
+fuera del tracking y publicado, y ahora **la regla verificable numerada** que exige la regla 3 de
+`registro-incidentes.md`.
+
+---
+
+### 1. 🔴 R33 ya existía, y nombraba en su enunciado la excepción que falló
+
+Antes de escribir nada nuevo fui a ver qué decía el ADR. **R33 ya estaba:**
+
+> *"Ningún secreto en el repo. Escaneo de secretos en pre-commit **y** en CI. `.env*` gitigneado
+> **salvo `.env.example`**, que tiene **solo nombres**."*
+> Estado: ⚠️ *"`.env.example` existe con valores **de desarrollo evidentes**"*.
+
+Las tres partes fallaron a la vez:
+
+1. **La excepción del enunciado ERA el vector.** *"salvo `.env.example`"* es, literalmente, el
+   agujero — escrito como parte de la regla que debía impedirlo.
+2. **La condición que la volvía segura —"solo nombres"— no se chequeaba en ningún lado.** No había
+   test, ni escaneo, ni gate. Era una afirmación, no un control.
+3. **El campo de estado admitía la violación por escrito.** *"Existe con valores de desarrollo
+   evidentes"*. El defecto estuvo documentado en la tabla de reglas **toda la vida del repo**.
+
+Es la **cuarta vez en el día** del mismo patrón —R10 dos veces, R13, ahora R33— y con una vuelta de
+tuerca peor que las anteriores: acá la regla **no pasaba verde por medir mal, pasaba amarillo
+admitiendo la falla**. Quedó escrito como corolario en el ADR: **un ⚠️ que nadie convierte en trabajo
+es un ✅ con más letras.** El campo de estado es parte de la regla, no una nota al pie.
+
+### 2. R37 — las tres decisiones de forma, y por qué cada una
+
+**(1) Barre `git ls-files`, no el filesystem.** La pregunta que importa no es *"¿qué archivos hay?"*
+sino **"¿qué está trackeado?"** — lo único que puede viajar a un remoto. Un archivo con secretos en
+disco pero ignorado no es el incidente; uno trackeado sí. Barrer el filesystem sería, otra vez, medir
+lo fácil en vez de lo que hay que garantizar.
+
+**(2) No mira nombres de archivo: mira contenido.** Ignorar `.env.example` cierra **el caso**. La
+**clase** es *"un archivo que documenta variables se fue llenando de valores"*, y eso pasa igual en un
+`docker-compose.yml`, un workflow de CI, un `.md` de runbook o un script de despliegue. Tres formas:
+archivo con forma de entorno, URL con credenciales embebidas, y clave `UPPER_SNAKE` secreta asignada a
+un literal que no sea marcador.
+
+**(3) 🔴 El cruce con los `.env*` vivos, que ninguna allowlist puede eximir.** Es el incidente #3 en
+una línea: el valor "de ejemplo" y la credencial **viva del piloto** eran la misma cadena, y nadie lo
+notó en cinco días. Un literal descartable de CI es aceptable; el mismo literal siendo **además** la
+credencial de un entorno real, no — y esa distinción **ninguna lista de excepciones tiene derecho a
+hacerla**. Es el equivalente del `revoke temporary` de `0015`: la mitad que cierra la clase entera.
+
+Detalle de higiene: **los hallazgos nunca llevan el valor**, solo longitud y sha256 corto. Un hallazgo
+no puede filtrar lo que denuncia.
+
+### 3. Al correrla por primera vez encontró credenciales en cuatro archivos más
+
+Ninguno se llamaba `.env`. Ésa es la prueba de que la clase era más grande que el caso:
+
+| Archivo | Qué tenía | Arreglo |
+|---|---|---|
+| `docker-compose.yml` | **6** credenciales horneadas como `${VAR:-valor}` | pasan a `${VAR:?falta en .env}` — requerida, sin default |
+| `docs/arquitectura/ADR-0000-stack-infra.md` | `PGPASSWORD=` literal en dos comandos del runbook | pasan a `"$JOB_DB_PASSWORD"` / `"$APP_DB_PASSWORD"` |
+| `docs/diseno/03-hallazgos-del-panel.md` | el pepper de desarrollo, literal | reescrito sin el valor |
+| `docs/arquitectura/ADR-0002-seguridad.md` | **mi propio texto de R37**, que usaba un ejemplo de DSN con forma de credencial real | reescrito con marcadores |
+
+El último es el más divertido y el más tranquilizador: la regla atrapó a quien la estaba escribiendo,
+en el mismo commit.
+
+### 4. Cerrada por mutación — 3 contra el repo real, 7 sintéticas
+
+Un cero puede significar dos cosas: que no hay credenciales, o que el detector no detecta. Para
+distinguirlas hay que **plantar una y ver que la encuentre**.
+
+**Contra el repo real:**
+
+| Mutación | Resultado |
+|---|---|
+| Reintroducir `!.env.example` en `.gitignore` | **rojo** — R37 bis, nombrando la negación |
+| Hornear de vuelta un `${VAR:-default}` en el compose | **rojo** — R37 |
+| Escribir un valor **VIVO** de `.env` en un doc trackeado | **rojo** — clasificado `valor-vivo`, no como asignación común |
+
+**Sintéticas**, cada una armando un repo git de verdad en un tmpdir: `.env` trackeado, `.env.<sufijo>`
+trackeado, URL con credenciales en un `.md`, asignación en un `.yml`, asignación en un `.sh`, más los
+dos **negativos** (un template con marcadores y una referencia de código no deben marcarse). Y el
+contraste que aísla la variable: **el mismo archivo permitido pasa sin el `.env`, y falla con él**.
+
+Más el **control de vacuidad**: se afirma con un número que el barrido ve `> 100` archivos. Sin eso,
+un `git ls-files` que fallara en silencio daría verde para siempre — el mismo error que
+`qa-automation` encontró en su propio harness de mutación (entrada 55).
+
+Dos fallas del test fueron mías y las dos informativas: `.env.plantilla.txt` **sí** tiene forma de
+archivo de entorno (el detector tenía razón, mi fixture estaba mal), y un motivo de la allowlist
+quedó corto — el gate exige motivo escrito de más de 40 caracteres, justamente para que un permitido
+no se cuele sin razón revisable.
+
+### 5. Estado del incidente #3: **CERRADO**
+
+| | |
+|---|---|
+| 9 credenciales rotadas, los dos entornos | ✅ verificado en las dos direcciones contra `origin/main` |
+| `.env.example` fuera del tracking | ✅ publicado en `origin/main` (`a95d24f`) |
+| Regla verificable numerada | ✅ **R37 + R37 bis**, `ADR-0002` §B.3, con el porqué escrito |
+| Probada rompiéndola | ✅ 10 mutaciones |
+| R33 | ❌ marcada **insuficiente**, reemplazada |
+
+🔴 **Se cierra el CONTROL, no la exposición.** Por la regla 4 de la bitácora, lo que estuvo en un
+repositorio público desde el 2026-08-10 estuvo, y eso no se revierte. Queda pendiente, como decisión
+aparte: **reescribir el historial de git**.
+
+`pnpm verificar`: **60 archivos, 1377 tests, 0 fallas** (venía de 59/1360).
+
+### 6. Pendientes
+
+| | |
+|---|---|
+| Incidente **#2** | Control aplicado y verificado en las dos bases (`0016`, R36). **Falta el cierre formal** en el registro — a propósito: la marca de «cerrado» del #1 se puso una vez sin revisión y estaba mal |
+| Reescribir el historial | Decisión del titular, explícitamente fuera de esta tanda |
+| Publicar la documentación de los incidentes | El repo es público; merece su propia decisión |
+| `0017` — determinante de idempotencia | **Sigue frenado** |
+| Dueño del esquema superusuario | Abierto. La «segunda mitad del impacto» del #1 |
+| `pnpm db:seed` roto desde cero | Falta `movimiento_contraparte_identificador` en el `truncate` |
+
+---
+
 ## 2026-08-15 (59) — Incidente **#3**: rotado también **LOCAL** + los secretos S3 y `CRON_SECRET` de los dos entornos. **Ningún secreto del repo público sigue siendo válido en ningún lado.**
 
 **Herramienta:** Claude Code. Escrita en el momento. **Ninguna credencial se transcribe.**
