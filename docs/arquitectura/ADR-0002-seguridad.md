@@ -120,12 +120,38 @@ Redactadas para que un test o `code-reviewer` las chequee sin criterio humano. T
 | **R7** | Ninguna relación tiene como **owner** un rol con `BYPASSRLS`. | `pg_class` ⋈ `pg_roles` → 0 filas. | ⏳ pendiente |
 | **R8** | Toda vista sobre tablas con RLS se crea con `security_invoker = true`. Si el Postgres objetivo no lo soporta, **prohibidas las vistas sobre dominio**. | `pg_class.reloptions`. | ⏳ pendiente |
 | **R9** | **Prohibidas las vistas materializadas sobre tablas de dominio.** Una matview **no admite policies**: su contenido queda cross-tenant. Para materializar un agregado, se usa una **tabla real con columna de tenant + RLS**, refrescada por evento. | `pg_class where relkind='m'` → 0 (o whitelist N0). | ⏳ pendiente |
-| **R10** | Toda función `security definer` fija `search_path`. | `pg_proc.prosecdef` + `proconfig`. | ✅ **verificado** (T11) |
+| **R10** | **Toda función de `app`/`public` —`security definer` Y `invoker`— declara `search_path` terminado en `pg_temp`.** Única exención: una función que no lea ninguna relación **ni declare ningún tipo** (hoy, solo `app.current_user_id()`), y va nominada en el test. | `pg_proc.proconfig`: último elemento del `search_path` = `pg_temp`. Más `has_database_privilege(rol, db, 'TEMPORARY')` = `false` para los roles de aplicación (R10 bis). | ✅ **verificado**, reescrita por el incidente #1 |
 | **R11** | Las únicas `security definer` permitidas son `app.accessible_tenant_ids()` y `app.has_role_on()` (leen **tenancía**, no dominio). Otra requiere ADR. | Whitelist por nombre. | ✅ cumplido hoy; test pendiente |
 | **R12** | **FK compuestas tenant-consistentes**: el hijo referencia `(cliente_id, id)` del padre, con `unique (cliente_id, id)` en el padre. Es la **única** integridad de tenant que sobrevive a `BYPASSRLS` y a `COPY`. | Por cada FK entre dos tablas con tenant, la FK incluye la columna de tenant en ambos lados. | ⏳ pendiente — **entra con el Módulo 1** |
 | **R13** | `tenant_node.path` coherente con `parent_id` **siempre**: trigger en `insert` **y** en `update of parent_id`; el `path` no se edita a mano. | Trigger + `app.verificar_coherencia_path()` en CI **y como job en producción**. | ✅ **implementado y verificado** (P1-A/B/C/D) — era el bug H-1 |
 | **R14** | Toda migración que crea una tabla con tenant incluye, en la misma migración: RLS enable+force, policies, índice, FK compuesta si aplica, y entrada en el registro de clasificación. | No se lee el diff: CI **aplica todas las migraciones sobre base limpia y corre R1–R13**. | ✅ el ciclo ya corre a mano (§C.0); falta cablearlo en CI |
 | **R15** | **No hay super-raíz por encima de los estudios.** Cada estudio es raíz. Una super-raíz mete a todos los estudios en un subárbol: una policy mal escrita filtra el SaaS entero. | `tenant_node where tipo='estudio' and parent_id is not null` → 0. | ✅ **verificado** (T14) |
+
+> 🔴 **Por qué R10 está redactada así, y no como estaba (incidente #1, 2026-08-15).**
+>
+> La versión anterior decía *"toda función `security definer` fija `search_path`"* y el test miraba
+> que `pg_proc.proconfig` tuviera una entrada. **Pasó verde con la vulnerabilidad adentro durante los
+> cinco días de vida del esquema**: `accessible_tenant_ids` y `has_role_on` fijaban
+> `search_path = public, app`, o sea que cumplían la letra y eran explotables igual — **`pg_temp` se
+> busca PRIMERO para nombres de relación y de tipo aunque no esté listado**, así que cualquiera con
+> privilegio `TEMPORARY` plantaba una `membership` falsa y anulaba la RLS de toda la instancia.
+>
+> Las dos cosas que la regla nueva corrige, y las dos importan:
+>
+> 1. **Mide la posición, no la presencia.** "Fija alguno" era la pregunta equivocada; la pregunta es
+>    si el que fija **neutraliza `pg_temp`**.
+> 2. **No se filtra por `prosecdef`.** Cuatro de las seis funciones vulnerables eran **`invoker`** —
+>    entre ellas `app.exigir_nodo_cliente()`, que es el renglón (3) de la plantilla de ADR-0001 §5 y
+>    vive en 15 tablas de dominio. Una R10 acotada a `security definer` seguiría verde con ella
+>    desprotegida: la misma falla, movida un renglón.
+>
+> Y la exención de `current_user_id()` no es comodidad: una cláusula `SET` **inhabilita el inlining de
+> funciones SQL**, y esa función se inlinea dentro de `has_role_on` y de las policies — medido, **+75 %**
+> sobre el predicado de RLS de toda tabla de dominio. No la necesita porque `pg_temp` **nunca** se
+> busca para nombres de función.
+>
+> Corolario para quien escriba la próxima regla: **una regla verificable que mide lo que es fácil de
+> medir, en vez de lo que hay que garantizar, es peor que no tenerla** — porque además da confianza.
 
 ### B.2. Contexto de tenant, pooling y roles de base
 
