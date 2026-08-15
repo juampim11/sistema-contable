@@ -68,6 +68,29 @@ export const PERMITIDOS: readonly { readonly archivo: string; readonly clave: st
       'de un .env real — esa parte no la exime este permitido, la verifica `valoresVivos`.',
   },
   {
+    archivo: '.github/workflows/ci.yml',
+    clave: 'S3_LECTURA_ACCESS_KEY_ID',
+    motivo:
+      'Es un NOMBRE DE USUARIO de MinIO, no un secreto — el par secreto es S3_LECTURA_SECRET_ACCESS_KEY, ' +
+      'que en CI se genera aleatorio por corrida. Y es exclusivo de CI (`ci_lectura`): no se reusa el ' +
+      'identificador de ningun entorno real, asi que el cruce con `valoresVivos` no lo puede alcanzar.',
+  },
+  {
+    archivo: '.github/workflows/ci.yml',
+    clave: 'S3_ESCRITURA_ACCESS_KEY_ID',
+    motivo:
+      'Idem: nombre de usuario de MinIO exclusivo de CI (`ci_escritura`). El secreto del par se genera ' +
+      'aleatorio en cada corrida y no queda escrito en ningun archivo trackeado.',
+  },
+  {
+    archivo: '.github/workflows/ci.yml',
+    clave: 'IDENTIFICADOR_PEPPER_ID',
+    motivo:
+      'Es el IDENTIFICADOR de version del pepper (`v1`), no el pepper. Matchea porque `PEPPER` esta ' +
+      'en NOMBRE_SECRETO — el regex es mas ancho que el concepto, y eso se corrige junto con 0017. ' +
+      'Un identificador de version no es una credencial; el valor secreto es IDENTIFICADOR_PEPPER.',
+  },
+  {
     archivo: 'packages/shared/src/seguridad/hmac-identificador.ts',
     clave: 'PEPPER_DE_EJEMPLO',
     motivo:

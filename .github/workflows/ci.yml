@@ -29,7 +29,58 @@ jobs:
       # que corre en desarrollo.
       - name: Infraestructura local (Postgres + MinIO)
         run: |
-          cp .env.example .env
+          # 🔴 El `.env` de CI se GENERA acá, con secretos ALEATORIOS de un solo uso.
+          #
+          # Antes era `cp .env.example .env`. Ese archivo dejó de estar trackeado por el incidente #3
+          # —un archivo de ejemplo versionado es el camino más corto para que un valor real termine en
+          # el repo— y este paso quedó roto, con CI muriendo en la primera línea. De ahí que nadie
+          # viera que `0001_aislamiento.test.sql` estaba en rojo.
+          #
+          # Generarlos, en vez de escribir literales acá, cierra las dos puntas a la vez: no hay
+          # ningún valor de credencial en un archivo trackeado (R37), y **ningún secreto de CI puede
+          # coincidir con el de un entorno real**, que es exactamente lo que falló en el #3. Además
+          # cambian en cada corrida, así que no hay nada que rotar ni que filtrar.
+          #
+          # `openssl` viene en el runner de Ubuntu. `set -euo pipefail` para que un fallo acá no
+          # deje un `.env` a medias y el error aparezca veinte pasos después.
+          set -euo pipefail
+          gen() { openssl rand -hex 24; }
+          PG_PASS="$(gen)"; APP_PASS="$(gen)"; JOB_PASS="$(gen)"; MINIO_PASS="$(gen)"
+          LEC_SECRET="$(gen)"; ESC_SECRET="$(gen)"
+          {
+            echo "APP_ENTORNO=local"
+            echo "APP_TIMEZONE=America/Argentina/Cordoba"
+            echo "POSTGRES_DB=sistema_contable"
+            echo "POSTGRES_USER=sistema_contable"
+            echo "POSTGRES_PASSWORD=${PG_PASS}"
+            echo "POSTGRES_PORT=5432"
+            echo "DATABASE_URL=postgres://sistema_contable:${PG_PASS}@localhost:5432/sistema_contable"
+            echo "APP_DB_USER=app_request_dev"
+            echo "APP_DB_PASSWORD=${APP_PASS}"
+            echo "DATABASE_URL_APP=postgres://app_request_dev:${APP_PASS}@localhost:5432/sistema_contable"
+            echo "JOB_DB_PASSWORD=${JOB_PASS}"
+            echo "DATABASE_URL_JOB=postgres://app_job:${JOB_PASS}@localhost:5432/sistema_contable"
+            echo "MINIO_ROOT_USER=sistema_contable"
+            echo "MINIO_ROOT_PASSWORD=${MINIO_PASS}"
+            echo "MINIO_API_PORT=9000"
+            echo "MINIO_CONSOLE_PORT=9001"
+            echo "S3_BUCKET=sistema-contable"
+            echo "S3_REGION=us-east-1"
+            echo "S3_ENDPOINT=http://localhost:9000"
+            echo "S3_FORCE_PATH_STYLE=true"
+            # Identificadores propios de CI: NO se reusan los de ningún entorno real. R37 marcó
+            # esta línea cuando decían `app_lectura_dev` — porque eran, cadena por cadena, los
+            # valores vivos del `.env`. El cruce con los `.env*` hizo exactamente su trabajo.
+            echo "S3_LECTURA_ACCESS_KEY_ID=ci_lectura"
+            echo "S3_LECTURA_SECRET_ACCESS_KEY=${LEC_SECRET}"
+            echo "S3_ESCRITURA_ACCESS_KEY_ID=ci_escritura"
+            echo "S3_ESCRITURA_SECRET_ACCESS_KEY=${ESC_SECRET}"
+            echo "AUTH_PROVIDER=dev-identidad-fija"
+            echo "DEV_USER_ID="
+            echo "CRON_SECRET=$(gen)"
+            echo "IDENTIFICADOR_PEPPER=$(gen)"
+            echo "IDENTIFICADOR_PEPPER_ID=v1"
+          } > .env
           docker compose up -d postgres minio minio-init
           for i in $(seq 1 30); do
             if docker compose exec -T postgres pg_isready -U sistema_contable -d sistema_contable; then
@@ -65,14 +116,18 @@ jobs:
       # credencial pudiera hacer las tres, el diseño estaría mal.
       - name: Invariantes de aislamiento en SQL (tres pasadas, tres roles)
         run: |
-          set -e
+          set -euo pipefail
+          # Las contraseñas salen del `.env` generado arriba, no de un literal en este archivo.
+          # Estaban hardcodeadas y eran, cadena por cadena, las mismas que vivían en el piloto: el
+          # incidente #3 en miniatura. Ahora son aleatorias por corrida y no hay nada que allowlistear.
+          set -a; . ./.env; set +a
           docker compose exec -T postgres \
             psql -U sistema_contable -d sistema_contable -v ON_ERROR_STOP=1 -v ddl=1 \
             < packages/data/sql/tests/0001_aislamiento.test.sql
-          docker compose exec -T -e PGPASSWORD=app_job_dev postgres \
+          docker compose exec -T -e PGPASSWORD="$JOB_DB_PASSWORD" postgres \
             psql -h 127.0.0.1 -U app_job -d sistema_contable -v ON_ERROR_STOP=1 \
             < packages/data/sql/tests/0001_aislamiento.test.sql
-          docker compose exec -T -e PGPASSWORD=app_request_dev postgres \
+          docker compose exec -T -e PGPASSWORD="$APP_DB_PASSWORD" postgres \
             psql -h 127.0.0.1 -U app_request_dev -d sistema_contable -v ON_ERROR_STOP=1 \
             < packages/data/sql/tests/0001_aislamiento.test.sql
 
@@ -112,10 +167,13 @@ jobs:
 
       # Un secreto commiteado se considera público para siempre (ADR-0002 §E.4.8): se rota, no se
       # limpia el historial. Este paso existe para no llegar a esa conversación.
-      - name: No hay secretos en el repo (R33)
+      - name: No hay secretos en el repo (R37)
         run: |
-          if git ls-files --error-unmatch .env 2>/dev/null; then
-            echo "ERROR: .env está trackeado. Solo .env.example va al repo."
+          # R33 quedó reemplazada por R37 (incidente #3): decía «`.env*` gitigneado SALVO
+          # `.env.example`», y esa excepción de su propio enunciado ERA el vector. Hoy no hay
+          # excepción: ningún archivo con forma de entorno puede estar trackeado.
+          if git ls-files | grep -E '(^|/)\.env(\.[^/]+)?$'; then
+            echo "ERROR: hay un archivo con forma de .env trackeado. Ninguno va al repo."
             exit 1
           fi
           if git grep -nE -- '-----BEGIN [A-Z ]*PRIVATE KEY' -- . ':!*.md'; then
