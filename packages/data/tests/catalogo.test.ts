@@ -332,15 +332,76 @@ describe('R7/R8/R9 — owner, vistas y materializadas', () => {
 
 // -----------------------------------------------------------------------------
 describe('R10/R11 — funciones SECURITY DEFINER', () => {
-  it('R10: toda SECURITY DEFINER fija search_path', async () => {
-    const { rows } = await db.query<{ nombre: string }>(
-      `select p.proname as nombre
-         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where p.prosecdef and n.nspname in ('app', 'public')
-          and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c
-                           where c like 'search_path=%')`,
+  /**
+   * 🔴 R10 REESCRITA (migración 0015, incidente #1 de `docs/seguridad/registro-incidentes.md`).
+   *
+   * La versión anterior exigía "toda `security definer` fija `search_path`" y miraba
+   * `pg_proc.proconfig`. **Pasó VERDE con el bug adentro**: `accessible_tenant_ids` y `has_role_on`
+   * fijaban `search_path = public, app`, o sea que cumplían la letra de la regla y aun así eran
+   * explotables — `pg_temp` se busca PRIMERO para relaciones y tipos aunque no esté listado, así que
+   * cualquiera con privilegio `TEMPORARY` plantaba una `membership` falsa y anulaba la RLS entera.
+   * La regla medía "¿fija alguno?" en vez de "¿el que fija neutraliza `pg_temp`?".
+   *
+   * Dos cambios, y el segundo importa tanto como el primero:
+   *
+   *   1. Se exige que `pg_temp` sea el ÚLTIMO elemento del `search_path`, no que exista alguno.
+   *   2. 🔴 Se barren TODAS las funciones, no sólo las `security definer`. Cuatro de las seis
+   *      vulnerables eran INVOKER — entre ellas `exigir_nodo_cliente`, que es el renglón (3) de la
+   *      plantilla de ADR-0001 §5 y vive en 15 tablas de dominio. Un R10 acotado a `prosecdef`
+   *      seguiría verde con ella desprotegida: la misma falla, movida un renglón.
+   *
+   * El parseo va por `string_to_array` + último elemento + `btrim`, no por `like '%pg_temp'`: ese
+   * `like` se rompe con comillas o espacios, y `proconfig` guarda la forma canónica.
+   */
+  it('R10: toda función de app/public neutraliza pg_temp (search_path terminado en pg_temp)', async () => {
+    const { rows } = await db.query<{ nombre: string; search_path_actual: string }>(
+      `select n.nspname || '.' || p.proname as nombre,
+              coalesce(sp.valor, '(sin search_path)') as search_path_actual
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+         left join lateral (
+           select right(c, -length('search_path=')) as valor
+             from unnest(coalesce(p.proconfig, '{}'::text[])) c
+            where c like 'search_path=%' limit 1
+         ) sp on true
+         left join lateral (
+           select btrim(e) as ultimo
+             from unnest(string_to_array(sp.valor, ',')) with ordinality as t(e, i)
+            order by i desc limit 1
+         ) u on true
+        where n.nspname in ('app', 'public')
+          and p.prokind = 'f'
+          -- EXENCION UNICA Y DOCUMENTADA: app.current_user_id() no lee ninguna relacion ni tipo
+          -- (solo current_setting), y pg_temp NUNCA se busca para nombres de funcion. Y una
+          -- clausula SET inhabilitaria su inlining dentro de has_role_on y de las policies:
+          -- +75 % medido (131 -> ~230 us) sobre el predicado de RLS de TODA tabla de dominio.
+          and p.proname <> 'current_user_id'
+          and coalesce(u.ultimo, '') <> 'pg_temp'
+        order by 1`,
     );
-    expect(rows.map((f) => f.nombre)).toEqual([]);
+    expect(
+      rows.map((f) => `${f.nombre} → ${f.search_path_actual}`),
+      'una función que no termina su search_path en pg_temp es plantable: cualquiera con privilegio ' +
+        'TEMPORARY le sustituye la relación (o el tipo) que lee. Ver 0015 y el incidente #1.',
+    ).toEqual([]);
+  });
+
+  /**
+   * La otra mitad del cierre de 0015, y la que sobrevive a una función nueva mal escrita: sin
+   * privilegio `TEMPORARY` no se puede crear el objeto que shadowea.
+   */
+  it('R10 bis: ningún rol de aplicación puede crear tablas temporales', async () => {
+    const { rows } = await db.query<{ rol: string; puede: boolean }>(
+      `select rolname as rol,
+              has_database_privilege(rolname, current_database(), 'TEMPORARY') as puede
+         from pg_roles
+        where rolname in ('app_request', 'app_job', 'app_firmador')`,
+    );
+    expect(
+      rows.filter((r) => r.puede).map((r) => r.rol),
+      'un rol de aplicación con TEMPORARY puede plantar una relación en pg_temp y secuestrar lo que ' +
+        'lea cualquier función que no la califique. Ver 0015 §2.',
+    ).toEqual([]);
   });
 
   it('R11: las únicas SECURITY DEFINER son las dos que leen tenancía', async () => {

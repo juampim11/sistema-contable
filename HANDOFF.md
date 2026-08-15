@@ -6,6 +6,187 @@
 
 ---
 
+## 2026-08-15 (54) — 🔴 CRÍTICO: escalada de privilegios por shadowing de `pg_temp` en las funciones de tenancía. `0015_search_path_pg_temp.sql` aplicada a **local Y piloto**. Incidente #1 abierto, **NO cerrado**.
+
+**Herramienta:** Claude Code. Plan `replicated-zooming-pine` (reescrito para esto; CLAUDE.md §3.2,
+disparadores (a), (b) y (c)). **La migración del determinante de idempotencia quedó FRENADA por completo**
+y se corre a `0016` — su trabajo está commiteado en `feat/persistir-reconocimiento` y no se pierde.
+
+### 🔴 En qué entorno quedó aplicada (sección propia, escrita en el momento)
+
+**`0015_search_path_pg_temp.sql` está aplicada a LOCAL y al PILOTO**, esta vez con confirmación
+anticipada y explícita del titular, condicionada a que local verificara primero.
+
+```
+piloto: 0015_search_path_pg_temp.sql | 2026-08-15 00:59:44 | hash 3230d715aa287ecd
+```
+
+Hash **idéntico** al del archivo local (recalculado, no asumido). Sin drift.
+
+### Cómo apareció
+
+Auditando la superficie de un trigger que iba a entrar en la migración anterior, `security-engineer`
+encontró —**respondiendo una pregunta lateral sobre `search_path`**— que la RLS entera se podía anular
+con la credencial ordinaria de la aplicación. No lo buscaba nadie.
+
+### El defecto
+
+`pg_temp` se busca **PRIMERO** para nombres de **relación y de tipo**, aunque **no esté listado** en el
+`search_path`. Las funciones de tenancía declaraban `set search_path = public, app` y leían
+`membership`/`tenant_node` **sin calificar el esquema**. Y las dos `security definer` corren con un
+dueño que es **superusuario**, así que adentro la RLS ni se evalúa.
+
+Reproducido **tres veces de forma independiente** (quien conduce, `security-engineer`, `dba-data`) con
+la credencial `app_request` — no superusuario, no `BYPASSRLS`:
+
+```
+                                             baseline   con la trampa plantada
+tenant_node                                         1  ->  5   (los dos estudios completos)
+movimiento_bancario_crudo                           1  ->  2   (100 %)
+has_role_on(<raíz del estudio ajeno>, socio)        —  ->  true
+```
+
+El PoC usa `<un usuario real>` como marcador: **no se transcribe ningún `user_id`**.
+
+### 🔴 Por qué es más grave que "una fuga de lectura"
+
+1. **No es sólo lectura: es escalada persistente.** `has_role_on` es el `with check` de las policies de
+   ESCRITURA. El atacante podía insertarse una membresía **real** sobre el estudio ajeno y borrar la
+   trampa — una escalada que **habría sobrevivido intacta a este mismo fix**. Por eso la verificación
+   forense se corrió ANTES de parchear: parchear sin verificar habría sido cerrar la puerta con el
+   intruso adentro.
+2. **`has_role_on` cae junto con `accessible_tenant_ids`, y `has_role_on` ES el control de N2-R.**
+   Durante toda la ventana, los CUIT en claro de socios, los números de cuenta completos y las filas
+   crudas de extracto —con los identificadores de TERCEROS que nunca fueron clientes de nadie—
+   quedaron **al nivel de N2**. Los dos controles que sustituyeron al grant por columna en N2-R son
+   exactamente los dos que este vector anulaba: la policy con `has_role_on`, y `leerConAuditoria`, que
+   es un choke point de **TypeScript** y contra alguien que habla SQL **no existe**.
+3. **Se salvó UNA sola columna, y por un control distinto del que se suponía.**
+   `credencial_fiscal.material_cifrado` (N3) no se fugó porque su control es un **grant por columna**
+   —un privilegio de Postgres, evaluado ANTES que la RLS— y ninguna función `security definer` lo toca.
+   El comentario de `0002` que decía *"es un control más fuerte que una policy"* resultó literalmente
+   cierto.
+
+### El barrido completo: el patrón NO eran dos funciones
+
+**Seis de las ocho** funciones del esquema `app` leían relaciones sin calificar; **ninguna de las ocho**
+excluía `pg_temp`. Incluía `exigir_nodo_cliente` —el **renglón (3) de la plantilla obligatoria** de
+ADR-0001 §5, presente en **15 tablas de dominio**— y `tenant_node_set_path`, que fabrica el `path` con
+el que `accessible_tenant_ids` resuelve el subárbol: **H-1 por otra puerta**.
+
+### 🔴 Estado forense: verificado ANTES y DESPUÉS del fix, limpio
+
+| | Piloto | Local |
+|---|---|---|
+| `app.verificar_coherencia_path()` | **0 incoherencias** | **0 incoherencias** |
+| Membresías | 1, coincide con `HANDOFF` (45) | 6, exactamente las del seed |
+
+**El enunciado defendible es "no hay evidencia de escalada persistente".** NO se afirma que no hubo
+acceso: **no existe capacidad técnica de determinarlo** — ver la deuda al pie.
+
+### Qué cierra la migración, y qué se midió
+
+1. **Las 6 funciones**: esquema calificado en los cuerpos **y** `set search_path = pg_catalog, public,
+   app, pg_temp` con `pg_temp` **último**.
+2. **`revoke temporary on database … from public`** — el único control que cierra la **clase entera**,
+   incluida la función que alguien escriba dentro de seis meses.
+3. **`revoke all on function app.reparentar_nodo / verificar_coherencia_path from public`** — hallazgo
+   de `dba-data` que nadie más vio: `0001:294-295` revocó de PUBLIC sólo las dos `security definer`, así
+   que **hasta hoy `app_request` podía invocar `reparentar_nodo()`**, la función que reescribe los `path`
+   — el vector H-1 directamente invocable.
+
+**Verificado por ejecución, en las dos direcciones:**
+
+| Prueba | Antes | Después |
+|---|---|---|
+| PoC con `app_request` | 5 nodos, 2/2 movimientos | **bloqueado en el primer paso** (`permission denied to create temporary tables`) |
+| PoC con la trampa plantada **desde el dueño** (que conserva `TEMPORARY`) | — | **1 nodo**, `has_role_on(ajeno)` = **`false`** |
+
+La segunda prueba es la que importa: demuestra que **el fix de las funciones cierra por sí solo**,
+independientemente del `revoke`. Si mañana alguien re-concede `TEMPORARY`, el agujero no vuelve.
+
+### 🔴 `app.current_user_id()` NO se tocó, y es deliberado
+
+Una cláusula `SET` **inhabilita el inlining de funciones SQL**, y esa función se inlinea dentro de
+`has_role_on` y de las policies. Medido por `dba-data`: **+75 %** (131 → ~230 µs) en `has_role_on`, que
+corre en el predicado de RLS de **toda** tabla de dominio. Y **no lo necesita**: `pg_temp` nunca se
+busca para nombres de función. Completar la tanda "por simetría" degradaría el sistema entero a cambio
+de nada.
+
+### Otras cosas medidas y que conviene no re-descubrir
+
+- **`drop`/`create` es imposible**, no es preferencia de estilo: **49 policies** dependen de
+  `accessible_tenant_ids` y **37** de `has_role_on`. `drop … cascade` **las borra en silencio**, dejando
+  tablas con RLS forzada y sin policy.
+- **`create or replace` preserva OID, dueño y ACL** (comparado fila por fila), así que los grants de
+  `0001:294-300` no se re-emiten. Los **15 triggers** sobre `exigir_nodo_cliente` siguen enganchados.
+- **No hace falta reciclar conexiones**: probado con una conexión viva y la trampa todavía plantada en
+  su `pg_temp`, la fuga se cierra en la transacción siguiente, en el mismo backend.
+- **Costo cero** en el predicado de RLS: `EXPLAIN` textualmente idéntico, medido sobre 4005 nodos.
+- **`pg_temp` también secuestra NOMBRES DE TIPO** — un `create temp table text (…)` rompe una
+  declaración de plpgsql. Por eso `rechazar_path_manual` entró en la tanda aunque no lea ninguna
+  relación, y por eso `pg_catalog` va explícito y **primero**.
+
+### 🔴 R10 pasó VERDE con el bug adentro — y eso es una falla de la suite
+
+`ADR-0002` §B.1 R10 exige que *"toda función `security definer` fija `search_path`"*, y el test mira
+`pg_proc.proconfig`. **Las dos funciones vulnerables lo fijaban.** La regla medía "¿fija alguno?", no
+"¿el que fija neutraliza `pg_temp`?". Y acotarla a `security definer` tampoco alcanza: **cuatro de las
+seis vulnerables son `INVOKER`**.
+
+Es el caso de manual de **"el gate verde no es evidencia"**, sobre la regla dura que el proyecto entero
+existe para sostener (CLAUDE.md §1.7). La reescritura de R10 y su test **van en el mismo cierre**, y
+sin ellos el incidente no se cierra.
+
+### Deuda declarada, con dueño
+
+- 🔴 **No existe capacidad técnica de determinar si el vector se ejecutó.** El único rastro de acceso
+  (`acceso_auditoria`) se escribe **desde la aplicación**, y el vector no pasa por la aplicación.
+  Postgres no tiene triggers de `SELECT`, `pgaudit` está descartado por ADR-0000 §6 y `log_statement`
+  está en el default. Hallazgo de segundo orden: **la trazabilidad de acceso de este sistema es un
+  control de aplicación, no de base**, y es estructuralmente ciega al escenario de ADR-0002 §0 fila 3.
+- 🔴 **El dueño del esquema es superusuario** en local Y en piloto (`rolsuper=t, rolbypassrls=t`),
+  verificado en los dos. Es la **segunda mitad del impacto** y hace falsa la afirmación de ADR-0002
+  §C.0.bis (*"`force row level security` le aplica las políticas también al dueño"*). Es **provisioning,
+  no migración**: tarea propia con `devops` + `security-engineer`.
+- **El hueco del logger**: el redactor **nunca ve la clave** de un campo de log de nivel superior
+  (`logger.ts:95-98` vs `redactar.ts:196-201`); la única defensa es el tipo, y `loggerAcotado` castea.
+  ~108 claves alcanzadas. Tarea propia.
+- **N2-R quedó apoyado en un único punto de falla** (`has_role_on`), y nadie lo había escrito. ¿Le
+  corresponde una segunda barrera independiente (rol lector con grant por columna, estilo
+  `app_firmador`)? Decisión del titular con `arquitecto-software`.
+- **Rotar la contraseña de `app_request_dev`** en las dos bases — no porque se haya filtrado, sino
+  porque es la credencial que vuelve esto explotable. `db-setup.sql` ya es idempotente. **NO** corresponde
+  rotar credenciales fiscales: el pepper vive en el entorno y `material_cifrado` no se leyó.
+- **Cerrar G-1/G-2/G-3 en `knowledge/` sube a prioridad ALTA.** Es el primer incidente donde el hueco
+  tiene costo operativo real.
+- **R8 y R9 pasan por vacuidad** (cero vistas y cero matviews). El día que exista la primera vista de la
+  cola de revisión, una vista `security_invoker` con referencias sin calificar es **la misma clase**.
+
+### Sobre lo normativo
+
+**No tengo esa fuente cargada.** `knowledge/` está en estado esqueleto y ADR-0002 §G declara abiertos
+G-1 (secreto fiscal), G-2 (protección de datos personales) y G-3 (deber de notificar). **No se afirma
+ni se niega** que esto constituya una violación de secreto fiscal, ni que exista deber de notificación,
+ni ante quién ni en qué plazo. Lo que sí corresponde por deber profesional y contractual —notificar al
+titular del estudio— ya está escrito en `registro-incidentes.md:28-30`.
+
+**Validar con profesional matriculado.**
+
+### El incidente NO está cerrado
+
+Registrado como **#1** en `docs/seguridad/registro-incidentes.md`, como **"vulnerabilidad de aislamiento
+— exposición no confirmada"** (no como filtración confirmada: la distinción se sostiene en las dos
+direcciones). **Ventana: desde `0001` (2026-08-10) hasta hoy** — el defecto es fundacional, existió cada
+minuto de vida del esquema.
+
+Por la regla 3 de esa bitácora, **no se cierra hasta que exista el control expresado como regla
+verificable de ADR-0002 §B con su número**. El fix está aplicado; la regla numerada y su test todavía
+no. Y "es local" **no baja la severidad**: `registro-excepciones.md` E-1 dice que *"dado que hay material
+real en juego, el entorno local se trata como productivo a los efectos de los controles"*.
+
+---
+
 ## 2026-08-14 (53) — 🔴 `0014` APLICADA AL PILOTO, con confirmación explícita del titular. Escrito EN EL MOMENTO.
 
 **Herramienta:** Claude Code. Entrada corta y deliberadamente separada de la (52): su único objetivo es
