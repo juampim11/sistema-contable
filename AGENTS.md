@@ -20,7 +20,8 @@
 
 Ver `CLAUDE.md` §1 (`<REGLA_DURA_1..4>` + sin secretos en el repo + §1.6 guardrails de los agentes
 fiscales/contables + §1.7 asistido-no-automático y aislamiento entre clientes + §1.8 toda regla
-verificable se prueba rompiéndola). **No** reescribir acá.
+verificable se prueba rompiéndola + §1.9 antes de migrar a un entorno con datos reales: listar,
+confirmar y frenar si aparece una de más). **No** reescribir acá.
 
 > **Las dos que esta herramienta tiene que tener presentes en cada respuesta de dominio**, porque son las
 > que se rompen sin darse cuenta:

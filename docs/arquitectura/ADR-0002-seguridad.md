@@ -423,6 +423,33 @@ amarillas con su propio defecto adentro, está en `docs/diseno/09-lecciones-apre
 > existe para mirar lo que el socio hace, y la policy de lectura de `acceso_auditoria` ya lo reconoce
 > al restringir el rastro a `socio` **y** `auditor` y a nadie más.
 
+
+> 🔴 **ADVERTENCIA PROBATORIA — vigente mientras `0019` no se rediseñe (2026-08-16).**
+>
+> **Una fila de `membership_historia` NO es evidencia confiable por sí sola: pudo haber sido
+> fabricada.** El `insert` sobre esa tabla está otorgado a `app_request` sin mirar el rol, así que
+> **cualquier identidad con acceso al nodo** —`socio`, `administrativo`, `cliente_lectura` y **el
+> propio `auditor`**— puede escribir filas **indistinguibles de las que escribe el trigger**:
+> misma tabla, mismas columnas, y `hecho_por` puesto por el mismo `DEFAULT`. **No hay ninguna
+> columna que diga «esto lo escribió la base».** Medido en la ronda de cierre de `0019`, incluida
+> una fila fabricada que afirma que se borró la membresía de un auditor — una operación que `0019`
+> volvió imposible.
+>
+> **Y la ausencia de una fila tampoco prueba nada:** `tenant_node.deleted_at` esconde el rastro de
+> un nodo entero de la vista de quien supervisa, sin borrar una sola fila del disco.
+>
+> **Qué SÍ se puede hacer con este rastro, hoy:** reconstruir de buena fe una secuencia de cambios,
+> y usarlo como **indicio** que hay que corroborar contra otra fuente. **Qué NO:** sostener una
+> imputación contra una persona, ni afirmar que un cambio de derecho no ocurrió porque no figura.
+>
+> 🔴 **Esto NO afecta al control.** El ataque del incidente #5 —expulsar a la supervisión— queda
+> bloqueado **de forma independiente**: medido en nueve escenarios, con y sin filas fabricadas, en
+> transacciones separadas y en la misma, los supervisores quedan **2/2 activos** en todos. La
+> policy `membership_wr` **no menciona `membership_historia`** (verificado sobre `pg_policy`): las
+> filas falsas son **ruido, no privilegio**. El daño es a la **trazabilidad**, no al control.
+>
+> Esta advertencia se levanta cuando el rediseño cierre los dos bloqueantes, y **no antes**.
+
 ---
 
 ## C. Invariantes de aislamiento y su verificación

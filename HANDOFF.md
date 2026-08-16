@@ -6,6 +6,100 @@
 
 ---
 
+## 2026-08-16 (65) — Decisión del titular: **`0019` se queda en el piloto.** Advertencia probatoria escrita, regla dura de runbook adoptada, y el plan formal de `0019` convocado.
+
+**Herramienta:** Claude Code. Cierra la entrada (64), que dejó la decisión abierta.
+
+---
+
+### 1. La decisión, y el razonamiento que la sostiene
+
+**`0019` se queda aplicada en el piloto. No se revierte.**
+
+El titular decidió con la medición a la vista: **revertir cambiaría una vulnerabilidad severa ya
+cerrada —la expulsión silenciosa de la supervisión— por evitar una menor —un rastro que se puede
+ensuciar, pero no falsear para habilitar nada.**
+
+La medición que lo sostiene, nueve escenarios en **local**:
+
+| Escenario | Resultado | Supervisores activos |
+|---|---|---|
+| Desactivar al auditor | `UPDATE 0` | 2/2 |
+| Update masivo a los dos supervisores | `UPDATE 0` | 2/2 |
+| Borrar la membresía | `permission denied` | 2/2 |
+| Degradar el `rol` | `permission denied` | 2/2 |
+| **Fabricar fila falsa → desactivar** | `UPDATE 0` | 2/2 |
+| **Fabricar → masivo** | `UPDATE 0` | 2/2 |
+| **Fabricar + desactivar en la MISMA transacción** | `UPDATE 0` | 2/2 |
+| **Fabricar + borrar en la misma transacción** | `permission denied` | 2/2 |
+
+Y la razón estructural, **verificada sobre `pg_policy`**: la policy `membership_wr` **no menciona
+`membership_historia`**. Los dos mecanismos viven en planos distintos. Las filas fabricadas son
+**ruido, no privilegio**. El único acoplamiento —si el `insert` del rastro falla, aborta la
+transacción— **va en la dirección segura, nunca al revés**.
+
+### 2. 🔴 La advertencia probatoria, escrita donde se va a leer
+
+Quedó en **`docs/seguridad/registro-incidentes.md`** (al pie de la tabla) y en **`ADR-0002` §B, junto
+a R38**, para que nadie la use como prueba sin saberlo:
+
+> **Una fila de `membership_historia` NO es evidencia confiable por sí sola: pudo haber sido
+> fabricada.** Cualquier identidad con acceso al nodo —`socio`, `administrativo`, `cliente_lectura` y
+> **el propio `auditor`**— puede escribir filas **indistinguibles de las del trigger**. **No hay
+> ninguna columna que diga «esto lo escribió la base».**
+>
+> **Y la ausencia de una fila tampoco prueba nada:** `tenant_node.deleted_at` esconde el rastro de un
+> nodo entero de la vista de quien supervisa, sin borrar una sola fila del disco.
+>
+> **Qué SÍ:** reconstruir de buena fe una secuencia, y usarlo como **indicio** a corroborar contra
+> otra fuente. **Qué NO:** sostener una imputación contra una persona, ni afirmar que un cambio de
+> derecho no ocurrió porque no figura.
+
+Se levanta **cuando el rediseño cierre los dos bloqueantes, y no antes**.
+
+### 3. 🔴 Regla dura nueva: `CLAUDE.md` §1.9 — listar, confirmar, frenar
+
+Adoptada **ya**, no como propuesta, y rige para toda instrucción que toque el piloto de acá en
+adelante:
+
+> Antes de aplicar cualquier migración a un entorno con datos reales: **(1)** listar explícitamente
+> qué está pendiente, **(2)** confirmar que la lista coincide **exacto** con lo autorizado, **(3)**
+> frenar si aparece **una sola** migración de más.
+>
+> `pnpm db:migrate` **aplica TODAS las pendientes**: es el comando de «aplicá todo», y por eso nunca
+> es el comando de una autorización puntual.
+
+Con el porqué escrito al lado — la entrada (64), y el agravante: **los runbooks de `0015`, `0016` y
+`0017` funcionaron por casualidad.** En los tres lo pendiente coincidía con lo autorizado. **El
+control nunca existió.** Puntero agregado en `AGENTS.md`.
+
+### 4. El plan formal de `0019`, convocado — prioridad del día
+
+Tres agentes en paralelo, con el estado correcto de arranque (**no diseñan desde cero: rediseñan algo
+que ya corre sobre datos reales**):
+
+| Agente | Qué contesta |
+|---|---|
+| `seguridad-datos-financieros` | El eje de dominio: el enunciado probatorio, la jerarquía entre los dos daños, si `deleted_at` como operación legítima acota la remediación, y si los bloqueantes son del #5 o merecen fila propia |
+| `arquitecto-software` | 🔴 **La decisión cara: ¿entra una tercera `security definer`?** Elegí `invoker` para no tocar R11, y **el costo de esa elección no está escrito**: se paga con el grant de `insert` abierto a todo el tenant. Más: ¿el rastro de supervisión debe vivir bajo la misma RLS que los datos que documenta? |
+| `security-engineer` | El barrido de la clase —¿es cierto que **toda columna de `tenant_node` escribible por el tenant** es de la clase?— y **la superficie que `0019` AGREGÓ**: siete columnas de payload que un tenant escribe y de cuyo valor depende qué lee el supervisor |
+
+### Estado
+
+`pnpm verificar`: **61 archivos, 1416 tests, 0 fallas**. Local y piloto al mismo nivel de esquema
+(`0019`).
+
+| Pendiente | |
+|---|---|
+| 🔴 **El rediseño del rastro de `0019`** | Prioridad del día. Los tres reportes definen la forma |
+| Arreglar los runbooks de `docs/devops/` | La regla ya está en `CLAUDE.md` §1.9; falta el procedimiento operativo |
+| `acceso_auditoria.ocurrido_en` y `.id` | Los hallazgos H-A/H-B de `security-engineer`, abiertos desde el #4 |
+| Rol `app_rls_owner` con `BYPASSRLS` sin origen versionado | Tarea aparte |
+| Dueño del esquema superusuario | La premisa de la que depende R36 |
+| `0020` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
 ## 2026-08-16 (64) — 🔴 **`0019` entró al piloto SIN AUTORIZACIÓN. Error mío, del runbook que yo mismo escribí.** `0018` aplicada y efectiva. Nada perdido ni corrompido.
 
 **Herramienta:** Claude Code. Se escribe **en el momento**, y sin maquillar: es la primera vez en toda
