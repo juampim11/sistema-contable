@@ -6,6 +6,128 @@
 
 ---
 
+## 2026-08-16 (64) — 🔴 **`0019` entró al piloto SIN AUTORIZACIÓN. Error mío, del runbook que yo mismo escribí.** `0018` aplicada y efectiva. Nada perdido ni corrompido.
+
+**Herramienta:** Claude Code. Se escribe **en el momento**, y sin maquillar: es la primera vez en toda
+la cadena de incidentes que se cruza la línea del piloto, y la cruzó quien escribió la regla.
+
+---
+
+### 1. Qué pasó
+
+El titular autorizó **`0018` y sólo `0018`**, con la instrucción explícita de que **`0019` espera** —
+tiene dos bloqueantes de la ronda de cierre y necesita el plan formal con el panel.
+
+Corrí el runbook de la entrada (62) tal cual:
+
+```
+ENV_FILE=.env.piloto pnpm db:migrate
+  = 0017_path_por_construccion.sql (ya aplicada)
+  + 0018_parent_id_solo_en_el_alta.sql … aplicada
+  + 0019_membership_supervision.sql … aplicada        <- NO AUTORIZADA
+```
+
+🔴 **`pnpm db:migrate` aplica TODAS las migraciones pendientes, no la que uno tiene en la cabeza.**
+`0019` estaba pendiente en el piloto y entró detrás de `0018`.
+
+### 2. La causa, que es mía y es concreta
+
+**El runbook de la entrada (62) se escribió para aplicar DOS migraciones**, cuando `0018` y `0019`
+iban juntas. Cuando la decisión cambió a *«`0019` espera»*, **actualicé el plan y no actualicé el
+comando**. El runbook quedó con un `pnpm db:migrate` pelado, que es correcto para «aplicá todo lo
+pendiente» y **es exactamente lo que no había que hacer**.
+
+Es la misma clase de defecto que este expediente viene documentando hace dos días —**un artefacto que
+dice una cosa y hace otra**— con el agravante de que acá el artefacto era la instrucción de operación,
+no un test.
+
+### 3. Estado verificado, sin maquillar
+
+**No se perdió ni se corrompió nada.** Medido inmediatamente después:
+
+| | |
+|---|---|
+| `0018` | Aplicada, **sin drift** (`e10c1d20281e7ac7` en las dos puntas) y **efectiva**: `app_request` perdió el `UPDATE` sobre `parent_id` y conserva el `INSERT` |
+| `0019` | Aplicada, **sin drift** (`9d62ee810d5dc32d`). **No autorizada** |
+| `membership_historia` | **0 filas** — la tabla se creó vacía y nada la escribió |
+| `membership` | **1 fila, intacta** |
+| `app.verificar_coherencia_path()` | **0** |
+| Nodos | 1 estudio + 3 clientes — **sin cambios** |
+
+O sea: el sistema está **estable y funcionalmente sano**. Lo que está mal es que hay un control
+aplicado que el titular dijo que esperaba.
+
+### 4. Lo que NO hice, y por qué
+
+**No revertí por mi cuenta.** Dos razones, y la segunda pesa más:
+
+1. **Revertir `0019` restaura una vulnerabilidad conocida** — el estado previo es el del incidente #5:
+   un socio desactiva y borra al `auditor` y al `admin_plataforma` sin dejar rastro. No es obvio que
+   sea la opción segura.
+2. 🔴 **Acababa de equivocarme con el piloto.** Encadenar una segunda acción no autorizada sobre datos
+   de un cliente para tapar la primera es exactamente cómo un error se convierte en un incidente.
+
+Se elevó al titular con las tres opciones y su costo. **El piloto quedó como está, sin tocar, hasta
+que decida.**
+
+### 5. La medición que pidió el titular para decidir
+
+*«¿El ataque del #5 queda bloqueado de forma INDEPENDIENTE de que el rastro sea gameable?»*
+
+**Sí. Medido en LOCAL —no en el piloto—, nueve escenarios:**
+
+| Escenario | Resultado | Supervisores activos |
+|---|---|---|
+| Desactivar al auditor | `UPDATE 0` | 2/2 |
+| Update masivo a los dos supervisores | `UPDATE 0` | 2/2 |
+| Borrar la membresía | `permission denied` | 2/2 |
+| Degradar el `rol` | `permission denied` | 2/2 |
+| **Fabricar fila falsa en el rastro → desactivar** | `UPDATE 0` | 2/2 |
+| **Fabricar → masivo** | `UPDATE 0` | 2/2 |
+| **Fabricar + desactivar en la MISMA transacción** | `UPDATE 0` | 2/2 |
+| **Fabricar + borrar en la misma transacción** | `permission denied` | 2/2 |
+
+Y la razón estructural, **verificada sobre `pg_policy` y no razonada**: la policy `membership_wr`
+**no menciona `membership_historia`** ni en el `using` ni en el `with check`. Los dos mecanismos viven
+en planos distintos —la desactivación la frena el predicado sobre el rol de la fila tocada más el
+grant por columna; el rastro es una consecuencia posterior en otra tabla—. Las filas fabricadas
+quedan como **ruido, no como privilegio**.
+
+**El único acoplamiento que existe va en la dirección segura:** si el `insert` del rastro falla, la
+transacción entera aborta (por eso un socio no puede darse de baja a sí mismo, MEDIA-6). **Nunca al
+revés.**
+
+**Conclusión para la decisión:** los dos bloqueantes de `0019` degradan la **capacidad de investigar
+después** —el rastro se puede esconder con `deleted_at` y se puede ensuciar— pero **no reabren la
+expulsión de la supervisión**. Es daño a la trazabilidad, no al control.
+
+### 6. Corrección de proceso, para que no se repita
+
+🔴 **Un runbook que dice `pnpm db:migrate` es un runbook para «aplicá todo lo pendiente».** Si la
+autorización es por migración —y en este repo **siempre** lo es— el runbook tiene que:
+
+1. **Listar antes qué está pendiente** (`--dry-run` o el equivalente de inspección) y **exigir que la
+   lista coincida** con lo autorizado.
+2. **Frenar si aparece una migración de más**, en vez de aplicarla.
+3. Y decir explícitamente **qué NO se aplica en esta tanda**, no sólo qué sí.
+
+Los runbooks anteriores de esta cadena (`0015`, `0016`, `0017`) funcionaron **por casualidad**: en los
+tres casos lo pendiente coincidía con lo autorizado. **El control nunca existió.**
+
+### Estado
+
+`pnpm verificar`: **61 archivos, 1416 tests, 0 fallas**. Local y piloto quedaron —involuntariamente—
+al mismo nivel de esquema (`0019`).
+
+| Pendiente | |
+|---|---|
+| 🔴 **Decisión del titular sobre `0019` en el piloto** | Revertir / dejar / revertir sólo la tabla de rastro. Los tres costos están escritos arriba |
+| 🔴 **Plan formal del fix real del #5** | `seguridad-datos-financieros` + `arquitecto-software` + `security-engineer`. **Su forma depende de la decisión anterior**, por eso no se convocó todavía |
+| **Arreglar el runbook** | Los tres puntos de §6, en `docs/devops/` y en el próximo HANDOFF que lleve runbook |
+| `0020` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
 ## 2026-08-16 (63) — Ronda de cierre de `0019`: **vuelve a taller**. Dos bloqueantes, los dos de mi diseño. 🔴 **El piloto sigue intacto.**
 
 **Herramienta:** Claude Code, trabajo autónomo. **Verificado al cierre: el piloto sigue en `0017`,
