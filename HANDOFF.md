@@ -6,6 +6,173 @@
 
 ---
 
+## 2026-08-16 (62) — Noche autónoma: **#2 cerrado, #4 y #5 abiertos**, `0018` y `0019` en local. 🔴 **Nada al piloto.**
+
+**Herramienta:** Claude Code, trabajando sin supervisión. **La línea que no se cruzó: ninguna
+migración, ningún cambio y ninguna verificación tocaron `sistema-contable-postgres-piloto`.** `0018` y
+`0019` están **sólo en local** y esperan confirmación explícita del titular.
+
+---
+
+### 1. El registro de incidentes, completo
+
+| | |
+|---|---|
+| **#2** | **CERRADO, con alcance declarado.** R36 numerada y reescrita sobre el predicado. Se cierra el **vector**; los residuos viven en el #4 |
+| **#4** | **ABIERTO** — defectos del control de integridad del árbol. **Tres ventanas distintas**, y ésa es la precisión que se habría perdido fusionándolo con el #2: B y C nacen con `0016` y murieron el mismo día; **A y D son fundacionales desde `0001`** —no son defectos del fix, se **encontraron** en su ronda de cierre—; E nace con `0017` y sigue abierta. Cerrados A, B, C y D |
+| **#5** | **ABIERTO** — el padrón de derechos es escribible por el sujeto del control. Mecanismo cerrado por `0019` en local; falta la regla numerada |
+| **#1 y #2** | 🔴 **ANOTADOS, no reabiertos** |
+
+🔴 **La anotación de #1 y #2 es el hallazgo de proceso de la noche.** La medición forense *«cero
+membresías inesperadas en las dos bases»* —que sostiene el *«no hay evidencia de escalada
+persistente»* de los dos— corre sobre un estado que **el sujeto auditado puede editar y borrar sin
+dejar fila**. `verificar_coherencia_path()` sigue en pie como medición independiente; **la de
+membresías no prueba lo que se creyó que probaba**. El enunciado original sigue siendo correcto: lo
+que cambia es **cuánta fuerza tiene la mitad de la evidencia que lo sostiene**. Pega más fuerte en el
+#2, porque el residuo persistente de ese vector **es** una `membership`.
+
+De ahí salen **dos reglas nuevas** en la bitácora: que «ventana» y «cierre» contestan preguntas
+distintas y **pueden discrepar sin contradecirse**; y que **una fila cerrada se ANOTA, no se reabre** —
+reabrir borraría la cronología, que es lo único que ese archivo no puede reconstruir después.
+
+**Por qué el #5 va aparte del #4** (`seguridad-datos-financieros`, aplicando sus propias cuatro
+razones una por una): en el #4 hay **un control que se elude**; en el #5 **el control nunca se
+escribió**. Y la ventana compartida **no fusiona**: el #1 y el #2 también comparten ventana exacta,
+del mismo archivo, y están en filas separadas.
+
+### 2. `0018` — `parent_id` sólo en el alta (cierra ALTA-2 del #4)
+
+`0017` dejó a `app_request` con `update` sobre `parent_id`, que parecía inofensivo porque la policy lo
+gatea con `has_role_on(parent_id)`. Pero el trigger de `0001` **recalcula el `path` desde el padre**:
+`parent_id` es, de hecho, una vía de escritura del `path`. Un socio relocalizaba un subárbol de cuatro
+niveles con un solo `update`, coherente, **sin el GUC, sin `reparentar_nodo()` y sin una sola fila en
+`acceso_auditoria`**. Un `contador` con membresía sólo sobre un grupo pasó de ver 2 nodos a ver **3**.
+
+Y era **no determinístico**: dependía del orden físico del heap.
+
+**Colgar un nodo nuevo y mover uno existente son dos operaciones distintas, y sólo una es del alcance
+de la aplicación.** `app_request` conserva `INSERT` y pierde `UPDATE`. **No es una restricción nueva:
+es hacer cumplir la que `ADR-0001` §8.2 ya declaraba.** Verificado con los vectores de `tester`:
+**12 de 12**.
+
+### 3. `0019` — el padrón de derechos (cierra el mecanismo del #5)
+
+**Tres patas, porque cerrar una sola dejaba el hallazgo vivo:**
+
+1. **RASTRO** — `membership_historia`, append-only, **escrita por trigger y no por la aplicación**. Es
+   la lección del #1 en una línea: `acceso_auditoria` se escribe desde la aplicación, y por eso el
+   vector del #1 no dejó nada.
+2. **PRIVILEGIO** — grant por columna: sólo `activo` se actualiza, el `DELETE` desaparece. Mismo
+   criterio con que `0005` se lo sacó a `credencial_fiscal`: **una membresía no se borra, se
+   desactiva**.
+3. **POLICY** — el predicado mira el rol de **la fila tocada**, en el `using` **y** en el `with check`.
+
+🔴 **El rastro no puede ir contra `acceso_auditoria`, y el motivo es mecánico antes que semántico:**
+su trigger exige un nodo de tipo `cliente`, y una membresía de `socio`/`auditor`/`admin_plataforma`
+cuelga del **estudio** — la fila **no entra**. Precedente en el repo: `credencial_fiscal` +
+`credencial_fiscal_rotacion`.
+
+`hecho_por` y `ocurrido_en` **salen de un DEFAULT y nadie tiene grant sobre ellas**: ni el trigger las
+nombra. Cierra por construcción el defecto que `acceso_auditoria` **sí tiene hoy**, donde el auditado
+elige la marca de tiempo. Y `hecho_por` es **nullable a propósito**: el nulo **es información** —
+significa que la escritura vino del dueño o de un job, no de una persona a través de la aplicación.
+
+**Decisión de negocio tomada, y revertible en una línea:** los roles supervisores son `auditor` y
+`admin_plataforma`. El segundo es **estructural** (`0001:36`: es staff de la plataforma, no del
+estudio); el primero es **la decisión**, con el argumento de que existe para mirar lo que el socio
+hace. Se cambia el cuerpo de `app.es_rol_supervisor()` y nada más.
+
+**Mutación: 4 de 4 atrapadas**, incluida la sutil — dejar el predicado sólo en el `with check` y no en
+el `using` **deja pasar el ataque**, porque el socio no cambia el `rol` al desactivar y la fila
+resultante sigue siendo válida.
+
+**Y el caso legítimo es parte de la regla:** INV-10 exige que revocar una membresía corte el acceso en
+el request siguiente. El defecto nunca fue que se escriba `activo` — fue **sobre qué fila, con qué
+grant y sin qué rastro**.
+
+### 4. Tres cosas que atajó el proceso, y valen más que el resultado
+
+- **Mi propio test encontró un defecto en mi propia migración**: el `grant insert` sobre
+  `membership_historia` había quedado a **nivel tabla**, así que el caso *«`hecho_por` no se puede
+  falsificar»* pasaba en verde **por el motivo equivocado**. Ahora es por columna.
+- **El gate exigió dos cosas seguidas y las dos veces tenía razón**: la constante de TypeScript que
+  espeja el `check` de dominio cerrado, y después el `comment on constraint` que la nombra.
+- 🔴 **`0019` se corrigió tres veces revirtiéndola de local, no encadenando correctivos.** Es legítimo
+  porque **no está en el piloto ni pusheada**: la regla *«una migración aplicada no se edita»* protege
+  contra el **drift entre entornos**, y encadenar un `0020` correctivo habría **arrastrado el defecto
+  al piloto**. La decisión está escrita en el propio script de reversión.
+
+Y un freno que me puse: iba a corregir el encabezado de `0017` —que sobredeclaraba la inmunidad del
+mecanismo— y **lo aborté**, porque `0017` **sí** está aplicada al piloto y editarla le cambia el hash.
+La corrección terminó donde correspondía: **como premisa explícita de R36**.
+
+### 5. Documentación puesta al día
+
+`CHANGELOG.md` **creado** — no existía y nunca existió, aunque cinco documentos lo referencian.
+`09-lecciones-aprendidas.md` **§11**, la lección más valiosa de la sesión. `ADR-0002` **§B.0** (ninguna
+regla cuenta como control hasta que se probó rompiéndola, **eligiendo las mutaciones para refutar y no
+para confirmar**), la tabla de §B que se declaraba dominante **congelada**, **T11** reescrita —
+enunciaba la R10 rota— más **T15** y **T16**. `CLAUDE.md` **§1.8** y su puntero en `AGENTS.md`.
+
+---
+
+### 🔴 6. Runbook para aplicar al PILOTO — **listo para copiar y pegar, NO EJECUTADO**
+
+**Espera confirmación explícita del titular.** Se aplican **las dos, en orden**: `0018` depende del
+estado que dejó `0017` (que sí está en el piloto) y `0019` es independiente, pero el orden de
+migración es estricto.
+
+```bash
+# --- Paso 0: estado ANTES, con app_job (BYPASSRLS) ---
+#   Con el dueño podría ser verde por vacuidad el día que deje de ser superusuario,
+#   que es lo que ADR-0002 exige para producción.
+#     select count(*) from app.verificar_coherencia_path();          -- debe dar 0
+#     select rol, count(*) from membership group by rol order by 1;  -- foto del padrón ANTES
+#
+# --- Paso 1: verificar los hashes contra el archivo local ANTES de correr nada ---
+#     0018_parent_id_solo_en_el_alta.sql   ->  e10c1d20281e7ac7
+#     0019_membership_supervision.sql      ->  9d62ee810d5dc32d
+#
+# --- Paso 2: aplicar ---
+ENV_FILE=.env.piloto pnpm db:migrate
+#
+# --- Paso 3: verificar DESPUÉS ---
+#   a) sin drift: el hash registrado en el piloto == el de local, para las dos
+#   b) select count(*) from app.verificar_coherencia_path();   -- 0
+#   c) el padrón NO cambió: misma foto que el paso 0
+#   d) privilegios de columna:
+#        has_column_privilege('app_request','tenant_node','parent_id','UPDATE')  -- false
+#        has_column_privilege('app_request','tenant_node','parent_id','INSERT')  -- true
+#        has_column_privilege('app_request','membership','rol','UPDATE')         -- false
+#        has_column_privilege('app_request','membership','activo','UPDATE')      -- true
+#        has_table_privilege ('app_request','membership','DELETE')               -- false
+#   e) que DISPARA, no que existe: en una transacción que SIEMPRE revierte, una escritura
+#      sobre `membership` tiene que dejar su fila en `membership_historia`.
+```
+
+🔴 **Y una advertencia que no estaba en los runbooks anteriores:** `0019` **cambia el
+comportamiento de la baja de una membresía** — el `DELETE` deja de existir para la aplicación. Si en
+el piloto hay algún flujo que borre membresías, **falla después de aplicar**. Medido en el repo:
+**cero** escrituras de `membership` desde código de producción TypeScript, así que no debería haber
+ninguno — pero eso se mide en el repo, **no en el piloto**, y por eso queda como advertencia y no
+como verificación.
+
+### 7. Estado y pendientes
+
+`pnpm verificar`: **61 archivos, 1406 tests, 0 fallas** (venía de 60/1392).
+
+| Pendiente | |
+|---|---|
+| 🔴 **Aplicar `0018` y `0019` al piloto** | **Primero de la mañana.** Espera confirmación explícita |
+| **R38** — la regla numerada del #5 en `ADR-0002` §B | Sin ella el #5 no cierra (regla 3). El mecanismo ya está y probado por mutación |
+| **Ronda de cierre de `0019`** | `qa-automation` en worktree, `tester`, `code-reviewer`, `documentador`. **Con la lección puesta**: `0016` y `0017` pasaron las suyas y tenían agujeros |
+| **#4 defecto E** — el `DETAIL` del driver | El hueco real es que `conUsuario`/`conJob` re-lanzan el error crudo: la protección existe **por callsite y no por diseño** |
+| Rol `app_rls_owner` con `BYPASSRLS` sin origen versionado | Tarea aparte, `security-engineer` |
+| Dueño del esquema superusuario | La premisa de la que depende R36, y sigue abierta desde el #1 |
+| `0020` — determinante de idempotencia | **Sigue frenado.** Se corre de `0018` a `0020` |
+
+---
+
 ## 2026-08-15 (61) — `0017_path_por_construccion.sql` aplicada a **local y PILOTO**. El invariante del árbol baja de trigger a `check` + `foreign key`.
 
 **Herramienta:** Claude Code. Escrita **en el momento** (§4). Confirmación explícita del titular para
