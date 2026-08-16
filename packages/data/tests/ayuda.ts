@@ -147,7 +147,12 @@ export async function sembrar(): Promise<Sembrado> {
         'movimiento_contraparte_identificador, padron_socio_documento, padron_socio, ' +
         'movimiento_origen_crudo, movimiento_bancario_crudo, lote_ingesta_cuenta, ' +
         'lote_ingesta, cuenta_bancaria_identificador, cuenta_bancaria, banco, ' +
-        'credencial_fiscal_rotacion, credencial_fiscal, acceso_auditoria, membership, ' +
+        'credencial_fiscal_rotacion, credencial_fiscal, acceso_auditoria, ' +
+        // `membership_historia` antes que `membership`: el `cascade` la alcanzaría igual por la FK a
+        // `tenant_node`, pero nombrarla es lo que hace que la próxima tabla del plano de tenancía se
+        // note acá. 0019 la agregó y esta lista no se enteró — que es la misma falla que tenía R1 de
+        // `catalogo.test.ts`, y por el mismo motivo: una lista escrita a mano.
+        'membership_historia, membership, ' +
         'tenant_node cascade',
     );
   } finally {

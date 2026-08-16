@@ -57,6 +57,16 @@ import { clienteDuenio } from './ayuda.ts';
 
 let db: Client;
 
+/**
+ * Las ÚNICAS tablas clasificadas que pueden vivir sin RLS, y por qué. Es una excepción y por eso se
+ * escribe acá: el default de R1 es "con RLS habilitada y forzada", y agregar un nombre a este set es
+ * un cambio que se ve en el diff.
+ *
+ * - `banco`: catálogo GLOBAL de entidades bancarias, idéntico para todos los clientes y sin un solo
+ *   dato de nadie. No tiene columna de tenant porque no le corresponde ninguna.
+ */
+const SIN_RLS_CON_MOTIVO = new Set<string>(['banco']);
+
 /** Tablas reales del esquema `public`, sin las internas del aplicador de migraciones. */
 async function tablasDelEsquema(): Promise<string[]> {
   const { rows } = await db.query<{ nombre: string }>(
@@ -135,15 +145,25 @@ describe('registro de clasificación (ADR-0002 §A.3)', () => {
 
 // -----------------------------------------------------------------------------
 describe('R1/R2/R3 — RLS, columna de tenant e índice', () => {
-  it('R1: toda tabla con columna de tenant tiene RLS habilitada Y forzada', async () => {
+  it('R1: toda tabla clasificada tiene RLS habilitada Y forzada, salvo excepción escrita', async () => {
     const { rows } = await db.query<{ nombre: string; habilitada: boolean; forzada: boolean }>(
       `select c.relname as nombre, c.relrowsecurity as habilitada, c.relforcerowsecurity as forzada
          from pg_class c join pg_namespace n on n.oid = c.relnamespace
         where c.relkind = 'r' and n.nspname = 'public'`,
     );
-    const esperadas = new Set<string>([...tablasConColumnaTenant(), 'tenant_node', 'membership']);
+    // 🔴 La lista se DERIVA de la clasificación; lo que se enumera es la EXCEPCIÓN, no la regla.
+    // Antes acá había un `[...tablasConColumnaTenant(), 'tenant_node', 'membership']` escrito a mano,
+    // y el efecto fue exactamente el que tiene toda allowlist: `membership_historia` (0019) nació
+    // fuera de la lista y R1 dejó de mirarla. MEDIDO: con `disable row level security` sobre el
+    // rastro del padrón de derechos, los 218 casos de `packages/data` seguían en verde. Con la
+    // lista derivada, la tabla número cuatro del plano de tenancía entra sola.
     const mal = rows
-      .filter((f) => esperadas.has(f.nombre) && !(f.habilitada && f.forzada))
+      .filter(
+        (f) =>
+          (Object.keys(CLASIFICACION) as string[]).includes(f.nombre) &&
+          !SIN_RLS_CON_MOTIVO.has(f.nombre) &&
+          !(f.habilitada && f.forzada),
+      )
       .map((f) => `${f.nombre} (habilitada=${f.habilitada}, forzada=${f.forzada})`);
     expect(mal).toEqual([]);
   });
