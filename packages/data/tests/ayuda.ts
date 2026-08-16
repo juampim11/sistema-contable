@@ -28,6 +28,29 @@ export type Sembrado = {
   clienteC: string;
 };
 
+/**
+ * Conexión con **`app_job`** (BYPASSRLS), para los tests que tienen que medir un INVARIANTE y no un
+ * privilegio.
+ *
+ * Existe por una razón concreta, de `0017`: un ataque probado sólo con `app_request` muere por
+ * `permission denied` antes de llegar al invariante, así que ese test **se pone verde el día que
+ * alguien re-otorgue un grant de tabla entera** copiando la plantilla de ADR-0001 §5 — que es el
+ * escenario de regresión realista. Para saber si el invariante existe hay que atacarlo con el
+ * escritor más privilegiado que no sea el dueño.
+ */
+export async function clienteJob(): Promise<Client> {
+  const dsn = process.env['DATABASE_URL_JOB'];
+  if (!dsn) {
+    throw new Error(
+      'Falta DATABASE_URL_JOB. Sin app_job no se puede distinguir "el invariante se cumple" de\n' +
+        '"a este rol le falta un grant", que es justo lo que 0017 vino a separar.',
+    );
+  }
+  const c = new Client({ connectionString: dsn });
+  await c.connect();
+  return c;
+}
+
 /** Conexión con el dueño del esquema, para leer el catálogo y hacer DDL en los tests. */
 export async function clienteDuenio(): Promise<Client> {
   const dsn = process.env['DATABASE_URL'];

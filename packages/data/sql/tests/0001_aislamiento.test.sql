@@ -253,19 +253,12 @@ begin
 
   -- Limpieza de los nodos auxiliares del test de reparentado.
   --
-  -- ⚠️ TEMPORAL — se saca cuando entre `0017`. `trg_tenant_node_path_coherente` (0016) es un
-  -- constraint trigger DIFERIDO: los eventos de los `insert` de arriba se validan recién en el
-  -- commit, y para entonces estas filas ya no existen. La función trata "no puedo leer la fila"
-  -- como VIOLACION —correcto contra el ataque, donde el atacante se auto-oculta la fila—, pero no
-  -- distingue ese caso de "la fila se borró en la misma transacción", que es esto y es legítimo.
-  -- Resultado: el bloque abortaba en el commit DESPUES de que las cuatro aserciones pasaran.
-  --
-  -- Forzar el chequeo acá lo valida mientras las filas existen; el `delete` no encola nada, porque
-  -- `DELETE` no está entre los eventos del trigger (`after insert or update of path, parent_id`).
-  -- La ambigüedad de fondo se resuelve en `0017`; esto es para que CI vuelva a correr, no un fix.
-  set constraints trg_tenant_node_path_coherente immediate;
+  -- Entre `0016` y `0017` esto abortaba en el commit y hubo que forzar el chequeo a mano: el
+  -- constraint trigger de `0016` era diferido y trataba "no puedo leer la fila" como violación, sin
+  -- distinguir el ataque —donde el atacante se auto-oculta la fila— de "la fila se borró en esta
+  -- misma transacción", que es lo que pasa acá y es legítimo. `0017` elimina el caso: el invariante
+  -- pasa a ser un CHECK fila-local más una FK, y una fila borrada no tiene nada que violar.
   delete from tenant_node where id in (v_mudado, v_grupo);
-  set constraints trg_tenant_node_path_coherente deferred;
 
   raise notice '=== PASADA 1 COMPLETA (P1-A..P1-D) ===';
 end $$;

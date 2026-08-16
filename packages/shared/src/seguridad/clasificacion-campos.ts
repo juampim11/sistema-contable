@@ -65,6 +65,14 @@ export const CLASIFICACION = {
           'Se clasifica por el caso más sensible.',
       },
       path: { nivel: 'N1', exportable: false, nota: 'Contiene nid: no sale (R25).' },
+      parent_path: {
+        nivel: 'N1',
+        exportable: false,
+        nota:
+          'Espejo del `path` del padre (0017). Mismo criterio que `path`: contiene nid, no sale (R25). ' +
+          'No es un dato: es lo que vuelve fila-local el invariante del árbol, y por lo tanto ' +
+          'verificable con un CHECK inmune a la RLS. Su veracidad la sostiene tenant_node_parent_path_fk.',
+      },
       deleted_at: MARCA_TIEMPO,
       created_at: MARCA_TIEMPO,
       updated_at: MARCA_TIEMPO,
