@@ -92,10 +92,47 @@ tenant** (`cliente_id` | `estudio_id` | `ninguna` + justificación escrita).
 
 Redactadas para que un test o `code-reviewer` las chequee sin criterio humano. Todas **bloquean merge**.
 
-> ### Estado al cerrar la Fase 0 — ESTA TABLA MANDA sobre la columna "Estado" de cada regla
+### B.0. 🔴 Ninguna regla de esta sección cuenta como control hasta que se probó rompiéndola
+
+**Toda regla nueva o reescrita de §B se cierra por prueba de mutación, no por redacción.** En concreto:
+
+1. Se escribe la versión **defectuosa** del código que la regla debe atrapar, y se verifica que la
+   regla se ponga **roja**. Si no se pone roja, la regla no mide lo que dice.
+2. 🔴 **Las mutaciones se eligen para REFUTAR, no para confirmar.** «4 mutaciones, 4 atrapadas» no dice
+   nada si son las 4 que el test fue escrito para atrapar: sobre esa misma regla se corrieron 27 y
+   sobrevivieron 7, todas en la familia que ningún test miraba.
+3. Se agrega el **caso legítimo** —lo que la regla debe seguir permitiendo— y se verifica que alguna
+   mutación se detecte **sólo** por él. Un control que sólo prohíbe pasa todos los tests negativos y
+   rompe la operación real.
+4. Se declara, en la columna «Estado», **cuántas mutaciones se probaron y cuántas atrapó**. Un número
+   sin harness versionado se marca como **no reproducible**, y eso es información, no un detalle.
+5. Se verifica que la regla **no pase por vacuidad**: toda aserción sobre un conjunto que puede estar
+   vacío lleva su guarda de cardinalidad, con número.
+6. **Cada ataque corre con la identidad más privilegiada que corresponda.** Un ataque probado sólo con
+   el rol de la aplicación mide **privilegio**, no **invariante**, y se pone verde el día que alguien
+   re-otorgue un grant de tabla entera copiando la plantilla de ADR-0001 §5.
+
+**Y el estado es parte de la regla.** Un ⚠️ o un ❌ sin dueño y sin fecha no es una advertencia: es un
+✅ con más letras. R33 estuvo ⚠️ *«existe con valores de desarrollo evidentes»* toda la vida del repo, y
+esa frase era el incidente #3 escrito por adelantado.
+
+**Marcar una regla como cerrada sin haberla mutado es exactamente el error que los incidentes #1 a #5
+documentan.** Pasó: la primera marca de «cerrado» del #1 se puso con R10 escrita y sin mutar, y R10
+estaba mal — por segunda vez. El porqué completo, con las cinco reglas que llegaron a estar verdes o
+amarillas con su propio defecto adentro, está en `docs/diseno/09-lecciones-aprendidas.md` §11.
+
+> ### Estado al cerrar la Fase 0 — 🔴 CONGELADA. YA NO MANDA: manda la columna «Estado» de cada regla
 >
-> La columna Estado de las tablas de abajo se escribió **antes** de que existiera código. Éste es el
-> estado real, verificado con `pnpm verificar` (typecheck + 72 tests) y con las tres pasadas SQL:
+> **Foto histórica del cierre de la Fase 0 (2026-08-09), 72 tests. Se conserva para trazabilidad y
+> no se actualiza.** Se escribió cuando la columna «Estado» de cada regla era una intención y no un
+> hecho; hoy es al revés, y dejarla dominante **propaga datos falsos**: acá figuran ✅ **R13 y R33**,
+> que sus propias filas declaran ⚠️ y ❌ *insuficiente* después de los incidentes #2, #3 y #4.
+>
+> 🔴 **Regla de lectura, desde 2026-08-16: la fila de cada regla es la fuente de verdad de su
+> estado; esta tabla es historia.** Las reglas posteriores a la Fase 0 (R36, R37, R37 bis) no están
+> acá y no van a estarlo. **Un índice que repite un estado es un índice que se desincroniza** — éste
+> se desincronizó tres veces en un día. El estado de entonces, verificado con `pnpm verificar`
+> (typecheck + 72 tests) y las tres pasadas SQL:
 >
 > | Estado | Reglas | Cómo se verifica |
 > |---|---|---|
@@ -349,7 +386,9 @@ cada una con el rol que le corresponde**, y esa separación es parte de lo que s
 | **T8** | Una fila de dominio solo cuelga de un nodo `cliente` |
 | **T9** | Toda tabla con `cliente_id` tiene RLS **habilitada y forzada** |
 | **T10** | Ninguna policy con predicado abierto ni escritura sin `with_check` |
-| **T11** | Toda función `security definer` fija `search_path` |
+| **T11** | 🔴 **Ninguna función de `app`/`public` puede ser secuestrada por `pg_temp`** — `definer` **e** `invoker`: la **primera** aparición de `pg_temp` es la **última** posición y hay ≥2 elementos (R10), ningún rol no superusuario conserva `TEMPORARY` (R10 bis), y `app`/`public` son los únicos esquemas de dominio (R10 ter). *La redacción anterior —«toda función `security definer` fija `search_path`»— era la R10 original, que estuvo verde toda la vida del esquema con el incidente #1 adentro: las funciones vulnerables **sí** fijaban `search_path`.* |
+| **T15** | El `path` es una **función** de `(parent_id, nid)`: ninguna transacción que rompa el predicado commitea, **con ninguna identidad** — incluidos `app_job` (BYPASSRLS) y el dueño del esquema (R36) |
+| **T16** | Ni `app_request` ni `app_job` escriben `nid`; `app_request` tampoco `path`, `parent_path` ni **`parent_id` en un `UPDATE`** — mover un nodo es de `app.reparentar_nodo()` con `app_job` (`0017` §7, `0018`) |
 | **T12** | `app_request` no saltea RLS ni es superusuario |
 | **T13** | `acceso_auditoria` es append-only para el rol de request |
 | **T14** | Cada estudio es raíz: no hay super-raíz de plataforma |

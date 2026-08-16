@@ -5,6 +5,10 @@
 > una bitácora —esa es `HANDOFF.md`— sino el **procedimiento y las trampas** para que el cuarto no vuelva a
 > pagarlos.
 >
+> **§11 no es de bancos.** Salió de los cinco incidentes de seguridad del 2026-08-15/16 y está acá
+> porque es la misma falla que §2, un nivel más arriba: no un fixture que consagra la spec, sino un
+> **control** que consagra su propia ceguera. Léase junto con §2.
+>
 > Léase **antes** de escribir un adaptador nuevo, junto con la spec del banco.
 
 ---
@@ -309,3 +313,104 @@ Ninguna bloquea, todas están en `08` §3 con detalle:
 5. **E1.1 en 5 de 14**: los otros nueve puntos del panel siguen abiertos.
 6. **`inferirCortes` / `cortarEnColumnas`**: cero usuarios en tres bancos. **Se borran al confirmarlo con el
    cuarto** — borrar sobre tres es una conclusión, borrar sobre uno era una corazonada.
+
+---
+
+## 11. 🔴 Un control que corre con los privilegios de quien escribe no es un control
+
+Cinco incidentes en dos días, y tres de ellos comparten **la misma forma**. No es una lección sobre
+PostgreSQL: es sobre **dónde vive un control y qué puede ver**.
+
+> 🔴 **Un invariante verificado con la visibilidad del escritor no es un invariante. Si el control lee
+> con los privilegios de quien escribe, quien escribe elige lo que el control ve.**
+
+| Incidente | El control | Con qué visibilidad leía | Qué eligió el atacante |
+|---|---|---|---|
+| **#1** | `accessible_tenant_ids()`, `has_role_on()` | el `search_path` **del invocador** (`pg_temp` primero) | la **tabla** que el control lee |
+| **#2 / #4** | `exigir_path_coherente()`, `invoker` | la **RLS del escritor** | la **fila** que el control valida — la que él mismo acaba de escribir |
+| **#5** | `membership_wr` | — | acá el control **ni siquiera existe**: la policy gatea por el nodo y **nunca por la fila que se toca** |
+
+**Y la compensación es peor que el agujero.** `0016` no ignoró la ceguera: la **convirtió en el
+control**, tratando *"no puedo leer la fila"* como violación. Eso (a) **no era lo que cerraba el
+incidente** —está medido: lo cerraba la comparación de coherencia—, (b) confundía **tres** situaciones
+de las que sólo una era un ataque, y (c) **rompió una operación legítima**, dejando en rojo un test de
+CI que nadie vio porque CI también estaba roto. Una compensación por ceguera hereda todos los falsos
+positivos de la ceguera.
+
+### El método que sale de acá
+
+1. **Preguntá con qué privilegios lee el control, antes de escribirlo.** Si la respuesta es «los del
+   escritor», ya está roto — aunque hoy funcione.
+2. **Bajá el invariante al escalón más bajo que lo soporte.** `check` < `foreign key` < trigger <
+   código. Postgres exime a `check`/`unique`/`foreign key` de la RLS **por diseño**; los triggers no.
+   Bajar dos escalones borró la necesidad de un `security definer`, de una excepción a **R11** y de un
+   ADR entero — y salió **~5× más rápido** que el trigger.
+3. **Probá cada ataque con la identidad más privilegiada que corresponda.** Un test que sólo corre con
+   el rol de la aplicación mide **privilegio**, no **invariante**, y **se pone verde el día que alguien
+   re-otorgue un grant de tabla entera copiando la plantilla**. Ése es el escenario de regresión real,
+   mucho más que un atacante.
+4. **Mecanismo y privilegio no se sustituyen.** Sólo mecanismo deja pasar lo que es *íntegramente
+   válido* (un `nid` cualquiera lo es). Sólo privilegio deja al dueño y a cualquier script de
+   mantenimiento romper el árbol en silencio, porque **el grant no le aplica al dueño**.
+5. **La regla se enuncia sobre el PREDICADO, nunca sobre el mecanismo.** R33 nombraba en su enunciado
+   la excepción que resultó ser el vector; la primera R36 nombraba «trigger diferido», «re-lee la
+   fila» y «`not found` es violación» — **las tres cambiaron en una migración, y una era falsa**. Una
+   regla bien escrita **sobrevive al cambio de implementación sin tocar una palabra**.
+6. **Declará la premisa en vez de esconderla.** «El mecanismo sobrevive al dueño» era falso por partes:
+   los `CHECK` sí, la FK **es un trigger de sistema** y `session_replication_role` la apaga, y el
+   trigger de `nid` lo apaga `disable trigger user`, que el dueño **no superusuario** sí puede correr.
+   Decirlo **por constraint y no por bloque** es la diferencia entre una regla y un eslogan.
+
+### 🔴 Y el corolario de proceso, que es el que más duele
+
+> **Una aserción sobre la presencia de un control, o sobre el estado actual, nunca es una aserción
+> sobre una garantía. La garantía es sobre ALCANZABILIDAD.**
+
+Cinco reglas verificables llegaron a estar verdes o amarillas **con su propio defecto adentro**:
+
+| Regla | Qué medía | Qué había que garantizar | Cuánto estuvo así |
+|---|---|---|---|
+| **R10** v1 | *«la función **fija** un `search_path`»* | que el que fija **neutralice `pg_temp`** | los cinco días de vida del esquema |
+| **R10** v2 | *«`search_path` **terminado** en `pg_temp`»* | que `pg_temp` quede último **al resolver** — Postgres resuelve por **primera** aparición | un commit |
+| **R13** | *«**existe** el trigger»* + *«el árbol **está** coherente ahora»* | que **no se pueda alcanzar** un árbol incoherente | toda la vida del esquema |
+| **R33** | *«ningún secreto en el repo, `.env*` gitigneado **salvo `.env.example`**»* | que **ningún archivo trackeado** contenga una credencial | toda la vida del repo |
+| **R36** v1 | *«existe el constraint trigger»* + 4 mutaciones elegidas para **confirmar** | **7 de 27** mutaciones seguían vivas | un día |
+
+**R33 es el caso extremo y no se parece a los otros: no pasaba verde por medir mal — pasaba amarillo
+admitiendo la falla.** Su campo de estado decía, textualmente, *«existe con valores de desarrollo
+evidentes»*. El defecto estuvo escrito, en la tabla de reglas, todo el tiempo.
+
+> **Un ⚠️ que nadie convierte en trabajo es un ✅ con más letras.**
+
+De donde salen tres cosas que no son opinables:
+
+1. **El campo de estado es parte de la regla, no una nota al pie.**
+2. **Una excepción nombrada dentro del enunciado de una regla es el primer lugar donde buscar el
+   próximo incidente.** *«Salvo X»* es una hipótesis sobre X que nadie está midiendo.
+3. **Una regla mide la clase, no el caso.** Ignorar `.env.example` cerraba **el caso**; la **clase** es
+   *«un archivo que documenta variables se fue llenando de valores»*. Al medir la clase por primera
+   vez, R37 encontró credenciales en **cuatro archivos más** — y uno era **el texto de la propia regla
+   que se estaba escribiendo**.
+
+### Qué hacer al escribir la próxima regla verificable
+
+1. Escribí la regla. Después escribí **qué mide** y **qué hay que garantizar**, en dos renglones
+   separados. Si son el mismo renglón, todavía no la leíste bien.
+2. Preguntá **«¿esto mide presencia, estado o alcanzabilidad?»**. Si es de las dos primeras, no cierra
+   nada por sí sola.
+3. **Rompela.** Escribí la versión defectuosa y verificá que la regla se ponga roja. Contá las
+   mutaciones y **escribí el número**, con el harness versionado si es reproducible. **Y elegí las
+   mutaciones para refutar, no para confirmar**: las 4 de la primera R36 eran las 4 que el test fue
+   escrito para atrapar.
+4. Agregá el **caso legítimo**, y verificá que alguna mutación se detecte **sólo** por él. De las 27
+   mutaciones de `0017`, **seis** se detectaban únicamente por un caso positivo.
+5. Releé el enunciado buscando la palabra **«salvo»**. Si está, ésa es la próxima entrada de
+   `registro-incidentes.md`.
+
+**El costo de no saberlo antes, medido:** `0016` fue una migración completa, aplicada a local **y al
+piloto**, con su ronda de cierre de cuatro agentes, que **cerraba el ataque por la rama equivocada** y
+abría tres agujeros nuevos. Se reemplazó a las horas.
+
+**Detalle numérico:** `docs/arquitectura/ADR-0002-seguridad.md` §B.1 y §B.3. **Cronología:**
+`HANDOFF.md`, entradas (54) en adelante. **Los cinco incidentes:**
+`docs/seguridad/registro-incidentes.md`.

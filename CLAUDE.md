@@ -46,6 +46,13 @@
    `agents/personas/motor-conciliacion-contable.md`). Y **un cliente nunca ve el dato de otro**: el
    aislamiento y el secreto fiscal son requisitos de diseño, no un detalle de implementación (ver
    `agents/personas/seguridad-datos-financieros.md`).
+8. **Una regla verificable no cuenta como control hasta que se probó rompiéndola.** Toda regla de
+   `ADR-0002` §B nueva o reescrita se cierra por **prueba de mutación** —se escribe el código
+   defectuoso y se verifica que la regla se ponga roja—, con su **caso legítimo**, con el conteo de
+   mutaciones declarado, y **eligiendo las mutaciones para refutar, no para confirmar**. Procedimiento
+   completo: **ADR-0002 §B.0**. El porqué —cinco reglas verdes o amarillas con su propio defecto
+   adentro, en dos días—: `docs/diseno/09-lecciones-aprendidas.md` §11. Y el corolario que gobierna
+   los campos de estado: **un ⚠️ que nadie convierte en trabajo es un ✅ con más letras.**
 
 ## 2. Convenciones técnicas
 
@@ -69,7 +76,7 @@
   ```bash
   pnpm db:up && pnpm db:migrate && pnpm db:setup   # infra + esquema + roles
   pnpm db:seed                                     # datos SINTÉTICOS (nunca reales)
-  pnpm verificar                                   # typecheck estricto + 72 tests (gate)
+  pnpm verificar                                   # typecheck + barrido + fixtures + la suite (gate)
   ```
   Detalle del runbook: ADR-0000 §4.1.
 
