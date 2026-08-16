@@ -324,6 +324,7 @@ amarillas con su propio defecto adentro, está en `docs/diseno/09-lecciones-apre
 | **R35** | Mandar algo ≥ N2 a un servicio externo requiere entrada en `docs/seguridad/registro-terceros.md` con qué se manda, con qué base y quién lo autorizó. | La lista de destinos de red permitidos es explícita; una URL externa nueva sin entrada → falla. | ✅ registro creado (vacío) |
 | **R37** | **Ningún archivo TRACKEADO contiene un valor de credencial** — se llame como se llame. Tres formas: **(a)** ningún archivo con forma de entorno (`.env`, `.env.<lo que sea>`) está trackeado; **(b)** ningún archivo trackeado contiene una URL con credenciales embebidas (`<esquema>://<usuario>:<secreto>@`); **(c)** ninguna clave `UPPER_SNAKE` de nombre secreto se asigna a un literal que no sea marcador. Los permitidos de (c) llevan **motivo escrito** y no pueden apuntar a un archivo que ya no existe. 🔴 **Y ningún permitido exime de lo siguiente: un literal que coincida con un valor de un `.env*` real de la máquina es violación siempre.** | `tools/barrido-credenciales.test.ts` sobre **`git ls-files`** — lo que importa es qué está *trackeado*, que es lo único que puede viajar a un remoto. Cada forma se prueba **plantándola en un repositorio git sintético** y exigiendo que el barrido la nombre; más control de vacuidad (`> 100` archivos vistos). | ⚠️ **INSUFICIENTE — el mecanismo no llega al enunciado. Se corrige junto con `0017`.** El enunciado es correcto; la implementación tiene tres huecos medidos. **(1)** `${VAR:-default}` bajo una clave de nombre secreto es **sistemáticamente invisible**: el match captura la interpolación entera, que empieza con `$`, y `esMarcador` la descarta — o sea que la forma que el commit afirma haber cazado en `docker-compose.yml` es precisamente la que **no** caza (las encontró una persona leyendo). Prueba de control: `docker-compose.piloto.yml` conservaba un default horneado y el barrido daba **cero**. **(2)** El cruce con los `.env*` vivos —el 🔴 que *«ninguna allowlist puede eximir»*— corre **después** de `esMarcador` y solo dentro del loop del regex de asignación: una credencial viva que empiece con `ejemplo` o `changeme`, o que esté en prosa de un `.md`, en JSON o en minúscula, **nunca llega al cruce**. Medido: hay dos valores vivos en `HANDOFF.md` y el barrido reporta verde. **(3)** No corre en pre-commit ni puede estar verde en CI —sin `.env` el control de vacuidad se pone rojo—. Mutación: **23 corridas, 7 sobrevivientes** |
 | **R37 bis** | **`.gitignore` no tiene ninguna negación (`!`) que vuelva a admitir un archivo de entorno.** | `negacionesDeEnv()` = `[]`, y el test comprueba que **sí** detecta una reintroducida. | ✅ **verificado** |
+| **R38** | **El sujeto de un control no escribe el registro que lo constituye.** Ninguna identidad de tenant —`socio` incluido— puede **desactivar, borrar ni degradar** la membresía de un **rol supervisor** (`auditor`, `admin_plataforma`), y **toda** escritura sobre `membership` deja una fila en un rastro **append-only que escribe la base, no la aplicación**, con un autor y una marca de tiempo **que el escritor no puede elegir**. El caso legítimo es parte del enunciado: **INV-10 sigue rigiendo** — revocar la membresía de un rol no supervisor tiene que cortar el acceso en el request siguiente. | **Se ejecuta el ataque**, con el rol del atacante real (un `socio` sobre su propio estudio) y **con la escritura que sí tiene permitida**, para que el caso no pueda pasar por un `permission denied` del privilegio: `packages/data/tests/membership-supervision.test.ts`, 13 casos en cuatro bloques —**privilegio**, **policy**, **legítimo** y **rastro**— que miden las tres patas por separado. | ⚠️ **mecanismo aplicado (`0019`) y cerrado por mutación (4 de 4, incluida la sutil); ✅ recién cuando pase la ronda de cierre.** `0016` y `0017` pasaron las suyas y tenían agujeros |
 
 > 🔴 **Por qué R37 reemplaza a R33, y por qué mide la clase y no el archivo (incidente #3, 2026-08-15).**
 >
@@ -359,6 +360,58 @@ amarillas con su propio defecto adentro, está en `docs/diseno/09-lecciones-apre
 > Corolario, para no repetirlo una quinta vez: **el campo de estado de esta tabla es parte de la
 > regla, no una nota al pie.** Un ⚠️ que describe una violación concreta es un incidente que todavía
 > no se abrió.
+
+
+> 🔴 **Por qué R38 exige las TRES patas, y por qué ninguna sustituye a las otras (incidente #5).**
+>
+> La lección es **distinta** de la del #4, y por eso el incidente va en su propia fila. El #4 es sobre
+> lo que un control **puede ver**: *un control de integridad que corre bajo RLS hereda la ceguera de la
+> RLS*. El #5 es sobre lo que un control **tiene autoridad para decidir**:
+>
+> > 🔴 **La RLS decide QUIÉN escribe una fila, nunca QUÉ DICE la fila. Cuando la fila es la que define
+> > quién es quién, esa distinción exacta es la vulnerabilidad.**
+>
+> Y el corolario que lo vuelve de este dominio y no de un manual: **el padrón de acceso es un dato de
+> seguridad, no un dato de dominio.** En los incidentes #1 y #2 la única medición forense que dio
+> positiva —la que sostiene *«no hay evidencia de escalada persistente»*— fue **«cero membresías
+> inesperadas en las dos bases»**. El #5 establece que ese estado era **editable y borrable por el
+> propio sujeto auditado, sin dejar fila**: degrada **retroactivamente** la fuerza de esa evidencia, y
+> por eso las dos filas quedaron **anotadas**.
+>
+> **Las tres patas, y qué deja abierto quitar cada una** — medido por mutación, no razonado:
+>
+> | Si falta… | Qué queda vivo |
+> |---|---|
+> | la **policy** sobre el rol de la fila tocada | el socio desactiva al auditor. **4 casos en rojo** |
+> | el **grant por columna** | cambia el `rol` del auditor a `contador` y esquiva cualquier predicado sobre `rol`; y **borra** la fila. **2 casos en rojo** |
+> | el **rastro** | todo lo anterior pasa sin dejar constancia, y **el intento tampoco queda**. **4 casos en rojo** |
+>
+> **La mutación sutil, que es la que vale:** dejar el predicado **sólo en el `with check`** y no en el
+> `using`. El `with check` gobierna la fila **que queda**, y como el socio **no cambia el `rol`** al
+> desactivar, la fila resultante sigue siendo del auditor y el predicado la sigue aceptando. **3 casos
+> en rojo.** Una regla que sólo mirara el `with check` se vería perfectamente razonable.
+>
+> **Por qué el rastro no puede vivir en `acceso_auditoria`, y es mecánico antes que semántico:** su
+> trigger `trg_acceso_auditoria_cliente` exige un nodo de tipo `cliente` activo, y una membresía de
+> `socio`, `auditor` o `admin_plataforma` cuelga del nodo **estudio** — **la fila no entra**. Y
+> semánticamente responden preguntas distintas: `acceso_auditoria` es *«quién vio qué dato fiscal»*;
+> esto es *«quién puede ver, desde cuándo, y quién lo decidió»*. Precedente en el repo, con la misma
+> forma: `credencial_fiscal` + `credencial_fiscal_rotacion`.
+>
+> **Y lo escribe un TRIGGER, no la aplicación.** Es la lección del #1 en una línea: `acceso_auditoria`
+> se escribe desde la aplicación, y **el vector del #1 no pasaba por la aplicación**. Un rastro que
+> depende de que el escritor coopere no sirve contra un escritor hostil. Por la misma razón `hecho_por`
+> y `ocurrido_en` salen de un `DEFAULT` y **nadie tiene grant sobre esas columnas** — cierra por
+> construcción el defecto que `acceso_auditoria` **sí tiene hoy**, donde el auditado elige la marca de
+> tiempo.
+>
+> **La decisión de negocio que R38 encapsula, y que se revierte en una línea:** los roles supervisores
+> son `auditor` y `admin_plataforma`, en `app.es_rol_supervisor()`. `admin_plataforma` es
+> **estructural** —es staff de la plataforma, no del estudio—, y que el titular de un tenant pueda
+> expulsarlo deja al operador sin intervención sobre un tenant que sigue custodiando datos fiscales de
+> **terceros**, que no son parte de esa relación ni la pueden observar. `auditor` es **la decisión**:
+> existe para mirar lo que el socio hace, y la policy de lectura de `acceso_auditoria` ya lo reconoce
+> al restringir el rastro a `socio` **y** `auditor` y a nadie más.
 
 ---
 
