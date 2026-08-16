@@ -6,6 +6,181 @@
 
 ---
 
+## 2026-08-15 (61) — `0017_path_por_construccion.sql` aplicada a **local y PILOTO**. El invariante del árbol baja de trigger a `check` + `foreign key`.
+
+**Herramienta:** Claude Code. Escrita **en el momento** (§4). Confirmación explícita del titular para
+el piloto. Plan formal aprobado sin cambios; panel: `dba-data` + `security-engineer` +
+`seguridad-datos-financieros`.
+
+---
+
+### 1. 🔴 El hallazgo que reordenó el diseño: `0016` atribuía el cierre a la rama equivocada
+
+`dba-data` midió lo que yo había afirmado sin medir. Con `security definer` puesto **y** `not found`
+tratado como no-op, el ataque original del incidente #2 **sigue bloqueado**:
+
+```
+ERROR:  tenant_node …: path incoherente con parent_id
+CONTEXT:  PL/pgSQL function exigir_path_coherente() line 21
+```
+
+Línea 21 = **rama de coherencia**, no la de `not found`. O sea que el encabezado de `0016`, donde
+escribí *"EL PUNTO QUE CIERRA EL INCIDENTE"*, señalaba la mitad equivocada.
+
+**`not found` nunca fue un control: fue una compensación por una ceguera autoinfligida.** El trigger
+era `invoker`, así que la RLS le tapaba justo la fila que tenía que validar. Y como toda compensación
+por ceguera, confundía tres situaciones —ataque, fila borrada, fila archivada— y rompía una operación
+legítima.
+
+De ahí el corolario que gobierna `0017`, y que vale más allá de esta tabla:
+
+> **Un invariante verificado con la visibilidad del escritor no es un invariante.** Si el control lee
+> con los privilegios de quien escribe, **quien escribe elige lo que el control ve**.
+
+### 2. La decisión de fondo: bajar dos escalones
+
+El invariante es **referencial** —relaciona una fila con otra por una clave— y Postgres **exime a
+`check`, `unique` y `foreign key` de la RLS por diseño**. Los triggers no. Meter un invariante
+referencial en un trigger es exactamente lo que obligaba a `security definer`, que **viola R11** y
+pedía un ADR.
+
+| | Mecanismo | Cierra |
+|---|---|---|
+| `parent_path` + `tenant_node_path_chk` | **`check` fila-local** — no se difiere, no lo apaga `disable trigger all`, aplica al dueño y a `COPY` | el #2 en su forma cruda, y A residual |
+| `tenant_node_parent_path_fk`, `match full`, diferida | **integridad referencial** — no pasa por la RLS, así que **no puede fallar abierta** | **B**: si un padre cambia de path, todos sus hijos tienen que haberse actualizado en la misma transacción |
+| `trg_tenant_node_nid_inmutable` + grant por columna | trigger **y** privilegio | **A**: el grant no le aplica al dueño; el trigger no puede rechazar un `overriding system value`, porque todo `nid` es íntegramente válido |
+
+**Resultado: R11 no se toca y no hace falta ningún ADR.** Ésa fue la razón principal para elegir esto
+sobre el `security definer` que proponía `qa-automation`: su fix es correcto en lo que arregla, pero
+paga un ADR y una excepción a R11 por un invariante que no necesita ninguna de las dos.
+
+`match full` no es decorativo: con el `match simple` por omisión, un `parent_path` nulo satisface la
+FK **gratis** y el `check` admitiría `path = nid` — o sea, sacar un nodo del subárbol de su propio
+estudio. Reproducido.
+
+### 3. Verificación en local — 13 de 13, con los tres roles
+
+Lo importante no es el conteo: es **con qué identidad** se probó cada cosa. Un ataque probado sólo con
+`app_request` muere por `permission denied` antes de llegar al invariante, y **ese test se pone verde
+el día que alguien re-otorgue un grant de tabla entera** copiando la plantilla de `ADR-0001` §5 — que
+es el escenario de regresión realista, mucho más que un atacante.
+
+| Ataque | Identidad | Qué lo frenó |
+|---|---|---|
+| `set nid = default`, solo y con `parent_id = parent_id` | `app_request`, `app_job` | **privilegio** |
+| ídem | **dueño (superusuario)** | **trigger** — mecanismo, no privilegio |
+| `insert … overriding system value` con `nid` | `app_request`, `app_job` | **privilegio**, y sólo privilegio |
+| `path` al subárbol ajeno, con el GUC prendido | **`app_job`** (BYPASSRLS + grant sobre `path`) | **`tenant_node_path_chk`** ⇒ **mecanismo** |
+| mintiendo `path` **y** `parent_path` | `app_job` | **FK**, en el commit |
+| `parent_path` nulo con `parent_id` no nulo | dueño | `parent_path_nulo_chk` |
+| **B**: mudar padre coherente dejando al hijo colgado | dueño | **FK** |
+| **B2**: ídem con el hijo **oculto por `deleted_at`** | dueño | **FK** — el truco que `0016` dejaba commitear |
+
+Y los legítimos, que son parte de la regla: alta, `reparentar_nodo()` con descendientes, y **los dos
+falsos positivos de `0016` que ahora commitean** — alta + borrado, y alta + baja lógica, en la misma
+transacción. Eso destrabó `packages/data/sql/tests/0001_aislamiento.test.sql` y permitió **sacar el
+parche temporal**: PASADA 1 completa sin él, 14 aserciones OK en la tercera pasada.
+
+### 4. El piloto — antes, aplicación y después
+
+**Antes** (chequeo con `app_job`, `bypassrls = true` confirmado en la misma consulta: con el dueño
+podría ser verde por vacuidad el día que deje de ser superusuario, que es lo que `ADR-0002` exige):
+
+| | |
+|---|---|
+| Hash local vs. autorizado | `d35ba671b8c2b66b` ✅ |
+| Última migración | `0016_path_coherente.sql` |
+| ¿`0017` ya estaba? / ¿`parent_path` ya existía? | **no** / **no** |
+| `verificar_coherencia_path()` | **0** |
+| Raíces con path mal formado | **0** |
+| Nodos | 1 estudio + 3 clientes |
+
+**Después:**
+
+| | |
+|---|---|
+| Hash piloto vs. local | `d35ba671b8c2b66b` = `d35ba671b8c2b66b` — **sin drift** |
+| `verificar_coherencia_path()` | **0** |
+| Constraints | **las 4**, todas `validada=true`; la FK `deferrable=true deferred=true` |
+| Triggers | el de `0016` **se fue**; está `trg_tenant_node_nid_inmutable` |
+| Privilegios | `app_request` nid upd/ins = **false/false** · `app_job` nid upd = **false** · `app_request` path upd = **false** · `app_job` path upd = **true** (lo necesita `reparentar_nodo()`) |
+| Nodos | 1 estudio + 3 clientes — **sin cambios** |
+
+**Y que DISPARA, no que existe** — mismo criterio que con `0016`, porque comprobar que una constraint
+*está* es el chequeo de presencia que R13 y R10 hacían mientras el agujero seguía abierto:
+
+```
+SONDA -> new row for relation "tenant_node" violates check constraint "tenant_node_path_chk"
+filas sonda que quedaron: 0 (limpio)
+INCOHERENCIAS finales: 0
+```
+
+Sin riesgo, y auditable: un nodo **nuevo** dentro de una transacción que **siempre termina en
+`rollback`**. Ninguna fila de cliente se leyó, modificó ni borró.
+
+### 5. Costo, y dos cifras mías de `0016` que no reproducen
+
+| | `0016` | `0017` |
+|---|---|---|
+| Reparentar 801 nodos, total | ~630 ms | **~148 ms** |
+| Reparentar 1 nodo hoja | 14,4 ms | **6,2 ms** |
+| Alta, por fila | +102 µs | **+58 µs** |
+| Lectura (`accessible_tenant_ids`, `has_role_on`) | sin cambio | **sin cambio** |
+| Tamaño con índices | 1856 kB | 2304 kB (**+24 %**) |
+
+`0017` es **~5× más barato** que `0016` en el reparentado, porque desaparece el scan completo del
+árbol que `reparentar_nodo()` corría al final.
+
+🔴 **Y hay que decir por qué las cifras de `0016` estaban mal**: cronometré la **llamada a la
+función**, que es justo el único lugar donde un `constraint trigger` **diferido** no corre. Todo el
+costo aterrizaba en el `COMMIT`. Es el mismo patrón de R10 — **medí lo que era fácil de medir**. El
+`+191 %` del bucle de hijos tampoco reproduce: la guarda es sobre `UPDATE`, así que en un alta masiva
+ese bucle no corre nunca.
+
+### 6. Lo que se pierde, declarado
+
+- 🔴 **El control del texto del error.** `0016` emitía "el uuid y nada más" a propósito (R25/R28).
+  Medido: con `app_request` el `DETAIL` **no lleva valores** —Postgres los suprime si el rol no ve la
+  fila—, pero **con `app_job` sale la fila entera**, incluido `nombre` (N2) y `path` (contiene `nid`).
+  Es una regresión respecto de una decisión explícita. **Mitigación pendiente, fuera de la migración:**
+  mapear `23514`/`23503` en `conErroresTraducidos`, y que el logger nunca emita `err.detail`.
+- **+24 % de tamaño** y **+110 µs por fila en el borrado físico** — irrelevante en un diseño
+  soft-delete (`0001:59`), pero real.
+- **`path` como columna generada** (el endgame, medido por `dba-data`): `path` se vuelve
+  **físicamente inescribible** y el GUC desaparece. No entra acá porque en PG16 una columna existente
+  no se puede convertir: hay que dropear y re-crear `path` con `uq_tenant_node_path` encima, en la
+  tabla raíz de la RLS, con datos reales en el piloto. **Es un ADR con `arquitecto-software`, no un
+  fix de incidente.** Queda medido para que la decisión exista.
+
+### 7. Dos cosas que atajó el gate, y valen más que el resultado
+
+- **`parent_path` sin clasificar puso el gate en rojo** antes de que yo me acordara. Columna nueva sin
+  entrada en el registro = rojo, sin *"sin clasificar"*. Funcionó como está diseñado.
+- **R17 me frenó** al abrir un `new Client` en el test. Tenía razón, y el arreglo correcto no era
+  agregarme a la allowlist: el helper va en `ayuda.ts`, que es el único lugar que abre conexiones para
+  tests. Ahora existe `clienteJob()`, con el porqué escrito al lado.
+
+Y una corrección propia: mi primera sonda del caso B dio rojo, y era **la sonda**, no el fix — usé un
+`nid` inventado en el path, así que lo atajó el `check` de inmediato en vez de la FK. El ataque
+abortaba igual; lo que no medía era lo que decía medir.
+
+### Estado
+
+`pnpm verificar`: **60 archivos, 1386 tests, 0 fallas** (venía de 60/1377). Local y piloto **al mismo
+nivel de esquema** (`0017`), las dos con 0 incoherencias.
+
+| Pendiente | |
+|---|---|
+| **Cerrar el #2 y abrir el #4** en `registro-incidentes.md` | `seguridad-datos-financieros` propone abrir el **#4** en vez de reabrir el #2: A y B son defectos **del fix**, no del defecto original, y las ventanas son distintas |
+| **Reescribir R36** sobre el **predicado**, nunca sobre el mecanismo | El enunciado actual nombra "trigger diferido", "re-lee la fila" y "`not found` es violación" — las tres cambiaron |
+| **R37 sigue en ⚠️** | Su mecanismo no llega a su enunciado (entrada 60) |
+| Ronda de cierre de `0017` | `qa-automation` en worktree, `tester`, `code-reviewer`, `documentador` |
+| Mapear `23514`/`23503` en `conErroresTraducidos` | §6 |
+| Rol `app_rls_owner` con `BYPASSRLS` sin origen versionado | Tarea aparte, `security-engineer` |
+| `0018` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
 ## 2026-08-15 (60) — Incidente **#3 CERRADO** con **R37**, la regla de clase. Y aparece la cuarta regla que estuvo verde con su propia falla adentro.
 
 **Herramienta:** Claude Code. Cierra el incidente #3: credenciales rotadas (58/59), `.env.example`
