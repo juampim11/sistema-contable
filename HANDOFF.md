@@ -6,6 +6,114 @@
 
 ---
 
+## 2026-08-16 (63) — Ronda de cierre de `0019`: **vuelve a taller**. Dos bloqueantes, los dos de mi diseño. 🔴 **El piloto sigue intacto.**
+
+**Herramienta:** Claude Code, trabajo autónomo. **Verificado al cierre: el piloto sigue en `0017`,
+sin `membership_historia` y con `app_request` conservando el `update` sobre `parent_id`** — o sea que
+`0018` y `0019` **no llegaron ahí**. La línea aguantó toda la noche.
+
+---
+
+### 1. El veredicto
+
+`0019` **cierra el ataque literal del incidente #5, no la clase.** La ronda dejó **11 de 28
+mutaciones vivas** y **dos bloqueantes reproducidos**.
+
+**Y hay que decir lo que sí cerró**, porque es la mitad del resultado y se verificó una por una: el
+ataque original en **todas** sus formas —update masivo, `MERGE`, `ON CONFLICT`, CTE `with … delete`,
+`truncate`, `delete`, cambio de `rol`—, el alta de una membresía de supervisor, el aislamiento del
+rastro entre estudios, y **INV-10 intacto en las dos direcciones**. Y la pregunta que más me
+preocupaba tiene buena respuesta: **el `on delete cascade` NO se lleva el historial** — la FK a
+`tenant_node` es `no action`, así que borrar el nodo **aborta**.
+
+### 2. 🔴 Bloqueante 1 — el rastro tiene interruptor, y lo maneja el auditado
+
+`tenant_node.deleted_at` **reproduce el resultado entero del #5 sin tocar `membership` y sin dejar una
+sola fila de rastro.** `app.accessible_tenant_ids()` exige `deleted_at is null` sobre el nodo **de la
+membresía**, así que con un solo `update` —que `0017` §7 le otorga a `app_request`— el socio expulsa
+al supervisor **y le apaga la vista del rastro**. Medido:
+
+```
+auditor ve, antes : {"rastro":2,"nodos":1}
+el socio hizo     : UPDATE 1
+auditor ve, desp  : {"rastro":0,"nodos":0}
+filas en disco    : 2      <- no las borró: las escondió
+```
+
+Eso **obliga a corregir la lección que yo mismo escribí** en la §3 de `0019`. Decía: *«la RLS decide
+QUIÉN escribe una fila, nunca QUÉ DICE la fila»*. Le falta la mitad:
+
+> 🔴 **La RLS también decide QUÉ FILA EXISTE PARA EL QUE MIRA — y ese predicado lo alimenta una
+> columna que el auditado escribe. Un rastro cuya visibilidad depende de un `boolean` del auditado es
+> un rastro con interruptor.**
+
+### 3. 🔴 Bloqueante 2 — el rastro lo escribe cualquiera, incluido el auditor
+
+`membership_historia_ins` **no mira el rol**. Medido con los dos extremos:
+
+```
+socio     INSERT 1  🔴 fabricó una fila que dice que se BORRÓ la membresía del auditor
+auditor   INSERT 1  🔴 idem
+```
+
+Y la fila fabricada es **indistinguible de la que escribe el trigger**: misma tabla, mismo `hecho_por`
+puesto por el `DEFAULT`. No hay columna que diga «esto lo escribió la base». Sin techo, además: `tester`
+metió **50 000 filas de ruido en una sentencia** — para que un evento real no se encuentre no hace
+falta borrarlo.
+
+**La migración creó una instancia nueva de la clase que la migración existe para cerrar:** siete
+columnas que un tenant escribe y de cuyo valor depende qué lee el supervisor.
+
+### 4. Y una tercera, que es mía y duele
+
+`app_job` conserva un `grant update (activo)` **que no usa ningún camino de producción** —lo puse
+justificándolo con la siembra sintética, y la siembra hace `insert`, no `update`— y con él expulsa a
+la supervisión **de todos los tenants en una sentencia**, dejando `hecho_por = null`.
+
+🔴 **Ese nulo es el mismo que el nulo legítimo.** Escribí en el encabezado que el nulo «es
+información» porque distingue al dueño o a un job de una persona. **También es camuflaje**: un ataque
+por esa vía queda **indistinguible de una migración**. Es evadible por `conJob('mantenimiento', …)`,
+que está en la unión `MotivoJob` y **compila**.
+
+### 5. La causa raíz de otras dos, y es el patrón del #3 otra vez
+
+`membership_historia` quedó **fuera de R1 y R3 desde que nació**: la lista de tablas con RLS en
+`catalogo.test.ts` estaba **escrita a mano**, y como la tabla tiene `columnaTenant: 'ninguna'` no
+entra por la derivación automática ni la agregó nadie. Con eso, `disable row level security` sobre la
+tabla de rastro dejaba **los 218 tests en verde**. **Es una allowlist cuya excepción es el vector** —
+exactamente el incidente #3, en la tabla que `0019` vino a crear. Corregido: **R1 ahora deriva la
+lista y enumera la excepción, no la regla.**
+
+### 6. Lo que apliqué y lo que NO
+
+**Aplicado** (`add868d`): los tests (**13 → 23 casos**), la corrección de R1, `membership_historia` en
+el `truncate` de la ayuda, R38 marcada **⚠️ insuficiente** con los dos bloqueantes escritos, y el #5
+anotado con el estado real de `0019`.
+
+🔴 **NO toqué `0019`.** Los dos bloqueantes necesitan una **decisión de arquitectura** —que el rastro
+lo escriba una `security definer`, en vez de depender de un grant abierto al tenant, **choca con
+R11**— y **no voy a inventar el fix de un control de seguridad de madrugada sin el panel.** Eso es
+exactamente lo que produjo `0016`: una migración completa, aplicada a local y al piloto, con su ronda
+de cierre, que cerraba el ataque **por la rama equivocada** y abría tres agujeros nuevos.
+
+### 7. Estado y orden para la mañana
+
+`pnpm verificar`: **61 archivos, 1416 tests, 0 fallas** (venía de 61/1406).
+
+| # | Pendiente | |
+|---|---|---|
+| 1 | 🔴 **Aplicar `0018` al piloto** | Runbook en la entrada (62), hash `e10c1d20281e7ac7`. **`0019` NO**: vuelve a taller |
+| 2 | 🔴 **Plan formal del fix real de #5** | `dba-data` + `security-engineer` + `seguridad-datos-financieros` + `arquitecto-software`. Tres decisiones: el camino de `deleted_at`, quién escribe el rastro (y el choque con R11), y si `app_job` queda dentro o fuera del alcance de R38 |
+| 3 | Sacar el `grant update (activo) on membership to app_job` | No lo usa nadie. Entra en el mismo `0020` |
+| 4 | `ocurrido_en default clock_timestamp()` | `now()` es el inicio de la transacción: el escritor elige cuándo abrirla. Medido: **3 s de desfase** con un `pg_sleep(3)` |
+| 5 | Un socio **no puede darse de baja a sí mismo**, y el error culpa a la tabla equivocada | Falla cerrado, así que no es agujero — es regresión funcional de `0019` |
+| 6 | `pnpm db:seed` sigue roto desde antes | Le faltan las tablas de `0013`/`0014` **y** `membership_historia` |
+| 7 | **La séptima columna de la clase: `tenant_node.tipo`** | Un socio lo cambia a `'grupo'` y **apaga la posibilidad de escribir auditoría para ese cliente**. Falla cerrado (`leerConAuditoria` audita antes de leer), pero el enunciado útil ya no es contar columnas: **toda columna de `tenant_node` escribible por el tenant es de la clase** |
+| 8 | El rastro no tiene ninguna defensa de **mecanismo** | `truncate` y `alter table … no force` del **dueño** lo vacían. Contra el dueño no hay defensa dentro de la misma base — pero **hay que escribirlo**, porque `admin_plataforma` es parte de lo que este rastro existe para vigilar |
+| 9 | `0020` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
 ## 2026-08-16 (62) — Noche autónoma: **#2 cerrado, #4 y #5 abiertos**, `0018` y `0019` en local. 🔴 **Nada al piloto.**
 
 **Herramienta:** Claude Code, trabajando sin supervisión. **La línea que no se cruzó: ninguna
