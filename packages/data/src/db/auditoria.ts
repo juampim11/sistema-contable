@@ -39,6 +39,21 @@ export const ACCIONES = [
 ] as const;
 export type AccionAuditada = (typeof ACCIONES)[number];
 
+/**
+ * Las operaciones que registra `membership_historia` (incidente #5, migración `0019`).
+ *
+ * Es un dominio cerrado aparte de `ACCIONES` a propósito, y la distinción es la razón de ser de esa
+ * tabla: `acceso_auditoria` responde **«quién vio qué dato fiscal»**; esto responde **«quién puede
+ * ver, desde cuándo, y quién lo decidió»**. Mezclarlas degrada las dos consultas.
+ *
+ * `alta` cubre tanto la creación de la membresía como su reactivación: las dos son «este usuario
+ * pasa a tener acceso», que es lo que hay que poder contestar después. `borrado` existe porque una
+ * membresía **no debería** borrarse —`0019` le saca el `DELETE` a la aplicación— pero el dueño del
+ * esquema sí puede, y ese caso tiene que dejar rastro igual.
+ */
+export const OPERACIONES_MEMBRESIA = ['alta', 'modificacion', 'baja', 'borrado'] as const;
+export type OperacionMembresia = (typeof OPERACIONES_MEMBRESIA)[number];
+
 /** Acciones donde el motivo es obligatorio: sacar el dato del sistema. */
 const EXIGEN_MOTIVO: ReadonlySet<AccionAuditada> = new Set([
   'export',

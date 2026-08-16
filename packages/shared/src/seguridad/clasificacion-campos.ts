@@ -94,6 +94,33 @@ export const CLASIFICACION = {
     },
   },
 
+  /**
+   * Rastro append-only de los cambios del padrón de derechos (incidente #5, `0019`).
+   *
+   * Mismo plano que `membership`: se aísla por el nodo, no por `cliente_id`. Y mismo criterio de
+   * nivel — quién tiene qué rol sobre qué nodo es estructura de la plataforma, no dato de un cliente.
+   */
+  membership_historia: {
+    columnaTenant: 'ninguna',
+    motivoSinTenant:
+      'Igual que `membership`: se aísla por tenant_node_id in (select app.accessible_tenant_ids()). ' +
+      'Una membresía de socio, auditor o admin_plataforma cuelga del ESTUDIO, no de un cliente — que ' +
+      'es exactamente por lo que este rastro no puede vivir en `acceso_auditoria` (su trigger exige ' +
+      'un nodo de tipo cliente y la fila no entra).',
+    campos: {
+      id: UUID_INTERNO,
+      tenant_node_id: UUID_INTERNO,
+      membership_id: UUID_INTERNO,
+      user_id: UUID_INTERNO,
+      rol: { nivel: 'N1', exportable: true },
+      operacion: { nivel: 'N1', exportable: true },
+      activo_antes: { nivel: 'N1', exportable: true },
+      activo_despues: { nivel: 'N1', exportable: true },
+      hecho_por: UUID_INTERNO,
+      ocurrido_en: MARCA_TIEMPO,
+    },
+  },
+
   // ---------------------------------------------------------------------------
   // Auditoría de acceso (ADR-0002 §C.0 / R32). Append-only.
   // ---------------------------------------------------------------------------

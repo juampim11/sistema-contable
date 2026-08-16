@@ -18,7 +18,7 @@ import {
   tablasQueExigenRolEnLectura,
   type NombreTabla,
 } from '@sistema-contable/shared/seguridad';
-import { ACCIONES } from '../src/db/auditoria.ts';
+import { ACCIONES, OPERACIONES_MEMBRESIA } from '../src/db/auditoria.ts';
 import { AMBIENTES_CREDENCIAL } from '../src/credenciales.ts';
 import { TIPOS_CUENTA_ALTA } from '../src/ingesta/escrituras.ts';
 import { LECTORES_AUDITADOS, tablasSinLectorAuditado } from '../src/db/lectores-auditados.ts';
@@ -766,6 +766,14 @@ type DominioCerrado = {
  * completo está en el comentario de `TIPOS_CUENTA_ALTA`.
  */
 const DOMINIOS_CERRADOS: DominioCerrado[] = [
+  {
+    check: 'membership_historia_operacion_chk',
+    tabla: 'membership_historia',
+    columna: 'operacion',
+    constante: 'OPERACIONES_MEMBRESIA',
+    valores: OPERACIONES_MEMBRESIA,
+    migracion: '0019',
+  },
   {
     check: 'acceso_auditoria_accion_chk',
     tabla: 'acceso_auditoria',
