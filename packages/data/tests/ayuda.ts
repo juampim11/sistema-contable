@@ -48,7 +48,27 @@ export async function clienteJob(): Promise<Client> {
   }
   const c = new Client({ connectionString: dsn });
   await c.connect();
+  await exigirRol(c, 'app_job', 'DATABASE_URL_JOB');
   return c;
+}
+
+/**
+ * Un DSN mal apuntado convierte "esto lo mide `app_job`" en "esto lo mide el dueño" **sin que nada se
+ * ponga rojo**: los dos casos de INVARIANTE de `path-coherente.test.ts` pasan igual con el dueño,
+ * porque lo que los frena es el CHECK y no un privilegio. MEDIDO: con `DATABASE_URL_JOB` apuntando al
+ * dueño, 13 de 14 casos quedan verdes. Sin este control, la mitad "y no es el dueño" no la verifica
+ * nada.
+ */
+async function exigirRol(c: Client, esperado: string, variable: string): Promise<void> {
+  const r = await c.query<{ u: string }>('select current_user as u');
+  const actual = r.rows[0]?.u;
+  if (actual !== esperado) {
+    await c.end();
+    throw new Error(
+      `${variable} conecta como "${actual}" y tiene que conectar como "${esperado}". ` +
+        'Un test que dice medir un rol y mide otro no mide nada.',
+    );
+  }
 }
 
 /** Conexión con el dueño del esquema, para leer el catálogo y hacer DDL en los tests. */
@@ -68,6 +88,15 @@ export async function clienteDuenio(): Promise<Client> {
       'No se pudo conectar a Postgres. Levantá la infraestructura local:\n' +
         '  pnpm db:up && pnpm db:migrate && pnpm db:setup\n' +
         `Detalle: ${(error as Error).message}`,
+    );
+  }
+  const r = await c.query<{ u: string }>('select current_user as u');
+  if (r.rows[0]?.u === 'app_job' || r.rows[0]?.u === 'app_request') {
+    const u = r.rows[0]?.u;
+    await c.end();
+    throw new Error(
+      `DATABASE_URL conecta como "${u}", no como el dueño del esquema. Los tests que miden ` +
+        'MECANISMO (lo que ni el dueño puede saltear) medirían un privilegio y saldrían verdes.',
     );
   }
   return c;

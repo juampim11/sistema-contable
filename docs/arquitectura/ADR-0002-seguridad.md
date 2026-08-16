@@ -124,33 +124,59 @@ Redactadas para que un test o `code-reviewer` las chequee sin criterio humano. T
 | **R11** | Las únicas `security definer` permitidas son `app.accessible_tenant_ids()` y `app.has_role_on()` (leen **tenancía**, no dominio). Otra requiere ADR. | Whitelist por nombre. | ✅ cumplido hoy; test pendiente |
 | **R12** | **FK compuestas tenant-consistentes**: el hijo referencia `(cliente_id, id)` del padre, con `unique (cliente_id, id)` en el padre. Es la **única** integridad de tenant que sobrevive a `BYPASSRLS` y a `COPY`. | Por cada FK entre dos tablas con tenant, la FK incluye la columna de tenant en ambos lados. | ⏳ pendiente — **entra con el Módulo 1** |
 | **R13** | `tenant_node.path` coherente con `parent_id` **siempre**: trigger en `insert` **y** en `update of parent_id`; el `path` no se edita a mano. | Trigger + `app.verificar_coherencia_path()` en CI **y como job en producción**. | ⚠️ **insuficiente — reemplazada por R36** (incidente #2). Medía **presencia** del trigger y **estado actual** del árbol; ninguna de las dos cosas es una garantía de **alcanzabilidad**. Estuvo ✅ toda la vida del esquema con el agujero adentro |
-| **R36** | **El `path` de `tenant_node` no se puede dejar incoherente, por ninguna vía y bajo ningún GUC.** Toda transacción que deje una fila con `path <> coalesce(padre.path‖'.','') ‖ nid` **aborta en el commit** — aunque el escritor tenga rol `socio`/`admin_plataforma`, aunque prenda `app.reparentando`, y **aunque la RLS le oculte la fila que acaba de escribir**. El chequeo se **difiere al commit** (el reparentado tiene un estado intermedio incoherente por diseño), **re-lee el estado final** y trata **«no puedo leer la fila» como violación**, nunca como no-op. | **Se ejecuta el ataque**, no se inspecciona el catálogo: `packages/data/tests/path-coherente.test.ts`, con `app_request` y contexto de un `socio`. Cinco casos, incluido el **positivo** (`reparentar_nodo()` sobre un subárbol con descendientes **debe seguir pasando**). | ⚠️ **INSUFICIENTE — el enunciado no se cumple. Se cierra en `0017`** (plan abierto). `0016` está aplicada y **defiende contra el ataque original**, pero *«por ninguna vía»* es falso: **(A)** `nid` no está en la lista de columnas de ningún trigger, y `update … set nid = default` deja el árbol incoherente y **commitea** —combinado con `parent_id = parent_id` reescribe el `path` sin `reparentar_nodo()` ni GUC—; **(B)** el scan de hijos re-lee bajo RLS y trata `not found` como **no-op**, o sea que **falla abierto** justo donde la re-lectura principal falla cerrado; **(C)** la rama `not found` no distingue *«el atacante se auto-ocultó la fila»* de *«la fila se borró o archivó en la misma transacción»*, y aborta operaciones legítimas. **La cifra «4 mutaciones, 4 atrapadas» era engañosa**: eran las 4 que el test fue escrito para atrapar. En la ronda de cierre se corrieron **9 más y sobrevivieron 8**, incluida `security definer` y una que **escribe estado incoherente y commitea**. Además el caso 5 es una **tautología** (compara la resolución por path de la RLS contra otra resolución por path) y el caso 3 pasa sin que ningún ataque haya corrido |
+| **R36** | **El `path` de `tenant_node` es una FUNCIÓN de `(parent_id, nid)`, no un dato.** Para toda fila `n`, en **todo estado observable**: `n.path = coalesce(padre(n).path ‖ '.', '') ‖ n.nid`, con **`n.nid` inmutable**. Se verifica sobre el **estado físico** de la tabla y **no admite excepción**: ni por rol, ni por GUC (`app.reparentando` incluido), ni por vía de escritura (`UPDATE`, `MERGE`, `COPY`, multi-fila), ni por `BYPASSRLS`. **Y el caso legítimo es parte del enunciado**: `reparentar_nodo()` sobre un subárbol con descendientes, el alta, y el alta seguida de borrado o de baja lógica **en la misma transacción**, tienen que seguir commiteando. | **Se ejecuta el ataque, no se inspecciona el catálogo** — y cada ataque **con la identidad más privilegiada que corresponda**: `packages/data/tests/path-coherente.test.ts`, 20 casos. `app_request` mide el **privilegio**; `app_job` (`BYPASSRLS`, con grant sobre `path`) y el **dueño del esquema** miden el **invariante**. Más un bloque de **forma** que congela lo que ningún ataque puede distinguir (`confmatchtype`, `condeferrable`, `convalidated`, las ACL de columna) y un caso que **planta una incoherencia** y exige que el detector la vea. | ⚠️ **enunciado reescrito y mecanismo aplicado (`0017` + `0018`); ✅ recién cuando la mutación cierre limpia.** La ronda de cierre de `0017` dejó **7 de 27 mutaciones vivas** y `tester` encontró dos hallazgos ALTA. Marcarla ✅ ahora repetiría el error que el propio incidente #1 documenta |
 | **R14** | Toda migración que crea una tabla con tenant incluye, en la misma migración: RLS enable+force, policies, índice, FK compuesta si aplica, y entrada en el registro de clasificación. | No se lee el diff: CI **aplica todas las migraciones sobre base limpia y corre R1–R13**. | ✅ el ciclo ya corre a mano (§C.0); falta cablearlo en CI |
 | **R15** | **No hay super-raíz por encima de los estudios.** Cada estudio es raíz. Una super-raíz mete a todos los estudios en un subárbol: una policy mal escrita filtra el SaaS entero. | `tenant_node where tipo='estudio' and parent_id is not null` → 0. | ✅ **verificado** (T14) |
 
-> 🔴 **R36 y R37 están en ⚠️ y las dos se cierran en `0017` — plan abierto, no observación suelta.**
+> 🔴 **Por qué R36 se enuncia sobre el PREDICADO y nunca sobre el mecanismo (incidentes #2 y #4).**
 >
-> La ronda de cierre del incidente #2 (2026-08-15) encontró que **las dos reglas nuevas del día son la
-> cuarta y la quinta con su propio defecto adentro**, después de R10 (dos veces), R13 y R33. El
-> incidente **#2 no se cierra** hasta que `0017` entre: `0016` defiende contra el ataque original y
-> deja abiertos los tres agujeros descritos en la fila de R36.
+> La redacción anterior nombraba tres cosas del mecanismo de `0016`: que el chequeo **se difiere al
+> commit**, que **re-lee el estado final**, y que trata **«no puedo leer la fila» como violación**.
+> **Las tres cambiaron con `0017`**, y la regla habría quedado describiendo una implementación que ya
+> no existe. Es exactamente el error de forma de R33, que nombraba en su propio enunciado la excepción
+> que resultó ser el vector.
 >
-> **Lo que `0017` tiene que resolver, y es la razón de ser del plan:**
+> Peor: **una de las tres era falsa.** Está medido que, con `security definer` puesto y `not found`
+> tratado como no-op, el ataque original **sigue bloqueado** — por la comparación de coherencia, no por
+> `not found`. Esa rama nunca fue un control: fue una **compensación por una ceguera autoinfligida**,
+> porque el trigger era `invoker` y la RLS le tapaba justo la fila que tenía que validar. De ahí el
+> corolario que gobierna esta regla, y que vale más allá de esta tabla:
 >
-> 1. **`nid` fuera del alcance de escritura** — por **grant de columna**, no por trigger: está medido
->    que agregar `nid` a la lista de columnas cierra la incoherencia pero **no** la reescritura del
->    `path`. Es la misma distinción que salvó a `material_cifrado` en el #1: un privilegio de Postgres
->    se evalúa antes que cualquier predicado.
-> 2. **El scan de hijos tiene que fallar cerrado**, como la re-lectura principal.
-> 3. **Las tres situaciones de `not found`, distinguidas** —ataque, fila borrada, fila archivada— y no
->    solo la del ataque. Hoy la ambigüedad rompe operaciones legítimas, y ya rompió una real: dejó en
->    rojo `packages/data/sql/tests/0001_aislamiento.test.sql`, que corre en CI.
+> > 🔴 **Un invariante verificado con la visibilidad del escritor no es un invariante. Si el control
+> > lee con los privilegios de quien escribe, quien escribe elige lo que el control ve.**
 >
-> 🔴 **Y una pregunta de diseño que el plan tiene que contestar antes de redactar R36 de nuevo:** está
-> medido que **bajo `security definer` el ataque original sigue bloqueado por la rama de coherencia**.
-> Si eso es así, la rama `not found` **no es lo que cierra el incidente**, y el encabezado de `0016`
-> afirma que sí. El enunciado de R36 tiene que describir el **invariante**, no el mecanismo — que es
-> exactamente el error de forma de R33.
+> **La consecuencia de diseño:** el invariante es **referencial**, y Postgres exime a `check`, `unique`
+> y `foreign key` de la RLS **por diseño**; los triggers no. Meterlo en un trigger es lo que obligaba a
+> `security definer`, que **viola R11** y pedía un ADR. Bajado al escalón que le corresponde, **R11 no
+> se toca y no hizo falta ningún ADR**. El enunciado no lo nombra igual: si mañana `path` pasa a ser una
+> columna generada —medido y postergado—, la regla **no cambia una palabra**. Ésa es la prueba de que
+> está escrita en el nivel correcto.
+>
+> **🔴 Y R36 declara su premisa, en vez de esconderla.** No todas las patas del mecanismo sobreviven lo
+> mismo, y decirlo por bloque en vez de por constraint es el sobre-enunciado que ya se pagó tres veces:
+>
+> | Pata | Qué la apaga |
+> |---|---|
+> | `tenant_node_path_chk`, `..._nulo_chk` | **nada**, salvo dropearla. Aguanta `session_replication_role` y `disable trigger all` |
+> | `tenant_node_parent_path_fk` | 🔴 la integridad referencial **es un trigger de sistema**: `session_replication_role=replica` y `disable trigger all` **la apagan**. Pero las dos piden **superusuario** |
+> | `trg_tenant_node_nid_inmutable` | 🔴 es un trigger de **usuario**: lo apaga `disable trigger user`, **que el dueño no superusuario SÍ puede correr**. El `CHECK` queda cubriendo el invariante; lo que se pierde es la inmutabilidad de `nid` |
+>
+> O sea: **el invariante sobrevive al dueño; la inmutabilidad de `nid` no.** R36 depende de una premisa
+> que hoy **no se cumple en ningún entorno**: que el dueño del esquema no sea superusuario. Es la deuda
+> abierta del incidente #1, y mientras siga abierta esta regla se apoya en ella.
+>
+> **Y la identidad con la que corre cada caso es parte de la regla, no un detalle del test.** La versión
+> anterior probaba el ataque **sólo con `app_request`**; con `0017` ese rol ya no tiene grant sobre
+> `path` ni `nid`, así que el ataque muere por `permission denied` **antes de llegar al invariante**. Un
+> test así **se pone verde el día que alguien re-otorgue `grant … update on tenant_node to app_request`**
+> copiando la plantilla de ADR-0001 §5 — que es el escenario de regresión realista, mucho más que un
+> atacante. **Sin privilegio, el dueño y los jobs rompen el árbol en silencio; sin invariante, alcanza
+> con un grant de más. Ninguno sustituye al otro.**
+>
+> **Lo que R36 deliberadamente NO cubre**, y por eso no es una violación del predicado: el minado del
+> secuencial **global** de `nid` vía `overriding system value`. Cualquier valor de `nid` es
+> **íntegramente válido** ⇒ no hay constraint que lo pueda rechazar. Lo cierra el **privilegio**, y el
+> privilegio **no le aplica al dueño**. Residuo **declarado**, y vive en el incidente #4.
 >
 > 🔴 **Por qué R36 se chequea ejecutando el ataque y no mirando el catálogo (incidente #2, 2026-08-15).**
 >

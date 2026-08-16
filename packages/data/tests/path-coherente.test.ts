@@ -35,7 +35,7 @@
  * Requisito previo: pnpm db:up && pnpm db:migrate && pnpm db:setup
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Client } from 'pg';
 import { cerrarConexiones, conJob, conUsuario } from '../src/db/conexion.ts';
 import { clienteDuenio, clienteJob, sembrar, USUARIOS, type Sembrado } from './ayuda.ts';
@@ -190,7 +190,9 @@ describe('R36 / INVARIANTE — se cumple aunque el escritor sea app_job o el due
         `select set_config('app.reparentando','on',true)`,
         `update tenant_node set path = '${pathAjeno}.${nid}' where id = '${s.clienteA}'`,
       ],
-      /tenant_node_path_chk|check constraint/i,
+      // El NOMBRE del constraint, no «check constraint» a secas: con la alternativa laxa, el caso
+      // pasaba igual cuando el que saltaba era OTRO check. Ver el comentario de `abortaCon`.
+      /tenant_node_path_chk/,
     );
   });
 
@@ -204,7 +206,7 @@ describe('R36 / INVARIANTE — se cumple aunque el escritor sea app_job o el due
         `update tenant_node set path = '${pathAjeno}.${nid}', parent_path = '${pathAjeno}' ` +
           `where id = '${s.clienteA}'`,
       ],
-      /foreign key|parent_path_fk/i,
+      /tenant_node_parent_path_fk/,
     );
   });
 
@@ -218,34 +220,70 @@ describe('R36 / INVARIANTE — se cumple aunque el escritor sea app_job o el due
     );
   });
 
-  it('parent_path nulo con parent_id no nulo queda prohibido (match full + check)', async () => {
-    // Sin esto, un `parent_path` nulo satisfaría la FK "gratis" y el check admitiría `path = nid`:
-    // o sea, sacar un nodo del subárbol de su propio estudio poniéndole un path de raíz.
+  it('un nodo CON padre no puede darse un path de RAÍZ vaciando su espejo', async () => {
+    // 🔴 Éste es EL ataque que `tenant_node_parent_path_nulo_chk` y `match full` existen para frenar:
+    // sacar un nodo del subárbol de su propio estudio poniéndole un path sin prefijo. Y hay que
+    // escribir path Y parent_path JUNTOS, porque son las dos mitades de la mentira.
+    //
+    // La versión anterior de este caso escribía sólo `parent_path = null`, y entonces el que saltaba
+    // era `tenant_node_path_chk` — no el nulo_chk. MEDIDO en la ronda de mutación: con
+    // `tenant_node_parent_path_nulo_chk` DROPEADO los 14 casos quedaban verdes, y con la FK bajada a
+    // `match simple` también. Los dos cerrojos de la nulidad parcial no los probaba nada.
+    const nid = await campo(s.clienteA, 'nid');
     await abortaCon(
       duenio,
       [
         `select set_config('app.reparentando','on',true)`,
-        `update tenant_node set parent_path = null where id = '${s.clienteA}'`,
+        `update tenant_node set path = '${nid}', parent_path = null where id = '${s.clienteA}'`,
       ],
-      /nulo_chk|check constraint/i,
+      /tenant_node_parent_path_nulo_chk/,
     );
   });
 });
 
 describe('R36 / HIJOS — mover un padre no puede dejar descendientes colgados', () => {
+  // 🔴 Padre e hijo PROPIOS de cada caso, no los globales `grupo`/`clienteDelGrupo`.
+  //
+  // Estos dos ataques mudan un padre de `s.estudio` a `s.estudio2`. Si el padre YA estuviera bajo
+  // `estudio2`, el update sería un no-op que COMMITEA y `abortaCon` daría rojo con el mensaje
+  // exactamente equivocado: «la transacción COMMITEÓ: el invariante no se está aplicando». MEDIDO con
+  // `--sequence.shuffle.tests --sequence.seed=42`: con el orden barajado, el caso positivo de
+  // `reparentar_nodo()` corría primero, movía `grupo`, y estos dos casos caían por eso. La dependencia
+  // de orden existía, no estaba declarada, y el síntoma acusaba al invariante en vez de al test.
+  let padre: string;
+  let hijo: string;
+
+  beforeEach(async () => {
+    const r = await duenio.query<{ padre: string; hijo: string }>(
+      `with p as (
+         insert into tenant_node (tipo, nombre, parent_id) values ('grupo','SONDA HIJOS',$1)
+         returning id
+       ), h as (
+         insert into tenant_node (tipo, nombre, parent_id)
+         select 'cliente','SONDA HIJOS HIJO SA', p.id from p returning id, parent_id
+       )
+       select h.parent_id::text as padre, h.id::text as hijo from h`,
+      [s.estudio],
+    );
+    padre = r.rows[0]!.padre;
+    hijo = r.rows[0]!.hijo;
+    // El ataque sólo significa algo si el padre arranca colgando del estudio PROPIO.
+    expect(await campo(padre, 'parent_path')).toBe(await campo(s.estudio, 'path'));
+  });
+
   it('mudar un padre a un path coherente CONSIGO MISMO, dejando al hijo atrás, aborta por FK', async () => {
     // El padre queda coherente, así que el CHECK fila-local lo acepta. Lo que queda mal es el HIJO,
     // cuyo `parent_path` ya no existe. Es exactamente lo que 0016 no veía.
     const pathAjeno = await campo(s.estudio2, 'path');
-    const nidGrupo = await campo(grupo, 'nid');
+    const nidPadre = await campo(padre, 'nid');
     await abortaCon(
       duenio,
       [
         `select set_config('app.reparentando','on',true)`,
-        `update tenant_node set path = '${pathAjeno}.${nidGrupo}', parent_path = '${pathAjeno}', ` +
-          `parent_id = '${s.estudio2}' where id = '${grupo}'`,
+        `update tenant_node set path = '${pathAjeno}.${nidPadre}', parent_path = '${pathAjeno}', ` +
+          `parent_id = '${s.estudio2}' where id = '${padre}'`,
       ],
-      /foreign key|parent_path_fk/i,
+      /tenant_node_parent_path_fk/,
     );
   });
 
@@ -254,16 +292,16 @@ describe('R36 / HIJOS — mover un padre no puede dejar descendientes colgados',
     // desaparecer del control y la mudanza COMMITEABA. La integridad referencial no pasa por la RLS,
     // así que el truco dejó de funcionar.
     const pathAjeno = await campo(s.estudio2, 'path');
-    const nidGrupo = await campo(grupo, 'nid');
+    const nidPadre = await campo(padre, 'nid');
     await abortaCon(
       duenio,
       [
-        `update tenant_node set deleted_at = now() where id = '${clienteDelGrupo}'`,
+        `update tenant_node set deleted_at = now() where id = '${hijo}'`,
         `select set_config('app.reparentando','on',true)`,
-        `update tenant_node set path = '${pathAjeno}.${nidGrupo}', parent_path = '${pathAjeno}', ` +
-          `parent_id = '${s.estudio2}' where id = '${grupo}'`,
+        `update tenant_node set path = '${pathAjeno}.${nidPadre}', parent_path = '${pathAjeno}', ` +
+          `parent_id = '${s.estudio2}' where id = '${padre}'`,
       ],
-      /foreign key|parent_path_fk/i,
+      /tenant_node_parent_path_fk/,
     );
   });
 });
@@ -308,6 +346,143 @@ describe('R36 / LO LEGÍTIMO — es parte de la regla, no un extra', () => {
       `${await campo(grupo, 'path')}.${await campo(clienteDelGrupo, 'nid')}`,
     );
     expect(await campo(clienteDelGrupo, 'parent_path')).toBe(await campo(grupo, 'path'));
+  });
+});
+
+describe('R36 / FORMA — lo que ningún ataque puede distinguir', () => {
+  // Acá SÍ se mira el catálogo, y no contradice a ADR-0002 §B.1: lo que el ADR prohíbe es que R36 se
+  // verifique SÓLO inspeccionando el catálogo (eso es lo que dejó a R13 verde con el agujero adentro).
+  // Los ataques de arriba miden ALCANZABILIDAD; este bloque congela los atributos declarativos que
+  // NINGÚN ataque puede distinguir porque no cambian el resultado de ninguna operación probable.
+  //
+  // MEDIDO por mutación, todas VERDES sin este bloque: `match full` -> `match simple`; el CHECK y la
+  // FK re-creados `not valid`; `idx_tenant_node_parent_path` dropeado.
+
+  it('la FK es la que 0017 declara: match full, deferrable, deferred, no action, validada', async () => {
+    const r = await duenio.query<{
+      matchtype: string; deferrable: boolean; deferred: boolean;
+      validated: boolean; upd: string; del: string;
+    }>(
+      `select confmatchtype as matchtype, condeferrable as deferrable, condeferred as deferred,
+              convalidated as validated, confupdtype as upd, confdeltype as del
+         from pg_constraint where conname = 'tenant_node_parent_path_fk'
+          and conrelid = 'tenant_node'::regclass`,
+    );
+    // `f` = MATCH FULL. Con `s` (simple) un parent_path nulo satisface la FK gratis.
+    expect(r.rows[0]).toEqual({
+      matchtype: 'f', deferrable: true, deferred: true, validated: true, upd: 'a', del: 'a',
+    });
+  });
+
+  it('los dos CHECK son inmediatos y están validados', async () => {
+    const r = await duenio.query<{ conname: string; deferrable: boolean; validated: boolean }>(
+      `select conname, condeferrable as deferrable, convalidated as validated
+         from pg_constraint
+        where conrelid = 'tenant_node'::regclass
+          and conname in ('tenant_node_path_chk','tenant_node_parent_path_nulo_chk')
+        order by conname`,
+    );
+    expect(r.rows).toEqual([
+      { conname: 'tenant_node_parent_path_nulo_chk', deferrable: false, validated: true },
+      { conname: 'tenant_node_path_chk', deferrable: false, validated: true },
+    ]);
+  });
+
+  it('están el unique que la FK necesita y el índice que cubre la comprobación', async () => {
+    const r = await duenio.query<{ n: string }>(
+      `select string_agg(indexname, ',' order by indexname) as n from pg_indexes
+        where tablename = 'tenant_node'
+          and indexname in ('uq_tenant_node_id_path','idx_tenant_node_parent_path')`,
+    );
+    expect(r.rows[0]?.n).toBe('idx_tenant_node_parent_path,uq_tenant_node_id_path');
+  });
+
+  it('nid no lo escribe NADIE, y path/parent_path sólo app_job', async () => {
+    const r = await duenio.query<{ col: string; acl: string }>(
+      `select attname as col, coalesce(attacl::text, '(sin acl)') as acl
+         from pg_attribute where attrelid = 'tenant_node'::regclass
+          and attname in ('nid','path','parent_path') order by attname`,
+    );
+    const acl = Object.fromEntries(r.rows.map((x) => [x.col, x.acl]));
+    // `nid` sin ACL de columna = nadie puede escribirla: es lo ÚNICO que cierra el minado del
+    // secuencial global, porque cualquier valor de nid es íntegramente válido.
+    expect(acl['nid']).toBe('(sin acl)');
+    expect(acl['path']).toBe('{app_job=w/sistema_contable}');
+    expect(acl['parent_path']).toBe('{app_job=w/sistema_contable}');
+  });
+
+  it('ni app_request ni app_job tienen insert/update A NIVEL TABLA', async () => {
+    // El escenario de regresión realista: alguien copia la plantilla de ADR-0001 §5 y re-otorga el
+    // grant de tabla. `revoke update (col)` sobre un grant de tabla es un NO-OP SILENCIOSO.
+    const r = await duenio.query<{ rol: string; tiene: boolean }>(
+      `select rol, has_table_privilege(rol, 'tenant_node', 'insert')
+              or has_table_privilege(rol, 'tenant_node', 'update') as tiene
+         from unnest(array['app_request','app_job']) as rol order by rol`,
+    );
+    expect(r.rows).toEqual([
+      { rol: 'app_job', tiene: false },
+      { rol: 'app_request', tiene: false },
+    ]);
+  });
+});
+
+describe('R36 / EL DETECTOR — verificar_coherencia_path() tiene que ver algo', () => {
+  it('cuenta EXACTAMENTE la fila que se rompió a propósito, y cero después de repararla', async () => {
+    // 🔴 CONTROL DE VACUIDAD DEL CONTROL. `expect(await incoherentes()).toBe(0)` aparece tres veces
+    // en este archivo y pasa igual con el detector CIEGO: MEDIDO, reemplazando el cuerpo de la
+    // función por `select … where false`, los 14 casos quedaban verdes. Un cero sólo significa algo
+    // si el mismo detector sabe devolver uno.
+    //
+    // Para plantar la incoherencia hay que apagar la FK, y lo único que la apaga es
+    // `session_replication_role = replica` — que requiere SUPERUSUARIO. Ver el bloque de arriba: eso
+    // NO es una vía de ataque en producción (ADR-0002 exige que el dueño no sea superusuario), es la
+    // única forma de fabricar el estado que el detector tiene que detectar.
+    expect(await incoherentes()).toBe(0);
+
+    // Padre e hijo PROPIOS de este caso. No se reusan `grupo`/`clienteDelGrupo`: para cuando este
+    // bloque corre, el caso positivo ya los movió, el update de abajo sería un no-op y el caso
+    // pasaría midiendo cero contra cero. (Pasó al escribirlo: lo delató este mismo `toBe(1)`.)
+    const nuevos = await duenio.query<{ padre: string; hijo: string }>(
+      `with p as (
+         insert into tenant_node (tipo, nombre, parent_id) values ('grupo','SONDA DETECTOR',$1)
+         returning id
+       ), h as (
+         insert into tenant_node (tipo, nombre, parent_id)
+         select 'cliente','SONDA DETECTOR HIJO SA', p.id from p returning id, parent_id
+       )
+       select h.parent_id::text as padre, h.id::text as hijo from h`,
+      [s.estudio],
+    );
+    const padre = nuevos.rows[0]!.padre;
+    const hijo = nuevos.rows[0]!.hijo;
+
+    try {
+      await duenio.query('begin');
+      await duenio.query('set local session_replication_role = replica');
+      const r0 = await duenio.query(
+        `update tenant_node set path = $1, parent_path = $2, parent_id = $3 where id = $4`,
+        [
+          `${await campo(s.estudio2, 'path')}.${await campo(padre, 'nid')}`,
+          await campo(s.estudio2, 'path'),
+          s.estudio2,
+          padre,
+        ],
+      );
+      expect(r0.rowCount, 'no se rompió ninguna fila: el caso no probaría nada').toBe(1);
+      await duenio.query('commit');
+      // El hijo quedó apuntando a un parent_path que ya no existe: UNA fila incoherente, ni más ni menos.
+      expect(await incoherentes()).toBe(1);
+      const r = await duenio.query<{ id: string }>(
+        'select id::text as id from app.verificar_coherencia_path()',
+      );
+      expect(r.rows[0]?.id).toBe(hijo);
+    } finally {
+      await duenio.query('rollback').catch(() => undefined);
+      await duenio
+        .query(`delete from tenant_node where nombre like 'SONDA DETECTOR%'`)
+        .catch(() => undefined);
+    }
+    expect(await incoherentes()).toBe(0);
   });
 });
 
