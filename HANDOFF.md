@@ -6,6 +6,179 @@
 
 ---
 
+## 2026-08-17 (69) — 🔴 **PUNTO DE ENTRADA SI RETOMÁS SIN ESTE CHAT.** P0 y P1 de `0021` MEDIDOS: la premisa NO es falsa, y el número es **64**. Panel de 6 convocado y volcado a `docs/`.
+
+**Herramienta:** Claude Code. Plan `quirky-riding-music` (CLAUDE.md §3.2, disparadores (a), (b) y (d)),
+aprobado íntegro por el titular. Reemplaza el plan de `0021` que se aprobó en sesión y **nunca se
+escribió** (entrada 54).
+
+> 🔴 **TODO EL EXPEDIENTE ESTÁ EN
+> `docs/diseno/11-migracion-0021-determinante-y-capa-c.md`** — el plan, las mediciones, **los seis
+> dictámenes completos**, el DDL verificado y el código de las mediciones. Se escribió porque **cuatro
+> de los seis dictámenes existían sólo en la sesión que los produjo**, y porque el plan anterior de
+> `0021` se perdió por vivir fuera del repo. Esta entrada es el resumen; **ese archivo es la fuente**.
+
+---
+
+### 1. 🔴 P0 — la medición que podía falsificar el plan entero, y no lo hizo
+
+`packages/contabilidad/src/nucleo/entrada.ts` (`digestDeEntrada`, puro, **por exclusión**) + 17 tests.
+**Sin una línea de DDL**, que es lo que hace a P0 revertible y verificable solo.
+
+Medido **sólo lectura contra el piloto**, por `conUsuario`, con el guard R18 y las dos compuertas de
+`resolver-contrapartida.ts` (una credencial que saltee RLS mediría contra filas que el motor nunca ve).
+Salida: **sólo conteos** — ninguna proyección ni `concepto_banco` salió del proceso.
+
+| Lote | Movs | Digests distintos | Cambia el digest | **…y la `clase` es la MISMA** | …y la clase cambia | No cambia |
+|---|---|---|---|---|---|---|
+| macro | 1346 | 236 | 1270 | **14** | 1256 | 76 |
+| galicia | 326 | 168 | 326 | **40** | 286 | 0 |
+| santander | 158 | 138 | 158 | **10** | 148 | 0 |
+| **total** | **1830** | **542** | **1754** | 🔴 **64** | 1690 | 76 |
+
+🔴 **64 movimientos del corpus real** habrían quedado con la interpretación vieja intacta y un `no_op`
+silencioso. Es **la magnitud del bug** declarado en `escrituras.ts:298-302`, en filas, medida y no
+argumentada. **La premisa de `0021` se sostiene.**
+
+**Control cruzado que valida el método:** los `76` que **no** cambian coinciden **exacto** con las 76
+filas de `concepto_banco_estrategia = 'no_publicado'` contadas por SQL independiente — son las que nunca
+tuvieron concepto capturado, así que la recaptura no las tocó. Dos caminos, mismo número.
+
+### 2. La prueba de mutación, y un test que nació decorativo
+
+**8 mutaciones, elegidas para refutar.** Siete mataron a la primera. **La octava sobrevivió**, y ese es
+el hallazgo:
+
+🔴 **M4 (sacar el prefijo de longitud) dejaba el test de inyectividad en VERDE.** El caso usaba
+`conceptoBanco` y `conceptoCodigo`, que en el orden alfabético **no son adyacentes** —se interpone
+`conceptoBancoEstrategia`—, y la colisión de un `join` con separador sólo existe entre campos
+**adyacentes**. El test no ejercía nada. Es la misma falla que la entrada (52) documenta para P0 de
+`0014`. Reescrito sobre la **propiedad** (campos adyacentes), con la nota de que hoy el dominio cerrado
+de `conceptoBancoEstrategia` la vuelve inalcanzable — **se enuncia sobre la propiedad, no sobre el
+caso**, que es la lección de R25, R33 y R36.
+
+Y al reescribirlo apareció **M8, un defecto propio que nadie había pedido buscar**: `texto.length` en
+JavaScript cuenta unidades UTF-16 y `length()` en Postgres cuenta **caracteres**. Con `.length` pelado,
+la función y su gemela del DDL habrían divergido sobre cualquier fila con un carácter fuera del plano
+básico, y P1 lo habría encontrado recién contra la base. Corregido a puntos de código, con su mutación.
+
+### 3. Decisiones de forma que P0 fijó, contra lo que el panel proponía
+
+- 🔴 **El digest va sobre `sign(importe)`, no sobre `importe`.** `dba-data` propuso `importe::text`
+  completo. Verificado: el motor **sólo** lee `columnaOrigen` (`motor.ts:46`) y
+  `EvidenciaDeMovimientoLeida` ni siquiera expone el importe. Un importe corregido de `-100` a `-150` no
+  mueve una sola clasificación; invalidar por eso entrena a la contadora a aceptar recálculos sin mirar.
+  **El principio, que además es verificable por el tipo:** el digest es función de lo que el motor lee,
+  y lo que el motor lee **es** `EvidenciaDeMovimientoLeida`.
+- **`md5` y no `sha256`**, contra el precedente de `version.ts`. Medido por `dba-data`: la gemela vive en
+  una columna generada que exige `IMMUTABLE`, y ahí `sha256` es una trampa (`text::bytea` reinterpreta;
+  `convert_to` no es inmutable; `pgcrypto` no está instalado y es no-core).
+- **`bancoCodigo` NO entra:** ya cubierto por `motor_digest`, que es por banco — y vive en
+  `lote_ingesta`, otra tabla, así que una generada no lo puede ver.
+- **Trinquete:** `entrada.ts` entra a la huella de `VERSION_DEL_MOTOR` **a propósito**, aceptado
+  `--sin-bump` con motivo commiteado: hoy no lo consume el motor, pero el **próximo** cambio de la
+  fórmula sí va a exigir bump.
+
+### 4. 🔴 DOS BLOQUEANTES que contradicen el plan aprobado
+
+**(a) `motor-conciliacion-contable`: `padron_manifestacion_id` NO puede ir en la unicidad.** Si cada
+corrida inserta una manifestación nueva (regla de `contador-dominio`, entrada 52) **y** la manifestación
+está en el determinante, **toda corrida produce fila nueva siempre**: se acaba el no-op de `05` §5.2 y
+cada supersesión se lleva puesta la decisión que la contadora ya registró. Convierte un límite
+**fail-closed y ruidoso** en un **fail-open silencioso**. Recomienda que `0021` **no toque**
+`uq_recon_determinante`.
+
+⚠️ **Pero `contador-dominio` corrigió esa misma regla suya en este panel:** «una manifestación por
+corrida» era un proxy; la correcta es invalidación **por cambio del padrón y por fecha del hecho**, con
+un `completo_hasta`, nunca por reloj — *«un control que se firma por reflejo dejó de ser un control»*.
+Con manifestaciones estables, la objeción pierde su premisa. **Las dos mitades no se pueden decidir por
+separado.**
+
+**(b) `contador-dominio`: el check que propuso `arquitecto-software` es insatisfacible.**
+`retiro_de_socio`/`aporte_de_socio` salen **exclusivamente** de `es_socio` (`motor.ts:144-154`), que es
+una de las cinco ramas **sin** `padron_manifestacion_id`: toda fila `retiro_de_socio` sería rechazada.
+Y el check **no es fila-local** — `tipo` vive en `reconocimiento_movimiento` y la manifestación en
+`reconocimiento_contrapartida`. Reemplazo propuesto: `contrapartida_promocion_chk`, que iguala
+«estado que promueve» con «clase = propuesta» usando `uq_recon_clase` (`0014:451`).
+
+Además, **contradicción de clasificación sin resolver**: `resolucion_estado` es **N2** para
+`seguridad-datos-financieros` y `contador-dominio`, y **N1** para `motor-conciliacion-contable`
+(*«vocabulario de proceso, mismo criterio que `clase` y `que_decide`»*).
+
+### 5. Otros hallazgos del panel que quedan asentados
+
+- 🔴 **R6 deja de discriminar** (medido por `security-engineer`): sólo mira índices únicos si alguna
+  columna es N2/N2R/N3. Un único **global** sobre un determinante clasificado N1 pasa **en verde** y es
+  un oráculo de existencia cross-tenant. → regla nueva **R40**, sobre la propiedad, línea de base 0.
+- 🔴 **Dos agujeros vivos HOY en `0014`**: `created_at` insertable (un tenant **antedata** su
+  reconocimiento) y `superseded_por` insertable (una fila **nacida superseded** nunca llega a la cola y
+  nada falla).
+- 🔴 **`nulls not distinct`**: con `unique` clásico, dos filas idénticas de capa B **entran las dos**.
+- 🔴 **Incidente #7 reproducido en laboratorio** con `bigint identity` → PK `uuid`, no negociable.
+- **`0017` NO usa columna generada** (usa espejo + check + FK + trigger): la premisa de
+  `10-deuda-declarada.md` §0.0 A.1 estaba mal apoyada.
+- **`0018:58-59` dice algo falso**: `revoke` por columna **sí** saca un grant de columna; lo que no
+  funciona es sobre un grant de **tabla**. `0018` no se toca; la frase **no se propaga**.
+- Dos hallazgos fuera de alcance: **`loggerAcotado` no intersecta su allowlist con el blocklist**, y
+  **`resolver-contrapartida.ts:309` publica `sociosInvolucrados` a stdout esquivando el redactor** —
+  inocuo hoy, deja de serlo en cuanto `socio_id` pase a N2, que es lo que hace esta migración.
+
+### 5 bis. Las dos decisiones del titular sobre los bloqueantes
+
+1. 🔴 **`uq_recon_determinante` lleva `entrada_digest` y NO `padron_manifestacion_id`.** Cierra el bug
+   que P0 midió en 64 movimientos reales y esquiva el fail-open que denunció
+   `motor-conciliacion-contable`. La manifestación entra **sólo como evidencia (FK)**. El límite
+   fail-closed y ruidoso de `0014:426-432` **queda vivo**, y la mitad del padrón vuelve a ser deuda con
+   su propia medición.
+   > **Consecuencia que se sigue sola:** con la manifestación fuera, las cinco columnas de la unicidad
+   > son **todas `not null`**, así que el `nulls not distinct` que `dba-data` midió como bloqueante
+   > **ya no hace falta**. Se declara en el DDL *por qué no está* — y que vuelve a ser obligatorio el
+   > día que la mitad del padrón entre.
+2. **`resolucion_estado` es N2** (`seguridad-datos-financieros` + `contador-dominio` contra
+   `motor-conciliacion-contable`): es la interpretación del movimiento de **este** cliente, y rige la
+   regla 3 del registro — el default de una columna nueva en tabla con `cliente_id` es N2, y la carga de
+   la prueba es para bajarla.
+
+### 6. 🔴 P1 TAMBIÉN MEDIDO, y sin aplicar una sola línea de DDL
+
+La expresión candidata de la columna generada se corrió **como un `select`**, no como columna: sin
+`alter table`, sin migración, sin escribir una fila. Sólo lectura contra el piloto.
+
+| | |
+|---|---|
+| Movimientos comparados | **1830** |
+| TS ≡ SQL | **1830 / 1830** |
+| Divergen | **0** |
+| Digests distintos por TS | **542** |
+| Digests distintos por SQL | **542** — el mismo número que midió P0 |
+
+**Y la medición se probó rompiéndola:** con la expresión SQL mutada, **1270 de 1346 divergen** y los
+digests distintos por SQL colapsan de 236 a 25. Discrimina.
+
+La mutación además **reprodujo en vivo la trampa que motiva todo el enmarcado**: los 76 que seguían
+coincidiendo son los que toman la rama `-:`, y el resto dio `NULL`, porque `md5(a || '|' || b)` **con un
+solo operando NULL da NULL entero**.
+
+🔴 **Corrección a la propuesta de `dba-data`, medida:** la fecha **no** necesita el rodeo
+`(fecha - date '2000-01-01')`. `date_out` es STABLE, pero `date_part(text, date)` y `lpad` son
+**IMMUTABLE**, y una generada con
+`lpad(date_part('year',f)::text,4,'0') || '-' || …` **compila y produce `YYYY-MM-DD`** (verificado en
+tabla descartable, revertida). Eso deja que TypeScript siga hasheando la **fecha ISO legible** en vez de
+un número de días, que era el costo escondido de aquella propuesta.
+
+### Estado
+
+`pnpm verificar`: **62 archivos, 1440 tests, 0 fallas** (base: 61 / 1423). **Nada aplicado a ninguna
+base: ni P0 ni P1 tienen DDL.** Piloto intacto — 1830 movimientos, 0 reconocimientos, esquema en `0020`,
+sin drift contra local.
+
+**Lo próximo:** escribir el archivo `0021_*.sql` (pasos P2 a P4 del plan), con la forma de
+`reconocimiento_contrapartida` ya ratificada por los dos agentes de dominio. **Su aplicación al piloto
+es una autorización aparte del titular, con `CLAUDE.md` §1.9 corrido completo.** El plan y los seis
+dictámenes están en `quirky-riding-music.md`.
+
+---
+
 ## 2026-08-16 (68) — 🔴 **PUNTO DE ENTRADA SI RETOMÁS SIN ESTE CHAT.** Cierre del expediente de seguridad: `main` al día, roadmap y backlog actualizados. Lo próximo es `0021`.
 
 **Herramienta:** Claude Code. Cierra el tramo que arrancó el 2026-08-14 con `0014` y terminó siendo

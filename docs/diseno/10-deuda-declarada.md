@@ -28,26 +28,30 @@
 
 | | Qué | Estado |
 |---|---|---|
-| **A.1** | 🔴 **`0021` — rediseño del determinante de idempotencia.** El determinante persistido (`motor_digest`) cubre **el CÓDIGO, no la ENTRADA**, y la entrada es **mutable**: `recapturar-conceptos.ts` y `backfill-contraparte.ts` hacen `UPDATE` sobre `movimiento_bancario_crudo`. Un reproceso que cambie `concepto_banco` sin cambiar la clase **da no-op con la interpretación vieja intacta** — está declarado en `escrituras.ts:296-300`. Tiene que basarse en el hash de la **fila persistible** | **Plan por escribir, con panel completo.** El plan anterior se aprobó en sesión y **nunca se escribió**: el archivo se sobrescribió con el de `0015` (entrada 54). No se recupera — se rehace |
+| **A.1** | 🔴 **`0021` — rediseño del determinante de idempotencia.** El determinante persistido (`motor_digest`) cubre **el CÓDIGO, no la ENTRADA**, y la entrada es **mutable**: `recapturar-conceptos.ts` y `backfill-contraparte.ts` hacen `UPDATE` sobre `movimiento_bancario_crudo`. Un reproceso que cambie `concepto_banco` sin cambiar la clase **da no-op con la interpretación vieja intacta** — está declarado en `escrituras.ts:296-300` | ⚠️ **PLAN ESCRITO Y PREMISA MEDIDA (2026-08-17).** Expediente completo: **`11-migracion-0021-determinante-y-capa-c.md`**. Panel de 6 convocado; **P0 y P1 cerrados sin una línea de DDL**. 🔴 **La magnitud del bug, medida sobre el corpus real: 64 movimientos** (de 1830, 1754 cambian de digest y 64 conservan la clase). Faltan P2–P4 |
 | **A.2** | 🔴 **La condición dura del dueño del esquema** — ver §6 de `08-plan-de-construccion.md`. **Antes de reconfigurar el dueño como NO superusuario en NINGÚN entorno**, hay que resolver la recursión infinita de RLS | Tarea propia con `security-engineer` + `arquitecto-software` + `dba-data` |
 
-🔴 **Las dos preguntas de diseño que `0017` y `0020` hicieron aparecer, y que NO existían cuando se
-aprobó el plan original de A.1.** Van al panel antes de escribir una línea:
+✅ **Las dos preguntas de diseño ya fueron al panel y están DICTAMINADAS** (2026-08-17). El detalle, con
+la evidencia ejecutada, está en `11-migracion-0021-determinante-y-capa-c.md` §3 y §4. Resumen:
 
-1. **¿Columna generada + `unique`, o hash calculado en TypeScript?** El invariante *«el determinante es
-   una función de la fila persistible»* tiene **exactamente la forma** de `path = f(parent_id, nid)`, y
-   `0017` dejó medido que `check`/`unique`/`foreign key` están **exentos de la RLS por diseño** y los
-   triggers no. Además `0014` **ya tiene una columna generada** (`es_propuesta`), o sea que el
-   precedente está en la misma tabla. **Un hash que calcula y pasa la aplicación es un hash sobre el
-   que el escritor puede mentir**; uno `generated always as … stored` no. Falta que `dba-data` dictamine
-   si la expresión de hash puede ser `IMMUTABLE` como exige una columna generada.
-2. **¿Se recorta el `grant insert` de tabla entera a columnas específicas?** Hoy
-   `reconocimiento_movimiento` tiene `grant select, insert` **de tabla** (19 columnas). Medido: **no
-   produce el daño del #7** —`id` es `uuid`, no hay ninguna columna `identity`— y **`0020` §5 tampoco
-   aplica**, porque la fila activa se resuelve por `superseded_por is null` con `for update` y nunca por
-   orden de `created_at`. **Pero si el rediseño agrega `fila_hash`, bajo un grant de tabla esa columna
-   es nombrable por el tenant desde el minuto cero**, y el determinante lo elegiría quien escribe. Es la
-   lección de `via_depth` textual.
+1. **¿Columna generada + `unique`, o hash calculado en TypeScript?** → **Generada en
+   `movimiento_bancario_crudo`** (donde la entrada es fila-local) **+ foto histórica por trigger
+   `BEFORE INSERT` + `not null`** en `reconocimiento_movimiento`.
+   🔴 **Y la premisa de esta pregunta, tal como estaba escrita acá, era FALSA:**
+   `0017_path_por_construccion.sql` **NO usa una columna generada** — usa columna espejo plana + `CHECK`
+   fila-local + FK compuesta `match full deferrable` + trigger (`0017:131, 180-182, 198-202, 213-232`).
+   El precedente real de generada+`unique` es `0014:184` (`es_propuesta`), con expresión **inline pura**;
+   en todo el repo no hay una generada que invoque una función de usuario.
+   🔴 **Y la FK que ese patrón sugería quedó descartada por medición:** *una FK afirma un hecho
+   PRESENTE; el determinante registra uno HISTÓRICO* — con `on update restrict` el primer reconocimiento
+   **congela `concepto_banco` para siempre** y `recapturar-conceptos.ts` muere con `23503`.
+2. **¿Se recorta el `grant insert`?** → **Sí, pero la premisa también era falsa.** Una generada **no es
+   falsificable ni bajo grant de tabla** (`cannot insert a non-DEFAULT value`: rechaza el mecanismo, no
+   el privilegio), y una columna llenada por trigger **se sobrescribe en silencio**. El recorte no compra
+   integridad: compra que el intento falle **ruidoso**.
+   🔴 **El recorte va igual, por dos agujeros vivos HOY en `0014`**: `created_at` insertable (un tenant
+   **antedata** su propio reconocimiento) y `superseded_por` insertable (una fila **nacida superseded**
+   sale del índice parcial, **nunca llega a la cola de la contadora**, y nada falla).
 
 **Dato que simplifica A.1:** el piloto tiene **1830 movimientos y CERO reconocimientos persistidos**.
 No hay backfill, no hay filas que migrar, no hay riesgo sobre datos existentes. La migración es de
