@@ -6,6 +6,100 @@
 
 ---
 
+## 2026-08-16 (67) — **`0020` aplicada al piloto, con autorización explícita del titular** y el procedimiento de §1.9 corrido por primera vez de verdad.
+
+**Herramienta:** Claude Code. Confirmación escrita **en el momento**, no después.
+
+---
+
+### 1. La condición previa que puso el titular, y su respuesta
+
+El titular condicionó la aplicación a **una consulta directa contra el piloto, no de memoria ni por
+precedente**: ¿el dueño del esquema sigue siendo superusuario? Si **no** lo fuera, el bloqueante de
+despliegue de la entrada (66) —la recursión infinita entre `accessible_tenant_ids()` y
+`membership_sel`— **estaría activo hoy**, y había que frenar.
+
+**Medido, sólo lectura:**
+
+```
+sistema_contable      rolsuper=true   bypassrls=true   login=true
+app_job               rolsuper=false  bypassrls=true
+app_request           rolsuper=false  bypassrls=false
+app_request_dev       rolsuper=false  bypassrls=false
+app_firmador          rolsuper=false  bypassrls=false
+
+app.accessible_tenant_ids -> sistema_contable
+app.has_role_on           -> sistema_contable
+```
+
+Las dos `security definer` del ciclo pertenecen al superusuario ⇒ **la recursión sigue dormida, igual
+que en local. No bloqueaba.**
+
+### 2. 🔴 CONDICIÓN DURA que queda asentada
+
+> **Antes de que el dueño del esquema se reconfigure como NO superusuario en NINGÚN entorno, la
+> recursión tiene que estar resuelta.** No es una preferencia ni una tarea a priorizar: es una
+> precondición. Hacerlo antes deja la base **inoperable** —`select count(*) from membership` da `stack
+> depth limit exceeded`—, no «más segura».
+
+Y el corolario incómodo, que es lo que la vuelve una condición y no una nota: **hoy todo el aislamiento
+depende de que el dueño sea superusuario**, que es exactamente lo contrario de lo que ADR-0002 pide en
+todos los demás renglones. La tarea está abierta y **no se investigó tocando el piloto**.
+
+### 3. El procedimiento de `CLAUDE.md` §1.9, corrido completo
+
+| Paso | Resultado |
+|---|---|
+| **1. Listar lo pendiente** | `ENV_FILE=.env.piloto pnpm db:migrate --estado` → **una sola**: `0020_rastro_no_falsificable.sql` |
+| **2. Confirmar que coincide EXACTO con lo autorizado** | Autorizado: `0020`. Pendiente: `0020`. Coincide |
+| **3. Frenar si aparece una de más** | No apareció ninguna. Las 19 anteriores, sin drift |
+
+🔴 **Es la primera vez que el control existe de verdad.** La entrada (64) dejó escrito que los runbooks
+de `0015`, `0016` y `0017` funcionaron **por casualidad** —lo pendiente coincidía con lo autorizado— y
+que `pnpm db:migrate --estado` **ya existía en `migrar.ts` y no estaba documentado en ningún runbook**.
+
+### 4. Línea de base y verificación — hash `14863bc7f633cb55`
+
+| | antes | después |
+|---|---|---|
+| `tenant_node` / `membership` / `membership_historia` | 4 / 1 / 0 | **4 / 1 / 0** |
+| `acceso_auditoria` / `movimiento_bancario_crudo` / `lote_ingesta` | 9 / 1830 / 3 | **9 / 1830 / 3** |
+| `verificar_coherencia_path()` | 0 | **0** |
+
+**Nada perdido, nada corrompido, ninguna fila tocada.**
+
+Y el control, verificado **por catálogo** —sin escribir una sola fila en el piloto, ni siquiera dentro
+de una transacción revertida—:
+
+| | antes | después |
+|---|---|---|
+| `grant insert` sobre `acceso_auditoria` | **9 columnas, `id` y `ocurrido_en` incluidas** | **7**, las dos vedadas (`insert=false` para `app_request` **y** `app_job`); `cliente_id` sigue en `true` |
+| `membership_historia_sel` / `acceso_auditoria_sel` | usan `accessible_tenant_ids()` | **no lo usan** |
+| `via_depth` | no existe | `not null`, `default pg_trigger_depth()`, `CHECK ((via_depth >= 1))`, **sin grant para nadie** |
+| Triggers sobre `membership` | `trg_membership_historia` | `trg_membership_historia_ins_del` (sin condición) + `trg_membership_historia_upd` (**con** condición) |
+| `ocurrido_en` en las dos tablas | `now()` | **`clock_timestamp()`** |
+| **R39** | — | **0 roles de aplicación con `CREATE` sobre algún esquema** |
+
+🔴 **Dato que confirma que el #7 estaba vivo en el piloto hasta hoy:** el `grant insert` sobre
+`acceso_auditoria` tenía las **9** columnas, `id` incluida. O sea que la denegación cross-tenant era
+**alcanzable en el entorno con material real**, no sólo en local.
+
+### Estado
+
+Local y piloto **al mismo nivel de esquema (`0020`)**, mismo hash, sin drift.
+
+| Pendiente | |
+|---|---|
+| 🔴 **Recursión de RLS con dueño no superusuario** | Bloqueante de despliegue. **Condición dura del §2 de esta entrada** |
+| 🔴 **#8 — la firma elegible** | Sin control posible dentro de la base; pide ADR |
+| R25: la verificación | El enunciado está reescrito; falta el barrido del catálogo |
+| `app_job` con `grant update (activo)` sin camino | Punto (7) de R38: enunciado y **no aplicado** |
+| La mitad *fuga* de H-A | `acceso_auditoria.id` sigue siendo bigint monótono global |
+| Runbooks de `docs/devops/` | Documentar `pnpm db:migrate --estado` como el paso 1 de §1.9 |
+| `0021` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
 ## 2026-08-16 (66) — `0020_rastro_no_falsificable.sql`: el rastro deja de ser gameable, y aparece la **única denegación cross-tenant** del expediente. Incidentes **#6, #7 y #8**.
 
 **Herramienta:** Claude Code. Cierra el plan formal de `0019` que la entrada (65) dejó convocado.
