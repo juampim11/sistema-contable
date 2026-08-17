@@ -118,6 +118,15 @@ export const CLASIFICACION = {
       activo_despues: { nivel: 'N1', exportable: true },
       hecho_por: UUID_INTERNO,
       ocurrido_en: MARCA_TIEMPO,
+      via_depth: {
+        nivel: 'N1',
+        exportable: true,
+        nota:
+          'Profundidad de trigger con la que se escribió la fila (`0020` §3). No es un dato del ' +
+          'negocio: es el mecanismo que distingue la fila del trigger (vale 1) de una escrita a mano ' +
+          '(el DEFAULT vale 0 fuera de un trigger y el check la rechaza). Se expone sin problema — no ' +
+          'dice nada de nadie.',
+      },
     },
   },
 
@@ -127,7 +136,22 @@ export const CLASIFICACION = {
   acceso_auditoria: {
     columnaTenant: 'cliente_id',
     campos: {
-      id: { nivel: 'N1', exportable: true },
+      id: {
+        nivel: 'N1',
+        exportable: false,
+        nota:
+          'Bigint secuencial GLOBAL — la MISMA forma que `tenant_node.nid`, y por lo tanto el mismo ' +
+          'trato: NUNCA sale en API, URL ni export (R25). No hace falta enumerar: DOS filas propias ' +
+          'alcanzan, porque la secuencia es de toda la plataforma y los huecos entre filas propias ' +
+          'son el volumen de auditoría de los demás estudios. Es N1 y NO N2 porque no revela dato de ' +
+          'ningún cliente sino actividad de la plataforma —mismo criterio que `nid`, `path` y ' +
+          '`parent_path`—, y porque este registro clasifica por NOMBRE de columna: `id` en N2 ' +
+          'rompería la compilación del logger en todo el repo y haría que `redactar` tape todo `id` ' +
+          'de todo log. `0020` §1 le revoca además el `insert`: con `overriding system value` un ' +
+          'tenant reclama ids que la secuencia no alcanzó y la PK aborta la operación auditada de ' +
+          'OTRO tenant (incidente #7, medido). La mitad FUGA sigue abierta (hallazgo H-A): cerrarla ' +
+          'es cambiar el tipo de la PK de una tabla append-only.',
+      },
       cliente_id: UUID_INTERNO,
       user_id: UUID_INTERNO,
       accion: { nivel: 'N1', exportable: true },

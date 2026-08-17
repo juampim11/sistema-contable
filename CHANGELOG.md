@@ -32,7 +32,7 @@ decide acá.**
 
 ### Seguridad
 
-Cinco incidentes registrados el 2026-08-15/16. El detalle —alcance, ventana y lo que **no** se puede
+Ocho incidentes registrados el 2026-08-15/16. El detalle —alcance, ventana y lo que **no** se puede
 determinar— está en `docs/seguridad/registro-incidentes.md`.
 
 - 🔴 **#1 — escalada de privilegios por shadowing de `pg_temp`.** **CONTROL CERRADO** con **R10 +
@@ -48,8 +48,29 @@ determinar— está en `docs/seguridad/registro-incidentes.md`.
 - 🔴 **#4 — defectos del control de integridad del árbol.** **ABIERTO** por el defecto **E** (el
   `DETAIL` del driver). A, B, C y D cerrados por `0017` y `0018`.
 - 🔴 **#5 — el padrón de derechos es escribible por el sujeto del control, sin rastro.** **ABIERTO.**
-- **Reglas verificables nuevas:** R36, R37, R37 bis (`ADR-0002` §B). **R13 y R33 quedan marcadas
-  insuficientes** y reemplazadas.
+  `0019` cierra el ataque literal; los defectos del propio fix y las vías equivalentes al resultado se
+  registran en el **#6**.
+- 🔴 **#6 — contaminación y ocultamiento del rastro de derechos.** **ABIERTO.** Tres defectos sobre el
+  mismo objeto: `tenant_node.deleted_at` **apagaba la vista del rastro sin borrar una fila del disco**
+  —y el mismo interruptor apagaba `acceso_auditoria`, el rastro central de todo `ADR-0002`—; el rastro
+  era escribible por cualquiera con acceso al nodo; y un `update` que no cambiaba nada escribía ruido
+  **legítimo e irreversible**. Mecanismo aplicado a **local** por `0020` §2/§3/§4.
+- 🔴 **#7 — denegación CROSS-TENANT del rastro de acceso.** **ABIERTO.** El **único hallazgo
+  cross-tenant del expediente**, y **fundacional desde `0001`**: reclamando ids de
+  `acceso_auditoria.id` un estudio **aborta la operación de negocio auditada de otro**, porque
+  `registrarAcceso()` corre antes de la lectura y en la misma transacción. Aislamiento roto en la
+  dimensión de **disponibilidad**, que ninguna fila anterior tocaba. Mecanismo aplicado a **local** por
+  `0020` §1, con **costo de producción cero**.
+- 🔴 **#8 — la firma del rastro es elegible por quien escribe.** **ABIERTO y sin control posible dentro
+  de la base.** `hecho_por` sale de un GUC que setea la propia sesión, así que quien tenga la
+  credencial de aplicación puede atribuirle una escritura del padrón a **cualquiera del propio
+  subárbol, el auditor incluido**. Una firma que resista a eso exige que **firme la aplicación**: es
+  decisión de arquitectura. Mientras tanto el control compensatorio es el **enunciado probatorio
+  escrito** en el registro y en `ADR-0002`.
+- **Reglas verificables nuevas:** R36, R37, R37 bis, **R4 bis** y **R39** (`ADR-0002` §B). **R25 queda
+  reescrita sobre la propiedad y no sobre el caso** — decía «prohibido exponer `tenant_node.nid`»,
+  nombraba la columna, y por eso `acceso_auditoria.id` —la misma forma exacta— pudo divergir desde
+  `0001` sin que nada se pusiera rojo. **R13 y R33 quedan marcadas insuficientes** y reemplazadas.
 
 ### Añadido
 

@@ -6,6 +6,121 @@
 
 ---
 
+## 2026-08-16 (66) — `0020_rastro_no_falsificable.sql`: el rastro deja de ser gameable, y aparece la **única denegación cross-tenant** del expediente. Incidentes **#6, #7 y #8**.
+
+**Herramienta:** Claude Code. Cierra el plan formal de `0019` que la entrada (65) dejó convocado.
+
+---
+
+### 1. El plan, y el panel que lo produjo
+
+Plan formal aprobado íntegro (los cinco puntos de `CLAUDE.md` §3.2). Tres agentes de diseño
+—`seguridad-datos-financieros`, `arquitecto-software`, `security-engineer`— y tres de implementación
+—`dba-data`, `security-engineer`, `seguridad-datos-financieros`—, con las tareas `convocar` bloqueando
+la implementación según §3.1.
+
+🔴 **Y lo primero que hay que escribir es que el panel se equivocó tres veces y yo dos.** Todo lo que
+sigue está **medido por quien conduce contra local**, en transacciones revertidas, no tomado de palabra.
+
+| Quién | Qué afirmó | Qué dio la medición |
+|---|---|---|
+| `security-engineer` | `when (tg_op <> 'UPDATE' or …)` en un solo trigger | `42703 column "tg_op" does not exist`. Y con `insert` en el evento, referenciar `OLD` en el `WHEN` está **prohibido**: partir el trigger **es lo único que compila** |
+| `seguridad-datos-financieros` | *«`0019` … aplicada a local y **nunca al piloto**»* | **Falso.** `0019` está en el piloto desde la entrada (64). Si ese texto entraba al registro, la bitácora habría afirmado que el rastro no existe en el entorno con material real — **contradiciendo la entrada que documenta el error** |
+| `dba-data` | «el `check` con función volátil lo rechaza Postgres» | **No lo rechaza**: se crea sin una advertencia y detona meses después, en el primer `VALIDATE` o restore |
+| **quien conduce** | el orden de `§3` (add column con el default real, backfill por `UPDATE`) | `pg_trigger_depth()` es **STABLE**: el `add column` usa `attmissingval` y deja las filas viejas en **0** (medido). Y el backfill por `UPDATE` **afecta 0 filas SIN ERROR** con dueño no superusuario |
+| **quien conduce** | *«fabricar una fila para incriminar a otro no funciona»* | **Falso**, y es el incidente **#8**. Ver §4 |
+
+### 2. `0020_rastro_no_falsificable.sql` — seis secciones, aplicada a **LOCAL**
+
+| § | Qué cierra | Medición |
+|---|---|---|
+| **1** | 🔴 **Denegación cross-tenant** (#7) | El socio del Estudio UNO reclama tres ids de `acceso_auditoria` (`INSERT 3`) y el del Estudio DOS recibe `23505 duplicate key`. Como `registrarAcceso()` corre **antes** de la lectura y en la misma transacción, **aborta la operación de negocio del otro estudio**. Con el fix: `42501` / `42501` / legítimo OK |
+| **2** | `deleted_at` como interruptor del rastro (#6a) | auditor **3 → 0 → 3** filas de rastro y **6 → 0 → 6** de acceso; socio ajeno **1 → 1** y **0 → 0**, con **0 filas fuera de su subárbol** |
+| **3** | La fila escrita a mano (#6b) | Caso C falla con **`23514 / membership_historia_via_chk`** —no con `permission denied`, que sería el verde por el motivo equivocado—. **5 mutaciones, 5 detectadas** |
+| **4** | 🔴 La **dilución** (#6c) | `update ... set activo = activo` sin `where` producía **+4 filas** legítimas y repetibles sin límite. Con §4: **+0**, y el `update` real sigue en **+1** |
+| **5** | El empate al microsegundo | `now()` daba la misma marca a la fila real y a la forjada. `clock_timestamp()`, con **costo nulo** medido sobre 300.000 filas y los dos índices |
+| **6** | El `comment on table` que mentía | Decía *«Lo escribe un TRIGGER, no la aplicación»*, y era falso desde el día uno |
+
+**Costo de producción: cero**, verificado contra el código real (`auditoria.ts:127` escribe exactamente
+las siete columnas; `sembrar.ts:144`, tres).
+
+### 3. Lo que `§4` resultó ser, y que cambió el alcance
+
+`§4` entró al plan como prolijidad. **Es el control anti-dilución**, y el dato que lo movió es que
+**el vector NO es el `insert` de tabla entera sobre `membership`** —el recorte que el titular dejó
+afuera— **sino `update (activo)`, que INV-10 OBLIGA a que exista**. O sea: el recorte quedó sano, y sin
+`§4` la migración cerraba la falsificación y dejaba abierta la **denegación de evidencia**.
+
+### 4. 🔴 El incidente **#8**, y por qué es el más incómodo
+
+`hecho_por` vale `app.current_user_id()`, que es `current_setting('app.user_id')` (`0001:210-213`) — un
+GUC que **setea la propia sesión**. Medido con la credencial real de `app_request`:
+
+```
+set_config('app.user_id', <otro>, true)   ->  OK
+app.current_user_id()                     ->  <el auditor>
+insert en membership_historia             ->  OK, hecho_por = <el auditor>
+declarar un socio de OTRO estudio         ->  42501
+```
+
+**La autoría es elegible.** El único límite es que la identidad declarada vea el nodo — y eso no acota
+nada donde importa, porque **el auditor está adentro del subárbol**. `via_depth` **no lo cierra**: quien
+se declara otro y hace una escritura **real** obtiene una fila **genuina y mal atribuida**, que es peor
+porque pasa todos los controles.
+
+Es la misma raíz que el **#2** con un abuso distinto: allá el GUC transportaba **autorización** —*«un
+GUC transporta identidad, nunca autorización»*—; acá transporta identidad y el rastro la trata como
+**atestación**. 🔴 **Identidad declarada no es identidad autenticada.**
+
+**No tiene arreglo dentro de la base** y conviene decirlo así: Postgres sólo conoce `app_request_dev`;
+`session_user` diría «lo escribió la aplicación», nunca **quién**. Exige que **firme la aplicación**.
+Mientras tanto el control compensatorio es el **enunciado probatorio escrito**.
+
+### 5. Texto
+
+- **`registro-incidentes.md`**: filas **#6**, **#7** y **#8**, y el recuadro probatorio **reescrito** —
+  la fecha no es elegible, **la autoría sí**; y sin la afirmación falsa sobre el piloto.
+- **`ADR-0002`**: **R38** con los puntos (4) a (8) · **R25 reescrita sobre la PROPIEDAD** (decía
+  «prohibido exponer `tenant_node.nid`», nombraba la columna, y por eso `acceso_auditoria.id` divergió
+  desde `0001` sin ponerse rojo) · **R4 bis** (la excepción, que vive **en el test**) · **R39 nueva** ·
+  R11 con su estado corregido.
+- **`CHANGELOG.md`** actualizado.
+
+🔴 **R39 es la que evita que `§3` sea contención con una precondición tácita.** Cerrada **por
+mutación**: 4 mutaciones, 4 detectadas. **La que discrimina es la #2** —`grant create on schema app to
+app_request_dev`, al **usuario de login** y no al rol-grupo—: la versión ingenua
+(`has_schema_privilege('app_request', …)`) **la deja pasar**, y quedó medido en la misma corrida.
+
+### 6. 🔴 Hallazgo fuera de alcance: bloqueante de despliegue
+
+Con dueño **no superusuario**, `app.accessible_tenant_ids()` (definer, dueño = dueño del esquema) lee
+`public.membership`, que tiene `force row level security`, cuya `membership_sel` (`0001:332-333`)
+**vuelve a llamarla**. No corta —`security definer` inhabilita el inlining y el detector de recursión de
+RLS nunca ve el ciclo—: **`stack depth limit exceeded` en un `select count(*) from membership`**.
+
+Hoy no explota **sólo porque el dueño es superusuario** (`rolsuper = t`, medido). O sea que **todo el
+aislamiento depende de una premisa que no está escrita en ningún lado**, y que es exactamente la
+contraria de lo que ADR-0002 pide en todos los demás renglones. Tarea propia.
+
+### Estado
+
+`pnpm verificar`: **61 archivos, 1423 tests, 0 fallas** (línea de base 1416; +7 casos nuevos).
+
+| Pendiente | |
+|---|---|
+| 🔴 **`0020` al piloto** | **Espera confirmación explícita del titular en vivo**, con el procedimiento de `CLAUDE.md` §1.9. Hoy el piloto está en `0019`, así que lo pendiente debería ser **exactamente `0020`** — y si la lista devuelve otra cosa, se frena y se eleva |
+| 🔴 **Recursión de RLS con dueño no superusuario** | Bloqueante de despliegue, tarea propia |
+| 🔴 **#8 — la firma elegible** | Sin control posible dentro de la base; pide ADR |
+| R25: la verificación | El enunciado está reescrito; falta el barrido del catálogo |
+| `app_job` con `grant update (activo)` sin camino | Punto (7) de R38: enunciado y **no aplicado** |
+| La mitad *fuga* de H-A | `acceso_auditoria.id` sigue siendo bigint monótono global |
+| Runbooks de `docs/devops/` | `pnpm db:migrate --estado` existe y no estaba documentado |
+| `acceso_auditoria.ocurrido_en` / `.id` | H-A/H-B, del #4 |
+| Rol `app_rls_owner` con `BYPASSRLS` sin origen versionado | Tarea aparte |
+| `0021` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
 ## 2026-08-16 (65) — Decisión del titular: **`0019` se queda en el piloto.** Advertencia probatoria escrita, regla dura de runbook adoptada, y el plan formal de `0019` convocado.
 
 **Herramienta:** Claude Code. Cierra la entrada (64), que dejó la decisión abierta.

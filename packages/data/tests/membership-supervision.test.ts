@@ -434,18 +434,124 @@ describe('R38 / LA CUARTA VÍA — borrar el nodo no es una puerta de atrás a l
 
 // -----------------------------------------------------------------------------
 describe('R38 / MECANISMO — lo que el catálogo tiene que decir, lo diga quien lo diga', () => {
-  it('🔴 el trigger es AFTER, por fila, y cubre insert, update Y delete', async () => {
+  it('🔴 el trigger es AFTER, por fila, y cubre insert, update Y delete — en DOS triggers', async () => {
     // Un test de comportamiento no distingue AFTER de BEFORE acá (la transacción revierte igual las
     // dos), así que el invariante se mide donde SÍ es observable: el catálogo. Y de paso cierra las
     // tres mutaciones de cobertura del trigger sin depender de que exista un caso por operación.
-    // tgtype = ROW(1) | INSERT(4) | DELETE(8) | UPDATE(16) = 29; el bit BEFORE(2) tiene que estar
-    // apagado.
-    const r = await duenio.query<{ tgname: string; tgtype: number }>(
-      `select tgname, tgtype::int as tgtype from pg_trigger
-        where tgrelid = 'membership'::regclass and not tgisinternal`,
+    //
+    // 🔴 `0020` §4 lo partió en DOS, y no por prolijidad: la condición natural
+    // `when (tg_op <> 'UPDATE' or old.* is distinct from new.*)` NO EXISTE. Medido: `tg_op` no está
+    // en una cláusula `WHEN` (42703, es una variable de PL/pgSQL) y, en cuanto el evento incluye
+    // `insert`, referenciar `OLD` en el `WHEN` está PROHIBIDO. Partirlo es lo único que compila.
+    //
+    // tgtype: ROW(1) | INSERT(4) | DELETE(8) | UPDATE(16); el bit BEFORE(2) apagado en los dos.
+    //   ins_del = 1|4|8  = 13     upd = 1|16 = 17
+    // La UNIÓN tiene que seguir cubriendo las tres operaciones: 13|17 = 29, el mismo 29 de antes.
+    // `pg_get_triggerdef` y no `pg_get_expr(tgqual, …)`: la cláusula `WHEN` referencia OLD **y** NEW,
+    // o sea dos relaciones, y `pg_get_expr` aborta con "expression contains variables of more than
+    // one relation". Medido al escribir este caso.
+    const r = await duenio.query<{ tgname: string; tgtype: number; def: string }>(
+      `select tgname, tgtype::int as tgtype, pg_get_triggerdef(oid) as def
+         from pg_trigger
+        where tgrelid = 'membership'::regclass and not tgisinternal
+        order by tgname`,
     );
-    expect(r.rows.map((f) => f.tgname)).toEqual(['trg_membership_historia']);
-    expect(r.rows[0]?.tgtype, 'AFTER + FOR EACH ROW + insert/update/delete').toBe(29);
+    expect(r.rows.map((f) => f.tgname)).toEqual([
+      'trg_membership_historia_ins_del',
+      'trg_membership_historia_upd',
+    ]);
+    expect(r.rows[0]?.tgtype, 'AFTER + FOR EACH ROW + insert/delete').toBe(13);
+    expect(r.rows[1]?.tgtype, 'AFTER + FOR EACH ROW + update').toBe(17);
+    // Ninguna operación se perdió en la partición.
+    expect(
+      r.rows.reduce((acc, f) => acc | f.tgtype, 0),
+      'la unión de los dos tiene que seguir cubriendo insert, update y delete',
+    ).toBe(29);
+    // El de insert/delete NO puede tener condición: si la tuviera, un alta o una baja podrían no
+    // dejar rastro. El de update SÍ, y es el control anti-dilución.
+    expect(r.rows[0]?.def, 'insert/delete siempre registran, sin condición').not.toContain('WHEN');
+    expect(r.rows[1]?.def, 'la condición del update es la que evita el ruido').toContain(
+      'IS DISTINCT FROM',
+    );
+    // Y los dos llaman a la MISMA función: partir el trigger no duplicó lógica.
+    expect(r.rows.every((f) => f.def.includes('registrar_cambio_membership'))).toBe(true);
+  });
+
+  it('🔴 §4 — un update que no cambia nada NO escribe rastro, y uno real SÍ', async () => {
+    // El control ANTI-DILUCIÓN de `0020` §4. Sin él, `via_depth` cierra la FALSIFICACIÓN y deja
+    // abierta la DENEGACIÓN de evidencia: la fila de ruido nace del trigger, a profundidad 1, o sea
+    // que pasa el check sin problema. MEDIDO antes de §4: una sola sentencia
+    // `update membership set activo = activo` sin `where` —la RLS acota al subárbol sola— escribía
+    // +4 filas, y es repetible SIN LÍMITE porque no hay unicidad ni dedup (la PK es un uuid) y la
+    // tabla es append-only sin `delete` para nadie: la basura no se saca sin una migración.
+    //
+    // 🔴 Y el vector NO es el `insert` de tabla entera sobre `membership` —el recorte que `0020` deja
+    // afuera a propósito—: es `update (activo)`, que INV-10 OBLIGA a que exista.
+    const antes = Number(
+      (await duenio.query<{ n: string }>('select count(*)::text n from membership_historia')).rows[0]
+        ?.n,
+    );
+
+    await conUsuario(USUARIOS.socio, (tx) =>
+      tx.consultar('update membership set activo = activo where tenant_node_id = $1', [s.estudio]),
+    );
+    const traNoOp = Number(
+      (await duenio.query<{ n: string }>('select count(*)::text n from membership_historia')).rows[0]
+        ?.n,
+    );
+    expect(traNoOp, 'el update que no cambia nada NO puede dejar rastro').toBe(antes);
+
+    // Y el caso legítimo sigue registrando: una regla que sólo prohíbe pasa todos los negativos y
+    // rompe la operación. Es un contador, o sea una fila que el socio SÍ administra (INV-10).
+    await conUsuario(USUARIOS.socio, (tx) =>
+      tx.consultar('update membership set activo = false where user_id = $1', [CONTADOR]),
+    );
+    const traReal = Number(
+      (await duenio.query<{ n: string }>('select count(*)::text n from membership_historia')).rows[0]
+        ?.n,
+    );
+    expect(traReal, 'el update REAL sí deja rastro').toBe(antes + 1);
+    expect((await rastro(CONTADOR)).ops).toBe('baja');
+  });
+
+  it('🔴 §3 — la fila escrita a mano no entra, y falla por el CHECK y no por el grant', async () => {
+    // 🔴 HAY TRES VERDES POSIBLES Y SÓLO UNO MIDE EL MECANISMO. Si el atacante NOMBRA una columna que
+    // no tiene otorgada recibe `42501`, que mide el GRANT de `0019`. El caso que mide `0020` §3 es el
+    // que nombra SÓLO las siete otorgadas: ahí corre el DEFAULT, que fuera de un trigger vale 0, y el
+    // check lo rechaza. Por eso la aserción va por `code` + `constraint` y NUNCA por regex del
+    // mensaje: `/permission denied/` y `/violates check/` son strings distintos hoy, pero un
+    // `/denied|violates/` los colapsa en uno y el caso deja de discriminar.
+    const fila = (extra: string, valores: string) =>
+      conUsuario(USUARIOS.socio, (tx) =>
+        tx.consultar(
+          `insert into membership_historia
+             (tenant_node_id, membership_id, user_id, rol, operacion, activo_antes, activo_despues${extra})
+           select $1, id, $2, 'auditor', 'baja', true, false${valores}
+             from membership where user_id = $2`,
+          [s.estudio, AUDITOR],
+        ),
+      );
+
+    // A — nombra `hecho_por`: mide el grant de 0019.
+    await expect(fila(', hecho_por', `, $2::uuid`)).rejects.toMatchObject({ code: '42501' });
+    // B — nombra `via_depth`: mide que la columna no está otorgada.
+    await expect(fila(', via_depth', ', 1')).rejects.toMatchObject({ code: '42501' });
+    // C — sólo las siete otorgadas: MIDE EL MECANISMO.
+    await expect(fila('', '')).rejects.toMatchObject({
+      code: '23514',
+      constraint: 'membership_historia_via_chk',
+    });
+
+    // Y el caso legítimo, asertando el VALOR y no la existencia: sin mirar la columna, este bloque
+    // seguiría verde con el mecanismo apagado.
+    await conUsuario(USUARIOS.socio, (tx) =>
+      tx.consultar('update membership set activo = false where user_id = $1', [CONTADOR]),
+    );
+    const r = await duenio.query<{ v: number }>(
+      'select via_depth as v from membership_historia where user_id = $1',
+      [CONTADOR],
+    );
+    expect(r.rows.map((f) => f.v), 'la fila del trigger nace con via_depth = 1').toEqual([1]);
   });
 
   it('🔴 la FK del rastro a tenant_node existe y NO cascadea', async () => {

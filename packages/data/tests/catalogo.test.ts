@@ -227,7 +227,35 @@ describe('R1/R2/R3 — RLS, columna de tenant e índice', () => {
 });
 
 // -----------------------------------------------------------------------------
+/**
+ * 🔴 LAS DOS ÚNICAS EXCEPCIONES A R4, y están ACÁ y no en un documento PORQUE ES ACÁ DONDE SE MIRA.
+ *
+ * Migración `0020` §2. `accessible_tenant_ids()` exige `deleted_at is null` en las dos puntas del
+ * join (`0015:194-195`), así que un `update tenant_node set deleted_at = now()` —una escritura que el
+ * socio tiene otorgada (`0018:70`) y que no deja ninguna fila— APAGA EL RASTRO para quien supervisa,
+ * sin borrar una sola fila del disco. Medido: el auditor pasa de 3 filas de rastro y 6 de acceso a
+ * 0 y 0, con las 6 intactas. Un rastro cuya visibilidad depende de un estado que el observado
+ * controla no es un rastro.
+ *
+ * EL AISLAMIENTO CRUZADO NO SE AFLOJA: lo carga `has_role_on()` por contención de `path`, y ese
+ * predicado se queda. Medido: el socio del otro estudio ve lo mismo antes y después (1 -> 1, 0 -> 0),
+ * con 0 filas visibles fuera de su subárbol.
+ *
+ * Sólo alcanza al `qual` (SELECT). El `with_check` de las dos sigue exigiendo el predicado canónico,
+ * y el caso de abajo falla si alguna vez deja de ser así.
+ */
+const EXCEPCIONES_R4 = new Set([
+  'membership_historia.membership_historia_sel.qual',
+  'acceso_auditoria.acceso_auditoria_sel.qual',
+]);
+
 describe('R4/R5 — el predicado de tenant, exacto y sin fisuras', () => {
+  it('R4: las excepciones son exactamente dos, y ninguna alcanza a un `with_check`', () => {
+    // Si la lista crece, es una decisión que pide ADR — no un renglón más.
+    expect(EXCEPCIONES_R4.size, 'la excepción a R4 no se ensancha sin ADR').toBe(2);
+    expect([...EXCEPCIONES_R4].filter((e) => e.endsWith('.with_check'))).toEqual([]);
+  });
+
   it('R4: el predicado usa el patrón canónico `in (select app.accessible_tenant_ids())`', async () => {
     const { rows } = await db.query<{
       tablename: string;
@@ -243,6 +271,7 @@ describe('R4/R5 — el predicado de tenant, exacto y sin fisuras', () => {
         ['with_check', p.with_check],
       ] as const) {
         if (!expr) continue;
+        if (EXCEPCIONES_R4.has(`${p.tablename}.${p.policyname}.${cual}`)) continue;
         const usaLaFuncion = expr.includes('accessible_tenant_ids');
         if (!usaLaFuncion) {
           mal.push(`${p.tablename}.${p.policyname}.${cual}: no usa accessible_tenant_ids()`);
@@ -1127,15 +1156,126 @@ describe('R32 — la auditoría es append-only', () => {
   });
 
   it('app_job puede INSERTAR el rastro (R19) pero no leerlo', async () => {
+    // 🔴 `has_COLUMN_privilege` y no `has_table_privilege`: `0020` §1 revocó el INSERT de tabla y lo
+    // re-otorgó por columna, así que la pregunta a nivel tabla pasó a dar `false` y este caso se
+    // ponía rojo midiendo lo que ya no existe.
     const { rows: insert } = await db.query<{ puede: boolean }>(
-      `select has_table_privilege('app_job', 'acceso_auditoria', 'INSERT') as puede`,
+      `select has_column_privilege('app_job', 'acceso_auditoria', 'cliente_id', 'INSERT') as puede`,
     );
     expect(insert[0]?.puede, 'app_job debe poder dejar rastro de su uso de BYPASSRLS').toBe(true);
+
+    // 🔴 Y `id`/`ocurrido_en` NO: con `overriding system value` un tenant reclama ids que la
+    // secuencia no alcanzó y la PK aborta la operación auditada de OTRO tenant (incidente #7).
+    const { rows: vedadas } = await db.query<{ col: string; puede: boolean }>(
+      `select c.col, has_column_privilege('app_job', 'acceso_auditoria', c.col, 'INSERT') as puede
+         from (values ('id'), ('ocurrido_en')) as c(col)`,
+    );
+    expect(
+      vedadas.filter((c) => c.puede).map((c) => c.col),
+      'ni `id` ni `ocurrido_en` pueden tener grant de insert (0020 §1)',
+    ).toEqual([]);
 
     const { rows: select } = await db.query<{ puede: boolean }>(
       `select has_table_privilege('app_job', 'acceso_auditoria', 'SELECT') as puede`,
     );
     expect(select[0]?.puede, 'app_job no tiene por qué leer el rastro de otros').toBe(false);
+  });
+
+  /**
+   * 🔴 ESTE CASO MIRA EL GRANT Y NO EL ATAQUE, A PROPÓSITO.
+   *
+   * `0020` §3 apoya todo en que `via_depth` NO se puede nombrar: si el atacante la nombra recibe
+   * `42501`, y si no la nombra corre el DEFAULT (0 fuera de un trigger) y el check la rechaza con
+   * `23514`. Un test que probara EL ATAQUE seguiría VERDE el día que alguien re-otorgue
+   * `grant insert on membership_historia` de tabla entera copiando la plantilla de ADR-0001 §5 —el
+   * insert sin nombrar la columna seguiría fallando por el check— y el control habría desaparecido
+   * sin que nada se pusiera rojo. Es el mismo modo de falla que `0019:242-243` ya documenta.
+   */
+  it('🔴 via_depth NO tiene grant de insert: es lo único que sostiene 0020 §3', async () => {
+    const { rows } = await db.query<{ columna: string }>(
+      `select column_name as columna from information_schema.column_privileges
+        where table_name = 'membership_historia' and privilege_type = 'INSERT'
+          and grantee in ('app_request', 'app_job')`,
+    );
+    expect(
+      rows.map((f) => f.columna),
+      'si `via_depth` se vuelve nombrable, 0020 §3 desaparece en silencio',
+    ).not.toContain('via_depth');
+    // Y `hecho_por`/`ocurrido_en` tampoco, que es lo que sostiene que la FECHA no sea elegible.
+    expect(rows.map((f) => f.columna)).not.toContain('hecho_por');
+    expect(rows.map((f) => f.columna)).not.toContain('ocurrido_en');
+  });
+});
+
+// -----------------------------------------------------------------------------
+/**
+ * R39 — LA PRECONDICIÓN DE `via_depth`, ASERTADA EN VEZ DE SUPUESTA.
+ *
+ * `0020` §3 distingue la fila del trigger de la escrita a mano por `pg_trigger_depth()`. Eso vale
+ * exactamente lo que valga esta afirmación: **ningún rol de aplicación puede hacer correr SQL propio
+ * a profundidad de trigger ≥ 1**. Hoy es cierto porque no puede crear triggers, funciones, vistas ni
+ * tablas temporales en ningún lado — pero es una propiedad del ENTORNO, no del esquema:
+ * `grant create on schema public to app_request` es una línea, y `via_depth` cae con ella.
+ *
+ * Sin esta regla, §3 sería «contención con una precondición tácita», que es la forma exacta de R33 y
+ * R13: un artefacto que dice una cosa y depende de otra.
+ */
+describe('R39 — ningún rol de aplicación puede crear objetos (la premisa de 0020 §3)', () => {
+  it('R39a: ni un CREATE sobre ningún esquema del catálogo', async () => {
+    // 🔴 Barre `pg_namespace` y NO una lista: es la lección de `membership_historia`, que nació fuera
+    // de la allowlist de R1 y dejó de ser mirada. Un esquema nuevo entra solo.
+    // 🔴 Y enumera por `pg_has_role(…, 'USAGE')` y no por los tres nombres: `has_schema_privilege
+    // ('app_request', …)` NO VE un grant hecho directo a `app_request_dev`, que es el rol que
+    // efectivamente se conecta. Una regla escrita sobre los roles-grupo se pone verde con el agujero
+    // abierto — es la mutación que de verdad discrimina.
+    const { rows } = await db.query<{ rolname: string; nspname: string }>(
+      `with roles_app as (
+         select oid from pg_roles where rolname in ('app_request', 'app_job', 'app_firmador')
+       )
+       select r.rolname, n.nspname
+         from pg_roles r cross join pg_namespace n
+        where not r.rolsuper
+          and exists (select 1 from roles_app a where pg_has_role(r.oid, a.oid, 'USAGE'))
+          and n.nspname !~ '^pg_'
+          and has_schema_privilege(r.oid, n.oid, 'CREATE')
+        order by 1, 2`,
+    );
+    expect(
+      rows.map((f) => `${f.rolname} -> ${f.nspname}`),
+      'con CREATE sobre un esquema, un rol de aplicación puede crearse un trigger y correr SQL propio ' +
+        'a profundidad >= 1: `via_depth` (0020 §3) deja de distinguir nada',
+    ).toEqual([]);
+  });
+
+  it('R39b: ni CREATE ni TEMPORARY sobre la base', async () => {
+    // `TEMPORARY` es además el cierre del incidente #1 (`0015` §2): una tabla temporal admite
+    // triggers propios, así que reabrirlo rompe R10 y R39 de un saque.
+    const { rows } = await db.query<{ rolname: string; p: string }>(
+      `with roles_app as (
+         select oid from pg_roles where rolname in ('app_request', 'app_job', 'app_firmador')
+       )
+       select r.rolname, v.p
+         from pg_roles r cross join (values ('CREATE'), ('TEMPORARY')) as v(p)
+        where not r.rolsuper
+          and exists (select 1 from roles_app a where pg_has_role(r.oid, a.oid, 'USAGE'))
+          and has_database_privilege(r.oid, current_database(), v.p)
+        order by 1, 2`,
+    );
+    expect(rows.map((f) => `${f.rolname} -> ${f.p}`)).toEqual([]);
+  });
+
+  it('R39: el barrido NO es vacío — hay roles de aplicación que mirar', async () => {
+    // Control de vacuidad: si los tres roles desaparecieran o se renombraran, los dos casos de arriba
+    // pasarían en verde sin haber mirado nada.
+    const { rows } = await db.query<{ n: number }>(
+      `with roles_app as (
+         select oid from pg_roles where rolname in ('app_request', 'app_job', 'app_firmador')
+       )
+       select count(*)::int as n from pg_roles r
+        where not r.rolsuper
+          and exists (select 1 from roles_app a where pg_has_role(r.oid, a.oid, 'USAGE'))`,
+    );
+    expect(rows[0]?.n ?? 0, 'sin roles de aplicación, R39 pasaría por vacuidad').toBeGreaterThan(1);
   });
 });
 
