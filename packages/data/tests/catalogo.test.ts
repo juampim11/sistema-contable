@@ -18,7 +18,7 @@ import {
   tablasQueExigenRolEnLectura,
   type NombreTabla,
 } from '@sistema-contable/shared/seguridad';
-import { ACCIONES } from '../src/db/auditoria.ts';
+import { ACCIONES, OPERACIONES_MEMBRESIA } from '../src/db/auditoria.ts';
 import { AMBIENTES_CREDENCIAL } from '../src/credenciales.ts';
 import { TIPOS_CUENTA_ALTA } from '../src/ingesta/escrituras.ts';
 import { LECTORES_AUDITADOS, tablasSinLectorAuditado } from '../src/db/lectores-auditados.ts';
@@ -43,9 +43,29 @@ import {
   TIPOS_CUENTA,
 } from '../../ingesta/src/esquema.ts';
 import { CLASES_IDENTIFICADOR_CONTRAPARTE, TIPOS_DOCUMENTO_SOCIO } from '@sistema-contable/shared/seguridad';
+import { CONCEPTOS_CANONICOS } from '../../contabilidad/src/nucleo/catalogo.ts';
+import {
+  CLASES_RECONOCIMIENTO,
+  LADOS,
+  MOTIVOS_SIN_RECONOCER,
+  POLARIDADES,
+  QUE_DECIDE,
+  TIPOS_MOVIMIENTO,
+  VIAS_EVIDENCIA,
+} from '../../contabilidad/src/nucleo/tipos.ts';
 import { clienteDuenio } from './ayuda.ts';
 
 let db: Client;
+
+/**
+ * Las ÚNICAS tablas clasificadas que pueden vivir sin RLS, y por qué. Es una excepción y por eso se
+ * escribe acá: el default de R1 es "con RLS habilitada y forzada", y agregar un nombre a este set es
+ * un cambio que se ve en el diff.
+ *
+ * - `banco`: catálogo GLOBAL de entidades bancarias, idéntico para todos los clientes y sin un solo
+ *   dato de nadie. No tiene columna de tenant porque no le corresponde ninguna.
+ */
+const SIN_RLS_CON_MOTIVO = new Set<string>(['banco']);
 
 /** Tablas reales del esquema `public`, sin las internas del aplicador de migraciones. */
 async function tablasDelEsquema(): Promise<string[]> {
@@ -125,15 +145,25 @@ describe('registro de clasificación (ADR-0002 §A.3)', () => {
 
 // -----------------------------------------------------------------------------
 describe('R1/R2/R3 — RLS, columna de tenant e índice', () => {
-  it('R1: toda tabla con columna de tenant tiene RLS habilitada Y forzada', async () => {
+  it('R1: toda tabla clasificada tiene RLS habilitada Y forzada, salvo excepción escrita', async () => {
     const { rows } = await db.query<{ nombre: string; habilitada: boolean; forzada: boolean }>(
       `select c.relname as nombre, c.relrowsecurity as habilitada, c.relforcerowsecurity as forzada
          from pg_class c join pg_namespace n on n.oid = c.relnamespace
         where c.relkind = 'r' and n.nspname = 'public'`,
     );
-    const esperadas = new Set<string>([...tablasConColumnaTenant(), 'tenant_node', 'membership']);
+    // 🔴 La lista se DERIVA de la clasificación; lo que se enumera es la EXCEPCIÓN, no la regla.
+    // Antes acá había un `[...tablasConColumnaTenant(), 'tenant_node', 'membership']` escrito a mano,
+    // y el efecto fue exactamente el que tiene toda allowlist: `membership_historia` (0019) nació
+    // fuera de la lista y R1 dejó de mirarla. MEDIDO: con `disable row level security` sobre el
+    // rastro del padrón de derechos, los 218 casos de `packages/data` seguían en verde. Con la
+    // lista derivada, la tabla número cuatro del plano de tenancía entra sola.
     const mal = rows
-      .filter((f) => esperadas.has(f.nombre) && !(f.habilitada && f.forzada))
+      .filter(
+        (f) =>
+          (Object.keys(CLASIFICACION) as string[]).includes(f.nombre) &&
+          !SIN_RLS_CON_MOTIVO.has(f.nombre) &&
+          !(f.habilitada && f.forzada),
+      )
       .map((f) => `${f.nombre} (habilitada=${f.habilitada}, forzada=${f.forzada})`);
     expect(mal).toEqual([]);
   });
@@ -197,7 +227,35 @@ describe('R1/R2/R3 — RLS, columna de tenant e índice', () => {
 });
 
 // -----------------------------------------------------------------------------
+/**
+ * 🔴 LAS DOS ÚNICAS EXCEPCIONES A R4, y están ACÁ y no en un documento PORQUE ES ACÁ DONDE SE MIRA.
+ *
+ * Migración `0020` §2. `accessible_tenant_ids()` exige `deleted_at is null` en las dos puntas del
+ * join (`0015:194-195`), así que un `update tenant_node set deleted_at = now()` —una escritura que el
+ * socio tiene otorgada (`0018:70`) y que no deja ninguna fila— APAGA EL RASTRO para quien supervisa,
+ * sin borrar una sola fila del disco. Medido: el auditor pasa de 3 filas de rastro y 6 de acceso a
+ * 0 y 0, con las 6 intactas. Un rastro cuya visibilidad depende de un estado que el observado
+ * controla no es un rastro.
+ *
+ * EL AISLAMIENTO CRUZADO NO SE AFLOJA: lo carga `has_role_on()` por contención de `path`, y ese
+ * predicado se queda. Medido: el socio del otro estudio ve lo mismo antes y después (1 -> 1, 0 -> 0),
+ * con 0 filas visibles fuera de su subárbol.
+ *
+ * Sólo alcanza al `qual` (SELECT). El `with_check` de las dos sigue exigiendo el predicado canónico,
+ * y el caso de abajo falla si alguna vez deja de ser así.
+ */
+const EXCEPCIONES_R4 = new Set([
+  'membership_historia.membership_historia_sel.qual',
+  'acceso_auditoria.acceso_auditoria_sel.qual',
+]);
+
 describe('R4/R5 — el predicado de tenant, exacto y sin fisuras', () => {
+  it('R4: las excepciones son exactamente dos, y ninguna alcanza a un `with_check`', () => {
+    // Si la lista crece, es una decisión que pide ADR — no un renglón más.
+    expect(EXCEPCIONES_R4.size, 'la excepción a R4 no se ensancha sin ADR').toBe(2);
+    expect([...EXCEPCIONES_R4].filter((e) => e.endsWith('.with_check'))).toEqual([]);
+  });
+
   it('R4: el predicado usa el patrón canónico `in (select app.accessible_tenant_ids())`', async () => {
     const { rows } = await db.query<{
       tablename: string;
@@ -213,6 +271,7 @@ describe('R4/R5 — el predicado de tenant, exacto y sin fisuras', () => {
         ['with_check', p.with_check],
       ] as const) {
         if (!expr) continue;
+        if (EXCEPCIONES_R4.has(`${p.tablename}.${p.policyname}.${cual}`)) continue;
         const usaLaFuncion = expr.includes('accessible_tenant_ids');
         if (!usaLaFuncion) {
           mal.push(`${p.tablename}.${p.policyname}.${cual}: no usa accessible_tenant_ids()`);
@@ -298,23 +357,45 @@ describe('R7/R8/R9 — owner, vistas y materializadas', () => {
     expect(conAppJob).toEqual([]);
   });
 
+  /**
+   * 🔴 Dos correcciones, las dos medidas contra la primera vista que se cree:
+   *
+   *   1. **Alcance `app` además de `public`.** Una vista en `app` sobre datos de dominio pasaba
+   *      VERDE (medido). Y `app` es justamente donde vive la plomería de tenancía, o sea el lugar
+   *      más plausible para un `app.v_movimientos_del_cliente`.
+   *   2. **`reloptions` guarda el booleano TAL CUAL se escribió.** `security_invoker = on` queda
+   *      `{security_invoker=on}` y `= 1` queda `{security_invoker=1}` (medido): la comparación
+   *      contra el literal `'security_invoker=true'` marcaba en ROJO una vista SEGURA. Un test que
+   *      grita cuando no pasa nada es un test que alguien apaga.
+   *
+   * Lo que NO hace falta cubrir acá, y también se midió: una vista no es vulnerable al shadowing de
+   * `pg_temp`. La regla de reescritura guarda el OID resuelto al CREAR, así que una trampa plantada
+   * después no la toca; y si la trampa ya está al crearla, PostgreSQL falla fuerte
+   * (`cannot create temporary relation in non-temporary schema`), no la enlaza en silencio.
+   */
   it('R8: toda vista sobre dominio usa security_invoker', async () => {
     const { rows } = await db.query<{ nombre: string; opciones: string[] | null }>(
-      `select c.relname as nombre, c.reloptions as opciones
+      `select n.nspname || '.' || c.relname as nombre, c.reloptions as opciones
          from pg_class c join pg_namespace n on n.oid = c.relnamespace
-        where c.relkind = 'v' and n.nspname = 'public'`,
+        where c.relkind = 'v' and n.nspname in ('public', 'app')`,
     );
-    const mal = rows
-      .filter((f) => !(f.opciones ?? []).some((o) => o.replace(/\s/g, '') === 'security_invoker=true'))
-      .map((f) => f.nombre);
-    expect(mal, 'vistas sin security_invoker=true').toEqual([]);
+    const encendido = (o: string): boolean => {
+      const i = o.indexOf('=');
+      if (i < 0) return false;
+      return (
+        o.slice(0, i).trim() === 'security_invoker' &&
+        ['true', 'on', '1', 'yes'].includes(o.slice(i + 1).trim().toLowerCase())
+      );
+    };
+    const mal = rows.filter((f) => !(f.opciones ?? []).some(encendido)).map((f) => f.nombre);
+    expect(mal, 'vistas sin security_invoker: se ejecutan con los privilegios del DUEÑO').toEqual([]);
   });
 
   it('R9: no hay vistas materializadas sobre dominio (no admiten policies de RLS)', async () => {
     const { rows } = await db.query<{ nombre: string }>(
-      `select c.relname as nombre from pg_class c
+      `select n.nspname || '.' || c.relname as nombre from pg_class c
          join pg_namespace n on n.oid = c.relnamespace
-        where c.relkind = 'm' and n.nspname = 'public'`,
+        where c.relkind = 'm' and n.nspname in ('public', 'app')`,
     );
     expect(rows.map((f) => f.nombre), 'materializadas: el contenido queda cross-tenant').toEqual([]);
   });
@@ -322,15 +403,133 @@ describe('R7/R8/R9 — owner, vistas y materializadas', () => {
 
 // -----------------------------------------------------------------------------
 describe('R10/R11 — funciones SECURITY DEFINER', () => {
-  it('R10: toda SECURITY DEFINER fija search_path', async () => {
-    const { rows } = await db.query<{ nombre: string }>(
-      `select p.proname as nombre
-         from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-        where p.prosecdef and n.nspname in ('app', 'public')
-          and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) c
-                           where c like 'search_path=%')`,
+  /**
+   * 🔴 R10 REESCRITA (migración 0015, incidente #1 de `docs/seguridad/registro-incidentes.md`).
+   *
+   * La versión anterior exigía "toda `security definer` fija `search_path`" y miraba
+   * `pg_proc.proconfig`. **Pasó VERDE con el bug adentro**: `accessible_tenant_ids` y `has_role_on`
+   * fijaban `search_path = public, app`, o sea que cumplían la letra de la regla y aun así eran
+   * explotables — `pg_temp` se busca PRIMERO para relaciones y tipos aunque no esté listado, así que
+   * cualquiera con privilegio `TEMPORARY` plantaba una `membership` falsa y anulaba la RLS entera.
+   * La regla medía "¿fija alguno?" en vez de "¿el que fija neutraliza `pg_temp`?".
+   *
+   * Dos cambios, y el segundo importa tanto como el primero:
+   *
+   *   1. Se exige que `pg_temp` sea el ÚLTIMO elemento del `search_path`, no que exista alguno.
+   *   2. 🔴 Se barren TODAS las funciones, no sólo las `security definer`. Cuatro de las seis
+   *      vulnerables eran INVOKER — entre ellas `exigir_nodo_cliente`, que es el renglón (3) de la
+   *      plantilla de ADR-0001 §5 y vive en 15 tablas de dominio. Un R10 acotado a `prosecdef`
+   *      seguiría verde con ella desprotegida: la misma falla, movida un renglón.
+   *
+   * El parseo va por `string_to_array` + posición + `btrim`, no por `like '%pg_temp'`: ese `like` se
+   * rompe con comillas o espacios. Medido: `proconfig` guarda la forma CANÓNICA — `set search_path =
+   * 'pg_catalog', "public" ,  app ,  "pg_temp"` queda `search_path=pg_catalog, public, app, pg_temp`,
+   * así que comillas y espacios de más no llegan hasta acá. Lo que sí llega, y el `like` no veía, es
+   * `"a,pg_temp"` (un solo esquema con una coma adentro): sigue dando ROJO, y tiene que darlo.
+   *
+   * ⚠️ **"Termina en pg_temp" NO alcanza y esa fue la segunda versión equivocada de esta regla.**
+   * PostgreSQL resuelve por PRIMERA aparición, así que `pg_temp, public, app, pg_temp` deja pg_temp
+   * PRIMERO y `search_path = pg_temp` también. Los dos pasaban verde y los dos leen la trampa —
+   * verificado leyendo 777 filas plantadas, exactamente igual que el patrón pre-0015. La condición
+   * es: la primera aparición de `pg_temp` tiene que ser el ÚLTIMO elemento, y no el único.
+   */
+  it('R10: toda función de app/public neutraliza pg_temp (primera aparición de pg_temp = último elemento)', async () => {
+    const { rows } = await db.query<{ nombre: string; search_path_actual: string }>(
+      `select n.nspname || '.' || p.proname as nombre,
+              coalesce(sp.valor, '(sin search_path)') as search_path_actual
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+         left join lateral (
+           -- Si alguna vez hubiera dos entradas 'search_path=', la que aplica en runtime es la
+           -- ULTIMA (se aplican en orden). 'limit 1' sin 'order by' tomaba una cualquiera.
+           select right(c, -length('search_path=')) as valor
+             from unnest(coalesce(p.proconfig, '{}'::text[])) with ordinality as e(c, i)
+            where c like 'search_path=%'
+            order by i desc limit 1
+         ) sp on true
+         left join lateral (
+           select count(*) as elementos,
+                  min(i) filter (where btrim(t) = 'pg_temp') as primer_pg_temp
+             from unnest(string_to_array(sp.valor, ',')) with ordinality as u(t, i)
+         ) pos on true
+        where n.nspname in ('app', 'public')
+          -- 'p' = PROCEDURE. Una procedure tiene cuerpo y lee relaciones igual que una funcion:
+          -- acotar a 'f' dejaba fuera de R10 a toda una clase de objeto. ('a'/'w' no tienen cuerpo.)
+          and p.prokind in ('f', 'p')
+          -- EXENCION UNICA Y DOCUMENTADA: app.current_user_id() no lee ninguna relacion ni tipo
+          -- (solo current_setting), y pg_temp NUNCA se busca para nombres de funcion. Y una
+          -- clausula SET inhabilitaria su inlining dentro de has_role_on y de las policies:
+          -- +75 % medido (131 -> ~230 us) sobre el predicado de RLS de TODA tabla de dominio.
+          -- Va CALIFICADA por esquema y aridad: exentar por 'proname' suelto exime tambien a
+          -- public.current_user_id() y a cualquier sobrecarga app.current_user_id(<args>).
+          and not (n.nspname = 'app' and p.proname = 'current_user_id' and p.pronargs = 0)
+          -- 🔴 NO alcanza con que pg_temp sea el ULTIMO elemento: PostgreSQL resuelve por PRIMERA
+          -- aparicion ('recomputeNamespacePath' descarta las repetidas), asi que
+          -- 'pg_temp, public, app, pg_temp' deja pg_temp PRIMERO — verificado con current_schemas()
+          -- y con la trampa plantada: la funcion lee la temporal, igual que el patron pre-0015.
+          -- La condicion correcta es que la PRIMERA aparicion sea tambien la ULTIMA POSICION, y que
+          -- haya algo ANTES (con 'search_path = pg_temp' a secas, pg_temp es primero y ultimo a la
+          -- vez: tambien lee la trampa, y tambien pasaba verde).
+          and (coalesce(pos.primer_pg_temp, 0) <> pos.elementos or pos.elementos < 2)
+        order by 1`,
     );
-    expect(rows.map((f) => f.nombre)).toEqual([]);
+    expect(
+      rows.map((f) => `${f.nombre} → ${f.search_path_actual}`),
+      'una función que no termina su search_path en pg_temp es plantable: cualquiera con privilegio ' +
+        'TEMPORARY le sustituye la relación (o el tipo) que lee. Ver 0015 y el incidente #1.',
+    ).toEqual([]);
+  });
+
+  /**
+   * La otra mitad del cierre de 0015, y la que sobrevive a una función nueva mal escrita: sin
+   * privilegio `TEMPORARY` no se puede crear el objeto que shadowea.
+   */
+  it('R10 bis: ningún rol NO superusuario puede crear tablas temporales', async () => {
+    /**
+     * 🔴 La lista de tres nombres literales dejaba afuera al rol que la aplicación USA de verdad:
+     * `app_request` es el rol de GRUPO, pero el que se conecta es el de login del entorno
+     * (`APP_DB_USER`, hoy `app_request_dev`). Un `grant temporary` directo sobre él reabría el
+     * vector entero — verificado: la sesión creaba `pg_temp.membership` sin ruido — y este test
+     * seguía verde. Lo mismo con cualquier rol nuevo (`app_rls_owner` ya existe y tampoco estaba).
+     *
+     * La regla real no es "estos tres roles": es que en ESTA base nadie salvo un superusuario
+     * pueda crear un objeto temporal. Se barre el clúster entero, así un rol nuevo entra solo.
+     */
+    const { rows } = await db.query<{ rol: string; puede: boolean }>(
+      `select rolname as rol,
+              has_database_privilege(rolname, current_database(), 'TEMPORARY') as puede
+         from pg_roles
+        where not rolsuper and rolname not like 'pg\\_%'
+        order by 1`,
+    );
+    expect(rows.length, 'el barrido de roles no puede quedar vacío: sería verde por vacuidad').toBeGreaterThan(0);
+    expect(
+      rows.filter((r) => r.puede).map((r) => r.rol),
+      'un rol de aplicación con TEMPORARY puede plantar una relación en pg_temp y secuestrar lo que ' +
+        'lea cualquier función que no la califique. Ver 0015 §2.',
+    ).toEqual([]);
+  });
+
+  /**
+   * 🔴 R10 declara su alcance en el `where`: `nspname in ('app','public')`. Ese `in` es correcto HOY
+   * porque son los dos únicos esquemas de dominio — pero es una premisa muda: el día que alguien
+   * cree `reportes` o `analitica`, R10 sigue verde con toda la clase de bug adentro (medido: función
+   * en esquema nuevo con `search_path = public, app` → R10 VERDE).
+   *
+   * Este test hace la premisa explícita: si aparece un esquema, hay que decidir a mano si entra al
+   * barrido de R10 y agregarlo acá. Es el mismo patrón que el `toEqual` exacto de R11.
+   */
+  it('R10 ter: los únicos esquemas de dominio son los que R10 barre', async () => {
+    const { rows } = await db.query<{ nombre: string }>(
+      `select nspname as nombre from pg_namespace
+        where nspname not like 'pg\\_%' and nspname <> 'information_schema'
+        order by 1`,
+    );
+    expect(
+      rows.map((f) => f.nombre),
+      'esquema nuevo: R10 solo barre app y public. Agregalo al `in` de R10 y a esta lista, o ' +
+        'documentá por qué queda afuera. Ver 0015 y el incidente #1.',
+    ).toEqual(['app', 'public']);
   });
 
   it('R11: las únicas SECURITY DEFINER son las dos que leen tenancía', async () => {
@@ -617,6 +816,14 @@ type DominioCerrado = {
  */
 const DOMINIOS_CERRADOS: DominioCerrado[] = [
   {
+    check: 'membership_historia_operacion_chk',
+    tabla: 'membership_historia',
+    columna: 'operacion',
+    constante: 'OPERACIONES_MEMBRESIA',
+    valores: OPERACIONES_MEMBRESIA,
+    migracion: '0019',
+  },
+  {
     check: 'acceso_auditoria_accion_chk',
     tabla: 'acceso_auditoria',
     columna: 'accion',
@@ -727,6 +934,74 @@ const DOMINIOS_CERRADOS: DominioCerrado[] = [
     constante: 'TIPOS_DOCUMENTO_SOCIO',
     valores: TIPOS_DOCUMENTO_SOCIO,
     migracion: '0013',
+  },
+  // -- 0014: los OCHO dominios del motor de reconocimiento -------------------------------------
+  // `reconocimiento_forma_chk` NO está acá a propósito: lleva un `case` y no matchea
+  // `FORMA_DOMINIO_CERRADO` (verificado contra pg_constraint). Su árbitro es
+  // `packages/contabilidad/tests/forma-persistible.test.ts`, que lo ata a `motor.ts`.
+  {
+    check: 'reconocimiento_clase_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'clase',
+    constante: 'CLASES_RECONOCIMIENTO',
+    valores: CLASES_RECONOCIMIENTO,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_tipo_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'tipo',
+    constante: 'TIPOS_MOVIMIENTO',
+    valores: TIPOS_MOVIMIENTO,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_concepto_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'concepto',
+    constante: 'CONCEPTOS_CANONICOS',
+    valores: CONCEPTOS_CANONICOS,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_polaridad_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'polaridad',
+    constante: 'POLARIDADES',
+    valores: POLARIDADES,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_lado_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'lado',
+    constante: 'LADOS',
+    valores: LADOS,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_via_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'via',
+    constante: 'VIAS_EVIDENCIA',
+    valores: VIAS_EVIDENCIA,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_decide_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'que_decide',
+    constante: 'QUE_DECIDE',
+    valores: QUE_DECIDE,
+    migracion: '0014',
+  },
+  {
+    check: 'reconocimiento_motivo_chk',
+    tabla: 'reconocimiento_movimiento',
+    columna: 'motivo_codigo',
+    constante: 'MOTIVOS_SIN_RECONOCER',
+    valores: MOTIVOS_SIN_RECONOCER,
+    migracion: '0014',
   },
 ];
 
@@ -881,15 +1156,126 @@ describe('R32 — la auditoría es append-only', () => {
   });
 
   it('app_job puede INSERTAR el rastro (R19) pero no leerlo', async () => {
+    // 🔴 `has_COLUMN_privilege` y no `has_table_privilege`: `0020` §1 revocó el INSERT de tabla y lo
+    // re-otorgó por columna, así que la pregunta a nivel tabla pasó a dar `false` y este caso se
+    // ponía rojo midiendo lo que ya no existe.
     const { rows: insert } = await db.query<{ puede: boolean }>(
-      `select has_table_privilege('app_job', 'acceso_auditoria', 'INSERT') as puede`,
+      `select has_column_privilege('app_job', 'acceso_auditoria', 'cliente_id', 'INSERT') as puede`,
     );
     expect(insert[0]?.puede, 'app_job debe poder dejar rastro de su uso de BYPASSRLS').toBe(true);
+
+    // 🔴 Y `id`/`ocurrido_en` NO: con `overriding system value` un tenant reclama ids que la
+    // secuencia no alcanzó y la PK aborta la operación auditada de OTRO tenant (incidente #7).
+    const { rows: vedadas } = await db.query<{ col: string; puede: boolean }>(
+      `select c.col, has_column_privilege('app_job', 'acceso_auditoria', c.col, 'INSERT') as puede
+         from (values ('id'), ('ocurrido_en')) as c(col)`,
+    );
+    expect(
+      vedadas.filter((c) => c.puede).map((c) => c.col),
+      'ni `id` ni `ocurrido_en` pueden tener grant de insert (0020 §1)',
+    ).toEqual([]);
 
     const { rows: select } = await db.query<{ puede: boolean }>(
       `select has_table_privilege('app_job', 'acceso_auditoria', 'SELECT') as puede`,
     );
     expect(select[0]?.puede, 'app_job no tiene por qué leer el rastro de otros').toBe(false);
+  });
+
+  /**
+   * 🔴 ESTE CASO MIRA EL GRANT Y NO EL ATAQUE, A PROPÓSITO.
+   *
+   * `0020` §3 apoya todo en que `via_depth` NO se puede nombrar: si el atacante la nombra recibe
+   * `42501`, y si no la nombra corre el DEFAULT (0 fuera de un trigger) y el check la rechaza con
+   * `23514`. Un test que probara EL ATAQUE seguiría VERDE el día que alguien re-otorgue
+   * `grant insert on membership_historia` de tabla entera copiando la plantilla de ADR-0001 §5 —el
+   * insert sin nombrar la columna seguiría fallando por el check— y el control habría desaparecido
+   * sin que nada se pusiera rojo. Es el mismo modo de falla que `0019:242-243` ya documenta.
+   */
+  it('🔴 via_depth NO tiene grant de insert: es lo único que sostiene 0020 §3', async () => {
+    const { rows } = await db.query<{ columna: string }>(
+      `select column_name as columna from information_schema.column_privileges
+        where table_name = 'membership_historia' and privilege_type = 'INSERT'
+          and grantee in ('app_request', 'app_job')`,
+    );
+    expect(
+      rows.map((f) => f.columna),
+      'si `via_depth` se vuelve nombrable, 0020 §3 desaparece en silencio',
+    ).not.toContain('via_depth');
+    // Y `hecho_por`/`ocurrido_en` tampoco, que es lo que sostiene que la FECHA no sea elegible.
+    expect(rows.map((f) => f.columna)).not.toContain('hecho_por');
+    expect(rows.map((f) => f.columna)).not.toContain('ocurrido_en');
+  });
+});
+
+// -----------------------------------------------------------------------------
+/**
+ * R39 — LA PRECONDICIÓN DE `via_depth`, ASERTADA EN VEZ DE SUPUESTA.
+ *
+ * `0020` §3 distingue la fila del trigger de la escrita a mano por `pg_trigger_depth()`. Eso vale
+ * exactamente lo que valga esta afirmación: **ningún rol de aplicación puede hacer correr SQL propio
+ * a profundidad de trigger ≥ 1**. Hoy es cierto porque no puede crear triggers, funciones, vistas ni
+ * tablas temporales en ningún lado — pero es una propiedad del ENTORNO, no del esquema:
+ * `grant create on schema public to app_request` es una línea, y `via_depth` cae con ella.
+ *
+ * Sin esta regla, §3 sería «contención con una precondición tácita», que es la forma exacta de R33 y
+ * R13: un artefacto que dice una cosa y depende de otra.
+ */
+describe('R39 — ningún rol de aplicación puede crear objetos (la premisa de 0020 §3)', () => {
+  it('R39a: ni un CREATE sobre ningún esquema del catálogo', async () => {
+    // 🔴 Barre `pg_namespace` y NO una lista: es la lección de `membership_historia`, que nació fuera
+    // de la allowlist de R1 y dejó de ser mirada. Un esquema nuevo entra solo.
+    // 🔴 Y enumera por `pg_has_role(…, 'USAGE')` y no por los tres nombres: `has_schema_privilege
+    // ('app_request', …)` NO VE un grant hecho directo a `app_request_dev`, que es el rol que
+    // efectivamente se conecta. Una regla escrita sobre los roles-grupo se pone verde con el agujero
+    // abierto — es la mutación que de verdad discrimina.
+    const { rows } = await db.query<{ rolname: string; nspname: string }>(
+      `with roles_app as (
+         select oid from pg_roles where rolname in ('app_request', 'app_job', 'app_firmador')
+       )
+       select r.rolname, n.nspname
+         from pg_roles r cross join pg_namespace n
+        where not r.rolsuper
+          and exists (select 1 from roles_app a where pg_has_role(r.oid, a.oid, 'USAGE'))
+          and n.nspname !~ '^pg_'
+          and has_schema_privilege(r.oid, n.oid, 'CREATE')
+        order by 1, 2`,
+    );
+    expect(
+      rows.map((f) => `${f.rolname} -> ${f.nspname}`),
+      'con CREATE sobre un esquema, un rol de aplicación puede crearse un trigger y correr SQL propio ' +
+        'a profundidad >= 1: `via_depth` (0020 §3) deja de distinguir nada',
+    ).toEqual([]);
+  });
+
+  it('R39b: ni CREATE ni TEMPORARY sobre la base', async () => {
+    // `TEMPORARY` es además el cierre del incidente #1 (`0015` §2): una tabla temporal admite
+    // triggers propios, así que reabrirlo rompe R10 y R39 de un saque.
+    const { rows } = await db.query<{ rolname: string; p: string }>(
+      `with roles_app as (
+         select oid from pg_roles where rolname in ('app_request', 'app_job', 'app_firmador')
+       )
+       select r.rolname, v.p
+         from pg_roles r cross join (values ('CREATE'), ('TEMPORARY')) as v(p)
+        where not r.rolsuper
+          and exists (select 1 from roles_app a where pg_has_role(r.oid, a.oid, 'USAGE'))
+          and has_database_privilege(r.oid, current_database(), v.p)
+        order by 1, 2`,
+    );
+    expect(rows.map((f) => `${f.rolname} -> ${f.p}`)).toEqual([]);
+  });
+
+  it('R39: el barrido NO es vacío — hay roles de aplicación que mirar', async () => {
+    // Control de vacuidad: si los tres roles desaparecieran o se renombraran, los dos casos de arriba
+    // pasarían en verde sin haber mirado nada.
+    const { rows } = await db.query<{ n: number }>(
+      `with roles_app as (
+         select oid from pg_roles where rolname in ('app_request', 'app_job', 'app_firmador')
+       )
+       select count(*)::int as n from pg_roles r
+        where not r.rolsuper
+          and exists (select 1 from roles_app a where pg_has_role(r.oid, a.oid, 'USAGE'))`,
+    );
+    expect(rows[0]?.n ?? 0, 'sin roles de aplicación, R39 pasaría por vacuidad').toBeGreaterThan(1);
   });
 });
 

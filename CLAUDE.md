@@ -46,6 +46,31 @@
    `agents/personas/motor-conciliacion-contable.md`). Y **un cliente nunca ve el dato de otro**: el
    aislamiento y el secreto fiscal son requisitos de diseño, no un detalle de implementación (ver
    `agents/personas/seguridad-datos-financieros.md`).
+8. **Una regla verificable no cuenta como control hasta que se probó rompiéndola.** Toda regla de
+   `ADR-0002` §B nueva o reescrita se cierra por **prueba de mutación** —se escribe el código
+   defectuoso y se verifica que la regla se ponga roja—, con su **caso legítimo**, con el conteo de
+   mutaciones declarado, y **eligiendo las mutaciones para refutar, no para confirmar**. Procedimiento
+   completo: **ADR-0002 §B.0**. El porqué —cinco reglas verdes o amarillas con su propio defecto
+   adentro, en dos días—: `docs/diseno/09-lecciones-aprendidas.md` §11. Y el corolario que gobierna
+   los campos de estado: **un ⚠️ que nadie convierte en trabajo es un ✅ con más letras.**
+
+9. 🔴 **Antes de aplicar cualquier migración a un entorno con datos reales: listar, confirmar, frenar.**
+   La autorización del titular es **por migración**, nunca «lo pendiente». Así que:
+   1. **Listar explícitamente qué está pendiente** en ese entorno, antes de correr nada.
+   2. **Confirmar que la lista coincide EXACTO con lo autorizado.**
+   3. **Frenar si aparece una sola migración de más** — no aplicarla y elevar.
+
+   `pnpm db:migrate` **aplica TODAS las pendientes**: es el comando de «aplicá todo», y por eso
+   nunca es el comando de una autorización puntual. **Esto no es una recomendación: es la regla, y
+   rige para toda instrucción que toque el piloto.**
+
+   > **Por qué está escrito como regla dura.** `HANDOFF.md` (2026-08-16, entrada 64): el titular
+   > autorizó `0018` y **sólo** `0018`; el runbook —escrito cuando `0018` y `0019` iban juntas y no
+   > actualizado cuando la decisión cambió— decía `pnpm db:migrate` pelado, y **`0019` entró al
+   > piloto sin autorización**. Nada se perdió ni se corrompió, pero la línea se cruzó.
+   > Y lo peor no fue el error puntual: **los runbooks de `0015`, `0016` y `0017` funcionaron por
+   > casualidad** — en los tres casos lo pendiente coincidía con lo autorizado. **El control nunca
+   > existió.** Es el mismo patrón que R33 y R13: un artefacto que dice una cosa y hace otra.
 
 ## 2. Convenciones técnicas
 
@@ -69,7 +94,7 @@
   ```bash
   pnpm db:up && pnpm db:migrate && pnpm db:setup   # infra + esquema + roles
   pnpm db:seed                                     # datos SINTÉTICOS (nunca reales)
-  pnpm verificar                                   # typecheck estricto + 72 tests (gate)
+  pnpm verificar                                   # typecheck + barrido + fixtures + la suite (gate)
   ```
   Detalle del runbook: ADR-0000 §4.1.
 

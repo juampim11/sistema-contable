@@ -6,6 +6,1912 @@
 
 ---
 
+## 2026-08-16 (67) — **`0020` aplicada al piloto, con autorización explícita del titular** y el procedimiento de §1.9 corrido por primera vez de verdad.
+
+**Herramienta:** Claude Code. Confirmación escrita **en el momento**, no después.
+
+---
+
+### 1. La condición previa que puso el titular, y su respuesta
+
+El titular condicionó la aplicación a **una consulta directa contra el piloto, no de memoria ni por
+precedente**: ¿el dueño del esquema sigue siendo superusuario? Si **no** lo fuera, el bloqueante de
+despliegue de la entrada (66) —la recursión infinita entre `accessible_tenant_ids()` y
+`membership_sel`— **estaría activo hoy**, y había que frenar.
+
+**Medido, sólo lectura:**
+
+```
+sistema_contable      rolsuper=true   bypassrls=true   login=true
+app_job               rolsuper=false  bypassrls=true
+app_request           rolsuper=false  bypassrls=false
+app_request_dev       rolsuper=false  bypassrls=false
+app_firmador          rolsuper=false  bypassrls=false
+
+app.accessible_tenant_ids -> sistema_contable
+app.has_role_on           -> sistema_contable
+```
+
+Las dos `security definer` del ciclo pertenecen al superusuario ⇒ **la recursión sigue dormida, igual
+que en local. No bloqueaba.**
+
+### 2. 🔴 CONDICIÓN DURA que queda asentada
+
+> **Antes de que el dueño del esquema se reconfigure como NO superusuario en NINGÚN entorno, la
+> recursión tiene que estar resuelta.** No es una preferencia ni una tarea a priorizar: es una
+> precondición. Hacerlo antes deja la base **inoperable** —`select count(*) from membership` da `stack
+> depth limit exceeded`—, no «más segura».
+
+Y el corolario incómodo, que es lo que la vuelve una condición y no una nota: **hoy todo el aislamiento
+depende de que el dueño sea superusuario**, que es exactamente lo contrario de lo que ADR-0002 pide en
+todos los demás renglones. La tarea está abierta y **no se investigó tocando el piloto**.
+
+### 3. El procedimiento de `CLAUDE.md` §1.9, corrido completo
+
+| Paso | Resultado |
+|---|---|
+| **1. Listar lo pendiente** | `ENV_FILE=.env.piloto pnpm db:migrate --estado` → **una sola**: `0020_rastro_no_falsificable.sql` |
+| **2. Confirmar que coincide EXACTO con lo autorizado** | Autorizado: `0020`. Pendiente: `0020`. Coincide |
+| **3. Frenar si aparece una de más** | No apareció ninguna. Las 19 anteriores, sin drift |
+
+🔴 **Es la primera vez que el control existe de verdad.** La entrada (64) dejó escrito que los runbooks
+de `0015`, `0016` y `0017` funcionaron **por casualidad** —lo pendiente coincidía con lo autorizado— y
+que `pnpm db:migrate --estado` **ya existía en `migrar.ts` y no estaba documentado en ningún runbook**.
+
+### 4. Línea de base y verificación — hash `14863bc7f633cb55`
+
+| | antes | después |
+|---|---|---|
+| `tenant_node` / `membership` / `membership_historia` | 4 / 1 / 0 | **4 / 1 / 0** |
+| `acceso_auditoria` / `movimiento_bancario_crudo` / `lote_ingesta` | 9 / 1830 / 3 | **9 / 1830 / 3** |
+| `verificar_coherencia_path()` | 0 | **0** |
+
+**Nada perdido, nada corrompido, ninguna fila tocada.**
+
+Y el control, verificado **por catálogo** —sin escribir una sola fila en el piloto, ni siquiera dentro
+de una transacción revertida—:
+
+| | antes | después |
+|---|---|---|
+| `grant insert` sobre `acceso_auditoria` | **9 columnas, `id` y `ocurrido_en` incluidas** | **7**, las dos vedadas (`insert=false` para `app_request` **y** `app_job`); `cliente_id` sigue en `true` |
+| `membership_historia_sel` / `acceso_auditoria_sel` | usan `accessible_tenant_ids()` | **no lo usan** |
+| `via_depth` | no existe | `not null`, `default pg_trigger_depth()`, `CHECK ((via_depth >= 1))`, **sin grant para nadie** |
+| Triggers sobre `membership` | `trg_membership_historia` | `trg_membership_historia_ins_del` (sin condición) + `trg_membership_historia_upd` (**con** condición) |
+| `ocurrido_en` en las dos tablas | `now()` | **`clock_timestamp()`** |
+| **R39** | — | **0 roles de aplicación con `CREATE` sobre algún esquema** |
+
+🔴 **Dato que confirma que el #7 estaba vivo en el piloto hasta hoy:** el `grant insert` sobre
+`acceso_auditoria` tenía las **9** columnas, `id` incluida. O sea que la denegación cross-tenant era
+**alcanzable en el entorno con material real**, no sólo en local.
+
+### Estado
+
+Local y piloto **al mismo nivel de esquema (`0020`)**, mismo hash, sin drift.
+
+| Pendiente | |
+|---|---|
+| 🔴 **Recursión de RLS con dueño no superusuario** | Bloqueante de despliegue. **Condición dura del §2 de esta entrada** |
+| 🔴 **#8 — la firma elegible** | Sin control posible dentro de la base; pide ADR |
+| R25: la verificación | El enunciado está reescrito; falta el barrido del catálogo |
+| `app_job` con `grant update (activo)` sin camino | Punto (7) de R38: enunciado y **no aplicado** |
+| La mitad *fuga* de H-A | `acceso_auditoria.id` sigue siendo bigint monótono global |
+| Runbooks de `docs/devops/` | Documentar `pnpm db:migrate --estado` como el paso 1 de §1.9 |
+| `0021` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
+## 2026-08-16 (66) — `0020_rastro_no_falsificable.sql`: el rastro deja de ser gameable, y aparece la **única denegación cross-tenant** del expediente. Incidentes **#6, #7 y #8**.
+
+**Herramienta:** Claude Code. Cierra el plan formal de `0019` que la entrada (65) dejó convocado.
+
+---
+
+### 1. El plan, y el panel que lo produjo
+
+Plan formal aprobado íntegro (los cinco puntos de `CLAUDE.md` §3.2). Tres agentes de diseño
+—`seguridad-datos-financieros`, `arquitecto-software`, `security-engineer`— y tres de implementación
+—`dba-data`, `security-engineer`, `seguridad-datos-financieros`—, con las tareas `convocar` bloqueando
+la implementación según §3.1.
+
+🔴 **Y lo primero que hay que escribir es que el panel se equivocó tres veces y yo dos.** Todo lo que
+sigue está **medido por quien conduce contra local**, en transacciones revertidas, no tomado de palabra.
+
+| Quién | Qué afirmó | Qué dio la medición |
+|---|---|---|
+| `security-engineer` | `when (tg_op <> 'UPDATE' or …)` en un solo trigger | `42703 column "tg_op" does not exist`. Y con `insert` en el evento, referenciar `OLD` en el `WHEN` está **prohibido**: partir el trigger **es lo único que compila** |
+| `seguridad-datos-financieros` | *«`0019` … aplicada a local y **nunca al piloto**»* | **Falso.** `0019` está en el piloto desde la entrada (64). Si ese texto entraba al registro, la bitácora habría afirmado que el rastro no existe en el entorno con material real — **contradiciendo la entrada que documenta el error** |
+| `dba-data` | «el `check` con función volátil lo rechaza Postgres» | **No lo rechaza**: se crea sin una advertencia y detona meses después, en el primer `VALIDATE` o restore |
+| **quien conduce** | el orden de `§3` (add column con el default real, backfill por `UPDATE`) | `pg_trigger_depth()` es **STABLE**: el `add column` usa `attmissingval` y deja las filas viejas en **0** (medido). Y el backfill por `UPDATE` **afecta 0 filas SIN ERROR** con dueño no superusuario |
+| **quien conduce** | *«fabricar una fila para incriminar a otro no funciona»* | **Falso**, y es el incidente **#8**. Ver §4 |
+
+### 2. `0020_rastro_no_falsificable.sql` — seis secciones, aplicada a **LOCAL**
+
+| § | Qué cierra | Medición |
+|---|---|---|
+| **1** | 🔴 **Denegación cross-tenant** (#7) | El socio del Estudio UNO reclama tres ids de `acceso_auditoria` (`INSERT 3`) y el del Estudio DOS recibe `23505 duplicate key`. Como `registrarAcceso()` corre **antes** de la lectura y en la misma transacción, **aborta la operación de negocio del otro estudio**. Con el fix: `42501` / `42501` / legítimo OK |
+| **2** | `deleted_at` como interruptor del rastro (#6a) | auditor **3 → 0 → 3** filas de rastro y **6 → 0 → 6** de acceso; socio ajeno **1 → 1** y **0 → 0**, con **0 filas fuera de su subárbol** |
+| **3** | La fila escrita a mano (#6b) | Caso C falla con **`23514 / membership_historia_via_chk`** —no con `permission denied`, que sería el verde por el motivo equivocado—. **5 mutaciones, 5 detectadas** |
+| **4** | 🔴 La **dilución** (#6c) | `update ... set activo = activo` sin `where` producía **+4 filas** legítimas y repetibles sin límite. Con §4: **+0**, y el `update` real sigue en **+1** |
+| **5** | El empate al microsegundo | `now()` daba la misma marca a la fila real y a la forjada. `clock_timestamp()`, con **costo nulo** medido sobre 300.000 filas y los dos índices |
+| **6** | El `comment on table` que mentía | Decía *«Lo escribe un TRIGGER, no la aplicación»*, y era falso desde el día uno |
+
+**Costo de producción: cero**, verificado contra el código real (`auditoria.ts:127` escribe exactamente
+las siete columnas; `sembrar.ts:144`, tres).
+
+### 3. Lo que `§4` resultó ser, y que cambió el alcance
+
+`§4` entró al plan como prolijidad. **Es el control anti-dilución**, y el dato que lo movió es que
+**el vector NO es el `insert` de tabla entera sobre `membership`** —el recorte que el titular dejó
+afuera— **sino `update (activo)`, que INV-10 OBLIGA a que exista**. O sea: el recorte quedó sano, y sin
+`§4` la migración cerraba la falsificación y dejaba abierta la **denegación de evidencia**.
+
+### 4. 🔴 El incidente **#8**, y por qué es el más incómodo
+
+`hecho_por` vale `app.current_user_id()`, que es `current_setting('app.user_id')` (`0001:210-213`) — un
+GUC que **setea la propia sesión**. Medido con la credencial real de `app_request`:
+
+```
+set_config('app.user_id', <otro>, true)   ->  OK
+app.current_user_id()                     ->  <el auditor>
+insert en membership_historia             ->  OK, hecho_por = <el auditor>
+declarar un socio de OTRO estudio         ->  42501
+```
+
+**La autoría es elegible.** El único límite es que la identidad declarada vea el nodo — y eso no acota
+nada donde importa, porque **el auditor está adentro del subárbol**. `via_depth` **no lo cierra**: quien
+se declara otro y hace una escritura **real** obtiene una fila **genuina y mal atribuida**, que es peor
+porque pasa todos los controles.
+
+Es la misma raíz que el **#2** con un abuso distinto: allá el GUC transportaba **autorización** —*«un
+GUC transporta identidad, nunca autorización»*—; acá transporta identidad y el rastro la trata como
+**atestación**. 🔴 **Identidad declarada no es identidad autenticada.**
+
+**No tiene arreglo dentro de la base** y conviene decirlo así: Postgres sólo conoce `app_request_dev`;
+`session_user` diría «lo escribió la aplicación», nunca **quién**. Exige que **firme la aplicación**.
+Mientras tanto el control compensatorio es el **enunciado probatorio escrito**.
+
+### 5. Texto
+
+- **`registro-incidentes.md`**: filas **#6**, **#7** y **#8**, y el recuadro probatorio **reescrito** —
+  la fecha no es elegible, **la autoría sí**; y sin la afirmación falsa sobre el piloto.
+- **`ADR-0002`**: **R38** con los puntos (4) a (8) · **R25 reescrita sobre la PROPIEDAD** (decía
+  «prohibido exponer `tenant_node.nid`», nombraba la columna, y por eso `acceso_auditoria.id` divergió
+  desde `0001` sin ponerse rojo) · **R4 bis** (la excepción, que vive **en el test**) · **R39 nueva** ·
+  R11 con su estado corregido.
+- **`CHANGELOG.md`** actualizado.
+
+🔴 **R39 es la que evita que `§3` sea contención con una precondición tácita.** Cerrada **por
+mutación**: 4 mutaciones, 4 detectadas. **La que discrimina es la #2** —`grant create on schema app to
+app_request_dev`, al **usuario de login** y no al rol-grupo—: la versión ingenua
+(`has_schema_privilege('app_request', …)`) **la deja pasar**, y quedó medido en la misma corrida.
+
+### 6. 🔴 Hallazgo fuera de alcance: bloqueante de despliegue
+
+Con dueño **no superusuario**, `app.accessible_tenant_ids()` (definer, dueño = dueño del esquema) lee
+`public.membership`, que tiene `force row level security`, cuya `membership_sel` (`0001:332-333`)
+**vuelve a llamarla**. No corta —`security definer` inhabilita el inlining y el detector de recursión de
+RLS nunca ve el ciclo—: **`stack depth limit exceeded` en un `select count(*) from membership`**.
+
+Hoy no explota **sólo porque el dueño es superusuario** (`rolsuper = t`, medido). O sea que **todo el
+aislamiento depende de una premisa que no está escrita en ningún lado**, y que es exactamente la
+contraria de lo que ADR-0002 pide en todos los demás renglones. Tarea propia.
+
+### Estado
+
+`pnpm verificar`: **61 archivos, 1423 tests, 0 fallas** (línea de base 1416; +7 casos nuevos).
+
+| Pendiente | |
+|---|---|
+| 🔴 **`0020` al piloto** | **Espera confirmación explícita del titular en vivo**, con el procedimiento de `CLAUDE.md` §1.9. Hoy el piloto está en `0019`, así que lo pendiente debería ser **exactamente `0020`** — y si la lista devuelve otra cosa, se frena y se eleva |
+| 🔴 **Recursión de RLS con dueño no superusuario** | Bloqueante de despliegue, tarea propia |
+| 🔴 **#8 — la firma elegible** | Sin control posible dentro de la base; pide ADR |
+| R25: la verificación | El enunciado está reescrito; falta el barrido del catálogo |
+| `app_job` con `grant update (activo)` sin camino | Punto (7) de R38: enunciado y **no aplicado** |
+| La mitad *fuga* de H-A | `acceso_auditoria.id` sigue siendo bigint monótono global |
+| Runbooks de `docs/devops/` | `pnpm db:migrate --estado` existe y no estaba documentado |
+| `acceso_auditoria.ocurrido_en` / `.id` | H-A/H-B, del #4 |
+| Rol `app_rls_owner` con `BYPASSRLS` sin origen versionado | Tarea aparte |
+| `0021` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
+## 2026-08-16 (65) — Decisión del titular: **`0019` se queda en el piloto.** Advertencia probatoria escrita, regla dura de runbook adoptada, y el plan formal de `0019` convocado.
+
+**Herramienta:** Claude Code. Cierra la entrada (64), que dejó la decisión abierta.
+
+---
+
+### 1. La decisión, y el razonamiento que la sostiene
+
+**`0019` se queda aplicada en el piloto. No se revierte.**
+
+El titular decidió con la medición a la vista: **revertir cambiaría una vulnerabilidad severa ya
+cerrada —la expulsión silenciosa de la supervisión— por evitar una menor —un rastro que se puede
+ensuciar, pero no falsear para habilitar nada.**
+
+La medición que lo sostiene, nueve escenarios en **local**:
+
+| Escenario | Resultado | Supervisores activos |
+|---|---|---|
+| Desactivar al auditor | `UPDATE 0` | 2/2 |
+| Update masivo a los dos supervisores | `UPDATE 0` | 2/2 |
+| Borrar la membresía | `permission denied` | 2/2 |
+| Degradar el `rol` | `permission denied` | 2/2 |
+| **Fabricar fila falsa → desactivar** | `UPDATE 0` | 2/2 |
+| **Fabricar → masivo** | `UPDATE 0` | 2/2 |
+| **Fabricar + desactivar en la MISMA transacción** | `UPDATE 0` | 2/2 |
+| **Fabricar + borrar en la misma transacción** | `permission denied` | 2/2 |
+
+Y la razón estructural, **verificada sobre `pg_policy`**: la policy `membership_wr` **no menciona
+`membership_historia`**. Los dos mecanismos viven en planos distintos. Las filas fabricadas son
+**ruido, no privilegio**. El único acoplamiento —si el `insert` del rastro falla, aborta la
+transacción— **va en la dirección segura, nunca al revés**.
+
+### 2. 🔴 La advertencia probatoria, escrita donde se va a leer
+
+Quedó en **`docs/seguridad/registro-incidentes.md`** (al pie de la tabla) y en **`ADR-0002` §B, junto
+a R38**, para que nadie la use como prueba sin saberlo:
+
+> **Una fila de `membership_historia` NO es evidencia confiable por sí sola: pudo haber sido
+> fabricada.** Cualquier identidad con acceso al nodo —`socio`, `administrativo`, `cliente_lectura` y
+> **el propio `auditor`**— puede escribir filas **indistinguibles de las del trigger**. **No hay
+> ninguna columna que diga «esto lo escribió la base».**
+>
+> **Y la ausencia de una fila tampoco prueba nada:** `tenant_node.deleted_at` esconde el rastro de un
+> nodo entero de la vista de quien supervisa, sin borrar una sola fila del disco.
+>
+> **Qué SÍ:** reconstruir de buena fe una secuencia, y usarlo como **indicio** a corroborar contra
+> otra fuente. **Qué NO:** sostener una imputación contra una persona, ni afirmar que un cambio de
+> derecho no ocurrió porque no figura.
+
+Se levanta **cuando el rediseño cierre los dos bloqueantes, y no antes**.
+
+### 3. 🔴 Regla dura nueva: `CLAUDE.md` §1.9 — listar, confirmar, frenar
+
+Adoptada **ya**, no como propuesta, y rige para toda instrucción que toque el piloto de acá en
+adelante:
+
+> Antes de aplicar cualquier migración a un entorno con datos reales: **(1)** listar explícitamente
+> qué está pendiente, **(2)** confirmar que la lista coincide **exacto** con lo autorizado, **(3)**
+> frenar si aparece **una sola** migración de más.
+>
+> `pnpm db:migrate` **aplica TODAS las pendientes**: es el comando de «aplicá todo», y por eso nunca
+> es el comando de una autorización puntual.
+
+Con el porqué escrito al lado — la entrada (64), y el agravante: **los runbooks de `0015`, `0016` y
+`0017` funcionaron por casualidad.** En los tres lo pendiente coincidía con lo autorizado. **El
+control nunca existió.** Puntero agregado en `AGENTS.md`.
+
+### 4. El plan formal de `0019`, convocado — prioridad del día
+
+Tres agentes en paralelo, con el estado correcto de arranque (**no diseñan desde cero: rediseñan algo
+que ya corre sobre datos reales**):
+
+| Agente | Qué contesta |
+|---|---|
+| `seguridad-datos-financieros` | El eje de dominio: el enunciado probatorio, la jerarquía entre los dos daños, si `deleted_at` como operación legítima acota la remediación, y si los bloqueantes son del #5 o merecen fila propia |
+| `arquitecto-software` | 🔴 **La decisión cara: ¿entra una tercera `security definer`?** Elegí `invoker` para no tocar R11, y **el costo de esa elección no está escrito**: se paga con el grant de `insert` abierto a todo el tenant. Más: ¿el rastro de supervisión debe vivir bajo la misma RLS que los datos que documenta? |
+| `security-engineer` | El barrido de la clase —¿es cierto que **toda columna de `tenant_node` escribible por el tenant** es de la clase?— y **la superficie que `0019` AGREGÓ**: siete columnas de payload que un tenant escribe y de cuyo valor depende qué lee el supervisor |
+
+### Estado
+
+`pnpm verificar`: **61 archivos, 1416 tests, 0 fallas**. Local y piloto al mismo nivel de esquema
+(`0019`).
+
+| Pendiente | |
+|---|---|
+| 🔴 **El rediseño del rastro de `0019`** | Prioridad del día. Los tres reportes definen la forma |
+| Arreglar los runbooks de `docs/devops/` | La regla ya está en `CLAUDE.md` §1.9; falta el procedimiento operativo |
+| `acceso_auditoria.ocurrido_en` y `.id` | Los hallazgos H-A/H-B de `security-engineer`, abiertos desde el #4 |
+| Rol `app_rls_owner` con `BYPASSRLS` sin origen versionado | Tarea aparte |
+| Dueño del esquema superusuario | La premisa de la que depende R36 |
+| `0020` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
+## 2026-08-16 (64) — 🔴 **`0019` entró al piloto SIN AUTORIZACIÓN. Error mío, del runbook que yo mismo escribí.** `0018` aplicada y efectiva. Nada perdido ni corrompido.
+
+**Herramienta:** Claude Code. Se escribe **en el momento**, y sin maquillar: es la primera vez en toda
+la cadena de incidentes que se cruza la línea del piloto, y la cruzó quien escribió la regla.
+
+---
+
+### 1. Qué pasó
+
+El titular autorizó **`0018` y sólo `0018`**, con la instrucción explícita de que **`0019` espera** —
+tiene dos bloqueantes de la ronda de cierre y necesita el plan formal con el panel.
+
+Corrí el runbook de la entrada (62) tal cual:
+
+```
+ENV_FILE=.env.piloto pnpm db:migrate
+  = 0017_path_por_construccion.sql (ya aplicada)
+  + 0018_parent_id_solo_en_el_alta.sql … aplicada
+  + 0019_membership_supervision.sql … aplicada        <- NO AUTORIZADA
+```
+
+🔴 **`pnpm db:migrate` aplica TODAS las migraciones pendientes, no la que uno tiene en la cabeza.**
+`0019` estaba pendiente en el piloto y entró detrás de `0018`.
+
+### 2. La causa, que es mía y es concreta
+
+**El runbook de la entrada (62) se escribió para aplicar DOS migraciones**, cuando `0018` y `0019`
+iban juntas. Cuando la decisión cambió a *«`0019` espera»*, **actualicé el plan y no actualicé el
+comando**. El runbook quedó con un `pnpm db:migrate` pelado, que es correcto para «aplicá todo lo
+pendiente» y **es exactamente lo que no había que hacer**.
+
+Es la misma clase de defecto que este expediente viene documentando hace dos días —**un artefacto que
+dice una cosa y hace otra**— con el agravante de que acá el artefacto era la instrucción de operación,
+no un test.
+
+### 3. Estado verificado, sin maquillar
+
+**No se perdió ni se corrompió nada.** Medido inmediatamente después:
+
+| | |
+|---|---|
+| `0018` | Aplicada, **sin drift** (`e10c1d20281e7ac7` en las dos puntas) y **efectiva**: `app_request` perdió el `UPDATE` sobre `parent_id` y conserva el `INSERT` |
+| `0019` | Aplicada, **sin drift** (`9d62ee810d5dc32d`). **No autorizada** |
+| `membership_historia` | **0 filas** — la tabla se creó vacía y nada la escribió |
+| `membership` | **1 fila, intacta** |
+| `app.verificar_coherencia_path()` | **0** |
+| Nodos | 1 estudio + 3 clientes — **sin cambios** |
+
+O sea: el sistema está **estable y funcionalmente sano**. Lo que está mal es que hay un control
+aplicado que el titular dijo que esperaba.
+
+### 4. Lo que NO hice, y por qué
+
+**No revertí por mi cuenta.** Dos razones, y la segunda pesa más:
+
+1. **Revertir `0019` restaura una vulnerabilidad conocida** — el estado previo es el del incidente #5:
+   un socio desactiva y borra al `auditor` y al `admin_plataforma` sin dejar rastro. No es obvio que
+   sea la opción segura.
+2. 🔴 **Acababa de equivocarme con el piloto.** Encadenar una segunda acción no autorizada sobre datos
+   de un cliente para tapar la primera es exactamente cómo un error se convierte en un incidente.
+
+Se elevó al titular con las tres opciones y su costo. **El piloto quedó como está, sin tocar, hasta
+que decida.**
+
+### 5. La medición que pidió el titular para decidir
+
+*«¿El ataque del #5 queda bloqueado de forma INDEPENDIENTE de que el rastro sea gameable?»*
+
+**Sí. Medido en LOCAL —no en el piloto—, nueve escenarios:**
+
+| Escenario | Resultado | Supervisores activos |
+|---|---|---|
+| Desactivar al auditor | `UPDATE 0` | 2/2 |
+| Update masivo a los dos supervisores | `UPDATE 0` | 2/2 |
+| Borrar la membresía | `permission denied` | 2/2 |
+| Degradar el `rol` | `permission denied` | 2/2 |
+| **Fabricar fila falsa en el rastro → desactivar** | `UPDATE 0` | 2/2 |
+| **Fabricar → masivo** | `UPDATE 0` | 2/2 |
+| **Fabricar + desactivar en la MISMA transacción** | `UPDATE 0` | 2/2 |
+| **Fabricar + borrar en la misma transacción** | `permission denied` | 2/2 |
+
+Y la razón estructural, **verificada sobre `pg_policy` y no razonada**: la policy `membership_wr`
+**no menciona `membership_historia`** ni en el `using` ni en el `with check`. Los dos mecanismos viven
+en planos distintos —la desactivación la frena el predicado sobre el rol de la fila tocada más el
+grant por columna; el rastro es una consecuencia posterior en otra tabla—. Las filas fabricadas
+quedan como **ruido, no como privilegio**.
+
+**El único acoplamiento que existe va en la dirección segura:** si el `insert` del rastro falla, la
+transacción entera aborta (por eso un socio no puede darse de baja a sí mismo, MEDIA-6). **Nunca al
+revés.**
+
+**Conclusión para la decisión:** los dos bloqueantes de `0019` degradan la **capacidad de investigar
+después** —el rastro se puede esconder con `deleted_at` y se puede ensuciar— pero **no reabren la
+expulsión de la supervisión**. Es daño a la trazabilidad, no al control.
+
+### 6. Corrección de proceso, para que no se repita
+
+🔴 **Un runbook que dice `pnpm db:migrate` es un runbook para «aplicá todo lo pendiente».** Si la
+autorización es por migración —y en este repo **siempre** lo es— el runbook tiene que:
+
+1. **Listar antes qué está pendiente** (`--dry-run` o el equivalente de inspección) y **exigir que la
+   lista coincida** con lo autorizado.
+2. **Frenar si aparece una migración de más**, en vez de aplicarla.
+3. Y decir explícitamente **qué NO se aplica en esta tanda**, no sólo qué sí.
+
+Los runbooks anteriores de esta cadena (`0015`, `0016`, `0017`) funcionaron **por casualidad**: en los
+tres casos lo pendiente coincidía con lo autorizado. **El control nunca existió.**
+
+### Estado
+
+`pnpm verificar`: **61 archivos, 1416 tests, 0 fallas**. Local y piloto quedaron —involuntariamente—
+al mismo nivel de esquema (`0019`).
+
+| Pendiente | |
+|---|---|
+| 🔴 **Decisión del titular sobre `0019` en el piloto** | Revertir / dejar / revertir sólo la tabla de rastro. Los tres costos están escritos arriba |
+| 🔴 **Plan formal del fix real del #5** | `seguridad-datos-financieros` + `arquitecto-software` + `security-engineer`. **Su forma depende de la decisión anterior**, por eso no se convocó todavía |
+| **Arreglar el runbook** | Los tres puntos de §6, en `docs/devops/` y en el próximo HANDOFF que lleve runbook |
+| `0020` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
+## 2026-08-16 (63) — Ronda de cierre de `0019`: **vuelve a taller**. Dos bloqueantes, los dos de mi diseño. 🔴 **El piloto sigue intacto.**
+
+**Herramienta:** Claude Code, trabajo autónomo. **Verificado al cierre: el piloto sigue en `0017`,
+sin `membership_historia` y con `app_request` conservando el `update` sobre `parent_id`** — o sea que
+`0018` y `0019` **no llegaron ahí**. La línea aguantó toda la noche.
+
+---
+
+### 1. El veredicto
+
+`0019` **cierra el ataque literal del incidente #5, no la clase.** La ronda dejó **11 de 28
+mutaciones vivas** y **dos bloqueantes reproducidos**.
+
+**Y hay que decir lo que sí cerró**, porque es la mitad del resultado y se verificó una por una: el
+ataque original en **todas** sus formas —update masivo, `MERGE`, `ON CONFLICT`, CTE `with … delete`,
+`truncate`, `delete`, cambio de `rol`—, el alta de una membresía de supervisor, el aislamiento del
+rastro entre estudios, y **INV-10 intacto en las dos direcciones**. Y la pregunta que más me
+preocupaba tiene buena respuesta: **el `on delete cascade` NO se lleva el historial** — la FK a
+`tenant_node` es `no action`, así que borrar el nodo **aborta**.
+
+### 2. 🔴 Bloqueante 1 — el rastro tiene interruptor, y lo maneja el auditado
+
+`tenant_node.deleted_at` **reproduce el resultado entero del #5 sin tocar `membership` y sin dejar una
+sola fila de rastro.** `app.accessible_tenant_ids()` exige `deleted_at is null` sobre el nodo **de la
+membresía**, así que con un solo `update` —que `0017` §7 le otorga a `app_request`— el socio expulsa
+al supervisor **y le apaga la vista del rastro**. Medido:
+
+```
+auditor ve, antes : {"rastro":2,"nodos":1}
+el socio hizo     : UPDATE 1
+auditor ve, desp  : {"rastro":0,"nodos":0}
+filas en disco    : 2      <- no las borró: las escondió
+```
+
+Eso **obliga a corregir la lección que yo mismo escribí** en la §3 de `0019`. Decía: *«la RLS decide
+QUIÉN escribe una fila, nunca QUÉ DICE la fila»*. Le falta la mitad:
+
+> 🔴 **La RLS también decide QUÉ FILA EXISTE PARA EL QUE MIRA — y ese predicado lo alimenta una
+> columna que el auditado escribe. Un rastro cuya visibilidad depende de un `boolean` del auditado es
+> un rastro con interruptor.**
+
+### 3. 🔴 Bloqueante 2 — el rastro lo escribe cualquiera, incluido el auditor
+
+`membership_historia_ins` **no mira el rol**. Medido con los dos extremos:
+
+```
+socio     INSERT 1  🔴 fabricó una fila que dice que se BORRÓ la membresía del auditor
+auditor   INSERT 1  🔴 idem
+```
+
+Y la fila fabricada es **indistinguible de la que escribe el trigger**: misma tabla, mismo `hecho_por`
+puesto por el `DEFAULT`. No hay columna que diga «esto lo escribió la base». Sin techo, además: `tester`
+metió **50 000 filas de ruido en una sentencia** — para que un evento real no se encuentre no hace
+falta borrarlo.
+
+**La migración creó una instancia nueva de la clase que la migración existe para cerrar:** siete
+columnas que un tenant escribe y de cuyo valor depende qué lee el supervisor.
+
+### 4. Y una tercera, que es mía y duele
+
+`app_job` conserva un `grant update (activo)` **que no usa ningún camino de producción** —lo puse
+justificándolo con la siembra sintética, y la siembra hace `insert`, no `update`— y con él expulsa a
+la supervisión **de todos los tenants en una sentencia**, dejando `hecho_por = null`.
+
+🔴 **Ese nulo es el mismo que el nulo legítimo.** Escribí en el encabezado que el nulo «es
+información» porque distingue al dueño o a un job de una persona. **También es camuflaje**: un ataque
+por esa vía queda **indistinguible de una migración**. Es evadible por `conJob('mantenimiento', …)`,
+que está en la unión `MotivoJob` y **compila**.
+
+### 5. La causa raíz de otras dos, y es el patrón del #3 otra vez
+
+`membership_historia` quedó **fuera de R1 y R3 desde que nació**: la lista de tablas con RLS en
+`catalogo.test.ts` estaba **escrita a mano**, y como la tabla tiene `columnaTenant: 'ninguna'` no
+entra por la derivación automática ni la agregó nadie. Con eso, `disable row level security` sobre la
+tabla de rastro dejaba **los 218 tests en verde**. **Es una allowlist cuya excepción es el vector** —
+exactamente el incidente #3, en la tabla que `0019` vino a crear. Corregido: **R1 ahora deriva la
+lista y enumera la excepción, no la regla.**
+
+### 6. Lo que apliqué y lo que NO
+
+**Aplicado** (`add868d`): los tests (**13 → 23 casos**), la corrección de R1, `membership_historia` en
+el `truncate` de la ayuda, R38 marcada **⚠️ insuficiente** con los dos bloqueantes escritos, y el #5
+anotado con el estado real de `0019`.
+
+🔴 **NO toqué `0019`.** Los dos bloqueantes necesitan una **decisión de arquitectura** —que el rastro
+lo escriba una `security definer`, en vez de depender de un grant abierto al tenant, **choca con
+R11**— y **no voy a inventar el fix de un control de seguridad de madrugada sin el panel.** Eso es
+exactamente lo que produjo `0016`: una migración completa, aplicada a local y al piloto, con su ronda
+de cierre, que cerraba el ataque **por la rama equivocada** y abría tres agujeros nuevos.
+
+### 7. Estado y orden para la mañana
+
+`pnpm verificar`: **61 archivos, 1416 tests, 0 fallas** (venía de 61/1406).
+
+| # | Pendiente | |
+|---|---|---|
+| 1 | 🔴 **Aplicar `0018` al piloto** | Runbook en la entrada (62), hash `e10c1d20281e7ac7`. **`0019` NO**: vuelve a taller |
+| 2 | 🔴 **Plan formal del fix real de #5** | `dba-data` + `security-engineer` + `seguridad-datos-financieros` + `arquitecto-software`. Tres decisiones: el camino de `deleted_at`, quién escribe el rastro (y el choque con R11), y si `app_job` queda dentro o fuera del alcance de R38 |
+| 3 | Sacar el `grant update (activo) on membership to app_job` | No lo usa nadie. Entra en el mismo `0020` |
+| 4 | `ocurrido_en default clock_timestamp()` | `now()` es el inicio de la transacción: el escritor elige cuándo abrirla. Medido: **3 s de desfase** con un `pg_sleep(3)` |
+| 5 | Un socio **no puede darse de baja a sí mismo**, y el error culpa a la tabla equivocada | Falla cerrado, así que no es agujero — es regresión funcional de `0019` |
+| 6 | `pnpm db:seed` sigue roto desde antes | Le faltan las tablas de `0013`/`0014` **y** `membership_historia` |
+| 7 | **La séptima columna de la clase: `tenant_node.tipo`** | Un socio lo cambia a `'grupo'` y **apaga la posibilidad de escribir auditoría para ese cliente**. Falla cerrado (`leerConAuditoria` audita antes de leer), pero el enunciado útil ya no es contar columnas: **toda columna de `tenant_node` escribible por el tenant es de la clase** |
+| 8 | El rastro no tiene ninguna defensa de **mecanismo** | `truncate` y `alter table … no force` del **dueño** lo vacían. Contra el dueño no hay defensa dentro de la misma base — pero **hay que escribirlo**, porque `admin_plataforma` es parte de lo que este rastro existe para vigilar |
+| 9 | `0020` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
+## 2026-08-16 (62) — Noche autónoma: **#2 cerrado, #4 y #5 abiertos**, `0018` y `0019` en local. 🔴 **Nada al piloto.**
+
+**Herramienta:** Claude Code, trabajando sin supervisión. **La línea que no se cruzó: ninguna
+migración, ningún cambio y ninguna verificación tocaron `sistema-contable-postgres-piloto`.** `0018` y
+`0019` están **sólo en local** y esperan confirmación explícita del titular.
+
+---
+
+### 1. El registro de incidentes, completo
+
+| | |
+|---|---|
+| **#2** | **CERRADO, con alcance declarado.** R36 numerada y reescrita sobre el predicado. Se cierra el **vector**; los residuos viven en el #4 |
+| **#4** | **ABIERTO** — defectos del control de integridad del árbol. **Tres ventanas distintas**, y ésa es la precisión que se habría perdido fusionándolo con el #2: B y C nacen con `0016` y murieron el mismo día; **A y D son fundacionales desde `0001`** —no son defectos del fix, se **encontraron** en su ronda de cierre—; E nace con `0017` y sigue abierta. Cerrados A, B, C y D |
+| **#5** | **ABIERTO** — el padrón de derechos es escribible por el sujeto del control. Mecanismo cerrado por `0019` en local; falta la regla numerada |
+| **#1 y #2** | 🔴 **ANOTADOS, no reabiertos** |
+
+🔴 **La anotación de #1 y #2 es el hallazgo de proceso de la noche.** La medición forense *«cero
+membresías inesperadas en las dos bases»* —que sostiene el *«no hay evidencia de escalada
+persistente»* de los dos— corre sobre un estado que **el sujeto auditado puede editar y borrar sin
+dejar fila**. `verificar_coherencia_path()` sigue en pie como medición independiente; **la de
+membresías no prueba lo que se creyó que probaba**. El enunciado original sigue siendo correcto: lo
+que cambia es **cuánta fuerza tiene la mitad de la evidencia que lo sostiene**. Pega más fuerte en el
+#2, porque el residuo persistente de ese vector **es** una `membership`.
+
+De ahí salen **dos reglas nuevas** en la bitácora: que «ventana» y «cierre» contestan preguntas
+distintas y **pueden discrepar sin contradecirse**; y que **una fila cerrada se ANOTA, no se reabre** —
+reabrir borraría la cronología, que es lo único que ese archivo no puede reconstruir después.
+
+**Por qué el #5 va aparte del #4** (`seguridad-datos-financieros`, aplicando sus propias cuatro
+razones una por una): en el #4 hay **un control que se elude**; en el #5 **el control nunca se
+escribió**. Y la ventana compartida **no fusiona**: el #1 y el #2 también comparten ventana exacta,
+del mismo archivo, y están en filas separadas.
+
+### 2. `0018` — `parent_id` sólo en el alta (cierra ALTA-2 del #4)
+
+`0017` dejó a `app_request` con `update` sobre `parent_id`, que parecía inofensivo porque la policy lo
+gatea con `has_role_on(parent_id)`. Pero el trigger de `0001` **recalcula el `path` desde el padre**:
+`parent_id` es, de hecho, una vía de escritura del `path`. Un socio relocalizaba un subárbol de cuatro
+niveles con un solo `update`, coherente, **sin el GUC, sin `reparentar_nodo()` y sin una sola fila en
+`acceso_auditoria`**. Un `contador` con membresía sólo sobre un grupo pasó de ver 2 nodos a ver **3**.
+
+Y era **no determinístico**: dependía del orden físico del heap.
+
+**Colgar un nodo nuevo y mover uno existente son dos operaciones distintas, y sólo una es del alcance
+de la aplicación.** `app_request` conserva `INSERT` y pierde `UPDATE`. **No es una restricción nueva:
+es hacer cumplir la que `ADR-0001` §8.2 ya declaraba.** Verificado con los vectores de `tester`:
+**12 de 12**.
+
+### 3. `0019` — el padrón de derechos (cierra el mecanismo del #5)
+
+**Tres patas, porque cerrar una sola dejaba el hallazgo vivo:**
+
+1. **RASTRO** — `membership_historia`, append-only, **escrita por trigger y no por la aplicación**. Es
+   la lección del #1 en una línea: `acceso_auditoria` se escribe desde la aplicación, y por eso el
+   vector del #1 no dejó nada.
+2. **PRIVILEGIO** — grant por columna: sólo `activo` se actualiza, el `DELETE` desaparece. Mismo
+   criterio con que `0005` se lo sacó a `credencial_fiscal`: **una membresía no se borra, se
+   desactiva**.
+3. **POLICY** — el predicado mira el rol de **la fila tocada**, en el `using` **y** en el `with check`.
+
+🔴 **El rastro no puede ir contra `acceso_auditoria`, y el motivo es mecánico antes que semántico:**
+su trigger exige un nodo de tipo `cliente`, y una membresía de `socio`/`auditor`/`admin_plataforma`
+cuelga del **estudio** — la fila **no entra**. Precedente en el repo: `credencial_fiscal` +
+`credencial_fiscal_rotacion`.
+
+`hecho_por` y `ocurrido_en` **salen de un DEFAULT y nadie tiene grant sobre ellas**: ni el trigger las
+nombra. Cierra por construcción el defecto que `acceso_auditoria` **sí tiene hoy**, donde el auditado
+elige la marca de tiempo. Y `hecho_por` es **nullable a propósito**: el nulo **es información** —
+significa que la escritura vino del dueño o de un job, no de una persona a través de la aplicación.
+
+**Decisión de negocio tomada, y revertible en una línea:** los roles supervisores son `auditor` y
+`admin_plataforma`. El segundo es **estructural** (`0001:36`: es staff de la plataforma, no del
+estudio); el primero es **la decisión**, con el argumento de que existe para mirar lo que el socio
+hace. Se cambia el cuerpo de `app.es_rol_supervisor()` y nada más.
+
+**Mutación: 4 de 4 atrapadas**, incluida la sutil — dejar el predicado sólo en el `with check` y no en
+el `using` **deja pasar el ataque**, porque el socio no cambia el `rol` al desactivar y la fila
+resultante sigue siendo válida.
+
+**Y el caso legítimo es parte de la regla:** INV-10 exige que revocar una membresía corte el acceso en
+el request siguiente. El defecto nunca fue que se escriba `activo` — fue **sobre qué fila, con qué
+grant y sin qué rastro**.
+
+### 4. Tres cosas que atajó el proceso, y valen más que el resultado
+
+- **Mi propio test encontró un defecto en mi propia migración**: el `grant insert` sobre
+  `membership_historia` había quedado a **nivel tabla**, así que el caso *«`hecho_por` no se puede
+  falsificar»* pasaba en verde **por el motivo equivocado**. Ahora es por columna.
+- **El gate exigió dos cosas seguidas y las dos veces tenía razón**: la constante de TypeScript que
+  espeja el `check` de dominio cerrado, y después el `comment on constraint` que la nombra.
+- 🔴 **`0019` se corrigió tres veces revirtiéndola de local, no encadenando correctivos.** Es legítimo
+  porque **no está en el piloto ni pusheada**: la regla *«una migración aplicada no se edita»* protege
+  contra el **drift entre entornos**, y encadenar un `0020` correctivo habría **arrastrado el defecto
+  al piloto**. La decisión está escrita en el propio script de reversión.
+
+Y un freno que me puse: iba a corregir el encabezado de `0017` —que sobredeclaraba la inmunidad del
+mecanismo— y **lo aborté**, porque `0017` **sí** está aplicada al piloto y editarla le cambia el hash.
+La corrección terminó donde correspondía: **como premisa explícita de R36**.
+
+### 5. Documentación puesta al día
+
+`CHANGELOG.md` **creado** — no existía y nunca existió, aunque cinco documentos lo referencian.
+`09-lecciones-aprendidas.md` **§11**, la lección más valiosa de la sesión. `ADR-0002` **§B.0** (ninguna
+regla cuenta como control hasta que se probó rompiéndola, **eligiendo las mutaciones para refutar y no
+para confirmar**), la tabla de §B que se declaraba dominante **congelada**, **T11** reescrita —
+enunciaba la R10 rota— más **T15** y **T16**. `CLAUDE.md` **§1.8** y su puntero en `AGENTS.md`.
+
+---
+
+### 🔴 6. Runbook para aplicar al PILOTO — **listo para copiar y pegar, NO EJECUTADO**
+
+**Espera confirmación explícita del titular.** Se aplican **las dos, en orden**: `0018` depende del
+estado que dejó `0017` (que sí está en el piloto) y `0019` es independiente, pero el orden de
+migración es estricto.
+
+```bash
+# --- Paso 0: estado ANTES, con app_job (BYPASSRLS) ---
+#   Con el dueño podría ser verde por vacuidad el día que deje de ser superusuario,
+#   que es lo que ADR-0002 exige para producción.
+#     select count(*) from app.verificar_coherencia_path();          -- debe dar 0
+#     select rol, count(*) from membership group by rol order by 1;  -- foto del padrón ANTES
+#
+# --- Paso 1: verificar los hashes contra el archivo local ANTES de correr nada ---
+#     0018_parent_id_solo_en_el_alta.sql   ->  e10c1d20281e7ac7
+#     0019_membership_supervision.sql      ->  9d62ee810d5dc32d
+#
+# --- Paso 2: aplicar ---
+ENV_FILE=.env.piloto pnpm db:migrate
+#
+# --- Paso 3: verificar DESPUÉS ---
+#   a) sin drift: el hash registrado en el piloto == el de local, para las dos
+#   b) select count(*) from app.verificar_coherencia_path();   -- 0
+#   c) el padrón NO cambió: misma foto que el paso 0
+#   d) privilegios de columna:
+#        has_column_privilege('app_request','tenant_node','parent_id','UPDATE')  -- false
+#        has_column_privilege('app_request','tenant_node','parent_id','INSERT')  -- true
+#        has_column_privilege('app_request','membership','rol','UPDATE')         -- false
+#        has_column_privilege('app_request','membership','activo','UPDATE')      -- true
+#        has_table_privilege ('app_request','membership','DELETE')               -- false
+#   e) que DISPARA, no que existe: en una transacción que SIEMPRE revierte, una escritura
+#      sobre `membership` tiene que dejar su fila en `membership_historia`.
+```
+
+🔴 **Y una advertencia que no estaba en los runbooks anteriores:** `0019` **cambia el
+comportamiento de la baja de una membresía** — el `DELETE` deja de existir para la aplicación. Si en
+el piloto hay algún flujo que borre membresías, **falla después de aplicar**. Medido en el repo:
+**cero** escrituras de `membership` desde código de producción TypeScript, así que no debería haber
+ninguno — pero eso se mide en el repo, **no en el piloto**, y por eso queda como advertencia y no
+como verificación.
+
+### 7. Estado y pendientes
+
+`pnpm verificar`: **61 archivos, 1406 tests, 0 fallas** (venía de 60/1392).
+
+| Pendiente | |
+|---|---|
+| 🔴 **Aplicar `0018` y `0019` al piloto** | **Primero de la mañana.** Espera confirmación explícita |
+| **R38** — la regla numerada del #5 en `ADR-0002` §B | Sin ella el #5 no cierra (regla 3). El mecanismo ya está y probado por mutación |
+| **Ronda de cierre de `0019`** | `qa-automation` en worktree, `tester`, `code-reviewer`, `documentador`. **Con la lección puesta**: `0016` y `0017` pasaron las suyas y tenían agujeros |
+| **#4 defecto E** — el `DETAIL` del driver | El hueco real es que `conUsuario`/`conJob` re-lanzan el error crudo: la protección existe **por callsite y no por diseño** |
+| Rol `app_rls_owner` con `BYPASSRLS` sin origen versionado | Tarea aparte, `security-engineer` |
+| Dueño del esquema superusuario | La premisa de la que depende R36, y sigue abierta desde el #1 |
+| `0020` — determinante de idempotencia | **Sigue frenado.** Se corre de `0018` a `0020` |
+
+---
+
+## 2026-08-15 (61) — `0017_path_por_construccion.sql` aplicada a **local y PILOTO**. El invariante del árbol baja de trigger a `check` + `foreign key`.
+
+**Herramienta:** Claude Code. Escrita **en el momento** (§4). Confirmación explícita del titular para
+el piloto. Plan formal aprobado sin cambios; panel: `dba-data` + `security-engineer` +
+`seguridad-datos-financieros`.
+
+---
+
+### 1. 🔴 El hallazgo que reordenó el diseño: `0016` atribuía el cierre a la rama equivocada
+
+`dba-data` midió lo que yo había afirmado sin medir. Con `security definer` puesto **y** `not found`
+tratado como no-op, el ataque original del incidente #2 **sigue bloqueado**:
+
+```
+ERROR:  tenant_node …: path incoherente con parent_id
+CONTEXT:  PL/pgSQL function exigir_path_coherente() line 21
+```
+
+Línea 21 = **rama de coherencia**, no la de `not found`. O sea que el encabezado de `0016`, donde
+escribí *"EL PUNTO QUE CIERRA EL INCIDENTE"*, señalaba la mitad equivocada.
+
+**`not found` nunca fue un control: fue una compensación por una ceguera autoinfligida.** El trigger
+era `invoker`, así que la RLS le tapaba justo la fila que tenía que validar. Y como toda compensación
+por ceguera, confundía tres situaciones —ataque, fila borrada, fila archivada— y rompía una operación
+legítima.
+
+De ahí el corolario que gobierna `0017`, y que vale más allá de esta tabla:
+
+> **Un invariante verificado con la visibilidad del escritor no es un invariante.** Si el control lee
+> con los privilegios de quien escribe, **quien escribe elige lo que el control ve**.
+
+### 2. La decisión de fondo: bajar dos escalones
+
+El invariante es **referencial** —relaciona una fila con otra por una clave— y Postgres **exime a
+`check`, `unique` y `foreign key` de la RLS por diseño**. Los triggers no. Meter un invariante
+referencial en un trigger es exactamente lo que obligaba a `security definer`, que **viola R11** y
+pedía un ADR.
+
+| | Mecanismo | Cierra |
+|---|---|---|
+| `parent_path` + `tenant_node_path_chk` | **`check` fila-local** — no se difiere, no lo apaga `disable trigger all`, aplica al dueño y a `COPY` | el #2 en su forma cruda, y A residual |
+| `tenant_node_parent_path_fk`, `match full`, diferida | **integridad referencial** — no pasa por la RLS, así que **no puede fallar abierta** | **B**: si un padre cambia de path, todos sus hijos tienen que haberse actualizado en la misma transacción |
+| `trg_tenant_node_nid_inmutable` + grant por columna | trigger **y** privilegio | **A**: el grant no le aplica al dueño; el trigger no puede rechazar un `overriding system value`, porque todo `nid` es íntegramente válido |
+
+**Resultado: R11 no se toca y no hace falta ningún ADR.** Ésa fue la razón principal para elegir esto
+sobre el `security definer` que proponía `qa-automation`: su fix es correcto en lo que arregla, pero
+paga un ADR y una excepción a R11 por un invariante que no necesita ninguna de las dos.
+
+`match full` no es decorativo: con el `match simple` por omisión, un `parent_path` nulo satisface la
+FK **gratis** y el `check` admitiría `path = nid` — o sea, sacar un nodo del subárbol de su propio
+estudio. Reproducido.
+
+### 3. Verificación en local — 13 de 13, con los tres roles
+
+Lo importante no es el conteo: es **con qué identidad** se probó cada cosa. Un ataque probado sólo con
+`app_request` muere por `permission denied` antes de llegar al invariante, y **ese test se pone verde
+el día que alguien re-otorgue un grant de tabla entera** copiando la plantilla de `ADR-0001` §5 — que
+es el escenario de regresión realista, mucho más que un atacante.
+
+| Ataque | Identidad | Qué lo frenó |
+|---|---|---|
+| `set nid = default`, solo y con `parent_id = parent_id` | `app_request`, `app_job` | **privilegio** |
+| ídem | **dueño (superusuario)** | **trigger** — mecanismo, no privilegio |
+| `insert … overriding system value` con `nid` | `app_request`, `app_job` | **privilegio**, y sólo privilegio |
+| `path` al subárbol ajeno, con el GUC prendido | **`app_job`** (BYPASSRLS + grant sobre `path`) | **`tenant_node_path_chk`** ⇒ **mecanismo** |
+| mintiendo `path` **y** `parent_path` | `app_job` | **FK**, en el commit |
+| `parent_path` nulo con `parent_id` no nulo | dueño | `parent_path_nulo_chk` |
+| **B**: mudar padre coherente dejando al hijo colgado | dueño | **FK** |
+| **B2**: ídem con el hijo **oculto por `deleted_at`** | dueño | **FK** — el truco que `0016` dejaba commitear |
+
+Y los legítimos, que son parte de la regla: alta, `reparentar_nodo()` con descendientes, y **los dos
+falsos positivos de `0016` que ahora commitean** — alta + borrado, y alta + baja lógica, en la misma
+transacción. Eso destrabó `packages/data/sql/tests/0001_aislamiento.test.sql` y permitió **sacar el
+parche temporal**: PASADA 1 completa sin él, 14 aserciones OK en la tercera pasada.
+
+### 4. El piloto — antes, aplicación y después
+
+**Antes** (chequeo con `app_job`, `bypassrls = true` confirmado en la misma consulta: con el dueño
+podría ser verde por vacuidad el día que deje de ser superusuario, que es lo que `ADR-0002` exige):
+
+| | |
+|---|---|
+| Hash local vs. autorizado | `d35ba671b8c2b66b` ✅ |
+| Última migración | `0016_path_coherente.sql` |
+| ¿`0017` ya estaba? / ¿`parent_path` ya existía? | **no** / **no** |
+| `verificar_coherencia_path()` | **0** |
+| Raíces con path mal formado | **0** |
+| Nodos | 1 estudio + 3 clientes |
+
+**Después:**
+
+| | |
+|---|---|
+| Hash piloto vs. local | `d35ba671b8c2b66b` = `d35ba671b8c2b66b` — **sin drift** |
+| `verificar_coherencia_path()` | **0** |
+| Constraints | **las 4**, todas `validada=true`; la FK `deferrable=true deferred=true` |
+| Triggers | el de `0016` **se fue**; está `trg_tenant_node_nid_inmutable` |
+| Privilegios | `app_request` nid upd/ins = **false/false** · `app_job` nid upd = **false** · `app_request` path upd = **false** · `app_job` path upd = **true** (lo necesita `reparentar_nodo()`) |
+| Nodos | 1 estudio + 3 clientes — **sin cambios** |
+
+**Y que DISPARA, no que existe** — mismo criterio que con `0016`, porque comprobar que una constraint
+*está* es el chequeo de presencia que R13 y R10 hacían mientras el agujero seguía abierto:
+
+```
+SONDA -> new row for relation "tenant_node" violates check constraint "tenant_node_path_chk"
+filas sonda que quedaron: 0 (limpio)
+INCOHERENCIAS finales: 0
+```
+
+Sin riesgo, y auditable: un nodo **nuevo** dentro de una transacción que **siempre termina en
+`rollback`**. Ninguna fila de cliente se leyó, modificó ni borró.
+
+### 5. Costo, y dos cifras mías de `0016` que no reproducen
+
+| | `0016` | `0017` |
+|---|---|---|
+| Reparentar 801 nodos, total | ~630 ms | **~148 ms** |
+| Reparentar 1 nodo hoja | 14,4 ms | **6,2 ms** |
+| Alta, por fila | +102 µs | **+58 µs** |
+| Lectura (`accessible_tenant_ids`, `has_role_on`) | sin cambio | **sin cambio** |
+| Tamaño con índices | 1856 kB | 2304 kB (**+24 %**) |
+
+`0017` es **~5× más barato** que `0016` en el reparentado, porque desaparece el scan completo del
+árbol que `reparentar_nodo()` corría al final.
+
+🔴 **Y hay que decir por qué las cifras de `0016` estaban mal**: cronometré la **llamada a la
+función**, que es justo el único lugar donde un `constraint trigger` **diferido** no corre. Todo el
+costo aterrizaba en el `COMMIT`. Es el mismo patrón de R10 — **medí lo que era fácil de medir**. El
+`+191 %` del bucle de hijos tampoco reproduce: la guarda es sobre `UPDATE`, así que en un alta masiva
+ese bucle no corre nunca.
+
+### 6. Lo que se pierde, declarado
+
+- 🔴 **El control del texto del error.** `0016` emitía "el uuid y nada más" a propósito (R25/R28).
+  Medido: con `app_request` el `DETAIL` **no lleva valores** —Postgres los suprime si el rol no ve la
+  fila—, pero **con `app_job` sale la fila entera**, incluido `nombre` (N2) y `path` (contiene `nid`).
+  Es una regresión respecto de una decisión explícita. **Mitigación pendiente, fuera de la migración:**
+  mapear `23514`/`23503` en `conErroresTraducidos`, y que el logger nunca emita `err.detail`.
+- **+24 % de tamaño** y **+110 µs por fila en el borrado físico** — irrelevante en un diseño
+  soft-delete (`0001:59`), pero real.
+- **`path` como columna generada** (el endgame, medido por `dba-data`): `path` se vuelve
+  **físicamente inescribible** y el GUC desaparece. No entra acá porque en PG16 una columna existente
+  no se puede convertir: hay que dropear y re-crear `path` con `uq_tenant_node_path` encima, en la
+  tabla raíz de la RLS, con datos reales en el piloto. **Es un ADR con `arquitecto-software`, no un
+  fix de incidente.** Queda medido para que la decisión exista.
+
+### 7. Dos cosas que atajó el gate, y valen más que el resultado
+
+- **`parent_path` sin clasificar puso el gate en rojo** antes de que yo me acordara. Columna nueva sin
+  entrada en el registro = rojo, sin *"sin clasificar"*. Funcionó como está diseñado.
+- **R17 me frenó** al abrir un `new Client` en el test. Tenía razón, y el arreglo correcto no era
+  agregarme a la allowlist: el helper va en `ayuda.ts`, que es el único lugar que abre conexiones para
+  tests. Ahora existe `clienteJob()`, con el porqué escrito al lado.
+
+Y una corrección propia: mi primera sonda del caso B dio rojo, y era **la sonda**, no el fix — usé un
+`nid` inventado en el path, así que lo atajó el `check` de inmediato en vez de la FK. El ataque
+abortaba igual; lo que no medía era lo que decía medir.
+
+### Estado
+
+`pnpm verificar`: **60 archivos, 1386 tests, 0 fallas** (venía de 60/1377). Local y piloto **al mismo
+nivel de esquema** (`0017`), las dos con 0 incoherencias.
+
+| Pendiente | |
+|---|---|
+| **Cerrar el #2 y abrir el #4** en `registro-incidentes.md` | `seguridad-datos-financieros` propone abrir el **#4** en vez de reabrir el #2: A y B son defectos **del fix**, no del defecto original, y las ventanas son distintas |
+| **Reescribir R36** sobre el **predicado**, nunca sobre el mecanismo | El enunciado actual nombra "trigger diferido", "re-lee la fila" y "`not found` es violación" — las tres cambiaron |
+| **R37 sigue en ⚠️** | Su mecanismo no llega a su enunciado (entrada 60) |
+| Ronda de cierre de `0017` | `qa-automation` en worktree, `tester`, `code-reviewer`, `documentador` |
+| Mapear `23514`/`23503` en `conErroresTraducidos` | §6 |
+| Rol `app_rls_owner` con `BYPASSRLS` sin origen versionado | Tarea aparte, `security-engineer` |
+| `0018` — determinante de idempotencia | **Sigue frenado** |
+
+---
+
+## 2026-08-15 (60) — Incidente **#3 CERRADO** con **R37**, la regla de clase. Y aparece la cuarta regla que estuvo verde con su propia falla adentro.
+
+**Herramienta:** Claude Code. Cierra el incidente #3: credenciales rotadas (58/59), `.env.example`
+fuera del tracking y publicado, y ahora **la regla verificable numerada** que exige la regla 3 de
+`registro-incidentes.md`.
+
+---
+
+### 1. 🔴 R33 ya existía, y nombraba en su enunciado la excepción que falló
+
+Antes de escribir nada nuevo fui a ver qué decía el ADR. **R33 ya estaba:**
+
+> *"Ningún secreto en el repo. Escaneo de secretos en pre-commit **y** en CI. `.env*` gitigneado
+> **salvo `.env.example`**, que tiene **solo nombres**."*
+> Estado: ⚠️ *"`.env.example` existe con valores **de desarrollo evidentes**"*.
+
+Las tres partes fallaron a la vez:
+
+1. **La excepción del enunciado ERA el vector.** *"salvo `.env.example`"* es, literalmente, el
+   agujero — escrito como parte de la regla que debía impedirlo.
+2. **La condición que la volvía segura —"solo nombres"— no se chequeaba en ningún lado.** No había
+   test, ni escaneo, ni gate. Era una afirmación, no un control.
+3. **El campo de estado admitía la violación por escrito.** *"Existe con valores de desarrollo
+   evidentes"*. El defecto estuvo documentado en la tabla de reglas **toda la vida del repo**.
+
+Es la **cuarta vez en el día** del mismo patrón —R10 dos veces, R13, ahora R33— y con una vuelta de
+tuerca peor que las anteriores: acá la regla **no pasaba verde por medir mal, pasaba amarillo
+admitiendo la falla**. Quedó escrito como corolario en el ADR: **un ⚠️ que nadie convierte en trabajo
+es un ✅ con más letras.** El campo de estado es parte de la regla, no una nota al pie.
+
+### 2. R37 — las tres decisiones de forma, y por qué cada una
+
+**(1) Barre `git ls-files`, no el filesystem.** La pregunta que importa no es *"¿qué archivos hay?"*
+sino **"¿qué está trackeado?"** — lo único que puede viajar a un remoto. Un archivo con secretos en
+disco pero ignorado no es el incidente; uno trackeado sí. Barrer el filesystem sería, otra vez, medir
+lo fácil en vez de lo que hay que garantizar.
+
+**(2) No mira nombres de archivo: mira contenido.** Ignorar `.env.example` cierra **el caso**. La
+**clase** es *"un archivo que documenta variables se fue llenando de valores"*, y eso pasa igual en un
+`docker-compose.yml`, un workflow de CI, un `.md` de runbook o un script de despliegue. Tres formas:
+archivo con forma de entorno, URL con credenciales embebidas, y clave `UPPER_SNAKE` secreta asignada a
+un literal que no sea marcador.
+
+**(3) 🔴 El cruce con los `.env*` vivos, que ninguna allowlist puede eximir.** Es el incidente #3 en
+una línea: el valor "de ejemplo" y la credencial **viva del piloto** eran la misma cadena, y nadie lo
+notó en cinco días. Un literal descartable de CI es aceptable; el mismo literal siendo **además** la
+credencial de un entorno real, no — y esa distinción **ninguna lista de excepciones tiene derecho a
+hacerla**. Es el equivalente del `revoke temporary` de `0015`: la mitad que cierra la clase entera.
+
+Detalle de higiene: **los hallazgos nunca llevan el valor**, solo longitud y sha256 corto. Un hallazgo
+no puede filtrar lo que denuncia.
+
+### 3. Al correrla por primera vez encontró credenciales en cuatro archivos más
+
+Ninguno se llamaba `.env`. Ésa es la prueba de que la clase era más grande que el caso:
+
+| Archivo | Qué tenía | Arreglo |
+|---|---|---|
+| `docker-compose.yml` | **6** credenciales horneadas como `${VAR:-valor}` | pasan a `${VAR:?falta en .env}` — requerida, sin default |
+| `docs/arquitectura/ADR-0000-stack-infra.md` | `PGPASSWORD=` literal en dos comandos del runbook | pasan a `"$JOB_DB_PASSWORD"` / `"$APP_DB_PASSWORD"` |
+| `docs/diseno/03-hallazgos-del-panel.md` | el pepper de desarrollo, literal | reescrito sin el valor |
+| `docs/arquitectura/ADR-0002-seguridad.md` | **mi propio texto de R37**, que usaba un ejemplo de DSN con forma de credencial real | reescrito con marcadores |
+
+El último es el más divertido y el más tranquilizador: la regla atrapó a quien la estaba escribiendo,
+en el mismo commit.
+
+### 4. Cerrada por mutación — 3 contra el repo real, 7 sintéticas
+
+Un cero puede significar dos cosas: que no hay credenciales, o que el detector no detecta. Para
+distinguirlas hay que **plantar una y ver que la encuentre**.
+
+**Contra el repo real:**
+
+| Mutación | Resultado |
+|---|---|
+| Reintroducir `!.env.example` en `.gitignore` | **rojo** — R37 bis, nombrando la negación |
+| Hornear de vuelta un `${VAR:-default}` en el compose | **rojo** — R37 |
+| Escribir un valor **VIVO** de `.env` en un doc trackeado | **rojo** — clasificado `valor-vivo`, no como asignación común |
+
+**Sintéticas**, cada una armando un repo git de verdad en un tmpdir: `.env` trackeado, `.env.<sufijo>`
+trackeado, URL con credenciales en un `.md`, asignación en un `.yml`, asignación en un `.sh`, más los
+dos **negativos** (un template con marcadores y una referencia de código no deben marcarse). Y el
+contraste que aísla la variable: **el mismo archivo permitido pasa sin el `.env`, y falla con él**.
+
+Más el **control de vacuidad**: se afirma con un número que el barrido ve `> 100` archivos. Sin eso,
+un `git ls-files` que fallara en silencio daría verde para siempre — el mismo error que
+`qa-automation` encontró en su propio harness de mutación (entrada 55).
+
+Dos fallas del test fueron mías y las dos informativas: `.env.plantilla.txt` **sí** tiene forma de
+archivo de entorno (el detector tenía razón, mi fixture estaba mal), y un motivo de la allowlist
+quedó corto — el gate exige motivo escrito de más de 40 caracteres, justamente para que un permitido
+no se cuele sin razón revisable.
+
+### 5. Estado del incidente #3: **CERRADO**
+
+| | |
+|---|---|
+| 9 credenciales rotadas, los dos entornos | ✅ verificado en las dos direcciones contra `origin/main` |
+| `.env.example` fuera del tracking | ✅ publicado en `origin/main` (`a95d24f`) |
+| Regla verificable numerada | ✅ **R37 + R37 bis**, `ADR-0002` §B.3, con el porqué escrito |
+| Probada rompiéndola | ✅ 10 mutaciones |
+| R33 | ❌ marcada **insuficiente**, reemplazada |
+
+🔴 **Se cierra el CONTROL, no la exposición.** Por la regla 4 de la bitácora, lo que estuvo en un
+repositorio público desde el 2026-08-10 estuvo, y eso no se revierte. Queda pendiente, como decisión
+aparte: **reescribir el historial de git**.
+
+`pnpm verificar`: **60 archivos, 1377 tests, 0 fallas** (venía de 59/1360).
+
+### 6. Pendientes
+
+| | |
+|---|---|
+| Incidente **#2** | Control aplicado y verificado en las dos bases (`0016`, R36). **Falta el cierre formal** en el registro — a propósito: la marca de «cerrado» del #1 se puso una vez sin revisión y estaba mal |
+| Reescribir el historial | Decisión del titular, explícitamente fuera de esta tanda |
+| Publicar la documentación de los incidentes | El repo es público; merece su propia decisión |
+| `0017` — determinante de idempotencia | **Sigue frenado** |
+| Dueño del esquema superusuario | Abierto. La «segunda mitad del impacto» del #1 |
+| `pnpm db:seed` roto desde cero | Falta `movimiento_contraparte_identificador` en el `truncate` |
+
+---
+
+## 2026-08-15 (59) — Incidente **#3**: rotado también **LOCAL** + los secretos S3 y `CRON_SECRET` de los dos entornos. **Ningún secreto del repo público sigue siendo válido en ningún lado.**
+
+**Herramienta:** Claude Code. Escrita en el momento. **Ninguna credencial se transcribe.**
+
+Cierra el pendiente que la entrada (58) había dejado declarado, y por una razón concreta: al ir a
+pushear el fix de `.env.example` apareció que **publicar la documentación de los incidentes en un
+repo público sería un cartel apuntando a credenciales que todavía funcionaban**. La exposición era
+pasiva; documentarla la señalizaba. El titular decidió rotar local **antes** de publicar nada.
+
+---
+
+### 1. Qué se rotó ahora
+
+| Variable | Entorno | Mecanismo |
+|---|---|---|
+| `POSTGRES_PASSWORD` (dueño, **superusuario**) | local | `alter role %I password %L` armado con `format()` **del lado del servidor** |
+| `APP_DB_PASSWORD`, `JOB_DB_PASSWORD` | local | `pnpm db:setup` (el script del repo) |
+| `S3_LECTURA_SECRET_ACCESS_KEY` | **local Y piloto** | `docker compose up minio-init` (`mc admin user add`) |
+| `S3_ESCRITURA_SECRET_ACCESS_KEY` | **local Y piloto** | ídem |
+| `CRON_SECRET` | local y piloto, **distinto en cada uno** | valor nuevo, sin sistema externo |
+
+Más los 3 `DATABASE_URL*` de local, que embeben la contraseña dentro del DSN.
+
+🔴 **Los secretos S3 se rotan en los DOS entornos a la vez, y no es una elección: MinIO es un
+contenedor compartido** (`sistema-contable-minio`, puerto 9010, al que apuntan los dos `.env`). Ya
+había pasado lo mismo con la root en la entrada (58).
+
+### 2. Decisión de diseño: los `ACCESS_KEY_ID` **no** se rotaron, y es a propósito
+
+`S3_LECTURA_ACCESS_KEY_ID` y `S3_ESCRITURA_ACCESS_KEY_ID` (`app_lectura_dev`, `app_escritura_dev`)
+son **nombres de usuario** de MinIO, no secretos. Rotarlos habría creado usuarios **nuevos** y dejado
+los **viejos vivos**, con su secreto expuesto, salvo que además se los borre — estrictamente peor que
+no tocarlos. Lo que revoca de verdad es el **secreto**, y eso sí se rotó.
+
+Por eso un barrido ingenuo *"¿alguna clave sigue coincidiendo con `origin/main`?"* devuelve esos dos
+nombres en verde-rojo. **Es esperado y correcto.** Ningún **secreto** coincide.
+
+### 3. Verificación — en las dos direcciones, contra `origin/main`
+
+Las "viejas" que se probaron **no son las del respaldo: son las que están hoy en `origin/main`**, que
+es lo que un tercero tendría.
+
+```
+--- Postgres LOCAL: nuevas ---
+   dueño del esquema (nueva)              AUTENTICA
+   app_request_dev (nueva)                AUTENTICA
+   app_job (nueva)                        AUTENTICA
+--- Postgres LOCAL: las de origin/main NO deben autenticar ---
+   dueño (la commiteada)                  rechazada (password authentication failed)
+   app_request_dev (la commiteada)        rechazada (password authentication failed)
+   app_job (la commiteada)                rechazada (password authentication failed)
+--- S3 (MinIO compartido), SigV4 contra el endpoint real ---
+   lectura (nueva)                        AUTENTICA (HTTP 200)
+   escritura (nueva)                      AUTENTICA (HTTP 200)
+   lectura (la commiteada)                rechazada (HTTP 403)
+   escritura (la commiteada)              rechazada (HTTP 403)
+```
+
+`pnpm verificar` después de todo: **59 archivos, 1360 tests, 0 fallas.**
+
+### 4. Estado del incidente #3
+
+| | |
+|---|---|
+| **Piloto** | dueño, `app_request_dev`, `app_job`, MinIO root, secretos S3, `CRON_SECRET` — **rotados** |
+| **Local** | dueño, `app_request_dev`, `app_job`, MinIO root, secretos S3, `CRON_SECRET` — **rotados** |
+| **Ningún secreto de `origin/main` sigue siendo válido** | verificado en las dos direcciones, en los dos entornos |
+| `.env.example` | fuera del tracking (`a9303bb`) |
+
+**Sigue ABIERTO igual**, y por dos motivos que no se cierran rotando:
+
+1. **Regla 4: la exposición pasada no se revierte.** Lo que estuvo en `origin/main` desde el
+   2026-08-10 estuvo. Rotar corta el **uso futuro**; no hay forma de saber quién clonó.
+2. **Falta la regla verificable numerada** en `ADR-0002` §B, que tiene que cubrir la **clase**
+   —ningún valor de credencial en un archivo trackeado— y no este archivo. Regla 3 de la bitácora.
+
+**Decisión pendiente, aparte:** reescribir el historial de git. El titular lo dejó explícitamente
+fuera de esta tanda.
+
+**Y la publicación de la documentación de los tres incidentes también quedó pendiente**, con la misma
+lógica: el repo es público, y qué se publica de un incidente merece su propia decisión, no ir
+arrastrado por la urgencia de sacar un archivo del tracking.
+
+---
+
+## 2026-08-15 (58) — Incidente **#3**: credenciales del piloto **ROTADAS y verificadas**. Y el conjunto expuesto no eran 4: son **9**.
+
+**Herramienta:** Claude Code. Escrita en el momento, con confirmación explícita del titular.
+**Ninguna contraseña se transcribe acá** — se nombran las variables, igual que en las entradas
+anteriores.
+
+---
+
+### 1. 🔴 Antes de rotar: el conjunto expuesto es más grande de lo que decía la instrucción
+
+Se pidió rotar **4**. Comparando `origin/main:.env.example` contra `.env.piloto`, valor por valor y
+sin imprimirlos, resultaron **9 idénticas**:
+
+| Variable | ¿Idéntica a `origin/main`? | Rotada ahora |
+|---|---|---|
+| `POSTGRES_PASSWORD` (dueño del esquema, **superusuario**) | 🔴 sí | ✅ |
+| `APP_DB_PASSWORD` | 🔴 sí | ✅ |
+| `JOB_DB_PASSWORD` (**BYPASSRLS**) | 🔴 sí | ✅ |
+| `MINIO_ROOT_PASSWORD` | 🔴 sí | ✅ |
+| `S3_LECTURA_ACCESS_KEY_ID` / `S3_LECTURA_SECRET_ACCESS_KEY` | 🔴 sí | ❌ **pendiente** |
+| `S3_ESCRITURA_ACCESS_KEY_ID` / `S3_ESCRITURA_SECRET_ACCESS_KEY` | 🔴 sí | ❌ **pendiente** |
+| `CRON_SECRET` | 🔴 sí | ❌ **pendiente** |
+| `IDENTIFICADOR_PEPPER` | **no** — distinta | — |
+
+**La buena noticia es la última fila, y es la que más importaba.** `IDENTIFICADOR_PEPPER` es el
+pepper del HMAC de identificadores: si hubiera sido la misma, cualquiera podría recalcular el HMAC de
+un CUIT y correlacionar contrapartes entre entornos. **Se generó por entorno, como correspondía.**
+`IDENTIFICADOR_PEPPER_ID` ni siquiera existe en `origin/main`.
+
+**Las 5 que faltan quedan como pendiente explícito**, no como olvido: las claves S3 son cuentas de
+servicio de MinIO (mecanismo distinto — `mc admin`, no `alter role`) y `CRON_SECRET` no tiene
+consumidor cableado todavía. Se rotó lo autorizado; el resto se decide con el titular.
+
+### 2. Paso a paso de lo que se corrió, y contra qué
+
+**Base: `sistema_contable_piloto`, puerto 5443. Contenedor `sistema-contable-postgres-piloto`.**
+
+1. **Respaldo** de `.env.piloto` al scratchpad de la sesión, antes de tocar nada — para poder volver
+   atrás si la rotación fallaba a mitad de camino.
+2. **Dueño del esquema** (`POSTGRES_PASSWORD`): conectando con la credencial **vieja**, que todavía
+   autenticaba, se corrió `alter role %I password %L` armado con `format()` **del lado del servidor**
+   — ni el nombre del rol ni la contraseña se interpolan desde el cliente.
+3. **Reescritura de `.env.piloto`**: las 4 claves **más los 3 `DATABASE_URL*`**, que embeben la
+   contraseña adentro del DSN. Contraseñas nuevas de 24 bytes aleatorios en `base64url` (sin relleno:
+   seguras dentro de un DSN, sin escapes).
+4. **`app_request_dev` y `app_job`**: `ENV_FILE=.env.piloto pnpm db:setup`, que es el script del
+   propio repo. Su salida confirma el invariante de siempre: `app_request_dev` **no** saltea RLS,
+   solo `app_job` tiene `saltea_rls = true`.
+5. **MinIO**: 🔴 **el contenedor es COMPARTIDO** entre local y piloto — `docker-compose.piloto.yml`
+   solo define Postgres, y los dos `.env` apuntan al mismo `sistema-contable-minio` en el 9010. Así
+   que rotar la root del piloto **obliga** a mover también la de `.env` (local), o al reiniciar queda
+   una de las dos desincronizada. Se propagó el mismo valor a `.env` (con respaldo) y se recreó el
+   contenedor con `docker compose up -d minio`.
+
+### 3. Verificación — en las dos direcciones
+
+**Postgres:**
+
+```
+--- credenciales NUEVAS: deben autenticar ---
+   dueño del esquema (nueva)          AUTENTICA
+   app_request_dev (nueva)            AUTENTICA
+   app_job (nueva)                    AUTENTICA
+--- credenciales VIEJAS: NO deben autenticar ---
+   dueño del esquema (vieja)          rechazada (password authentication failed)
+   app_request_dev (vieja)            rechazada (password authentication failed)
+   app_job (vieja)                    rechazada (password authentication failed)
+```
+
+**MinIO** (SigV4 contra el endpoint real, no inspección de configuración):
+
+```
+   root NUEVA                       AUTENTICA (HTTP 200)
+   root VIEJA                       rechazada (HTTP 403)
+   clave de servicio: lectura       AUTENTICA (HTTP 200)
+   clave de servicio: escritura     AUTENTICA (HTTP 200)
+```
+
+Las cuentas de servicio siguen funcionando, como se esperaba: viven en el volumen de IAM y son
+independientes de la root. **Eso también significa que rotar la root NO las rota** — de ahí el
+pendiente del punto 1.
+
+`pnpm verificar` después de todo: **59 archivos, 1360 tests, 0 fallas.**
+
+### 4. 🔴 Lo que la rotación NO cubre, y hay que decirlo
+
+- **Local no se rotó.** `POSTGRES_PASSWORD`, `APP_DB_PASSWORD`, `JOB_DB_PASSWORD`, las 4 claves S3 y
+  `CRON_SECRET` de `.env` **siguen siendo las commiteadas**. El alcance pedido era el piloto. Pero
+  E-1 dice que el entorno local se trata como productivo a los efectos de los controles, y por local
+  ya pasó material real: **queda como pendiente, no como decisión tomada.**
+- **La exposición pasada no se cierra.** Regla 4: un secreto commiteado es público para siempre. La
+  rotación corta el **uso futuro**. Lo que estuvo en `origin/main` desde el 2026-08-10 estuvo, y no
+  hay forma de saber quién lo clonó.
+- **El incidente #3 sigue ABIERTO** en `registro-incidentes.md`: falta la regla verificable numerada
+  en `ADR-0002` §B —que tendrá que cubrir la **clase** (ningún valor de credencial en un archivo
+  trackeado), no este archivo— y faltan las 5 credenciales del punto 1.
+
+### Estado
+
+| | |
+|---|---|
+| Piloto | 4 credenciales rotadas y verificadas en las dos direcciones |
+| Local | MinIO rotado (contenedor compartido); **Postgres y S3 sin rotar** |
+| `.env.example` | fuera del tracking, comiteado en `a9303bb` |
+| Push | **pendiente de decisión** — ver la entrada siguiente cuando exista |
+
+---
+
+## 2026-08-15 (57) — `0016_path_coherente.sql` aplicada al **PILOTO**, con confirmación explícita del titular. Verificada sin drift y con el trigger **disparando**.
+
+**Herramienta:** Claude Code. Se escribe **en el momento**, como manda §4 — es la lección que ya se
+pagó dos veces (`0011` y `0012` quedaron solo en local).
+
+**Confirmación del titular, textual:** *"Aplicá 0016 al piloto — runbook de HANDOFF(56), verificando
+el hash 5292b9775d3b5cd6 contra el archivo local antes de correr nada, y el chequeo de coherencia
+antes y después como está previsto. Confirmalo en HANDOFF en el momento, como siempre. **#3 queda
+para mañana, sin excepción.**"*
+
+🔴 **El incidente #3 (credenciales en repo público) NO se tocó.** Sigue abierto y sin rotar, por
+decisión explícita. Es lo primero de mañana.
+
+---
+
+### 1. Antes de correr nada
+
+| Verificación | Resultado |
+|---|---|
+| Hash del archivo local vs. el autorizado | `5292b9775d3b5cd6` = `5292b9775d3b5cd6` ✅ |
+| Base y usuario | `sistema_contable_piloto`, dueño del esquema |
+| Última migración aplicada | `0015_search_path_pg_temp.sql` |
+| ¿`0016` ya estaba? | **No** |
+| `app.verificar_coherencia_path()` **antes** | **0** |
+| Nodos | 1 estudio + 3 clientes — **coincide con `HANDOFF` (45)** |
+| Triggers en `tenant_node` | 3 |
+
+### 2. Después
+
+| Verificación | Resultado |
+|---|---|
+| Hash registrado en piloto vs. en local | `5292b9775d3b5cd6` = `5292b9775d3b5cd6` — **sin drift** |
+| `app.verificar_coherencia_path()` **después** | **0** |
+| Trigger nuevo | `trg_tenant_node_path_coherente`: `constraint=true deferrable=true initdeferred=true` |
+| Triggers en `tenant_node` | 4 (los 3 de antes + el nuevo; **ninguno reemplazado**) |
+| `search_path` de `app.exigir_path_coherente()` | `pg_catalog, public, app, pg_temp` — **cumple R10** (incidente #1) |
+| Nodos | 1 estudio + 3 clientes — **sin cambios** |
+
+### 3. 🔴 Y que DISPARA, no que existe
+
+Verificar que el trigger *está* es exactamente el chequeo de presencia que R13 y R10 hacían mientras
+el agujero seguía abierto. Así que se probó el comportamiento **en el piloto mismo**:
+
+```
+DISPARO -> tenant_node <uuid de la sonda>: path incoherente con parent_id
+filas sonda que quedaron: 0 (limpio)
+INCOHERENCIAS finales   : 0
+```
+
+**Cómo se hizo sin riesgo, y queda escrito para que se pueda auditar:** se insertó un nodo **nuevo**
+(`ZZZ SONDA 0016`) dentro de una transacción que **siempre termina en `rollback`**, se le forzó un
+`path` incoherente con el GUC `app.reparentando` prendido, y se hizo `set constraints all immediate`
+para forzar el chequeo diferido. **Ninguna fila de cliente se leyó, modificó ni borró.** El único
+efecto residual es un valor consumido de la secuencia de `nid`. Verificado después del rollback: cero
+filas sonda, cero incoherencias.
+
+### 4. Lo que NO se hizo, declarado
+
+- **No se ejecutó el ataque completo contra el piloto.** Habría requerido el `user_id` de un socio
+  real y un `update` sobre un nodo de cliente real. El mecanismo ya está probado en local con las 4
+  mutaciones, la migración es **byte por byte la misma** (hash verificado en las dos puntas), y la
+  sonda de arriba prueba que el trigger dispara acá. Se prefirió no simular una escalada sobre datos
+  de un cliente.
+- **`0016` no cierra el incidente #2 en `registro-incidentes.md`.** El control existe y está
+  verificado en las dos bases, y **R36** ya está numerada en `ADR-0002` §B.1 — o sea que la regla 3 de
+  esa bitácora está satisfecha. Se deja el cierre formal para la ronda de revisión, por la lección de
+  la entrada (55): **la marca de «cerrado» del #1 se puso una vez con la regla escrita pero sin pasar
+  por revisión, y estaba mal.** No se repite el atajo.
+- **Nada pusheado.** 80 commits locales; la rama no tiene upstream.
+
+### Estado
+
+Local y piloto **al mismo nivel de esquema** (`0016`), las dos con 0 incoherencias. `pnpm verificar`:
+59 archivos, 1360 tests, 0 fallas.
+
+**Mañana, en orden:** (1) incidente **#3** — rotar las cuatro credenciales, que es lo más grave que
+hay abierto; (2) cerrar formalmente el **#2**; (3) `0017`, el determinante de idempotencia, que sigue
+frenado.
+
+---
+
+## 2026-08-15 (56) — 🔴 Incidente **#3**: credenciales en un repo PÚBLICO. Incidente **#2** con fix listo en local (`0016`), sin aplicar al piloto. Todo esperando confirmación.
+
+**Herramienta:** Claude Code. **Nada de esto está pusheado ni aplicado al piloto.** Las dos acciones
+—rotar credenciales y aplicar `0016`— esperan confirmación explícita del titular. Orden acordado para
+mañana: **primero el #3, después el #2.**
+
+---
+
+### 1. 🔴 Incidente #3 — la credencial commiteada es la credencial viva, y el repo es público
+
+Apareció al verificar, a pedido del titular, tres preguntas puntuales sobre algo que yo había traído
+al pasar como simple contención del #2. Las tres respuestas lo convirtieron en un incidente propio, y
+**más grave que los dos anteriores**:
+
+| Pregunta | Respuesta medida |
+|---|---|
+| ¿`.env.example` está ignorado o trackeado? | **Trackeado.** `.gitignore` tenía un `!.env.example` **explícito**; es el único `.env*` trackeado |
+| ¿Llegó al remoto? | **Sí**, en `ff2d992` (2026-08-10), que está en `origin/main`. Y el repositorio es **PÚBLICO** |
+| ¿Sigue vigente o quedó obsoleta? | **Vigente.** Comparadas sin transcribir valores contra `.env.piloto`: idénticas. Confirmado además **por autenticación real** contra la base del piloto |
+
+**Lo que importa no es la credencial de la aplicación.** `POSTGRES_PASSWORD` es el **dueño del esquema,
+que además es superusuario en las dos bases** —ignora la RLS siempre, forzada o no, y no necesita
+ningún vector— y `JOB_DB_PASSWORD` tiene **`BYPASSRLS`**. Contra cualquiera de esas dos, **todo el
+trabajo de aislamiento de esta sesión es irrelevante**. `app_request` es la **menos** grave de las
+cuatro.
+
+**Mitigante medido, y es la única razón por la que no es una emergencia del minuto:** el piloto se
+publica **solo en loopback** (`127.0.0.1:5443`, `docker-compose.piloto.yml:60`). **La credencial es
+pública; el puerto no.**
+
+**Hecho y comiteado, SIN pushear** (`a9303bb`): `git rm --cached .env.example` + se sacó la negación
+del `.gitignore`, con el porqué escrito ahí mismo. El archivo **sigue en disco**, no se pierde.
+
+🔴 **Esto NO cierra la exposición.** Regla 4 de `registro-incidentes.md`: un secreto commiteado es
+público para siempre. Está en el historial de un repo público desde el 2026-08-10. Sacarlo del
+tracking corta el sangrado; **el pasado no se cierra**. Lo que corta el uso futuro es la **rotación**.
+
+**Para decidir mañana:** un `.env.example` no trackeado deja al runbook sin su template, que es la
+razón por la que el archivo existía. La alternativa es mantenerlo trackeado **con marcadores** más un
+gate que verifique que no tenga valores.
+
+### 2. Incidente #2 — `0016_path_coherente.sql`, aplicada a LOCAL y verificada
+
+Panel completo: `dba-data`, `seguridad-datos-financieros`, `security-engineer`.
+
+**El fix es un `constraint trigger` diferido**, y las tres decisiones de forma están **medidas**:
+
+1. **Diferido al commit, no inmediato.** `reparentar_nodo()` reescribe el `path` del subárbol **antes**
+   de mover el `parent_id`: hay un estado intermedio incoherente **por diseño**, y un chequeo inmediato
+   aborta ahí incluso con cero descendientes. Además un `BEFORE ROW` no ve las filas que el mismo
+   `UPDATE` modificó. Resultado: **`reparentar_nodo()` no se toca, ni una línea.**
+2. **Re-lee la fila, no usa `NEW`.** Un `AFTER` diferido ve la tupla del **evento**, no la final.
+3. 🔴 **`not found` es VIOLACIÓN, no no-op.** El punto que cierra el incidente, y el que no se ve
+   leyendo el código: el trigger es `invoker`, la RLS le aplica, y el ataque consiste justamente en
+   escribir un `path` que saca la fila del subárbol propio. **Medido: el trigger recibe
+   `found = false`.** El atacante **se auto-oculta la prueba**.
+
+El GUC y `rechazar_path_manual()` quedan tal cual, degradados a lo que debieron ser siempre: el mensaje
+temprano y claro. Una excepción a la **prohibición**, no a la **integridad**.
+
+**Cerrado por mutación, 4 de 4 atrapadas** (`packages/data/tests/path-coherente.test.ts`):
+
+| Mutación | Resultado |
+|---|---|
+| Borrar el trigger | casos 1,2,3,4,5 rojo |
+| `not deferrable` (chequeo inmediato) | **solo caso 4** rojo |
+| Validar `NEW` en vez de re-leer | **solo caso 4** rojo |
+| `not found` como no-op (falla abierta) | **caso 1** rojo |
+
+**Las dos del medio se detectan ÚNICAMENTE por el caso positivo** — cierran el agujero **rompiendo la
+mudanza de un cliente entre estudios**. Por eso el caso legítimo es parte de la regla y no un extra.
+
+**R36** en `ADR-0002` §B.1, y **R13 marcada como insuficiente**: decía *"el `path` no se edita a mano"*
+con estado ✅, y estuvo verde toda la vida del esquema con el agujero adentro. Medía **presencia** del
+trigger y **estado actual** del árbol; ninguna de las dos es una garantía de **alcanzabilidad**. Esa es
+la generalización que le faltaba al corolario de R10.
+
+**Descartada la alternativa declarativa** (`path` como columna generada + FK compuesta con
+`on update cascade`), y va a la deuda declarada **con sus números**: es estructuralmente superior —el
+executor rechaza el `update`, no un trigger evadible— pero cuesta **+9 a +25 % en `has_role_on()`**, que
+es el predicado de RLS de **toda** tabla de dominio, para blindar una operación que **hoy no tiene un
+solo call-site**. Mismo criterio con que `0015` rechazó tocar `current_user_id()` por +75 %.
+
+### 3. 🔴 Runbook del piloto — listo para copiar y pegar, NO ejecutado
+
+```bash
+# 1. Verificar que el piloto está donde se cree que está (0015 aplicada, 0016 no)
+ENV_FILE=.env.piloto pnpm db:migrate --dry-run   # o el equivalente de inspección
+# 2. Aplicar
+ENV_FILE=.env.piloto pnpm db:migrate
+# 3. Verificar sin drift: el hash debe coincidir con el de local
+#    0016_path_coherente.sql -> sha256[0:16] = 5292b9775d3b5cd6
+# 4. Confirmar el estado del árbol ANTES y DESPUÉS
+#    select count(*) from app.verificar_coherencia_path();   -- debe dar 0 en los dos momentos
+```
+
+**Y escribir el resultado en `HANDOFF` en el momento**, no después — es la lección que ya se pagó dos
+veces (`0011`, `0012` quedaron solo en local).
+
+### 4. Estado y pendientes
+
+`pnpm verificar`: **59 archivos, 1360 tests, 0 fallas** (venía de 58/1355).
+
+| Pendiente | Nota |
+|---|---|
+| 🔴 **Rotar las 4 credenciales del piloto** (#3) | Espera confirmación. **Primero en el orden de mañana** |
+| 🔴 **Aplicar `0016` al piloto** (#2) | Espera confirmación |
+| **Pushear** | 79 commits locales. La rama **no tiene upstream**: nada se pushea por accidente |
+| Contención alternativa del #2 | `revoke update on tenant_node from app_request`. Medido: **cero** `update` sobre esa tabla en todo el TS. Con `0016` aplicado ya no hace falta, pero sigue siendo defensa en profundidad |
+| Dueño del esquema superusuario | Sigue abierto, y es la **segunda mitad del impacto** del #1. Plan propio con `devops` |
+| Corregir el racional de `pg_catalog` en `0015` | Texto, no comportamiento (`code-reviewer`) |
+| `pnpm db:seed` roto desde cero | Falta `movimiento_contraparte_identificador` en el `truncate` de `sembrar.ts` |
+| Regla de clase del GUC | *Un GUC transporta identidad, nunca autorización.* Adoptarla como número exige decidir antes si el GUC se elimina — con `0016` ya no protege nada |
+| `0017` (determinante de idempotencia) | **Sigue frenado.** Se corre de `0016` a `0017` |
+
+---
+
+## 2026-08-15 (55) — Ronda de cierre del incidente #1: R10 estuvo mal **dos veces**. Cerrado en la tercera redacción. Y aparece el **incidente #2**.
+
+**Herramienta:** Claude Code. Cierra la entrada (54), que quedó diciendo "incidente #1 **NO cerrado**"
+— hoy está **cerrado**, y esta entrada es la que lo dice. Ronda completa: `qa-automation` (worktree
+aislado + base descartable), `tester`, `code-reviewer`.
+
+---
+
+### 1. 🔴 Lo más importante: la regla que cerraba el incidente estaba mal, y la primera corrección también
+
+La entrada (54) dejó R10 reescrita como *"`search_path` **terminado** en `pg_temp`"*. **También estaba
+mal.** `qa-automation` lo encontró por mutación, y se verificó de forma independiente con
+`current_schemas(true)` contra Postgres real:
+
+```
+search_path = pg_catalog, public, app, pg_temp  ->  pg_catalog | public | app | pg_temp_N   SEGURO
+search_path = pg_temp, public, app, pg_temp     ->  pg_catalog | pg_temp_N | public | app   VULNERABLE
+search_path = pg_temp                           ->  pg_catalog | pg_temp_N                  VULNERABLE
+```
+
+**PostgreSQL resuelve por PRIMERA aparición** y descarta las repetidas. Las dos configuraciones
+vulnerables **terminan** en `pg_temp` — o sea que la R10 corregida las daba **verde**, y las dos leen
+la trampa plantada exactamente igual que el patrón pre-`0015` (medido: 777 filas de una temporal, con
+el cuerpo sin calificar).
+
+Es **la misma falla que motivó la reescritura, cometida de nuevo un renglón más abajo**: medir la
+*forma* del `search_path` en vez de su *efecto*. Tres redacciones de la misma regla, dos malas.
+
+**Enunciado final (R10):** la **primera** aparición de `pg_temp` es la **última posición**, y hay al
+menos **dos** elementos. Sobre `prokind in ('f','p')` — una `procedure` tiene cuerpo y lee relaciones
+igual que una función. Exención de `current_user_id()` nominada por **esquema + nombre + aridad**, no
+por `proname` suelto.
+
+**Consecuencia de proceso, y va escrita porque es el aprendizaje real:** la marca de `Cerrado: SÍ` del
+incidente #1 se puso con la regla **escrita pero no mutada**. Eso es, literalmente, el error que el
+propio incidente documenta. La fila de `registro-incidentes.md` lo dice con esas palabras: *"la primera
+marca de cerrado fue prematura"*. **Una regla no cuenta como control hasta que se probó rompiéndola.**
+
+### 2. Las 10 mutaciones que quedaban verdes
+
+40 mutaciones contra base propia (migraciones `0001`→`0015` de cero). Diez verdes indebidas al empezar,
+**cero al final**. Además de las dos de arriba:
+
+| Mutación | Por qué importaba |
+|---|---|
+| `grant temporary … to app_request_dev` | 🔴 R10 bis enumeraba `app_request`/`app_job`/`app_firmador` — pero `app_request` es el rol de **grupo** y el que **abre la conexión** es el de login (`APP_DB_USER`). Vector entero reabierto, gate verde. Verificado end-to-end: la sesión creaba `pg_temp.membership` sin ruido. Ahora se barre el clúster: todo rol **no superusuario**, con guarda de vacuidad |
+| Rol nuevo con `TEMPORARY` | Mismo agujero, por el lado del rol que se cree mañana |
+| `public.current_user_id()` con patrón malo | La exención iba por `proname` suelto: exentaba a cualquier función **llamada** así, en cualquier esquema |
+| Sobrecarga `app.current_user_id(text)` | Ídem, por aridad |
+| `create procedure` con patrón malo | `prokind = 'f'` dejaba fuera toda una clase de objeto |
+| Función en esquema nuevo (`reportes`) | El `in ('app','public')` de R10 era una **premisa muda**. Se hizo explícita en **R10 ter**: si aparece un esquema, hay que decidir a mano si entra |
+| Vista y matview en `app` (no `public`) | R8/R9 miraban solo `public`, y `app` es donde vive la plomería de tenancía |
+| Vista con `security_invoker = on` | **Falso positivo**: `reloptions` guarda el booleano tal cual se escribió, y R8 marcaba en rojo una vista **segura**. Un test que grita cuando no pasa nada es un test que alguien apaga |
+
+### 3. `pg-temp-shadowing.test.ts` — la primera cobertura **conductual** del vector
+
+R10/R10 bis/R10 ter son **estáticos**: prueban que el `search_path` está escrito como queremos, no que
+Postgres resuelva los nombres donde creemos. `0001_aislamiento.test.sql` no menciona `pg_temp` en sus
+419 líneas. **No había una sola prueba de comportamiento**, que es exactamente por qué la regla estática
+pudo estar verde con el esquema explotable.
+
+El archivo nuevo planta la trampa de verdad, desde la sesión del **dueño** (después de `0015` §2 ningún
+rol de aplicación puede plantar nada, y el dueño es además el peor caso: las `security definer` corren
+con sus privilegios). Cuatro casos, cada uno con **control de vacuidad exacto** antes de la aserción —
+un test que "no encuentra fuga" porque nunca plantó la trampa es el bug que el archivo existe para no
+repetir. Mutado: **7/7 en rojo**, cada fallo nombra su caso.
+
+> Nota de método, del propio `qa-automation`: su primera corrida del test conductual dio **7/7 verde**
+> porque el script de mutación no había reemplazado el `search_path`. O sea que **el harness de
+> mutación también necesitó verificarse**. Lo reporta él mismo; queda escrito porque es el tipo de
+> detalle que no se cuenta y después nadie sabe cuánto valía la medición.
+
+### 4. `tester`: `0015` sobrevive los seis vectores
+
+- **Shadowing por otra vía** (relación, tipo, función, operador): `app_request_dev` **no tiene `CREATE`
+  en ningún esquema**, ni `create schema`, ni `TEMPORARY`. No puede fabricar el objeto que secuestraría
+  nada.
+- **Re-conceder `TEMPORARY`** — el más importante: con el privilegio devuelto **y la trampa plantada**,
+  las funciones dieron baseline. Prueba que **la mitad (a) —calificar el esquema en los cuerpos—
+  defiende sola**; el `revoke` es defensa en profundidad, no el único muro. Antes esto era una
+  afirmación del encabezado de la migración; ahora está medido.
+- **`current_user_id()` sin `SET`**: no se pudo romper. Con `search_path` de sesión hostil devolvió el
+  valor correcto — anidada, gobierna el `SET` de la función externa; y solo lee `current_setting`
+  (función: `pg_temp` nunca se busca) y castea a `uuid` (tipo: sí se buscaría, pero el atacante no
+  puede crear uno sin `TEMPORARY` ni `CREATE`). **La exención declarada es correcta.**
+- **`reparentar_nodo` / `verificar_coherencia_path`**: `permission denied` con el rol de aplicación.
+  Sin `set role`, sin `security definer` intermedio.
+
+### 5. `code-reviewer`: el SQL se mergea tal cual
+
+Comparó los **siete cuerpos sentencia por sentencia** contra `0001_tenancy.sql`: la única diferencia es
+la calificación del esquema y la cláusula `SET`. Volatilidad, `security definer` y nombres de parámetro
+correctamente re-declarados; `exigir_nodo_cliente` **sigue sin** `security definer`, que era
+intencional. Verificó por su cuenta —sin creerle al reporte anterior— que el `revoke` no rompe ningún
+llamador legítimo. Y confirmó las cinco exclusiones de la documentación: cero datos del piloto, `<un
+usuario real>` como marcador, y **nunca** "no se explotó".
+
+Un racional suyo que corrige el encabezado de `0015`: el comentario dice que `pg_catalog` va primero
+*"no por prolijidad"*, y **eso es falso** — `pg_catalog` ya se busca implícito antes. Lo único que
+neutraliza el secuestro de **tipos** es listar `pg_temp` explícitamente. El comportamiento es correcto;
+el porqué está mal atribuido, y es justo el comentario que alguien podría leer para sacar `pg_temp` del
+path. **Pendiente de corregir** (§7).
+
+### 6. 🔴 Incidente **#2**: `tenant_node.path` se edita a mano con un GUC que prende el atacante
+
+`tester`, atacando el **estado post-fix**, encontró un agujero distinto y pre-existente. Ya está
+asentado en `docs/seguridad/registro-incidentes.md` como incidente **#2**, `Cerrado: NO`.
+
+`app.rechazar_path_manual()` (`0001_tenancy.sql:131-144`) deja editar el `path` cuando el GUC
+`app.reparentando` vale `'on'` — y es un *customized option* de namespace, que **cualquier sesión
+prende** con `set_config`, sin privilegio asociado. No es un control de autorización: es una bandera que
+enciende el propio atacante. La policy `tenant_node_wr` valida **quién** escribe y **qué padre**
+declara, nunca **el valor** del `path`. Y `accessible_tenant_ids()` resuelve el subárbol **por path**.
+
+Es **H-1 reabierta por la puerta que el propio trigger dejó**: el comentario de `0001:118-125` describe
+esta misma fuga con todas las letras. **Agravante:** `reparentar_nodo()` aborta si el árbol queda
+incoherente; por esta vía el `path` corrupto **queda escrito**.
+
+Alcance medido, sin sobrevender: requiere rol `socio`/`admin_plataforma` (un `contador` recibe
+`UPDATE 0`), y la dirección es **push, no pull** — el socio empuja un cliente **propio** al subárbol
+ajeno, exponiendo **ese** cliente. Detección: a diferencia del #1, **acá sí hay rastro**
+(`verificar_coherencia_path()`), y dio **0 en las dos bases**.
+
+**Plan formal propio en curso**, con `dba-data` + `seguridad-datos-financieros` + `security-engineer`.
+
+### 7. Pendiente, y por qué no entró acá
+
+- **Corregir el racional de `pg_catalog`** en el encabezado de `0015` (§5). Es texto, no comportamiento.
+- **Contención del #1 declarada y no hecha**: rotar la contraseña de `app_request_dev`, y el **dueño del
+  esquema es superusuario** en las dos bases — que la entrada (54) llama *"la segunda mitad del
+  impacto"*. `code-reviewer` marca, con razón, que el registro no las menciona en "Acciones".
+- **`pnpm db:seed` está roto contra una base desde cero** (hallazgo lateral de `qa-automation`): la
+  lista enumerada de `truncate` de `sembrar.ts` no incluye `movimiento_contraparte_identificador`, que
+  agregó `0013`. `tests/ayuda.ts` sí la tiene, por eso la suite corre y el runbook no. El diseño
+  enumerado-sin-`cascade` funcionó como se pensó: el olvido es **ruidoso**.
+- **Nada verifica que `0015` esté aplicada al piloto.** El gate no se conecta al piloto. Es la lección
+  que ya se pagó con `0011` y `0012`.
+- **`current_user_id()` sigue exenta sin test propio.** Lo correcto sería afirmar que **se sigue
+  inlineando**: si mañana alguien le agrega un `SET` "por simetría", el +75 % sobre el predicado de RLS
+  de toda tabla de dominio entra sin ruido.
+
+### Estado
+
+`pnpm verificar`: **58 archivos, 1355 tests, 0 fallas** (venía de 57/1350). Incidente **#1 cerrado**;
+incidente **#2 abierto** con plan formal en curso. `0016` (determinante de idempotencia) **sigue
+frenado**.
+
+---
+
+## 2026-08-15 (54) — 🔴 CRÍTICO: escalada de privilegios por shadowing de `pg_temp` en las funciones de tenancía. `0015_search_path_pg_temp.sql` aplicada a **local Y piloto**. Incidente #1 abierto, **NO cerrado**.
+
+**Herramienta:** Claude Code. Plan `replicated-zooming-pine` (reescrito para esto; CLAUDE.md §3.2,
+disparadores (a), (b) y (c)). **La migración del determinante de idempotencia quedó FRENADA por completo**
+y se corre a `0016` — su trabajo está commiteado en `feat/persistir-reconocimiento` y no se pierde.
+
+### 🔴 En qué entorno quedó aplicada (sección propia, escrita en el momento)
+
+**`0015_search_path_pg_temp.sql` está aplicada a LOCAL y al PILOTO**, esta vez con confirmación
+anticipada y explícita del titular, condicionada a que local verificara primero.
+
+```
+piloto: 0015_search_path_pg_temp.sql | 2026-08-15 00:59:44 | hash 3230d715aa287ecd
+```
+
+Hash **idéntico** al del archivo local (recalculado, no asumido). Sin drift.
+
+### Cómo apareció
+
+Auditando la superficie de un trigger que iba a entrar en la migración anterior, `security-engineer`
+encontró —**respondiendo una pregunta lateral sobre `search_path`**— que la RLS entera se podía anular
+con la credencial ordinaria de la aplicación. No lo buscaba nadie.
+
+### El defecto
+
+`pg_temp` se busca **PRIMERO** para nombres de **relación y de tipo**, aunque **no esté listado** en el
+`search_path`. Las funciones de tenancía declaraban `set search_path = public, app` y leían
+`membership`/`tenant_node` **sin calificar el esquema**. Y las dos `security definer` corren con un
+dueño que es **superusuario**, así que adentro la RLS ni se evalúa.
+
+Reproducido **tres veces de forma independiente** (quien conduce, `security-engineer`, `dba-data`) con
+la credencial `app_request` — no superusuario, no `BYPASSRLS`:
+
+```
+                                             baseline   con la trampa plantada
+tenant_node                                         1  ->  5   (los dos estudios completos)
+movimiento_bancario_crudo                           1  ->  2   (100 %)
+has_role_on(<raíz del estudio ajeno>, socio)        —  ->  true
+```
+
+El PoC usa `<un usuario real>` como marcador: **no se transcribe ningún `user_id`**.
+
+### 🔴 Por qué es más grave que "una fuga de lectura"
+
+1. **No es sólo lectura: es escalada persistente.** `has_role_on` es el `with check` de las policies de
+   ESCRITURA. El atacante podía insertarse una membresía **real** sobre el estudio ajeno y borrar la
+   trampa — una escalada que **habría sobrevivido intacta a este mismo fix**. Por eso la verificación
+   forense se corrió ANTES de parchear: parchear sin verificar habría sido cerrar la puerta con el
+   intruso adentro.
+2. **`has_role_on` cae junto con `accessible_tenant_ids`, y `has_role_on` ES el control de N2-R.**
+   Durante toda la ventana, los CUIT en claro de socios, los números de cuenta completos y las filas
+   crudas de extracto —con los identificadores de TERCEROS que nunca fueron clientes de nadie—
+   quedaron **al nivel de N2**. Los dos controles que sustituyeron al grant por columna en N2-R son
+   exactamente los dos que este vector anulaba: la policy con `has_role_on`, y `leerConAuditoria`, que
+   es un choke point de **TypeScript** y contra alguien que habla SQL **no existe**.
+3. **Se salvó UNA sola columna, y por un control distinto del que se suponía.**
+   `credencial_fiscal.material_cifrado` (N3) no se fugó porque su control es un **grant por columna**
+   —un privilegio de Postgres, evaluado ANTES que la RLS— y ninguna función `security definer` lo toca.
+   El comentario de `0002` que decía *"es un control más fuerte que una policy"* resultó literalmente
+   cierto.
+
+### El barrido completo: el patrón NO eran dos funciones
+
+**Seis de las ocho** funciones del esquema `app` leían relaciones sin calificar; **ninguna de las ocho**
+excluía `pg_temp`. Incluía `exigir_nodo_cliente` —el **renglón (3) de la plantilla obligatoria** de
+ADR-0001 §5, presente en **15 tablas de dominio**— y `tenant_node_set_path`, que fabrica el `path` con
+el que `accessible_tenant_ids` resuelve el subárbol: **H-1 por otra puerta**.
+
+### 🔴 Estado forense: verificado ANTES y DESPUÉS del fix, limpio
+
+| | Piloto | Local |
+|---|---|---|
+| `app.verificar_coherencia_path()` | **0 incoherencias** | **0 incoherencias** |
+| Membresías | 1, coincide con `HANDOFF` (45) | 6, exactamente las del seed |
+
+**El enunciado defendible es "no hay evidencia de escalada persistente".** NO se afirma que no hubo
+acceso: **no existe capacidad técnica de determinarlo** — ver la deuda al pie.
+
+### Qué cierra la migración, y qué se midió
+
+1. **Las 6 funciones**: esquema calificado en los cuerpos **y** `set search_path = pg_catalog, public,
+   app, pg_temp` con `pg_temp` **último**.
+2. **`revoke temporary on database … from public`** — el único control que cierra la **clase entera**,
+   incluida la función que alguien escriba dentro de seis meses.
+3. **`revoke all on function app.reparentar_nodo / verificar_coherencia_path from public`** — hallazgo
+   de `dba-data` que nadie más vio: `0001:294-295` revocó de PUBLIC sólo las dos `security definer`, así
+   que **hasta hoy `app_request` podía invocar `reparentar_nodo()`**, la función que reescribe los `path`
+   — el vector H-1 directamente invocable.
+
+**Verificado por ejecución, en las dos direcciones:**
+
+| Prueba | Antes | Después |
+|---|---|---|
+| PoC con `app_request` | 5 nodos, 2/2 movimientos | **bloqueado en el primer paso** (`permission denied to create temporary tables`) |
+| PoC con la trampa plantada **desde el dueño** (que conserva `TEMPORARY`) | — | **1 nodo**, `has_role_on(ajeno)` = **`false`** |
+
+La segunda prueba es la que importa: demuestra que **el fix de las funciones cierra por sí solo**,
+independientemente del `revoke`. Si mañana alguien re-concede `TEMPORARY`, el agujero no vuelve.
+
+### 🔴 `app.current_user_id()` NO se tocó, y es deliberado
+
+Una cláusula `SET` **inhabilita el inlining de funciones SQL**, y esa función se inlinea dentro de
+`has_role_on` y de las policies. Medido por `dba-data`: **+75 %** (131 → ~230 µs) en `has_role_on`, que
+corre en el predicado de RLS de **toda** tabla de dominio. Y **no lo necesita**: `pg_temp` nunca se
+busca para nombres de función. Completar la tanda "por simetría" degradaría el sistema entero a cambio
+de nada.
+
+### Otras cosas medidas y que conviene no re-descubrir
+
+- **`drop`/`create` es imposible**, no es preferencia de estilo: **49 policies** dependen de
+  `accessible_tenant_ids` y **37** de `has_role_on`. `drop … cascade` **las borra en silencio**, dejando
+  tablas con RLS forzada y sin policy.
+- **`create or replace` preserva OID, dueño y ACL** (comparado fila por fila), así que los grants de
+  `0001:294-300` no se re-emiten. Los **15 triggers** sobre `exigir_nodo_cliente` siguen enganchados.
+- **No hace falta reciclar conexiones**: probado con una conexión viva y la trampa todavía plantada en
+  su `pg_temp`, la fuga se cierra en la transacción siguiente, en el mismo backend.
+- **Costo cero** en el predicado de RLS: `EXPLAIN` textualmente idéntico, medido sobre 4005 nodos.
+- **`pg_temp` también secuestra NOMBRES DE TIPO** — un `create temp table text (…)` rompe una
+  declaración de plpgsql. Por eso `rechazar_path_manual` entró en la tanda aunque no lea ninguna
+  relación, y por eso `pg_catalog` va explícito y **primero**.
+
+### 🔴 R10 pasó VERDE con el bug adentro — y eso es una falla de la suite
+
+`ADR-0002` §B.1 R10 exige que *"toda función `security definer` fija `search_path`"*, y el test mira
+`pg_proc.proconfig`. **Las dos funciones vulnerables lo fijaban.** La regla medía "¿fija alguno?", no
+"¿el que fija neutraliza `pg_temp`?". Y acotarla a `security definer` tampoco alcanza: **cuatro de las
+seis vulnerables son `INVOKER`**.
+
+Es el caso de manual de **"el gate verde no es evidencia"**, sobre la regla dura que el proyecto entero
+existe para sostener (CLAUDE.md §1.7). La reescritura de R10 y su test **van en el mismo cierre**, y
+sin ellos el incidente no se cierra.
+
+### Deuda declarada, con dueño
+
+- 🔴 **No existe capacidad técnica de determinar si el vector se ejecutó.** El único rastro de acceso
+  (`acceso_auditoria`) se escribe **desde la aplicación**, y el vector no pasa por la aplicación.
+  Postgres no tiene triggers de `SELECT`, `pgaudit` está descartado por ADR-0000 §6 y `log_statement`
+  está en el default. Hallazgo de segundo orden: **la trazabilidad de acceso de este sistema es un
+  control de aplicación, no de base**, y es estructuralmente ciega al escenario de ADR-0002 §0 fila 3.
+- 🔴 **El dueño del esquema es superusuario** en local Y en piloto (`rolsuper=t, rolbypassrls=t`),
+  verificado en los dos. Es la **segunda mitad del impacto** y hace falsa la afirmación de ADR-0002
+  §C.0.bis (*"`force row level security` le aplica las políticas también al dueño"*). Es **provisioning,
+  no migración**: tarea propia con `devops` + `security-engineer`.
+- **El hueco del logger**: el redactor **nunca ve la clave** de un campo de log de nivel superior
+  (`logger.ts:95-98` vs `redactar.ts:196-201`); la única defensa es el tipo, y `loggerAcotado` castea.
+  ~108 claves alcanzadas. Tarea propia.
+- **N2-R quedó apoyado en un único punto de falla** (`has_role_on`), y nadie lo había escrito. ¿Le
+  corresponde una segunda barrera independiente (rol lector con grant por columna, estilo
+  `app_firmador`)? Decisión del titular con `arquitecto-software`.
+- **Rotar la contraseña de `app_request_dev`** en las dos bases — no porque se haya filtrado, sino
+  porque es la credencial que vuelve esto explotable. `db-setup.sql` ya es idempotente. **NO** corresponde
+  rotar credenciales fiscales: el pepper vive en el entorno y `material_cifrado` no se leyó.
+- **Cerrar G-1/G-2/G-3 en `knowledge/` sube a prioridad ALTA.** Es el primer incidente donde el hueco
+  tiene costo operativo real.
+- **R8 y R9 pasan por vacuidad** (cero vistas y cero matviews). El día que exista la primera vista de la
+  cola de revisión, una vista `security_invoker` con referencias sin calificar es **la misma clase**.
+
+### Sobre lo normativo
+
+**No tengo esa fuente cargada.** `knowledge/` está en estado esqueleto y ADR-0002 §G declara abiertos
+G-1 (secreto fiscal), G-2 (protección de datos personales) y G-3 (deber de notificar). **No se afirma
+ni se niega** que esto constituya una violación de secreto fiscal, ni que exista deber de notificación,
+ni ante quién ni en qué plazo. Lo que sí corresponde por deber profesional y contractual —notificar al
+titular del estudio— ya está escrito en `registro-incidentes.md:28-30`.
+
+**Validar con profesional matriculado.**
+
+### El incidente NO está cerrado
+
+Registrado como **#1** en `docs/seguridad/registro-incidentes.md`, como **"vulnerabilidad de aislamiento
+— exposición no confirmada"** (no como filtración confirmada: la distinción se sostiene en las dos
+direcciones). **Ventana: desde `0001` (2026-08-10) hasta hoy** — el defecto es fundacional, existió cada
+minuto de vida del esquema.
+
+Por la regla 3 de esa bitácora, **no se cierra hasta que exista el control expresado como regla
+verificable de ADR-0002 §B con su número**. El fix está aplicado; la regla numerada y su test todavía
+no. Y "es local" **no baja la severidad**: `registro-excepciones.md` E-1 dice que *"dado que hay material
+real en juego, el entorno local se trata como productivo a los efectos de los controles"*.
+
+---
+
+## 2026-08-14 (53) — 🔴 `0014` APLICADA AL PILOTO, con confirmación explícita del titular. Escrito EN EL MOMENTO.
+
+**Herramienta:** Claude Code. Entrada corta y deliberadamente separada de la (52): su único objetivo es
+que la aplicación al piloto quede registrada **en el acto**, no al cerrar la tarea. El hueco entre
+aplicar y registrar es exactamente donde se metieron los tres olvidos anteriores (0011, 0012, 0013).
+
+### El hecho
+
+```
+ENV_FILE=.env.piloto pnpm db:migrate
+  + 0014_reconocimiento_persistido.sql … aplicada
+
+select nombre, aplicada_en, hash from _migraciones where nombre like '0014%';
+               nombre               |         aplicada_en          |       hash
+ 0014_reconocimiento_persistido.sql | 2026-08-14 19:04:07.64428+00 | 441a375297deb38f
+```
+
+**Hash idéntico al del archivo local** (`441a375297deb38f`, sha256 normalizado a LF truncado a 16, el
+mismo algoritmo de `migrar.ts`) — verificado recalculándolo sobre el archivo, no asumido. Sin drift.
+
+**Estado de los dos entornos, medido:**
+
+| Entorno | Puerto | Migraciones | Datos |
+|---|---|---|---|
+| local | 5442 | hasta **0014** | 2 lotes, 2 movimientos (fixtures sintéticos) |
+| piloto | 5443 | hasta **0014** | 3 lotes, **1830 movimientos reales** |
+
+### Por qué se aplicó al piloto y no se probó en local
+
+El pedido original era correr el CLI nuevo contra un lote real y, si local no tenía uno, **ingerir un
+PDF real de banco contra la base local**. Se frenó antes de tocar nada: eso choca con una regla dura.
+
+- `ADR-0002` §A.1 clasifica el extracto crudo como **N2-R** y los movimientos/importes/descripciones
+  como **N2**. Su tabla dice, literal: N2 en entorno de prueba → *"No — solo sintético"*; N2-R →
+  *"Nunca"*. Es `CLAUDE.md` §1.4, bajo el título "reglas duras (no negociables)".
+- `ADR-0002` §F.1: *"Los extractos de prueba se construyen desde la especificación del formato, **no
+  desde el archivo de un cliente**"*.
+- Y el precedente citado apuntaba al otro lado: la verificación equivalente de Capa C
+  (`resolver-contrapartida.ts`) **no** corrió contra local — `HANDOFF` (51) dice *"verificado DIRECTO
+  contra `sistema-contable-postgres-piloto` (puerto 5443)"*. El piloto existe, con su compose, su
+  volumen y su `APP_ENTORNO` propios, precisamente para que el dato real no toque local.
+- Problema práctico además: `sembrar()` hace `truncate … cascade` sobre local en cada corrida de
+  tests. Dato real ahí duraría hasta el próximo `pnpm verificar`.
+
+El titular, consultado con las cuatro opciones sobre la mesa, **confirmó explícitamente** aplicar 0014
+al piloto y correr ahí, en dry-run primero, sin escribir nada todavía.
+
+### Lo que sigue, y lo que NO se hizo
+
+`pnpm reconocer:lote` en **DRY-RUN** contra uno de los tres lotes reales. **No se escribió ninguna fila
+en el piloto**: la tabla `reconocimiento_movimiento` existe ahí y está **vacía**. La corrida con
+`--aplicar` queda pendiente de una decisión del titular a la vista del resultado del dry-run.
+
+---
+
+## 2026-08-14 (52) — Módulo 2: migración `0014` (reconocimiento persistido) + trinquete de `VERSION_DEL_MOTOR`. Aplicada a **LOCAL únicamente**. `pnpm verificar` en verde. Comiteado en `feat/persistir-reconocimiento`, sin mergear.
+
+**Herramienta:** Claude Code. Plan `replicated-zooming-pine` (CLAUDE.md §3.2, disparadores (a), (b) y (d)).
+Cierra la pieza que `HANDOFF` (51) dejó explícitamente afuera: el motor recalculaba todo en cada corrida
+y no escribía nada.
+
+### 🔴 En qué entorno quedó aplicada la migración (sección propia, por pedido explícito del usuario)
+
+**`0014_reconocimiento_persistido.sql` está aplicada a la base LOCAL de desarrollo**
+(`sistema-contable-postgres`, puerto 5442) — donde corren los tests — **y NO al piloto**. Confirmado con
+`pnpm db:migrate`: `+ 0014_reconocimiento_persistido.sql … aplicada`.
+
+Al piloto se aplica **solo cuando el usuario lo confirme explícitamente**, y esa confirmación se escribe
+en esta bitácora **en el momento**, no después. Es la regla que el usuario dictó al aprobar el plan, sin
+que se la pidieran — señal de que las tres repeticiones anteriores (0011, 0012, 0013) le costaron. El
+hueco entre aplicar y registrar es exactamente donde se metieron esos tres olvidos.
+
+### Las decisiones del usuario que fijaron el alcance
+
+| Decisión | Resuelto |
+|---|---|
+| Numeración | `0014` = reconocimiento; `0015` = contrapartida + manifestación. **Reasigna** lo que decía `HANDOFF` (49) (que daba 0014 al plan de cuentas) |
+| Versionado | **`motor_digest` calculado por banco**, no contadores manuales |
+| `reconocimiento_concepto_chk` | **CHECK** con los 71 valores; se asume una migración por banco nuevo |
+| Nombre de la tabla de 0015 | **`padron_manifestacion` / `manifestado_por`** (corrección de `contador-dominio`: "atestación" connota un tercero que da fe sobre algo ajeno) |
+
+### Convocatoria — 2 rondas, 9 agentes
+
+**Ronda 1 (diseño, antes de una línea de código):** `arquitecto-software`, `dba-data`,
+`seguridad-datos-financieros`, `security-engineer`, `contador-dominio`, `plan-cuentas-multicliente`,
+`motor-conciliacion-contable`. **Ronda 2 (implementación):** `dba-data` (DDL exacto), `backend-dev`
+(gate + capa de escritura).
+
+**Lo que la Ronda 1 cambió, y que no habría aparecido sin ella:**
+
+- 🔴 `arquitecto-software` objetó `catalogo_version` como contador **global**: invalidaría todos los
+  reconocimientos de Galicia el día que entre un banco nuevo con conceptos que ningún léxico de Galicia
+  alcanza. Y agravó el hallazgo original: `motor.ts:52` pasa `ladoEsperadoDe` **al matcher**, así que el
+  catálogo determina también los **negativos**. Resultado: digest **por banco**, calculado, por exclusión.
+- 🔴 El mismo agente objetó que P0, como estaba escrito, **"no es el paso revertible más chico: es un
+  no-op con forma de paso"** — constantes que nadie lee difieren el 100 % del riesgo al commit siguiente.
+  P0 pasó a ser la función de digest **con cinco predicciones falsables**.
+- 🔴 `seguridad-datos-financieros`: `socio_id` debe ser **N2, no N1** — con N1 el tipo `ColumnaSensible`
+  **compila** `logger.info(…, { socioId })` y el redactor no lo intercepta. (Aplica a 0015.)
+- 🔴 `motor-conciliacion-contable`: `reconocimiento_forma_chk` debe ser condicional por
+  **`(clase, motivo_codigo)`**, no nulidad grupal. Verificado con grep: la evidencia está ausente en
+  `sin_evidencia_de_concepto`/`ambiguo`/`concepto_no_catalogado` y presente en
+  `concepto_sin_tipo_asignado`/`reversa_incoherente`. Nulidad grupal daría verde a un `ambiguo` con
+  evidencia adjunta — una prueba, en la cola de la contadora, de un match que el motor no hizo.
+- 🔴 `dba-data`: la FK de supersesión con dos columnas solo garantiza el cliente; con tres, también el
+  **movimiento**.
+- `contador-dominio`: cada corrida debe **insertar** una manifestación nueva, nunca reutilizar la más
+  reciente — si no, una de hace seis meses autoriza convertir en proveedor a la contraparte del socio 45.
+- `plan-cuentas-multicliente` ratificó el límite acto-vs-atributo: **el ADR inexistente de
+  `ADR-0001` §5.2 no es prerrequisito bloqueante**.
+
+### 🔴 El defecto que `dba-data` encontró EJECUTANDO, no leyendo (Ronda 2)
+
+`uq_recon_determinante` con solo `motor_digest` **era insatisfacible**. Capa C corre con el mismo léxico
+y por lo tanto el **mismo digest** que capa B, así que la fila de la promoción colisionaría siempre
+contra su predecesora: **la capa C entera no podría persistir**. Resuelto sin columna nueva —
+`es_propuesta`, la generada que ya existía para `05` §5.1, entra como cuarta columna de la unicidad.
+Verificado contra una base descartable creada desde template y borrada al terminar.
+
+**Límite declarado en el propio DDL:** dos corridas de capa C con el mismo digest y **padrón distinto**
+colisionan y la segunda es rechazada. Es **fail-closed y ruidoso**, correcto hoy; `0015` reemplaza esa
+unicidad cuando exista el determinante del padrón.
+
+### Tres errores del plan aprobado, corregidos tras verificarlos contra el código
+
+1. 🔴 El plan decía "retirar R-H y R-H bis" porque el repo las declara *"árbitro mientras no exista
+   0014"*. **Ese comentario del repo es falso** y el plan lo copió: R-H espeja la **entrada** del motor
+   contra el esquema de Módulo 1, y 0014 persiste la **salida**. Retirarlas borraría dos reglas vivas.
+2. 🔴 `retiro_de_socio` y `aporte_de_socio` están marcados `sin_evidencia_en_el_roster` y sin embargo
+   `motor.ts:147` los produce vía capa C. Un check derivado de los "habilitados" **rechazaría toda la
+   capa C**. El check va sobre los 31.
+3. 🔴 `version` dentro de `CONCEPTOS_CANONICOS` rompe el `as const satisfies` de `catalogo.ts:1392`,
+   que **es** la garantía PROP-1 por compilador. Va como constante hermana.
+
+### Y un falso verde en el test propio, encontrado por mutación
+
+La primera versión de la predicción (4) de P0 —"agregar un concepto de Santander no mueve el digest de
+Galicia"— **pasaba en verde con el digest mutado a global**. Ampliar un léxico no agrega filas al
+catálogo, así que no ejercía nada. Reescrita sobre la propiedad que sí sostiene el escenario: *la
+proyección de un banco no puede contener un concepto que ese banco no alcanza*. Re-mutada: ahora la mata.
+Sin mutar, P0 habría cerrado con un test decorativo en su punto más importante.
+
+### Qué se construyó
+
+**Nuevo:** `packages/contabilidad/src/nucleo/version.ts` (proyección semántica + `digestDeBanco`) +
+`tests/version.test.ts` (8) · `packages/data/migrations/0014_reconocimiento_persistido.sql`
+(`reconocimiento_movimiento` + `reconocimiento_candidato`) ·
+`packages/contabilidad/scripts/version-del-motor.ts` (el trinquete) + `tests/version-del-motor.test.ts`
+(13, siete de ellos ejercitando el **rojo**) + `version-del-motor.json` (libro append-only) ·
+`tests/dominios-cerrados.test.ts` (18).
+
+**Modificado:** `nucleo/tipos.ts` (`CLASES_RECONOCIMIENTO` nueva; se borraron las notas
+"TODAVÍA NO TIENE CHECK") · `nucleo/reconocimiento.ts` (el discriminante ahora se **deriva** con
+`Extract`) · `clasificacion-campos.ts` (las 2 tablas, todas sus columnas) · `catalogo.test.ts` (8 filas
+en `DOMINIOS_CERRADOS`) · `aislamiento-modulo-1.test.ts` + `tests/ayuda.ts` (truncate) · `package.json`.
+**Borrado:** `tests/dominios-pendientes.test.ts`, reemplazado por `dominios-cerrados.test.ts`, que cubre
+la dirección **código → base** que nunca tuvo guard.
+
+### Medido
+
+`pnpm verificar` en verde: **56 archivos, 1325 tests, 0 fallas** (7 `todo` preexistentes). Base al
+arrancar: 54 / 1287. Los 8 dominios cerrados verificados contra `pg_constraint` con el patrón anclado
+real del gate — `reconocimiento_forma_chk` correctamente **fuera** (lleva un `case`).
+
+### Lo que falta para cerrar 0014
+
+La **capa de escritura**: `nucleo/persistible.ts` (`aFilaPersistible` + `ReconocimientoFinal`),
+`escrituras.ts`/`lecturas.ts` en `packages/data`, la regla **R-K** que vigila el espejo plano, los tests
+de aislamiento de las dos tablas nuevas, y el CLI. `backend-dev` ya entregó el diseño completo.
+
+### Deuda declarada
+
+- 🔴 **`EntradaLexico['id']` es `string` a secas**, así que la protección que pidió
+  `seguridad-datos-financieros` ("aceptar solo el tipo literal") **es vacua tal como se escribió**. Se
+  cierra en la capa de escritura con marca de tipo + `Set.has` de **pertenencia** + el id que no entra
+  por parámetro. Y el error **no lleva el valor**: si vino de la glosa, meterlo en el mensaje lo filtra
+  al log.
+- **`recalculo_disponible` no tiene productor** y la regla de `05` §5.2 (*"un reconocimiento con decisión
+  humana **registrada** no se recalcula solo"*) es **vacua** hoy: no existe tabla de decisiones
+  registradas. Disparador: la guarda tiene que existir **antes** que la cola de revisión.
+- **`on delete restrict` cambia el comportamiento de la re-ingesta** — borrar un movimiento ya
+  reconocido, o su lote, ahora falla. Confirmado por el titular como coherente con "reprocesar, no
+  editar".
+- **La tabla de presencia de evidencia por motivo es una foto de `motor.ts` de hoy** y nada la ata. El
+  test que la ataría (`forma-persistible.test.ts`) va con la capa de escritura.
+
+---
+
 ## 2026-08-13 (51) — Módulo 2, Capa C: resolución de contrapartida (socio vs. tercero). `pnpm verificar` en verde. **Sin commitear** (rama `feat/capa-c-contrapartida`, el usuario commitea después).
 
 **Herramienta:** Claude Code. Plan `adaptive-herding-pillow` (reescrito para esta etapa — reemplaza al

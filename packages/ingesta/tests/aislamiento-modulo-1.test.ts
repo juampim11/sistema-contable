@@ -153,6 +153,13 @@ const FUERA_DEL_MODULO_1: Readonly<Record<string, string>> = {
     'ingesta). Cobertura de aislamiento en aislamiento-modulo-2.test.ts.',
   padron_socio_documento:
     'Satélite N2-R del padrón de socios (0013), misma razón que padron_socio.',
+  reconocimiento_movimiento:
+    'Tabla del Módulo 2 (migración 0014): el resultado del motor. La ingesta NO la escribe — el ' +
+    'motor corre después, sobre movimientos ya persistidos, y es lo que separa "qué dice el ' +
+    'documento" (Módulo 1) de "qué significa" (Módulo 2). Cobertura de aislamiento propia en ' +
+    'packages/data/tests/aislamiento-modulo-2.test.ts.',
+  reconocimiento_candidato:
+    'Satélite 0..N de reconocimiento_movimiento (0014), misma razón que su padre.',
 };
 
 /** Las tablas que el pipeline de ingesta **tiene que** haber llenado en los dos clientes. */

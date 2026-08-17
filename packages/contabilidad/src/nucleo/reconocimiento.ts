@@ -1,4 +1,12 @@
-import type { Lado, MotivoSinReconocer, Polaridad, QueDecide, TipoMovimiento, ViaEvidencia } from './tipos.ts';
+import type {
+  ClaseDeReconocimiento,
+  Lado,
+  MotivoSinReconocer,
+  Polaridad,
+  QueDecide,
+  TipoMovimiento,
+  ViaEvidencia,
+} from './tipos.ts';
 import type { ConceptoCanonico } from './catalogo.ts';
 import type { PendienteDeLaura } from './lexico.ts';
 import type { ResolucionDeContraparte } from './contrapartida.ts';
@@ -33,9 +41,15 @@ export type EvidenciaDelMatch = {
   readonly huboCola: boolean;
 };
 
+/**
+ * 🔴 Los tres discriminantes se DERIVAN de `CLASES_RECONOCIMIENTO` (`tipos.ts`) con `Extract`, no se
+ * escriben a mano. `Extract` no es decorativo: si alguien borra un valor de la constante, el `Extract`
+ * correspondiente colapsa a `never` y ESTA variante deja de ser construible — el error aparece acá, en
+ * el tipo, y no como una fila rechazada por `reconocimiento_clase_chk` en runtime.
+ */
 export type Reconocimiento =
   | {
-      readonly clase: 'propuesta';
+      readonly clase: Extract<ClaseDeReconocimiento, 'propuesta'>;
       readonly tipo: TipoMovimiento;
       readonly concepto: ConceptoCanonico;
       readonly polaridad: Polaridad;
@@ -47,7 +61,7 @@ export type Reconocimiento =
       readonly evidenciaContrapartida?: ResolucionDeContraparte;
     }
   | {
-      readonly clase: 'decision_humana';
+      readonly clase: Extract<ClaseDeReconocimiento, 'decision_humana'>;
       readonly tipo: TipoMovimiento;
       readonly concepto: ConceptoCanonico;
       readonly polaridad: Polaridad;
@@ -61,7 +75,7 @@ export type Reconocimiento =
       readonly evidenciaContrapartida?: ResolucionDeContraparte;
     }
   | {
-      readonly clase: 'sin_reconocer';
+      readonly clase: Extract<ClaseDeReconocimiento, 'sin_reconocer'>;
       readonly motivo: MotivoSinReconocer;
       readonly candidatos: readonly string[];
       readonly evidencia: EvidenciaDelMatch | undefined;

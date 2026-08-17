@@ -65,6 +65,14 @@ export const CLASIFICACION = {
           'Se clasifica por el caso más sensible.',
       },
       path: { nivel: 'N1', exportable: false, nota: 'Contiene nid: no sale (R25).' },
+      parent_path: {
+        nivel: 'N1',
+        exportable: false,
+        nota:
+          'Espejo del `path` del padre (0017). Mismo criterio que `path`: contiene nid, no sale (R25). ' +
+          'No es un dato: es lo que vuelve fila-local el invariante del árbol, y por lo tanto ' +
+          'verificable con un CHECK inmune a la RLS. Su veracidad la sostiene tenant_node_parent_path_fk.',
+      },
       deleted_at: MARCA_TIEMPO,
       created_at: MARCA_TIEMPO,
       updated_at: MARCA_TIEMPO,
@@ -86,13 +94,64 @@ export const CLASIFICACION = {
     },
   },
 
+  /**
+   * Rastro append-only de los cambios del padrón de derechos (incidente #5, `0019`).
+   *
+   * Mismo plano que `membership`: se aísla por el nodo, no por `cliente_id`. Y mismo criterio de
+   * nivel — quién tiene qué rol sobre qué nodo es estructura de la plataforma, no dato de un cliente.
+   */
+  membership_historia: {
+    columnaTenant: 'ninguna',
+    motivoSinTenant:
+      'Igual que `membership`: se aísla por tenant_node_id in (select app.accessible_tenant_ids()). ' +
+      'Una membresía de socio, auditor o admin_plataforma cuelga del ESTUDIO, no de un cliente — que ' +
+      'es exactamente por lo que este rastro no puede vivir en `acceso_auditoria` (su trigger exige ' +
+      'un nodo de tipo cliente y la fila no entra).',
+    campos: {
+      id: UUID_INTERNO,
+      tenant_node_id: UUID_INTERNO,
+      membership_id: UUID_INTERNO,
+      user_id: UUID_INTERNO,
+      rol: { nivel: 'N1', exportable: true },
+      operacion: { nivel: 'N1', exportable: true },
+      activo_antes: { nivel: 'N1', exportable: true },
+      activo_despues: { nivel: 'N1', exportable: true },
+      hecho_por: UUID_INTERNO,
+      ocurrido_en: MARCA_TIEMPO,
+      via_depth: {
+        nivel: 'N1',
+        exportable: true,
+        nota:
+          'Profundidad de trigger con la que se escribió la fila (`0020` §3). No es un dato del ' +
+          'negocio: es el mecanismo que distingue la fila del trigger (vale 1) de una escrita a mano ' +
+          '(el DEFAULT vale 0 fuera de un trigger y el check la rechaza). Se expone sin problema — no ' +
+          'dice nada de nadie.',
+      },
+    },
+  },
+
   // ---------------------------------------------------------------------------
   // Auditoría de acceso (ADR-0002 §C.0 / R32). Append-only.
   // ---------------------------------------------------------------------------
   acceso_auditoria: {
     columnaTenant: 'cliente_id',
     campos: {
-      id: { nivel: 'N1', exportable: true },
+      id: {
+        nivel: 'N1',
+        exportable: false,
+        nota:
+          'Bigint secuencial GLOBAL — la MISMA forma que `tenant_node.nid`, y por lo tanto el mismo ' +
+          'trato: NUNCA sale en API, URL ni export (R25). No hace falta enumerar: DOS filas propias ' +
+          'alcanzan, porque la secuencia es de toda la plataforma y los huecos entre filas propias ' +
+          'son el volumen de auditoría de los demás estudios. Es N1 y NO N2 porque no revela dato de ' +
+          'ningún cliente sino actividad de la plataforma —mismo criterio que `nid`, `path` y ' +
+          '`parent_path`—, y porque este registro clasifica por NOMBRE de columna: `id` en N2 ' +
+          'rompería la compilación del logger en todo el repo y haría que `redactar` tape todo `id` ' +
+          'de todo log. `0020` §1 le revoca además el `insert`: con `overriding system value` un ' +
+          'tenant reclama ids que la secuencia no alcanzó y la PK aborta la operación auditada de ' +
+          'OTRO tenant (incidente #7, medido). La mitad FUGA sigue abierta (hallazgo H-A): cerrarla ' +
+          'es cambiar el tipo de la PK de una tabla append-only.',
+      },
       cliente_id: UUID_INTERNO,
       user_id: UUID_INTERNO,
       accion: { nivel: 'N1', exportable: true },
@@ -662,6 +721,88 @@ export const CLASIFICACION = {
         nota: 'La fila cruda sin interpretar. N2R porque contiene los datos de TERCEROS de la ' +
           'contraparte (113 CUIT en un solo archivo del piloto), que no son clientes del estudio y ' +
           'nunca consintieron nada.',
+      },
+      created_at: MARCA_TIEMPO,
+    },
+  },
+
+  /**
+   * El resultado del motor de reconocimiento (migración 0014). Qué dijo el motor sobre un
+   * movimiento, con qué versión del código (`motor_digest`) y qué fila lo reemplazó.
+   *
+   * 🔴 NINGUNA columna N2-R, a propósito: la evidencia guarda el `id` de la entrada del léxico —que
+   * es CÓDIGO, N0— y nunca el texto que matcheó (05 §6). Es lo que mantiene a esta tabla fuera del
+   * régimen de lectura auditada, y es requisito de que la cola de revisión sea usable: se lista
+   * entera, todos los meses. Auditar cada pasada sería el ruido de ADR-0002 H-8.
+   */
+  reconocimiento_movimiento: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      movimiento_id: UUID_INTERNO,
+      superseded_por: UUID_INTERNO,
+      motor_digest: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Identidad del ARTEFACTO DE CÓDIGO que produjo la fila (digestDeBanco), no dato del cliente.',
+      },
+      clase: { nivel: 'N1', exportable: true, nota: 'Vocabulario de proceso: qué trabajo le queda a la persona.' },
+      es_propuesta: { nivel: 'N1', exportable: true, nota: 'Generada de `clase`. Destino de la FK de asiento_propuesto (0016+).' },
+      tipo: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Clasificación contable de ESTA transacción de ESTE cliente — mismo nivel que asientos y partidas (ADR-0002 §A.1).',
+      },
+      concepto: { nivel: 'N2', exportable: true, nota: 'Ídem `tipo`: es la interpretación del movimiento del cliente.' },
+      polaridad: { nivel: 'N1', exportable: true, nota: 'Hecho estructural (normal/reversa), mismo tier que saldo_es_acreedor.' },
+      lado: { nivel: 'N1', exportable: true, nota: 'Hecho estructural: sale de columnaOrigen (04 §2).' },
+      via: { nivel: 'N1', exportable: true, nota: 'Cuál matcher resolvió — hecho del PROCESO, mismo tier que concepto_banco_estrategia.' },
+      que_decide: { nivel: 'N1', exportable: true, nota: 'Vocabulario cerrado sobre qué falta decidir, mismo tier que motivo_codigo.' },
+      motivo_codigo: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'MotivoSinReconocer, vocabulario cerrado. `_codigo` y no `motivo` a secas: ADR-0002 §C.0.bis documenta que ese nombre ya costó una vez.',
+      },
+      evidencia_entrada_lexico_id: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Id del léxico (código N0), pero determina el concepto del movimiento del cliente tan directamente como la columna `concepto`: se clasifica por lo que revela, no por la forma.',
+      },
+      evidencia_caracteres_matcheados: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Acotado por el largo del LITERAL del léxico (N0), no por el de la glosa. Si un matcher futuro lo hiciera el largo de la glosa, pasa a ser un oráculo sobre texto del cliente y hay que reclasificarlo.',
+      },
+      evidencia_hubo_cola: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Es `entrada.matcheo.modo === prefijo_con_cola`: propiedad de la ENTRADA DEL LÉXICO, no de la glosa. La cola en sí (el nombre de la contraparte) está prohibida por 05 §6.',
+      },
+      recalculo_disponible: { nivel: 'N1', exportable: true, nota: 'Booleano de workflow. Sin productor todavía.' },
+      created_at: MARCA_TIEMPO,
+    },
+  },
+
+  /**
+   * Satélite 0..N de `reconocimiento_movimiento` (migración 0014): las entradas del léxico a las
+   * que apuntaba un reconocimiento que no se pudo resolver. Ids de código, nunca texto.
+   */
+  reconocimiento_candidato: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      reconocimiento_id: UUID_INTERNO,
+      reconocimiento_clase: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Generada CONSTANTE (`sin_reconocer`). Mitad hija de la FK de tres columnas: no se puede escribir ni con el valor correcto.',
+      },
+      entrada_lexico_id: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Mismo criterio que reconocimiento_movimiento.evidencia_entrada_lexico_id.',
       },
       created_at: MARCA_TIEMPO,
     },

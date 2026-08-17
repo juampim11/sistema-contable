@@ -19,7 +19,9 @@
 ## 1. Reglas duras (idénticas a CLAUDE.md)
 
 Ver `CLAUDE.md` §1 (`<REGLA_DURA_1..4>` + sin secretos en el repo + §1.6 guardrails de los agentes
-fiscales/contables + §1.7 asistido-no-automático y aislamiento entre clientes). **No** reescribir acá.
+fiscales/contables + §1.7 asistido-no-automático y aislamiento entre clientes + §1.8 toda regla
+verificable se prueba rompiéndola + §1.9 antes de migrar a un entorno con datos reales: listar,
+confirmar y frenar si aparece una de más). **No** reescribir acá.
 
 > **Las dos que esta herramienta tiene que tener presentes en cada respuesta de dominio**, porque son las
 > que se rompen sin darse cuenta:
@@ -64,7 +66,7 @@ todo acceso a datos de un cliente; `conJob()` solo con un motivo de su unión ce
 `shared/observabilidad` (nada de `console.*`); `leerConAuditoria()` para todo lo N2-R/N3; y el generador
 sintético para cualquier dato de desarrollo o test.
 
-**El gate es `pnpm verificar`** (typecheck estricto + 72 tests). Cuatro cosas lo ponen rojo sin que nadie
+**El gate es `pnpm verificar`** (typecheck estricto + barrido de fuga + verificacion de fixtures + la suite completa). Cuatro cosas lo ponen rojo sin que nadie
 tenga que notarlas en la revisión: una tabla con `cliente_id` sin RLS forzada, una columna sin clasificar
 en el registro, un `console.*` o un `Pool` fuera de `packages/data/src/db/`, y una FK entre tablas de
 dominio sin la columna de tenant.

@@ -45,7 +45,7 @@ services:
       # pedidos lo usa. Los roles app_request / app_job los crea la migración 0001_tenancy.sql.
       POSTGRES_DB: ${POSTGRES_DB:-sistema_contable}
       POSTGRES_USER: ${POSTGRES_USER:-sistema_contable}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sistema_contable_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta en .env}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -65,7 +65,7 @@ services:
       # Cuenta de ADMINISTRACIÓN del storage: puede borrar buckets enteros. Ninguna aplicación la
       # recibe — para eso están las dos cuentas de servicio que crea minio-init.
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sistema_contable}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-sistema_contable_dev}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?falta en .env}
     ports:
       - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
       - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
@@ -92,12 +92,12 @@ services:
       minio:
         condition: service_healthy
     environment:
-      MC_HOST_local: http://${MINIO_ROOT_USER:-sistema_contable}:${MINIO_ROOT_PASSWORD:-sistema_contable_dev}@minio:9000
+      MC_HOST_local: http://${MINIO_ROOT_USER:-sistema_contable}:${MINIO_ROOT_PASSWORD:?falta en .env}@minio:9000
       BUCKET: ${S3_BUCKET:-sistema-contable}
-      LECTURA_KEY: ${S3_LECTURA_ACCESS_KEY_ID:-app_lectura_dev}
-      LECTURA_SECRET: ${S3_LECTURA_SECRET_ACCESS_KEY:-app_lectura_dev_secret}
-      ESCRITURA_KEY: ${S3_ESCRITURA_ACCESS_KEY_ID:-app_escritura_dev}
-      ESCRITURA_SECRET: ${S3_ESCRITURA_SECRET_ACCESS_KEY:-app_escritura_dev_secret}
+      LECTURA_KEY: ${S3_LECTURA_ACCESS_KEY_ID:?falta en .env}
+      LECTURA_SECRET: ${S3_LECTURA_SECRET_ACCESS_KEY:?falta en .env}
+      ESCRITURA_KEY: ${S3_ESCRITURA_ACCESS_KEY_ID:?falta en .env}
+      ESCRITURA_SECRET: ${S3_ESCRITURA_SECRET_ACCESS_KEY:?falta en .env}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |

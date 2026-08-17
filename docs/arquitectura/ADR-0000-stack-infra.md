@@ -246,10 +246,10 @@ docker compose exec -T postgres psql -U sistema_contable -d sistema_contable -v 
 # 5. Verificar el aislamiento (18 aserciones, tres pasadas, una por rol)
 docker compose exec -T postgres psql -U sistema_contable -d sistema_contable -v ON_ERROR_STOP=1 -v ddl=1 \
   < packages/data/sql/tests/0001_aislamiento.test.sql
-docker compose exec -T -e PGPASSWORD=app_job_dev postgres \
+docker compose exec -T -e PGPASSWORD="$JOB_DB_PASSWORD" postgres \
   psql -h 127.0.0.1 -U app_job -d sistema_contable -v ON_ERROR_STOP=1 \
   < packages/data/sql/tests/0001_aislamiento.test.sql
-docker compose exec -T -e PGPASSWORD=app_request_dev postgres \
+docker compose exec -T -e PGPASSWORD="$APP_DB_PASSWORD" postgres \
   psql -h 127.0.0.1 -U app_request_dev -d sistema_contable -v ON_ERROR_STOP=1 \
   < packages/data/sql/tests/0001_aislamiento.test.sql
 #    Tiene que terminar en: === PASADA 2 COMPLETA: T1..T14 PASARON ===

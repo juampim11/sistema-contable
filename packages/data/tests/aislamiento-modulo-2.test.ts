@@ -13,7 +13,7 @@
  * Requisito previo: pnpm db:up && pnpm db:migrate && pnpm db:setup
  */
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { cerrarConexiones, conUsuario } from '../src/db/conexion.ts';
 import { leerConAuditoria } from '../src/db/auditoria.ts';
 import {
@@ -23,6 +23,14 @@ import {
   leerPadronYCandidatosDeContraparte,
   MovimientoAjenoAlClienteError,
 } from '../src/contabilidad/lecturas.ts';
+import {
+  persistirReconocimiento,
+  ReconocimientoDigestYaEnLaCadenaError,
+  type PedidoDePersistirReconocimiento,
+} from '../src/contabilidad/escrituras.ts';
+import { leerReconocimientosActivos } from '../src/contabilidad/lecturas.ts';
+import { escribirConAuditoria } from '../src/db/auditoria.ts';
+import { randomUUID } from 'node:crypto';
 import { hmacDocumento } from '@sistema-contable/shared/seguridad';
 import { clienteDuenio, sembrar, USUARIOS, type Sembrado } from './ayuda.ts';
 
@@ -347,5 +355,294 @@ describe('leerPadronYCandidatosDeContraparte — el guardrail de H-6/INV-9 (Rond
     if (error instanceof MovimientoAjenoAlClienteError) {
       expect(error.movimientoIdsAjenos).toEqual([escenario.movimientoB]);
     }
+  });
+});
+
+
+// -----------------------------------------------------------------------------
+// Migración 0014 — `reconocimiento_movimiento` y `reconocimiento_candidato`
+// -----------------------------------------------------------------------------
+
+const DIGEST_A = 'a1b2c3d4e5f60718';
+const DIGEST_B = '0f1e2d3c4b5a6978';
+
+/** El pedido mínimo de una `propuesta`, que es la clase con todas las columnas cargadas. */
+function propuestaDe(movimientoId: string, clienteId: string, digest: string): PedidoDePersistirReconocimiento {
+  return {
+    clienteId,
+    movimientoId,
+    reconocimientoId: randomUUID(),
+    motorDigest: digest,
+    clase: 'propuesta',
+    tipo: 'comision_bancaria',
+    concepto: 'comision_de_transferencia',
+    polaridad: 'normal',
+    lado: 'debe',
+    via: 'texto_literal_exacto',
+    queDecide: null,
+    motivoCodigo: null,
+    entradaLexicoId: 'galicia.comision_de_transferencia',
+    caracteresMatcheados: 12,
+    huboCola: false,
+    candidatos: [] as readonly string[],
+  };
+}
+
+async function persistir(usuario: string, pedido: PedidoDePersistirReconocimiento) {
+  return conUsuario(usuario, (tx) =>
+    escribirConAuditoria(
+      tx,
+      {
+        clienteId: pedido.clienteId,
+        accion: 'escritura',
+        recurso: 'reconocimiento_movimiento',
+        motivo: 'persistencia del reconocimiento del motor, test de aislamiento',
+      },
+      (ctx) => persistirReconocimiento(tx, ctx, pedido),
+    ),
+  );
+}
+
+describe('0014 — aislamiento y forma de reconocimiento_movimiento', () => {
+  /**
+   * La tabla es append-oriented y NADIE tiene DELETE —ni policy ni grant—, que es justamente lo que
+   * 0014 garantiza. Así que entre tests se limpia con `truncate` del dueño del esquema: TRUNCATE no
+   * pasa por las policies de RLS (que gobiernan select/insert/update/delete), y es el mismo mecanismo
+   * que usa `sembrar()` en `ayuda.ts`. Sin esto, cada `it` hereda las filas del anterior y los estados
+   * `no_op`/`supersedido` aparecen donde el test esperaba `creado`.
+   */
+  beforeEach(async () => {
+    const duenio = await clienteDuenio();
+    try {
+      await duenio.query('truncate reconocimiento_candidato, reconocimiento_movimiento cascade');
+    } finally {
+      await duenio.end();
+    }
+  });
+
+  it('el reconocimiento de A no lo ve un usuario de otro estudio, y sí el contador de A', async () => {
+    const r = await persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A));
+    expect(r.estado).toBe('creado');
+
+    const contar = async (usuario: string): Promise<number> =>
+      conUsuario(usuario, async (tx) => {
+        const f = await tx.consultar<{ n: string }>(
+          'select count(*)::text as n from reconocimiento_movimiento',
+        );
+        return Number(f[0]?.n ?? '-1');
+      });
+
+    // Dirección A: quien tiene membresía lo ve.
+    expect(await contar(USUARIOS.contadorA)).toBe(1);
+    // Dirección B: el socio de OTRO estudio no ve nada. Es la mitad que se olvida.
+    expect(await contar(USUARIOS.socioOtroEstudio), 'fuga entre estudios').toBe(0);
+    // El socio del estudio ve los dos clientes: acá solo hay uno cargado.
+    expect(await contar(USUARIOS.socio)).toBe(1);
+    // El contador de B no ve el reconocimiento de A.
+    expect(await contar(USUARIOS.contadorB), 'fuga entre clientes del mismo estudio').toBe(0);
+  });
+
+  it('🔴 reprocesar con el MISMO digest es no-op: cero filas nuevas (05 §5.2)', async () => {
+    const pedido = propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A);
+    const primera = await persistir(USUARIOS.contadorA, pedido);
+    expect(primera.estado).toBe('creado');
+
+    // Segundo intento con el mismo digest y OTRO uuid: tiene que reconocer la fila existente.
+    const segunda = await persistir(
+      USUARIOS.contadorA,
+      propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A),
+    );
+    expect(segunda.estado, 'la idempotencia de 05 §5.2 no se sostuvo').toBe('no_op');
+    if (segunda.estado === 'no_op' && primera.estado === 'creado') {
+      expect(segunda.reconocimientoId).toBe(primera.reconocimientoId);
+    }
+
+    const activos = await conUsuario(USUARIOS.contadorA, (tx) =>
+      leerReconocimientosActivos(tx, { clienteId: s.clienteA, loteIngestaId: escenario.loteA }),
+    );
+    expect(activos, 'quedó más de un reconocimiento vigente para el mismo movimiento').toHaveLength(1);
+  });
+
+  /**
+   * 🔴 EL TEST QUE FALTABA, y el defecto que destapó. Hallazgo INDEPENDIENTE de `qa-funcional` y
+   * `code-reviewer` en la Ronda 3 — los dos llegaron al mismo lugar por caminos distintos.
+   *
+   * Escenario real de los próximos días: se corre `--aplicar` con `padron_socio` vacío y los ~1148
+   * `distinguir_tercero_de_socio` se persisten como `decision_humana`. Después la contadora carga el
+   * padrón con `pnpm alta:socio`. Se vuelve a correr: capa C ahora resuelve `es_socio` y
+   * `aplicarContrapartida` PROMUEVE a `propuesta` — pero el léxico no cambió, así que el digest es EL
+   * MISMO.
+   *
+   * El no-op comparaba SOLO el digest, así que devolvía `no_op` y la promoción no se escribía nunca.
+   * El reporte imprimía `noOp: 1830, creados: 0` y PARECÍA que había salido bien: fail-open y
+   * silencioso, el mismo modo de falla que `version.ts` describe para un contador manual, un nivel
+   * más arriba.
+   *
+   * La base estaba bien diseñada: `uq_recon_determinante` lleva `es_propuesta` como cuarta columna
+   * justamente para admitir esta fila (hallazgo de `dba-data`, Ronda 2). El corto-circuito de la
+   * aplicación la anulaba antes de llegar al INSERT.
+   *
+   * Por qué no lo agarró la primera tanda de tests: los 11 usaban `propuestaDe()` con la MISMA clase
+   * las dos veces, así que verificaban "mismo digest + mismo contenido" y nunca "mismo digest + clase
+   * distinta".
+   */
+  it('🔴 mismo digest pero clase DISTINTA (promoción de capa C) NO es no-op: supersede', async () => {
+    const capaB: PedidoDePersistirReconocimiento = {
+      ...propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A),
+      clase: 'decision_humana',
+      tipo: 'pago_a_proveedor_transferencia',
+      queDecide: 'distinguir_tercero_de_socio',
+    };
+    const primera = await persistir(USUARIOS.contadorA, capaB);
+    expect(primera.estado).toBe('creado');
+
+    // Mismo digest, clase promovida — exactamente lo que produce capa C tras cargar el padrón.
+    const capaC: PedidoDePersistirReconocimiento = {
+      ...propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A),
+      tipo: 'retiro_de_socio',
+    };
+    const segunda = await persistir(USUARIOS.contadorA, capaC);
+
+    expect(
+      segunda.estado,
+      'la promoción de capa C se perdió: el no-op comparó solo el digest e ignoró la clase',
+    ).toBe('supersedido');
+
+    const activos = await conUsuario(USUARIOS.contadorA, (tx) =>
+      leerReconocimientosActivos(tx, { clienteId: s.clienteA, loteIngestaId: escenario.loteA }),
+    );
+    expect(activos).toHaveLength(1);
+    expect(activos[0]?.clase, 'la fila vigente tiene que ser la promovida').toBe('propuesta');
+  });
+
+
+  it('🔴 con un digest NUEVO se supersede: el viejo no se borra y queda UNO solo vigente', async () => {
+    await persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A));
+    const r = await persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_B));
+
+    expect(r.estado).toBe('supersedido');
+
+    const activos = await conUsuario(USUARIOS.contadorA, (tx) =>
+      leerReconocimientosActivos(tx, { clienteId: s.clienteA, loteIngestaId: escenario.loteA }),
+    );
+    expect(activos).toHaveLength(1);
+    expect(activos[0]?.motorDigest, 'el vigente tiene que ser el digest nuevo').toBe(DIGEST_B);
+
+    // Y el viejo NO se borró: 05 §5.2, "nunca se borra".
+    const total = await conUsuario(USUARIOS.contadorA, async (tx) => {
+      const f = await tx.consultar<{ n: string }>(
+        'select count(*)::text as n from reconocimiento_movimiento where cliente_id = $1',
+        [s.clienteA],
+      );
+      return Number(f[0]?.n ?? '-1');
+    });
+    expect(total, 'el reconocimiento superseded se borró en vez de conservarse').toBe(2);
+  });
+
+  it('🔴 volver a un digest ya superseded se corta con código, no se adivina', async () => {
+    await persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A));
+    await persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_B));
+
+    await expect(
+      persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A)),
+      'volver a un digest histórico es una decisión humana, no un reproceso',
+    ).rejects.toBeInstanceOf(ReconocimientoDigestYaEnLaCadenaError);
+  });
+
+  it('🔴 un reconocimiento NO puede colgar de un movimiento de otro cliente (FK compuesta)', async () => {
+    // `cliente_id` de A con un `movimiento_id` de B. El socio tiene membresía en los dos, así que la
+    // policy NO lo frena: lo único que queda en pie es la FK compuesta tenant-consistente.
+    await expect(
+      persistir(USUARIOS.socio, propuestaDe(escenario.movimientoB, s.clienteA, DIGEST_A)),
+    ).rejects.toThrow(/fk_recon_movimiento|foreign key/i);
+  });
+
+  it('🔴 un candidato NO puede colgar de una propuesta (FK de tres columnas)', async () => {
+    const pedido = {
+      ...propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A),
+      candidatos: ['galicia.comision_de_transferencia'] as readonly string[],
+    };
+    // `candidatos` solo existe en `sin_reconocer`; la FK de tres columnas lo hace imposible en la base.
+    await expect(persistir(USUARIOS.contadorA, pedido)).rejects.toThrow(
+      /fk_recon_candidato_reconocimiento|foreign key/i,
+    );
+  });
+
+  it('un sin_reconocer con candidatos sí los persiste, y quedan atados a esa fila', async () => {
+    const pedido = {
+      ...propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A),
+      clase: 'sin_reconocer',
+      tipo: null,
+      concepto: null,
+      polaridad: null,
+      lado: null,
+      via: null,
+      motivoCodigo: 'ambiguo',
+      entradaLexicoId: null,
+      caracteresMatcheados: null,
+      huboCola: null,
+      candidatos: ['galicia.uno', 'galicia.dos'] as readonly string[],
+    };
+    const r = await persistir(USUARIOS.contadorA, pedido);
+    expect(r.estado).toBe('creado');
+
+    const n = await conUsuario(USUARIOS.contadorA, async (tx) => {
+      const f = await tx.consultar<{ n: string }>(
+        'select count(*)::text as n from reconocimiento_candidato where reconocimiento_id = $1',
+        [r.reconocimientoId],
+      );
+      return Number(f[0]?.n ?? '-1');
+    });
+    expect(n).toBe(2);
+  });
+
+  it('🔴 el check de forma rechaza un sin_reconocer con `tipo` cargado', async () => {
+    const incoherente = {
+      ...propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A),
+      clase: 'sin_reconocer',
+      motivoCodigo: 'ambiguo',
+      // `tipo` queda cargado: una fila con la forma de otra clase.
+    };
+    await expect(persistir(USUARIOS.contadorA, incoherente)).rejects.toThrow(
+      /reconocimiento_forma_chk/i,
+    );
+  });
+
+  it('🔴 el check de forma rechaza un `ambiguo` CON evidencia — la prueba de un match que no ocurrió', async () => {
+    const conEvidenciaDeMas = {
+      ...propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A),
+      clase: 'sin_reconocer',
+      tipo: null,
+      concepto: null,
+      polaridad: null,
+      lado: null,
+      motivoCodigo: 'ambiguo',
+      // `ambiguo` NO lleva evidencia (motor.ts:55). Dejarla es exactamente lo que la nulidad grupal
+      // habría dejado pasar.
+    };
+    await expect(persistir(USUARIOS.contadorA, conEvidenciaDeMas)).rejects.toThrow(
+      /reconocimiento_forma_chk/i,
+    );
+  });
+
+  it('🔴 un digest mal formado (64 hex sin cortar) es rechazado por la base', async () => {
+    const malo = {
+      ...propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A),
+      motorDigest: 'a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718a1b2c3d4e5f60718',
+    };
+    await expect(persistir(USUARIOS.contadorA, malo)).rejects.toThrow(/reconocimiento_digest_chk/i);
+  });
+
+  it('🔴 el administrativo NO puede escribir sin membresía, y sin membresía nadie ve nada', async () => {
+    // Fail-closed: un usuario sin membresía en el cliente no ve ni una fila.
+    await persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A));
+    const vistas = await conUsuario(USUARIOS.socioOtroEstudio, async (tx) => {
+      const f = await tx.consultar<{ n: string }>(
+        'select count(*)::text as n from reconocimiento_movimiento where cliente_id = $1',
+        [s.clienteA],
+      );
+      return Number(f[0]?.n ?? '-1');
+    });
+    expect(vistas).toBe(0);
   });
 });

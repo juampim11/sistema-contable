@@ -8,3 +8,5 @@ export * from './nucleo/indice.ts';
 export * from './nucleo/matcher.ts';
 export * from './nucleo/contrapartida.ts';
 export * from './nucleo/motor.ts';
+export * from './nucleo/persistible.ts';
+export * from './nucleo/version.ts';

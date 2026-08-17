@@ -28,6 +28,49 @@ export type Sembrado = {
   clienteC: string;
 };
 
+/**
+ * Conexión con **`app_job`** (BYPASSRLS), para los tests que tienen que medir un INVARIANTE y no un
+ * privilegio.
+ *
+ * Existe por una razón concreta, de `0017`: un ataque probado sólo con `app_request` muere por
+ * `permission denied` antes de llegar al invariante, así que ese test **se pone verde el día que
+ * alguien re-otorgue un grant de tabla entera** copiando la plantilla de ADR-0001 §5 — que es el
+ * escenario de regresión realista. Para saber si el invariante existe hay que atacarlo con el
+ * escritor más privilegiado que no sea el dueño.
+ */
+export async function clienteJob(): Promise<Client> {
+  const dsn = process.env['DATABASE_URL_JOB'];
+  if (!dsn) {
+    throw new Error(
+      'Falta DATABASE_URL_JOB. Sin app_job no se puede distinguir "el invariante se cumple" de\n' +
+        '"a este rol le falta un grant", que es justo lo que 0017 vino a separar.',
+    );
+  }
+  const c = new Client({ connectionString: dsn });
+  await c.connect();
+  await exigirRol(c, 'app_job', 'DATABASE_URL_JOB');
+  return c;
+}
+
+/**
+ * Un DSN mal apuntado convierte "esto lo mide `app_job`" en "esto lo mide el dueño" **sin que nada se
+ * ponga rojo**: los dos casos de INVARIANTE de `path-coherente.test.ts` pasan igual con el dueño,
+ * porque lo que los frena es el CHECK y no un privilegio. MEDIDO: con `DATABASE_URL_JOB` apuntando al
+ * dueño, 13 de 14 casos quedan verdes. Sin este control, la mitad "y no es el dueño" no la verifica
+ * nada.
+ */
+async function exigirRol(c: Client, esperado: string, variable: string): Promise<void> {
+  const r = await c.query<{ u: string }>('select current_user as u');
+  const actual = r.rows[0]?.u;
+  if (actual !== esperado) {
+    await c.end();
+    throw new Error(
+      `${variable} conecta como "${actual}" y tiene que conectar como "${esperado}". ` +
+        'Un test que dice medir un rol y mide otro no mide nada.',
+    );
+  }
+}
+
 /** Conexión con el dueño del esquema, para leer el catálogo y hacer DDL en los tests. */
 export async function clienteDuenio(): Promise<Client> {
   const dsn = process.env['DATABASE_URL'];
@@ -45,6 +88,15 @@ export async function clienteDuenio(): Promise<Client> {
       'No se pudo conectar a Postgres. Levantá la infraestructura local:\n' +
         '  pnpm db:up && pnpm db:migrate && pnpm db:setup\n' +
         `Detalle: ${(error as Error).message}`,
+    );
+  }
+  const r = await c.query<{ u: string }>('select current_user as u');
+  if (r.rows[0]?.u === 'app_job' || r.rows[0]?.u === 'app_request') {
+    const u = r.rows[0]?.u;
+    await c.end();
+    throw new Error(
+      `DATABASE_URL conecta como "${u}", no como el dueño del esquema. Los tests que miden ` +
+        'MECANISMO (lo que ni el dueño puede saltear) medirían un privilegio y saldrían verdes.',
     );
   }
   return c;
@@ -87,9 +139,20 @@ export async function sembrar(): Promise<Sembrado> {
       // Las tablas del Módulo 1 van primero por dependencia, aunque `cascade` las alcanzaría igual:
       // nombrarlas hace que agregar una tabla nueva y olvidarla se note al fallar el truncate, no dos
       // suites después con filas de una corrida anterior.
-      'truncate movimiento_origen_crudo, movimiento_bancario_crudo, lote_ingesta_cuenta, ' +
+      // Las del Módulo 2 (0013/0014) van primero que las del Módulo 1: `reconocimiento_candidato`
+      // cuelga de `reconocimiento_movimiento`, que cuelga de `movimiento_bancario_crudo` con
+      // `on delete restrict`. Nombrarlas no es redundante con `cascade` — es lo que hace que
+      // agregar una tabla nueva y olvidarla se note acá y no dos suites después.
+      'truncate reconocimiento_candidato, reconocimiento_movimiento, ' +
+        'movimiento_contraparte_identificador, padron_socio_documento, padron_socio, ' +
+        'movimiento_origen_crudo, movimiento_bancario_crudo, lote_ingesta_cuenta, ' +
         'lote_ingesta, cuenta_bancaria_identificador, cuenta_bancaria, banco, ' +
-        'credencial_fiscal_rotacion, credencial_fiscal, acceso_auditoria, membership, ' +
+        'credencial_fiscal_rotacion, credencial_fiscal, acceso_auditoria, ' +
+        // `membership_historia` antes que `membership`: el `cascade` la alcanzaría igual por la FK a
+        // `tenant_node`, pero nombrarla es lo que hace que la próxima tabla del plano de tenancía se
+        // note acá. 0019 la agregó y esta lista no se enteró — que es la misma falla que tenía R1 de
+        // `catalogo.test.ts`, y por el mismo motivo: una lista escrita a mano.
+        'membership_historia, membership, ' +
         'tenant_node cascade',
     );
   } finally {

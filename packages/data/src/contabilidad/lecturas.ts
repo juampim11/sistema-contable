@@ -327,3 +327,60 @@ export async function leerEvidenciaDeMovimientos(
     };
   });
 }
+
+
+// -----------------------------------------------------------------------------
+// leerReconocimientosActivos (migración 0014)
+// -----------------------------------------------------------------------------
+
+export type ReconocimientoActivo = {
+  readonly reconocimientoId: string;
+  readonly movimientoId: string;
+  readonly motorDigest: string;
+  readonly clase: string;
+};
+
+/**
+ * Los reconocimientos VIGENTES de un lote (`superseded_por is null`) — lo que le dice al llamador,
+ * antes de procesar, cuántos movimientos ya están al día con el digest actual.
+ *
+ * Sin `ContextoAuditado`, mismo criterio que `leerPadronDeSocios`: se consulta en cada pasada del
+ * motor, y auditar cada una sería el ruido de ADR-0002 H-8.
+ *
+ * NO devuelve `tipo` ni `concepto` — que están clasificados N2. El reproceso solo necesita saber QUÉ
+ * digest tiene cada movimiento; traer la interpretación entera sería un lector con más alcance del que
+ * su propósito justifica, y el alcance de más es lo que después alguien reusa para un listado. Para
+ * pintar la cola de revisión va una lectura distinta, con su propia justificación.
+ *
+ * Usa `uq_recon_vigente`, el índice único PARCIAL de 0014: `(cliente_id, movimiento_id)
+ * where superseded_por is null` sirve este predicado sin un índice extra.
+ *
+ * 🔴 `where cliente_id = $1` explícito ADEMÁS de la RLS forzada — cinturón y tiradores, igual que el
+ * resto de este archivo.
+ */
+export async function leerReconocimientosActivos(
+  tx: Tx,
+  args: { readonly clienteId: string; readonly loteIngestaId: string },
+): Promise<readonly ReconocimientoActivo[]> {
+  const filas = await tx.consultar<{
+    id: string;
+    movimiento_id: string;
+    motor_digest: string;
+    clase: string;
+  }>(
+    `select r.id::text as id, r.movimiento_id::text as movimiento_id, r.motor_digest, r.clase
+       from reconocimiento_movimiento r
+       join movimiento_bancario_crudo m
+         on m.cliente_id = r.cliente_id and m.id = r.movimiento_id
+      where r.cliente_id = $1 and m.lote_ingesta_id = $2 and r.superseded_por is null
+      order by r.movimiento_id`,
+    [args.clienteId, args.loteIngestaId],
+  );
+
+  return filas.map((f) => ({
+    reconocimientoId: f.id,
+    movimientoId: f.movimiento_id,
+    motorDigest: f.motor_digest,
+    clase: f.clase,
+  }));
+}

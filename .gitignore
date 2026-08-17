@@ -3,11 +3,15 @@
 # el historial y listo (ADR-0002 §E.4.8). Esta lista existe para no llegar a eso.
 .env
 .env.*
-# `!.env.example` estuvo acá y se quitó a propósito: un archivo de ejemplo documenta qué variables
-# hacen falta, pero en la práctica se fue llenando de valores en vez de marcadores, y un archivo de
-# ejemplo trackeado es el camino más corto para que un valor real termine en el repo.
-# Para que la excepción vuelva hacen falta las dos cosas: marcadores del tipo `<poner-una-clave>`,
-# y un gate que verifique que no hay valores. Sin eso, no vuelve.
+# 🔴 `!.env.example` ESTUVO ACÁ y es el incidente #3 (`docs/seguridad/registro-incidentes.md`).
+# La excepción tenía sentido — un archivo de ejemplo documenta qué variables hacen falta — pero el
+# archivo se llenó de valores REALES, no de marcadores, y viajó a `origin/main` de un repositorio
+# PÚBLICO con la contraseña del dueño del esquema (superusuario) y la de `app_job` (BYPASSRLS).
+# Las mismas que seguían vivas en el piloto.
+# La excepción no vuelve mientras el archivo tenga valores: si algún día se quiere de nuevo un
+# template trackeado, va con marcadores (`<poner-una-contraseña>`) y con un gate que lo verifique.
+# 🔴 Y la negación tampoco vuelve por la puerta de atrás: R37 bis (ADR-0002 §B.3) verifica que no
+# haya NINGUNA negación de un archivo de entorno en este archivo.
 .env.example
 *.pem
 *.key

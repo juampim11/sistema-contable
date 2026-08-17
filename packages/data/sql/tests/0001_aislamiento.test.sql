@@ -251,7 +251,13 @@ begin
   if v_fallo then raise exception 'P1-D FALLA: se permitió crear un ciclo en el árbol'; end if;
   raise notice 'P1-D OK  reparentar mantiene coherencia y rechaza ciclos';
 
-  -- Limpieza de los nodos auxiliares del test de reparentado
+  -- Limpieza de los nodos auxiliares del test de reparentado.
+  --
+  -- Entre `0016` y `0017` esto abortaba en el commit y hubo que forzar el chequeo a mano: el
+  -- constraint trigger de `0016` era diferido y trataba "no puedo leer la fila" como violación, sin
+  -- distinguir el ataque —donde el atacante se auto-oculta la fila— de "la fila se borró en esta
+  -- misma transacción", que es lo que pasa acá y es legítimo. `0017` elimina el caso: el invariante
+  -- pasa a ser un CHECK fila-local más una FK, y una fila borrada no tiene nada que violar.
   delete from tenant_node where id in (v_mudado, v_grupo);
 
   raise notice '=== PASADA 1 COMPLETA (P1-A..P1-D) ===';

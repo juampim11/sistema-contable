@@ -61,7 +61,7 @@ controles del ADR siguen funcionando **dentro** de la base; ninguno protege el v
 
 ### 1.2. 🔴 El pepper de desarrollo convierte `cbu_hmac` en un hash pelado
 
-`.env.example` trae `IDENTIFICADOR_PEPPER=pepper_de_desarrollo_no_usar_en_produccion_0001`, la única
+El archivo de ejemplo traía un `IDENTIFICADOR_PEPPER` con un valor de desarrollo literal, la única
 validación es `length >= 32`, y ese valor tiene 52: **pasa**. Si el alta se hace con el `.env` copiado del
 `.example` —que es lo que va a pasar—, el `cbu_hmac` del CBU real queda calculado con una clave **pública**:
 está en el repo, en cada clon, en cada caché de CI.
