@@ -172,10 +172,34 @@ un número de días, que era el costo escondido de aquella propuesta.
 base: ni P0 ni P1 tienen DDL.** Piloto intacto — 1830 movimientos, 0 reconocimientos, esquema en `0020`,
 sin drift contra local.
 
-**Lo próximo:** escribir el archivo `0021_*.sql` (pasos P2 a P4 del plan), con la forma de
-`reconocimiento_contrapartida` ya ratificada por los dos agentes de dominio. **Su aplicación al piloto
-es una autorización aparte del titular, con `CLAUDE.md` §1.9 corrido completo.** El plan y los seis
-dictámenes están en `quirky-riding-music.md`.
+### 7. 🔴 Dónde quedó todo — para retomar en frío
+
+| | |
+|---|---|
+| **Rama** | `feat/determinante-de-entrada`, commit **`a735483`**, sobre `main` (`2065c3d`). **Sin mergear.** |
+| ⚠️ `origin/main` | Sigue en **`a95d24f`**. **Nada pusheado** — decisión del titular |
+| **Expediente completo** | 🔴 `docs/diseno/11-migracion-0021-determinante-y-capa-c.md` (1177 líneas) — plan, mediciones, **los seis dictámenes**, el DDL verificado y **el código de las mediciones embebido** |
+| Adjuntos crudos | `docs/diseno/adjuntos/0021-dictamen-dba-data.md` (evidencia ejecutada), `…-arquitecto-software.md`, `…-plan-de-sesion.md` |
+| Código nuevo | `packages/contabilidad/src/nucleo/entrada.ts` + `tests/entrada.test.ts` (17) |
+| Índice actualizado | `10-deuda-declarada.md` §0.0 A.1 — las dos preguntas de diseño quedaron **dictaminadas**, y se corrigió la premisa falsa sobre `0017` |
+
+**Por qué se volcó todo a `docs/`:** **cuatro de los seis dictámenes existían sólo en el contexto de la
+sesión** (sólo `dba-data` y `arquitecto-software` dejaron archivo, y fuera del repo), y el plan anterior
+de `0021` **ya se había perdido exactamente así** (entrada 54). Es la regla del repo aplicándose a sí
+misma.
+
+**Lo próximo, en orden:**
+
+1. **Reconciliar las dos diferencias de §5 del expediente** entre `contador-dominio` y
+   `motor-conciliacion-contable` sobre la forma de `reconocimiento_contrapartida` — ¿una fila por
+   evaluación o sólo cuando hay algo que decir?, y ¿`socio_id` en el padre o sólo en la satélite?
+   **Bloquea abrir el `.sql`** (condición de `arquitecto-software`).
+2. Escribir `0021_*.sql` (P2 a P4). El DDL del determinante ya está verificado — §7 del expediente.
+3. 🔴 **Medir en local, con el corpus cargado, el costo del `ADD COLUMN … GENERATED`** sobre 1830 filas
+   (rewrite con `ACCESS EXCLUSIVE`). **No medido**, y hay que tenerlo antes de tocar el piloto.
+4. **La aplicación al piloto es una autorización aparte del titular**, con `CLAUDE.md` §1.9 corrido
+   completo: `ENV_FILE=.env.piloto pnpm db:migrate --estado` → listar → confirmar que coincide **exacto**
+   → frenar si aparece una de más. **Nunca `pnpm db:migrate` pelado.**
 
 ---
 
