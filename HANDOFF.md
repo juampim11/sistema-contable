@@ -6,6 +6,95 @@
 
 ---
 
+## 2026-08-16 (68) — 🔴 **PUNTO DE ENTRADA SI RETOMÁS SIN ESTE CHAT.** Cierre del expediente de seguridad: `main` al día, roadmap y backlog actualizados. Lo próximo es `0021`.
+
+**Herramienta:** Claude Code. Cierra el tramo que arrancó el 2026-08-14 con `0014` y terminó siendo
+**seis migraciones de seguridad y ocho incidentes**.
+
+---
+
+### 1. `main` está al día — merge `cd9fe95`
+
+`feat/persistir-reconocimiento` mergeada a `main` con `--no-ff`: **35 commits**. La rama se llamaba
+así porque nació para el determinante de idempotencia, **se frenó en el tercer commit**, y los 32
+siguientes son otra cosa. El nombre ya no describía el contenido y por eso se cerró.
+
+**Un solo conflicto**, en `.gitignore` — el cruce con el cherry-pick del incidente #3 que se había
+pusheado a `origin/main`. Las dos versiones decían lo mismo; quedó la de la rama, que cita el #3 y
+nombra qué se expuso, más un puntero a **R37 bis**. `diff rama..main` = esas 2 líneas.
+
+⚠️ **`origin/main` sigue en `a95d24f`.** Nada de esto está pusheado — es decisión del titular.
+
+### 2. Qué hay en el piloto hoy
+
+| | |
+|---|---|
+| Esquema | **`0020`**, igual que local, mismo hash, sin drift |
+| Dueño del esquema | `sistema_contable`, **`rolsuper = true`** (medido, no supuesto) |
+| Datos | 4 nodos · 1 membresía · 1830 movimientos crudos · 3 lotes · 9 filas de auditoría |
+| Reconocimientos persistidos | **0** |
+| `verificar_coherencia_path()` | **0 incoherencias** |
+
+### 3. Lo próximo, y por qué NO se escribió el plan acá
+
+**`0021` — el rediseño del determinante de idempotencia.** El titular decidió dejarlo para una sesión
+limpia, con el panel completo (`dba-data` + `arquitecto-software`). El detalle está en
+**`docs/diseno/10-deuda-declarada.md` §0.0 A.1**, con las **dos preguntas de diseño que `0017` y `0020`
+hicieron aparecer y que no existían cuando se aprobó el plan original**:
+
+1. **¿Columna generada + `unique`, o hash calculado en TypeScript?** `0017` dejó medido que
+   `check`/`unique`/FK están **exentos de la RLS por diseño** y los triggers no, y `0014` **ya tiene una
+   columna generada** (`es_propuesta`). *Un hash que calcula y pasa la aplicación es un hash sobre el
+   que el escritor puede mentir.*
+2. **¿Se recorta el `grant insert` de tabla entera?** Hoy `reconocimiento_movimiento` lo tiene de tabla
+   (19 columnas). **Medido que no produce el daño del #7** —`id` es `uuid`, sin columnas `identity`— y
+   que **`0020` §5 no aplica** —la fila activa se resuelve por `superseded_por is null`, nunca por orden
+   de `created_at`—. **Pero una `fila_hash` nueva sería nombrable por el tenant desde el minuto cero.**
+
+🔴 **Y el motivo por el que hay que REHACER el plan y no recuperarlo: no existe.** Se aprobó en sesión
+y el archivo de plan **se sobrescribió con el de `0015`** — lo dice la entrada (54) con todas las
+letras. No está en `docs/`, no está acá. Es la regla del repo aplicándose a sí misma: *lo que no está
+escrito no existe para la otra herramienta.*
+
+### 4. El expediente, en una tabla
+
+| Migración | Qué cerró | Incidente |
+|---|---|---|
+| `0015` | `search_path` / `pg_temp` — la escalada por shadowing | #1 ✅ |
+| `0016` | Primer intento del árbol, **superado por `0017`** | — |
+| `0017` | El `path` pasa a ser **función de `(parent_id, nid)`**: el invariante baja de trigger a `check` + FK, que es lo que lo vuelve inmune a la RLS | #2 ✅ |
+| `0018` | `parent_id` sólo en el alta — grant por columna sobre `tenant_node` | #4 (A–D) ✅ |
+| `0019` | El padrón de derechos deja de ser escribible por el sujeto del control | #5 (ataque literal) |
+| `0020` | `via_depth`, visibilidad por membresía, trigger partido, y la **denegación cross-tenant** | #6, #7 |
+
+**Reglas nuevas o reescritas:** R10/R10 bis/R10 ter, R25 (**sobre la propiedad, no sobre el caso**),
+R36 (**sobre el predicado**), R37/R37 bis, R38, **R4 bis**, **R39**, y la premisa **P-1**. R13 y R33
+marcadas insuficientes.
+
+**Reglas duras nuevas en `CLAUDE.md`:** §1.8 (una regla verificable no cuenta como control hasta que se
+probó rompiéndola) y §1.9 (listar, confirmar exacto, frenar).
+
+### 5. 🔴 Lo que queda abierto, con su condición
+
+**Índice completo: `docs/diseno/10-deuda-declarada.md` §0.0 (roadmap) y
+`08-plan-de-construccion.md` §6.0 (deuda de seguridad).** Lo que no se puede olvidar:
+
+- 🔴 **La recursión de RLS es una CONDICIÓN DURA, no una prioridad.** Antes de reconfigurar el dueño
+  del esquema como **no superusuario en ningún entorno**, tiene que estar resuelta. Hacerlo antes deja
+  la base **inoperable**, no más segura. Premisa **P-1** en `ADR-0002`.
+- 🔴 **#8 — la firma del rastro es elegible, y no tiene arreglo dentro de la base.** El control
+  compensatorio hoy es **el enunciado probatorio escrito**, no un mecanismo.
+- **Producto:** capa D (imputación) y capa E (composición del asiento) siguen bloqueadas por el plan de
+  cuentas del cliente; la cola de revisión no existe; **login / `AuthProvider` es la otra mitad del
+  #8**; y **FCI + tarjetas** tienen dos cosas marcadas como irrecuperables si se capturan tarde — el
+  **inventario PEPS de apertura** y la **liquidación del adquirente**.
+
+### Estado
+
+`pnpm verificar` **sobre `main`**: **61 archivos, 1423 tests, 0 fallas**.
+
+---
+
 ## 2026-08-16 (67) — **`0020` aplicada al piloto, con autorización explícita del titular** y el procedimiento de §1.9 corrido por primera vez de verdad.
 
 **Herramienta:** Claude Code. Confirmación escrita **en el momento**, no después.

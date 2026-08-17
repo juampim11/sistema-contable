@@ -14,6 +14,71 @@
 
 ---
 
+## 0.0. 🧭 ROADMAP — qué falta, al 2026-08-16
+
+> **Actualizado al cierre del expediente de seguridad** (`0015` a `0020`, incidentes #1 a #8),
+> mergeado a `main` en `cd9fe95`. Esta sección es **el índice de lo que falta**; el detalle de cada
+> línea vive en el documento que se cita.
+>
+> 🔴 **Cómo leer el orden:** lo de arriba **bloquea** a lo de abajo. La deuda de seguridad no es una
+> lista paralela al producto: la recursión de RLS es una precondición de despliegue, y el determinante
+> de idempotencia es una precondición del reproceso.
+
+### A. Lo próximo, ya decidido
+
+| | Qué | Estado |
+|---|---|---|
+| **A.1** | 🔴 **`0021` — rediseño del determinante de idempotencia.** El determinante persistido (`motor_digest`) cubre **el CÓDIGO, no la ENTRADA**, y la entrada es **mutable**: `recapturar-conceptos.ts` y `backfill-contraparte.ts` hacen `UPDATE` sobre `movimiento_bancario_crudo`. Un reproceso que cambie `concepto_banco` sin cambiar la clase **da no-op con la interpretación vieja intacta** — está declarado en `escrituras.ts:296-300`. Tiene que basarse en el hash de la **fila persistible** | **Plan por escribir, con panel completo.** El plan anterior se aprobó en sesión y **nunca se escribió**: el archivo se sobrescribió con el de `0015` (entrada 54). No se recupera — se rehace |
+| **A.2** | 🔴 **La condición dura del dueño del esquema** — ver §6 de `08-plan-de-construccion.md`. **Antes de reconfigurar el dueño como NO superusuario en NINGÚN entorno**, hay que resolver la recursión infinita de RLS | Tarea propia con `security-engineer` + `arquitecto-software` + `dba-data` |
+
+🔴 **Las dos preguntas de diseño que `0017` y `0020` hicieron aparecer, y que NO existían cuando se
+aprobó el plan original de A.1.** Van al panel antes de escribir una línea:
+
+1. **¿Columna generada + `unique`, o hash calculado en TypeScript?** El invariante *«el determinante es
+   una función de la fila persistible»* tiene **exactamente la forma** de `path = f(parent_id, nid)`, y
+   `0017` dejó medido que `check`/`unique`/`foreign key` están **exentos de la RLS por diseño** y los
+   triggers no. Además `0014` **ya tiene una columna generada** (`es_propuesta`), o sea que el
+   precedente está en la misma tabla. **Un hash que calcula y pasa la aplicación es un hash sobre el
+   que el escritor puede mentir**; uno `generated always as … stored` no. Falta que `dba-data` dictamine
+   si la expresión de hash puede ser `IMMUTABLE` como exige una columna generada.
+2. **¿Se recorta el `grant insert` de tabla entera a columnas específicas?** Hoy
+   `reconocimiento_movimiento` tiene `grant select, insert` **de tabla** (19 columnas). Medido: **no
+   produce el daño del #7** —`id` es `uuid`, no hay ninguna columna `identity`— y **`0020` §5 tampoco
+   aplica**, porque la fila activa se resuelve por `superseded_por is null` con `for update` y nunca por
+   orden de `created_at`. **Pero si el rediseño agrega `fila_hash`, bajo un grant de tabla esa columna
+   es nombrable por el tenant desde el minuto cero**, y el determinante lo elegiría quien escribe. Es la
+   lección de `via_depth` textual.
+
+**Dato que simplifica A.1:** el piloto tiene **1830 movimientos y CERO reconocimientos persistidos**.
+No hay backfill, no hay filas que migrar, no hay riesgo sobre datos existentes. La migración es de
+esquema puro.
+
+### B. El producto, donde estaba
+
+| | Qué | Bloqueado por |
+|---|---|---|
+| **B.1** | **Capa D — imputación** (qué cuenta se debita y cuál se acredita) | El **plan de cuentas del cliente**, que no existe todavía |
+| **B.2** | **Capa E — composición del asiento** | Ídem B.1 |
+| **B.3** | **La cola de revisión del contador** (`apps/web`) — el sistema es **asistido**: el motor propone y la contadora decide. Hoy no hay dónde decidir | Convoca `ux-designer` + `frontend-dev` + `seguridad-datos-financieros` |
+| **B.4** | **Login / `AuthProvider`** — hoy la identidad entra por un GUC que setea la sesión (**incidente #8**). No hay autenticación de personas en ningún lado | Es la otra mitad del #8: sin aplicación que firme, `hecho_por` no vale como atribución |
+| **B.5** | **FCI y tarjetas** — suscripción y rescate de FCI con **inventario PEPS**, pago de tarjeta corporativa, y la **liquidación del adquirente**. `01-modulo-1-ingesta-bancaria.md` marca el inventario PEPS de apertura como *«lo único que no se puede reconstruir después»* y la liquidación del adquirente como *«sin ella la regla 11 queda mal para siempre»* | Material del estudio + `contador-dominio`. **Alta prioridad de captura, aunque el cálculo venga después** |
+| **B.6** | **`knowledge/` sigue vacío** — siete huecos normativos. Los cuatro que el Módulo 2 consume directo: crédito fiscal, percepciones, régimen de recaudación bancaria provincial, y porción computable del impuesto a los débitos y créditos | Es la razón por la que los agentes fiscales contestan *«no tengo esa fuente cargada»*. **Eso es el guardrail funcionando, no una falla a compensar** — pero tiene costo operativo real desde el incidente #3 |
+
+### C. Deuda técnica que no bloquea, pero se cobra sola
+
+- **La deuda de seguridad abierta**: `08-plan-de-construccion.md` §6.0 — nueve líneas, de bloqueante de
+  despliegue a higiene.
+- **El lote-ancla se pierde en todo camino de excepción** (§1.1 de este documento).
+- **`pnpm db:seed` roto contra una base desde cero**: faltan `movimiento_contraparte_identificador` y
+  `membership_historia` en la lista de `truncate` de `sembrar.ts`. La suite corre porque
+  `tests/ayuda.ts` sí las tiene — **el runbook no**.
+- **`0016_path_coherente.sql` quedó en el historial de migraciones** aunque `0017` la reemplazó por
+  completo. No se toca (una migración aplicada no se edita), pero quien lea el directorio va a
+  encontrar dos migraciones del mismo invariante.
+- El resto de las secciones de este documento.
+
+---
+
 ## 0. El contexto que explica casi todo lo de abajo
 
 **El Módulo 1 se construyó sin el roster técnico dado de alta.** No existían `security-engineer`,

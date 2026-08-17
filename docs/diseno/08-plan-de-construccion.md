@@ -398,7 +398,27 @@ retenciones. Son plata, y el asiento cuadra igual. Ver `04` §5.
 
 ## 6. 🔴 Deuda de seguridad abierta
 
-De `03-hallazgos-del-panel.md` §1. Lo cerrado ya está marcado ahí; esto es lo que queda:
+> **Actualizado 2026-08-16, al cierre del expediente de seguridad** (`0015` a `0020`, incidentes #1 a
+> #8, mergeados a `main`). Las migraciones están aplicadas a **local y al piloto**, con hash verificado
+> en las dos puntas. Lo que sigue es lo que **NO** cerró.
+
+### 6.0. Lo que quedó abierto del expediente, en orden de gravedad
+
+| | Qué | Por qué no se cerró |
+|---|---|---|
+| 🔴 **BLOQUEANTE DE DESPLIEGUE** | **Recursión infinita de RLS con dueño no superusuario.** `app.accessible_tenant_ids()` es `security definer` con dueño = dueño del esquema; lee `public.membership`, que tiene `force row level security`; y `membership_sel` (`0001:332-333`) **vuelve a llamarla**. No corta: `security definer` inhabilita el inlining y el detector de recursión de RLS nunca ve el ciclo. Medido: `stack depth limit exceeded` en un `select count(*) from membership` | 🔴 **CONDICIÓN DURA: antes de reconfigurar el dueño del esquema como NO superusuario en NINGÚN entorno, esto tiene que estar resuelto.** No es prioridad, es precondición: hacerlo antes deja la base **inoperable**, no más segura. Y el corolario incómodo — **hoy todo el aislamiento depende de que el dueño sea superusuario**, que es lo contrario de lo que pide `ADR-0002` en todos los demás renglones. Premisa **P-1** |
+| 🔴 **#8 — la firma del rastro es elegible** | `hecho_por` vale `app.current_user_id()`, que es un GUC que **setea la propia sesión**. Medido: quien tiene la credencial de `app_request` puede atribuirle una escritura del padrón a **cualquiera del propio subárbol, el auditor incluido** | **No tiene arreglo dentro de la base**: Postgres sólo conoce `app_request_dev`. Exige que **firme la aplicación**, o sea material de firma que la base no tenga. Es decisión de arquitectura. Mientras tanto el control compensatorio es el **enunciado probatorio escrito** |
+| 🔴 **#4, defecto E** | `conUsuario`/`conJob` **re-lanzan el error crudo del driver** (`conexion.ts:255`, `:289`), así que la protección contra el `DETAIL` de Postgres existe **por callsite y no por diseño** | Hoy no hay vía alcanzable desde la aplicación — pero eso es *una propiedad del código de hoy, no un control*, y se rompe con el primer llamador nuevo |
+| 🟠 **R25: falta la verificación** | El enunciado quedó reescrito **sobre la propiedad** (ninguna columna de un secuencial compartido entre tenants sale en API/URL/export), pero el barrido del catálogo no está | Y el caveat que impide darla por cerrada con el flag: **`exportable` hoy sólo lo consume el test de N3** — para todo lo demás es documentación, no control |
+| 🟠 **H-A: la mitad *fuga*** | `acceso_auditoria.id` sigue siendo un bigint monótono **global**: dos filas propias revelan el volumen de auditoría de toda la plataforma | Cerrarlo es **cambiar el tipo de la PK** de una tabla append-only con backfill y dos índices: migración propia |
+| 🟠 **R38 punto (7), enunciado y no aplicado** | `app_job` conserva `grant update (activo)` sobre `membership` que **ningún camino de producción usa** | *Un privilegio sin camino nombrado no es una excepción documentada: es superficie* |
+| 🟡 **Rol `app_rls_owner`** | Existe con `BYPASSRLS` y **sin origen versionado** — ninguna migración lo crea | Y R7 sólo excluye `app_job` como dueño: una tabla de `app_rls_owner` pasaría el gate en verde |
+| 🟡 **`app_job` no puede dejar rastro** | `conJob` llama `envolver(cliente, null)`, así que `registrarAcceso()` tira antes de llegar a la base. **R19 promete algo hoy incumplible** | O se le da a `conJob` una vía de auditoría, o el comentario de `0002` deja de prometerlo |
+| 🟡 **Runbooks de `docs/devops/`** | Siguen diciendo `pnpm db:migrate` pelado, que es el comando de «aplicá todo» | `pnpm db:migrate --estado` **ya existía y no estaba documentado**. Es el paso 1 de `CLAUDE.md` §1.9 |
+
+### 6.1. Lo que ya estaba, de `03-hallazgos-del-panel.md` §1
+
+Lo cerrado ya está marcado ahí; esto es lo que queda:
 
 1. **El objeto huérfano no tiene compensación.** Falta `eliminar()` en el `catch` + reconciliación de claves
    contra `lote_ingesta.archivo_clave` en el job de mantenimiento.
