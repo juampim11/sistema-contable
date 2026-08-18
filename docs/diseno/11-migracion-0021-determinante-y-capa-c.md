@@ -257,7 +257,8 @@ conserva: con `unique` clásico y una columna nullable en la tupla, **dos filas 
 (`session_replication_role='replica'` saltea el trigger, `M4`) y la generada **no** (`M5`). Es **P-1**,
 ya declarada. Se escribe *«no falsificable por `app_request` ni `app_job`»*, **no** *«no falsificable»*.
 
-**No medido:** el costo del `ADD COLUMN … GENERATED` sobre las 1830 filas del piloto (rewrite con
+**No medido cuando se escribió este dictamen — MEDIDO después, ver §5.9:** el costo del
+`ADD COLUMN … GENERATED` sobre las 1830 filas del piloto (rewrite con
 `ACCESS EXCLUSIVE`). **Hay que tomarlo en local con el corpus cargado antes de tocar el piloto.**
 
 ### 4.2 `arquitecto-software`
@@ -638,19 +639,486 @@ nace **ejercitada**, no vacía.*
 
 ---
 
-## 5. Lo que queda por decidir antes de abrir el `.sql`
+## 5. Las dos diferencias — RECONCILIADAS (2ª ronda del panel, 2026-08-17)
 
-🔴 **Dos diferencias reales entre los dos agentes de dominio, sin reconciliar:**
+> Se convocó una **segunda ronda** con `Agent()` real: `contador-dominio` y
+> `motor-conciliacion-contable` con la posición del otro puesta enfrente, más `dba-data` (¿la base
+> sostiene cada forma?) y `seguridad-datos-financieros` (obligatorio, §3.1). Los cuatro con
+> prohibición de escribir archivos. Lo de abajo **reemplaza** el enunciado original, que quedó
+> demostrado como **mal redactado**.
 
-| # | `contador-dominio` | `motor-conciliacion-contable` |
+### 5.1 🔴 Diferencia 1 — NO EXISTÍA. La `§5` original registró como bloqueante una coincidencia
+
+La frase *«fila cuando hay algo que decir»* **nunca estuvo en el dictamen de `contador-dominio`**.
+Verificado por grep sobre `docs/`: aparece dos veces, y las dos son **§4.6 caracterizando la posición
+ajena** y **§5 copiando esa caracterización**. Lo que §4.5 punto 1 dice es *«los cinco no promotores se
+distinguen; ninguno es ruido»* — cinco no promotores + dos promotores = **los siete**. Los dos agentes
+sostenían lo mismo desde el principio.
+
+**DECISIÓN: una fila por cada evaluación de capa C, los SIETE estados.** Cuatro motivos, en orden:
+
+1. 🔴 **La regla se enuncia POR EVALUACIÓN, no por estado** — y acá sí había un residuo real. Las dos
+   formulaciones tienen hoy la **misma extensión** y distinta **intensión**: la regla por estado deja
+   que un octavo estado futuro «que no diga nada» nazca sin fila y rompa **en silencio** la lectura
+   «presencia = capa C evaluó». Va con esas palabras al `comment on table`.
+2. 🔴 **La opción rala convierte la PRESENCIA DE FILA en un predicado N2 legible sin tocar una columna
+   N2** (`seguridad-datos-financieros`). Con la regla rala,
+   `select movimiento_id from reconocimiento_contrapartida` —sólo columnas N1— devuelve *«qué
+   movimientos tienen que ver con un socio»*. El dato viaja en la **cardinalidad**, así que sobrevive a
+   todo grant por columna, a todo enmascarado y a todo export que «omita las columnas sensibles». Con
+   la regla densa la presencia equivale a `que_decide` (N1): información marginal **cero**.
+   **La opción con más filas es la que expone menos.**
+3. **`0021` no cerraría su propia deuda declarada.** `persistible.ts:130-136` dice que hoy *«los cinco
+   estados que NO promueven quedan indistinguibles entre sí»* y que lo cierra esta migración. Con la
+   regla rala, `sin_candidatos` seguiría indistinguible de «capa C no corrió».
+4. **No hay costo que lo justifique** (`dba-data`, medido sobre **234.000 filas** = 15 años de corridas
+   mensuales del piloto): **83 MB**, **232 ms** por corrida de 1300 inserts (17 ms sin los 4 únicos),
+   `Heap Fetches: 0` en la consulta de la cola, y **bloat máximo cero** porque la tabla no admite
+   `update` ni `delete`. Y la supersesión **no es por corrida sino por cambio**: el no-op de
+   `escrituras.ts:303` corta antes del insert, así que una corrida que no cambia nada escribe **0**
+   filas, no 1300.
+
+**Lo que el código ya decía y ningún dictamen de la 1ª ronda usó:** `aplicarContrapartida()`
+(`motor.ts:143-174`) adjunta `evidenciaContrapartida` en **los siete** estados. El modelo en memoria ya
+tiene una fila por evaluación; la regla rala habría introducido una asimetría que el código puro no
+tiene.
+
+### 5.2 Diferencia 2 — `socio_id` SÓLO EN LA SATÉLITE. Los cuatro convergen, y el fundamento cambió
+
+Los dos agentes **cambiaron de posición**: `motor-conciliacion-contable` retiró su argumento
+(*«sería una copia»*) al notar que la propuesta del otro no duplicaba nada —escalar en el padre para
+`es_socio`, satélite sólo para los múltiples—, y `contador-dominio` **retiró la columna**:
+*«una copia sólo aporta si puede diferir; si puede diferir es un riesgo; si no puede diferir es
+redundante»*.
+
+🔴 **Lo que decide no es ninguno de esos dos argumentos, sino la medición de `dba-data`** contra
+PG 16.13 — los **cuatro** mecanismos posibles, y ninguno sostiene la consistencia:
+
+| Mecanismo | Resultado medido |
+|---|---|
+| `check` con subconsulta | `cannot use subquery in check constraint` |
+| FK satélite→padre por `socio_id` | Sostiene el invariante correcto pero vuelve **inexpresables** `multiples_socios` y `socio_fuera_de_vigencia` con 2+ socios (`23503`). Mismo defecto de forma que **D-1** |
+| FK padre→satélite | Obliga a recortar la unicidad y **tirar `match_clase`** (medido: el mismo socio por CUIT y por CBU se rechaza) — y **aun así** no atrapa un segundo socio distinto en la satélite |
+| Trigger que cuenta | Valida el instante del insert del padre **y nunca más**: medido que una transacción **posterior** agrega un segundo socio a una fila ya validada y **nada falla** |
+
+Sin la columna, `es_socio` tiene un solo socio **por construcción** (`contrapartida.ts:231-244`) y un
+`≠1` **falla ruidoso en la lectura**. 🔴 **La mutación que lo prueba es sobre la EXCEPCIÓN, no sobre el
+conteo:** cambiar `left join` por `join` hace **desaparecer** la fila en vez de fallar, y un test de
+conteo quedaría **verde**.
+
+### 5.3 🔴 Dos diferencias NUEVAS que la 1ª ronda no vio, y una de ellas abortaba el piloto
+
+**(a) La nulidad de `padron_manifestacion_id` — CERRADA en forma BINARIA ESTRICTA.**
+`0021-plan-de-sesion.md:369` la fijaba `not null` en `es_tercero_padron_completo` **y** en
+`sin_match_padron_incompleto`. Los tres agentes la encontraron **insatisfacible por separado**
+(`contador-dominio` la llamó *D-1 bis*), y `dba-data` la midió: **rechaza el 100% de lo que el motor
+produce hoy** — la primera corrida de `reconocer:lote --aplicar` contra el piloto **abortaría el lote
+entero**. Es la misma clase de defecto que D-1: un constraint insatisfacible para una rama que el motor
+produce.
+
+```sql
+constraint contrapartida_manifestacion_chk check (
+  (resolucion_estado = 'es_tercero_padron_completo') = (padron_manifestacion_id is not null)
+)
+```
+
+`contador-dominio` **ratificó la forma binaria y retiró la laxa** que él mismo había propuesto, con el
+argumento que la cierra: la rama laxa **no tiene caso legítimo ejercitable** — el gate entra como
+`boolean` pelado (`contrapartida.ts:166`) y `ResolucionDeContraparte` **no tiene dónde alojar** cuál
+manifestación se consultó, así que un `sin_match_padron_incompleto` con manifestación no es difícil de
+producir: es **inexpresable en el tipo que ES la evidencia**. Y el costo futuro es **cero, verificado**:
+para hacerla producible hay que tocar `contrapartida.ts`, que está **dentro** de `huellasDelMotor()`
+(`NO_ENTRAN` sólo excluye `catalogo.ts` y `version.ts`, `version-del-motor.ts:78-91`) — o sea que la
+relajación viaja obligatoriamente con un bump de `VERSION_DEL_MOTOR`. **Una binaria escrita hoy no puede
+volverse silenciosamente equivocada.**
+
+**(b) El ancla de la satélite — CERRADA en una COMPOSICIÓN, que no es el DDL de ninguno de los dos.**
+`dba-data` midió `admite_matches boolean` y funciona (`A1`–`A7`: la generada `stored` sirve del lado
+**referenciado** de un `unique` usado por FK, y la hija `generated always as (true)` **no se puede
+escribir ni con el valor correcto**). `motor-conciliacion-contable` propuso `regimen_matches` de **tres**
+valores, que compra la **cardinalidad ≤1 de `es_socio` garantizada por la base** vía índice único
+parcial, **sin** `socio_id` en el padre.
+
+🔴 **Medido que hacen falta LAS DOS, y por qué:**
+
+| Mecanismo | Qué garantiza | ¿Falsificable? |
 |---|---|---|
-| 1 | Fila **cuando hay algo que decir** | **Una fila por cada evaluación**, los 7 estados — porque si no la tabla nace **vacía** contra 1830 movimientos (padrón en 0) |
-| 2 | `socio_id` **en el padre** (`es_socio`) + satélite para los múltiples | `socio_id` **sólo en la satélite** — en el padre sería una copia que la base no puede sostener |
+| `admite_matches` generada + FK | el padre **admite** matches | No: rechaza el **mecanismo**, no el valor (`I4.8`) |
+| `regimen_matches` escribible + FK | el régimen declarado **es** el del padre | No: la FK rechaza el valor (`I3.1`, `I3.2`) |
+| índice único parcial | **≤1 fila** bajo `socio_unico` | No (`I4.4`) |
 
-Y dos columnas que propone **sólo** `contador-dominio`, sin contraparte en el otro dictamen:
-**`resuelto_a_fecha`** (la fecha con la que se evaluó la vigencia — *«la vigencia se evalúa a la fecha del
-hecho, nunca a hoy»*) y **`completo_hasta`** en `padron_manifestacion`. El propio agente marca que
-`completo_hasta` *«necesita el visto de `product-owner`/`ux-designer` sobre el costo de captura»*.
+**`I3.4` es la medición que obliga a conservar la booleana:** con `regimen_matches` sola, un match
+`sin_matches` colgado de un `sin_candidatos` **lo rechaza el `check`, no la FK** —el padre
+`sin_candidatos` **existe** en el único con el valor `'sin_matches'`, así que la FK lo aceptaría—, y al
+mutar el `check` **entra**. O sea: la forma de una sola FK vuelve el `check` **load-bearing**, que es
+literalmente el defecto que `0014:671-679` describe para justificar la generada constante. Con las dos
+FK (`I4.6`), ese caso lo rechaza la **FK booleana**, por mecanismo, y el `check` pasa de garantía a
+cinturón. Va igual, con el `comment on constraint` diciendo que **no** es el control.
+
+**No se puede resolver con una generada en la hija:** `cannot use subquery in column generation
+expression` (`I4.1`) — una generada es fila-local por definición y no puede derivar el régimen del padre.
+
+### 5.4 🔴 Diferencia CUATRO — el índice parcial garantiza «≤1 FILA», no «≤1 SOCIO»
+
+Apareció **sólo al medir** (`I2.3`) y es la única con costo funcional real. «≤1 socio distinto entre N
+filas» **no es expresable como `unique`** en PostgreSQL — medido por los dos caminos posibles (`I2.3` y
+`B4.5`). El índice garantiza *≤1 fila*, así que **un mismo socio matcheando por dos vías (CUIT y CBU)
+—un solo socio, dos filas— es rechazado con `23505`.**
+
+**VOTO de `contador-dominio`: VA el índice.** Y la razón por la que no resigna nada de su §4.5 es la
+distinción que él mismo hizo: su advertencia era sobre el match **sólo por CBU** —el más débil—, que es
+**una sola fila** y **el índice no lo toca**: entra y la persona lo ve. Lo que el índice bloquea es
+**CUIT + CBU juntos**, el caso **corroborado**, el más fuerte. 🔴 **El índice cuesta corroboración sobre
+evidencia fuerte, nunca la alerta sobre evidencia débil.**
+
+Lo que el índice impide es el error que §4.5 marcó **sin detector aguas abajo y sin reclamante** — capa D
+imputando a la cuenta particular de un socio mientras la evidencia nombra a dos; la conciliación bancaria
+es ciega (la cuenta Banco queda idéntica), el balance cierra, y a diferencia del error inverso **nadie lo
+reclama**.
+
+🔴 **CONDICIÓN DURA — la pérdida se acepta como ABORTO RUIDOSO, jamás como deduplicación silenciosa.**
+Lo medido es que el índice **rechaza con `23505` y aborta el lote**, no que «se persista una sola vía».
+El día que el multi-vía sea alcanzable, **la aplicación NO deduplica para satisfacerlo**: que el `23505`
+suba. Deduplicar sería persistir una vía y descartar la otra sin decirlo — **el patrón `galicia.ts`**, y
+estrictamente peor que no tener el índice, porque la contadora vería una vía creyendo que es toda la
+evidencia. Misma figura que `resuelto_a_fecha`: **detector de cambio, no restricción a satisfacer.**
+
+**El índice NO retira el invariante de lectura.** Garantiza `≤1`, **no `≥1`**: un `es_socio` con **cero**
+filas satélite sigue siendo insertable y dejaría a capa D sin sujeto. `ContrapartidaEsSocioSinMatchError`
+y su test **siguen siendo obligatorios**. Índice (`≤1`) + excepción de lectura (`≥1`) = exactamente 1.
+
+⚠️ **Corrección al fundamento de la inalcanzabilidad, verificada — el guardián NO es el que se citó.**
+Se había atribuido a que `uq_mov_contraparte_candidato` excluiría dos candidatos con el mismo hmac.
+**No lo hace:** `0013:191-192` lleva **`clase` en la clave**, así que dos filas con el mismo hmac y
+distinta clase pasan. Lo que vuelve inalcanzable el multi-vía es la **separación de dominios de hash**:
+`movimiento_contraparte_identificador.identificador_hmac` se deriva con dominio `(cuit_cuil|dni|cbu)`
+según la clase (`0013:257-259`) y `padron_socio.documento_hmac` usa **sólo** `'cuit_cuil'` (`0013:294`).
+🔴 **Importa y no es pedantería:** el día que alguien unifique el dominio de hash para que un CBU del
+padrón pueda matchear, **`uq_mov_contraparte_candidato` no lo va a frenar** — y quien crea que esa
+unicidad es el guardián va a hacer el cambio pensando que está cubierto.
+
+### 5.5 🔴 El error que cometieron TRES agentes por separado, y lo que se llevó puesto
+
+`contador-dominio`, `seguridad-datos-financieros` y `dba-data` afirmaron, **cada uno por su lado**, que
+`movimiento_bancario_crudo.fecha` es inmutable. Los tres grepearon `grant update` —la **sintaxis** por
+columna— en vez de la **capacidad**. Hay un grant de **TABLA**, nunca recortado:
+
+```
+packages/data/migrations/0004_ingesta.sql:502
+grant select, insert, update, delete on movimiento_bancario_crudo to app_request;
+```
+
+**`fecha` es actualizable por `app_request`.** Sobre esa premisa falsa, `seguridad-datos-financieros`
+propuso blindar `resuelto_a_fecha` con una FK compuesta contra `unique (cliente_id, id, fecha)` — que es
+**exactamente la FK que `dba-data` ya había matado midiendo en `F4`** (con `restrict` congela la fecha
+del movimiento para siempre; con `cascade` reescribe el parámetro de una evaluación ya emitida) — y
+`dba-data` construyó sobre ella su razón para **no** incluir la columna. **Las conclusiones de dominio
+sobrevivieron; los mecanismos propuestos para sostenerlas, no.**
+
+> **Corolario que excede `0021`** (`contador-dominio`, y queda como ítem para `tech-lead` +
+> `qa-automation`): el barrido de grants debería enumerar **capacidades efectivas** por rol y columna
+> vía `information_schema.column_privileges`, no textos de migración. Tres agentes independientes
+> fallaron igual porque verificaron contra la **forma del artefacto** en vez de contra el **hecho**.
+
+### 5.6 `resuelto_a_fecha` — ENTRA, escrita por la aplicación
+
+**Entra**, y sobre la premisa correcta. El argumento de `motor-conciliacion-contable` para no incluirla
+—*«la fecha entra en `entrada_digest`, así que un cambio se supersede solo»*— cubre que cambie **el
+valor de la columna**, no que cambie **cuál columna se lee**. Verificado: `huellasDelMotor()` recorre
+**sólo** `packages/contabilidad/src/nucleo/*.ts` (`version-del-motor.ts:68,116-124`), así que
+`apps/cli/src/reconocer-lote.ts` está **fuera**; y la expresión de §7 lee `m.fecha`, **no**
+`m.fecha_valor` (que existe y es N2, `clasificacion-campos.ts:398`). El día que alguien cambie
+`reconocer-lote.ts:288` de `ev.fecha` a `ev.fechaValor`, **no se mueve ningún digest** y las filas
+históricas quedan indistinguibles de las nuevas.
+
+🔴 **NO por trigger y NO por FK.** El trigger `BEFORE INSERT` que copia `movimiento.fecha` que propuso
+`dba-data` garantizaría la igualdad **por construcción** — y así elimina justamente el grado de libertad
+que la columna existe para observar: seguiría escribiendo `movimiento.fecha` mientras el motor evalúa
+con otra, **afirmando con total confianza el parámetro equivocado**. La FK está muerta por `F4`.
+
+**Forma:** `resuelto_a_fecha date not null`, **sin default, sin trigger, sin FK, sin `grant update`**,
+escrita por la aplicación. **N2**, espejando `movimiento_bancario_crudo.fecha` (`:397`); no arrastra la
+tabla al régimen auditado. **El control es un test que asserta `resuelto_a_fecha = movimiento.fecha`** —
+que se pone rojo exactamente el día que alguien cambie el criterio, que es **el evento a detectar**. Con
+las tres condiciones de `contador-dominio`: (1) corre sobre una corrida que **el propio test produce**,
+nunca contra el histórico del piloto —si no, un cambio legítimo lo deja rojo para siempre sobre filas
+que **deben** conservar su valor viejo, y alguien lo borra—; (2) su **mutación** obligatoria es pasar
+`ev.fechaValor` y verificar el rojo, con la corrida normal como caso legítimo; (3) va anotado como
+**DETECTOR DE CAMBIO, no como restricción**: el día que se ponga rojo la respuesta correcta es **decidir
+el criterio contable** (`fecha` de operación vs. `fecha_valor` de acreditación — cuestión abierta de
+devengamiento, *«no tengo esa fuente cargada»*), **nunca** «arreglarlo» volviendo atrás.
+
+### 5.7 `completo_hasta` — ENTRA en `0021`. Visto de `product-owner` y `ux-designer`
+
+Los dos ratificaron, y `product-owner` con un motivo de alcance que ningún dictamen anterior había
+puesto: 🔴 **la columna no agrega un evento de autorización, lo EVITA.** `padron_manifestacion` ya entra
+en `0021` por la FK de P4, y dentro de esa misma migración la columna cuesta cero (tabla vacía, sin
+backfill, sin productor que romper). Dejarla para P5 convertiría P5 —hoy **un cambio de código de una
+línea**, revertible en local— en **un cambio de esquema con su propia autorización sobre el piloto**.
+*El recurso escaso acá no es la columna: es el evento de autorización*, y el incidente de `0019` es la
+factura. `not null` sin default: ratificado — con **cero productores** hoy, «bloquea el alta» es una
+objeción vacía, y `null`-permitido-y-endurecer-después es la peor de las tres opciones porque **paga la
+migración extra Y deja el esquema permitiendo la premisa sin alcance**.
+
+🔴 **`ux-designer` ratifica la columna y RECHAZA la captura tal como estaba imaginada**, y esto es
+condición de P5, no del DDL: *«"el padrón está completo HASTA tal fecha" le pide a la contadora que
+acote su propia ignorancia — y eso no es un dato que ella tenga»*. El hecho que sí tiene es **quiénes
+son los socios**; lo que no puede tener es la garantía de que no se le escapó nadie. Puesta como campo
+`date` obligatorio, se llena con **el valor que deje pasar el formulario** — y el incentivo es
+asimétrico: **una fecha corta la obliga a volver, una fecha larga la deja tranquila, y nada penaliza
+`2030-12-31`**. Agravante verificado: **hoy no hay pantalla**, así que «el formulario» sería
+`--completo-hasta 2026-12-31` en una terminal, sin la lista de socios delante y quedando en el historial.
+
+**La formulación que sí puede contestar:** no preguntar una fecha — pedir que **confirme la lista de
+socios para el período que está procesando**, con la consecuencia contable escrita al lado (*«si falta
+alguno, sus retiros se van a proponer como pagos a Proveedores en vez de Cuentas particulares»* — que es
+literalmente su control de todos los meses). `completo_hasta` se **deriva** del período del lote, no se
+tipea; el techo por cierre de ejercicio se **calcula** (no es diciembre y es distinto por cliente).
+Condiciones que quedan para P5: **el camino «no declaro» entero y sin castigo** (si declarar fuera
+requisito para recibir el Excel, va a declarar cualquier cosa: *la manifestación es un desbloqueo, jamás
+un peaje*); **nada de flag `--completo-hasta`** —si hace falta CLI antes de la pantalla, TTY obligatorio
+al estilo `prompt-oculto.ts` y la lista fuera de `stdout` redirigible, que es H-2—; y **falta un
+entregable que no estaba en el plan: la pantalla de la revocación** (*«¿qué propuestas se apoyaron en la
+declaración vieja?»* — si nadie construye esa vista, la FK justifica su costo en teoría y no devuelve
+nada en la práctica).
+
+### 5.8 🔴 La frescura BAJA A LA BASE — y la forma obvia tenía el control desactivado adentro
+
+`contador-dominio` había dado el invariante `completo_hasta >= resuelto_a_fecha` por **no expresable**
+(«cruza dos tablas»). **Sí lo es**, con espejo + `unique` de columnas exactas + FK compuesta + `check`
+fila-local: es `0017` literal (`parent_path`), y el propio `0017:50-58` da la razón de fondo — *Postgres
+exime a `check`/`unique`/`foreign key` de la RLS por diseño; los triggers no*.
+
+**Por qué acá la FK sobrevive al teorema que mató a las otras dos** (`F4`, y la de `resuelto_a_fecha`
+contra `movimiento.fecha`): **el referente es append-only**. `padron_manifestacion` nace sin `update` ni
+`delete`, **por privilegio y por policy**, dos mecanismos independientes — verificado *como capacidad y
+no como sintaxis*: cero `alter default privileges` en todo el repo. El corolario que completa el
+teorema: 🔴 **cuando el referente es append-only, el hecho presente y el histórico son el MISMO hecho, y
+la objeción desaparece con él.** Y el `23503` al intentar un `UPDATE` de `completo_hasta` no es el modo
+de falla de `F4` — allá el `UPDATE` era un camino **legítimo y vivo** (`recapturar-conceptos.ts`); acá
+está **prohibido por diseño**, así que la FK **mecaniza una decisión tomada** en vez de pelear contra una
+operación real.
+
+🔴 **Y la forma obvia tenía el control desactivado adentro.** Medido: con `match simple` —el default—, un
+`padron_manifestacion_id` **no nulo con el espejo en `NULL` ENTRA**, porque la FK compuesta **se saltea**
+si alguna columna referenciadora es nula; y entonces el check de frescura evalúa sobre `NULL`, da
+`UNKNOWN` y **pasa**. El control se desactiva dejando una columna vacía — lección `S4` sobre una columna
+nueva. ⚠️ **Y `match full` NO lo cierra**: con `cliente_id` (`not null`) adentro de la FK, «todas nulas»
+es inalcanzable, así que queda enforced siempre y **rechaza el caso legítimo** de las seis ramas sin
+manifestación. **Regla general que se sigue y vale para todo el repo: en un esquema tenant-consistente,
+`match full` es inutilizable en cualquier FK opcional.**
+
+Se cierra con **tres** piezas: el check de nulidad sobre **las dos** columnas, la FK de **dos** columnas
+(que ataja el `padron_manifestacion_id` colgado **por mecanismo**) y la de **tres** (que vuelve
+infalsificable el espejo). **8 mutaciones rojas + 3 casos legítimos verdes, ya corridos.**
+
+⚠️ **Y un argumento que quien conduce había dado por bueno queda REFUTADO, medido:** el de
+`0014:444-446` («no se puede agregar después sin rewrite») **no transfiere** — agregarlo después cuesta
+**20 ms**, o cero lock con `NOT VALID` + `VALIDATE`, porque la tabla nace vacía y `ADD COLUMN` nullable
+es metadata-only desde PG 11. El motivo real es otro y es más fuerte: **hacerlo después es otro evento de
+autorización sobre el piloto**, y P5 fue diseñado como un paso de código **sin** migración.
+
+**Condiciones de `arquitecto-software`, adoptadas:** el espejo se llama `padron_completo_hasta` (nombre
+distinto del de la madre, para que se lea como espejo y no como copia); lleva `comment` de «**NO es
+dato**» en las palabras de `0017:133-138`; y 🔴 **es el ÚNICO atributo que se espeja** — cualquier otro
+de `padron_manifestacion` es un join, escrito para que el cuarto no entre «ya que estamos». El espejo
+**NO entra** en `uq_recon_determinante`: la decisión 8 del titular sigue viva.
+
+**Y el límite honesto, que va al `comment`:** la base garantiza que **el alcance citado cubre la fecha
+evaluada**, nunca que **el alcance declarado sea cierto** — nada impide manifestar `2099-12-31`. 🔴 Y
+cubre **una** de las dos cosas que alteran una manifestación: la (b) de `contador-dominio` (el
+movimiento es posterior al alcance). Para la **(a) —que cambie el conjunto de socios— NO HAY MECANISMO**,
+ni en la base ni en la aplicación: `0013:409-417` permite insertar socios y actualizar `vigente_hasta`
+después de manifestado, y ninguna manifestación se entera.
+
+### 5.9 ✅ El costo del `ADD COLUMN … GENERATED`, MEDIDO — el número que faltaba
+
+🔴 **Con datos SINTÉTICOS, nunca con el corpus real.** El plan decía «medir en local con el corpus
+cargado», y eso **choca con la regla dura de `CLAUDE.md` §1.4**: datos financieros de terceros nunca
+en un entorno de prueba. Las 1830 filas reales viven en el piloto y **no se copian a local ni para
+medir**. Lo que el número tiene que capturar es el costo del rewrite —volumen, ancho de fila y costo
+de evaluar la expresión—, no el contenido semántico, así que se generaron 1830 filas sintéticas con
+longitudes de glosa y proporciones de nulos comparables. Corrido desde el repo y **borrado al
+terminar**, mismo criterio que los scripts de P0 y P1.
+
+| Qué | Medido |
+|---|---|
+| **`ADD COLUMN … GENERATED … STORED`, 1830 filas** | 🔴 **137,1 ms** (0,075 ms por fila) |
+| `UPDATE` de una columna equivalente (contraste) | 103,3 ms |
+| `ADD COLUMN` nullable sin default (contraste) | 5,6 ms |
+| Crecimiento **permanente** de la tabla | **+33 kB (+12 %)** — 278 kB → 311 kB tras `VACUUM FULL` |
+| Espacio **transitorio** durante el `ALTER` | **~1,9×** la tabla (278 → 524 kB), recuperable |
+
+**Lo que el desglose dice, y es lo que decide:** de los 137 ms, **103 son evaluar la expresión y
+escribir las filas**; el rewrite estructural en sí son los ~34 ms restantes. Contra los 5,6 ms de un
+`ADD COLUMN` vacío (metadata-only desde PG 11), el costo es real pero está **dominado por el `md5`, no
+por el `ALTER`**. Sobre 1830 filas, la ventana de `ACCESS EXCLUSIVE` es de **una décima de segundo**.
+
+⚠️ **Y el dato operativo que hay que llevar al runbook, que no estaba en ningún dictamen:** el
+crecimiento aparente inicial (casi el doble) **no es el costo de la columna** — son 33 kB permanentes
+y el resto es espacio transitorio del rewrite. Pero mientras el `ALTER` corre, **la tabla necesita
+espacio en disco para casi el doble de su tamaño**. Con este volumen son kilobytes; la propiedad se
+declara igual, porque es la que escala mal el día que la tabla tenga millones de filas.
+
+### 5.11 🔴 Las pruebas de mutación del DDL — y los DOS controles que sobrevivieron al primer barrido
+
+`packages/data/tests/mutaciones-0021.test.ts`: **37 mutaciones + 16 casos legítimos**, con el conteo
+declarado en el encabezado. Pero el valor no está en el número: está en que **no se confió en el
+conteo**. Se escribió un **barrido** que saca cada control del esquema local, corre el archivo, cuenta
+los rojos y lo restaura con su definición exacta leída del catálogo.
+
+🔴 **La primera corrida —con las 31 mutaciones especificadas y sus 15 legítimos EN VERDE— dejó DOS
+controles que se podían borrar de la base sin que un solo test se pusiera rojo:**
+
+**(1) `fk_recon_contrapartida_match_regimen` — y no era cobertura faltante, era un BYPASS REAL.**
+`uq_recon_contrapartida_match_socio_unico` es un índice **parcial**
+(`where regimen_matches = 'socio_unico'`). Un escritor que cuelgue de un padre `es_socio` una hija que
+**declare `'varios'`** queda **fuera del predicado del índice** y puede meter **dos socios distintos
+bajo un `es_socio`** — exactamente el error «sin detector aguas abajo y sin reclamante» que el índice
+existe para cerrar. La FK booleana **pasa** (el padre admite matches) y el check de régimen **pasa**
+(`'varios'` está en el dominio). **Lo único que lo cierra es la FK por valor.** O sea: los tres
+controles cubren cosas distintas y **ninguno es redundante** — lo contrario de lo que sugería llamar
+«cinturón» al check. Corregido en el `comment on constraint` y en el `comment on index`.
+
+**(2) `contrapartida_estado_chk` — cubierto por ESTRUCTURA, nunca por CONDUCTA.** `catalogo.test.ts`
+compara el texto del check contra `ESTADOS_RESOLUCION`, pero nadie medía qué pasa **sin** el check:
+un octavo estado **entra y nace con `admite_matches = false` y `regimen_matches = 'sin_matches'`** — el
+«rompe en silencio» que el `comment on table` describe, ahora medido y no argumentado.
+
+**Barrido final: cero sobrevivientes.**
+
+#### Tres correcciones MEDIDAS a la especificación de las mutaciones
+
+La especificación que se le pasó a `qa-automation` tenía **tres atribuciones erróneas**, y las tres
+importan porque un test escrito contra ellas habría quedado rojo — y el reflejo sería relajar la
+aserción a `/foreign key/`, que es lo que destruye la discriminación:
+
+| # | La especificación decía | Medido |
+|---|---|---|
+| 4 | manifestación inexistente + espejo poblado → `fk_…_alcance` | **`fk_…_manifestacion`** (fallan las dos; dispara la creada primero) |
+| 8 | manifestación de otro cliente → `fk_…_alcance` | **`fk_…_manifestacion`** (ídem) |
+| 5 | inexistente + espejo NULL → `fk_…_manifestacion`, «la única que prueba que la FK de dos no es redundante» | 🔴 **`contrapartida_manifestacion_chk`** — y esa afirmación **no puede ser cierta**: el check vuelve INALCANZABLE el estado que esa FK ataja, así que dispara antes y la FK **nunca se evalúa** |
+
+Eso obligó a un cambio de método: **siete de las 37 mutaciones mutan el DDL**, porque son invariantes
+cuyo mecanismo portante está **tapado por otro que dispara primero**. Corren en una transacción del
+dueño que **siempre se rollbackea**, con guard de entorno, el constraint defectuoso agregado
+`not valid` —descubierto corriéndolo: filas legítimas ya commiteadas hacían morir el `alter table`
+antes del insert— y verificación al salir de que el rollback restauró la definición original.
+
+**Los cuatro resultados que valen:**
+
+- 🔴 **`M-A6b`**: con el check de nulidad reducido a la forma «obvia» (sólo la primera mitad), una
+  manifestación **vencida medio año** con el espejo en NULL **ENTRA** — la frescura evalúa
+  `NULL >= fecha`, da UNKNOWN y pasa. **El control se desactiva dejando una columna vacía.**
+  Confirmado que la segunda mitad no es cosmética.
+- **`M-A5b` + `M-A5c`**: con el check reducido, la FK de dos columnas queda en pie; con el check
+  reducido **y** esa FK fuera, la fila **entra**. La FK de dos columnas **no** es redundante y la de
+  tres **no** la cubre.
+- **`M-C17b`**: con `(estado in (…)) = (clase = 'propuesta')`, un padre `sin_reconocer` con estado no
+  promotor **entra** (`false = false`). El `CASE` es lo único que ata la clase a un valor por rama.
+- **`M-D20b`**: con la forma del check que proponía el plan original, el estado que **hoy produce el
+  100% del corpus** se pone rojo. El costo de la forma descartada, medido.
+
+**`M-F27` — el bug de los 64 movimientos:** se corrió la mutación contra la suite completa (sacar la
+tercera condición del no-op en `escrituras.ts`). **Es el ÚNICO test de los 1493 que se pone rojo.**
+
+**`L-F25`** fija los **16 hex literales** de diez filas sintéticas —no sólo «SQL ≡ TS», porque una
+mutación que rompiera las dos gemelas a la vez quedaría verde—, incluida la del emoji fuera del plano
+básico (10 puntos de código vs. 11 unidades UTF-16), con su mutación `.length` pelado.
+
+#### Lo que NO se pudo cubrir, y por qué
+
+1. **`resuelto_a_fecha = movimiento.fecha`** y su mutación (`ev.fechaValor`): **no hay productor** —
+   ningún código escribe `reconocimiento_contrapartida` todavía, y el test tiene que correr sobre una
+   corrida que él mismo produzca.
+2. **`ContrapartidaEsSocioSinMatchError`** (el `≥1`): no hay lector. `L-B13` deja documentado que la
+   base **no** lo cubre, para que nadie borre la excepción de lectura por «redundante».
+3. **El camino real de `es_tercero_padron_completo`**: inalcanzable hasta P5. Los bloques A y D
+   ejercitan el DDL por SQL directo, nunca por el productor.
+4. 🔴 **El test de grants por conjunto EXACTO — y no es un ítem menor: es la PREMISA de `M-A10`.** La
+   inmutabilidad de `completo_hasta` depende de que nunca se otorgue `update` sobre
+   `padron_manifestacion`, **incluido un grant de TABLA que un grep por columna no ve**. Hoy esa
+   premisa **no la protege ningún test**.
+
+#### Dos hallazgos laterales
+
+- 🔴 **`packages/data/tests/ayuda.ts` afirmaba algo falso**, en el archivo que define para qué sirve
+  `clienteDuenio()`: decía que el nodo raíz no lo puede crear el dueño *«porque `force row level
+  security` le aplica las políticas también a él»*. **Medido: `sistema_contable` es `rolsuper` y el
+  insert le funciona sin GUC ninguno.** La conclusión («`clienteDuenio()` mide mecanismo») sigue en
+  pie, por otra razón. Importa porque de la premisa falsa se sigue una trampa: **cualquier test que
+  intente medir una POLICY a través de `clienteDuenio()` pasa EN VACÍO**. Corregido.
+- ⚠️ **Metodológico, para el próximo barrido:** `drop constraint` + `add constraint` **no conserva el
+  `COMMENT`**, y `drop index` + `create index` tampoco. `catalogo.test.ts` exige que cada check nombre
+  a su constante **en el comment**, así que un barrido que sólo restaura la definición deja ese test
+  rojo por un motivo ajeno al control que se está midiendo.
+- ⚠️ **Colisión deliberada, anotada:** `concepto_banco_estrategia` en `'no_capturado'` y en
+  `'no_publicado'` producen el **mismo `entrada_digest`**, porque las dos colapsan al `-:`. Es
+  correcto —el motor no puede leer esa diferencia—, pero la consecuencia es que **un movimiento que
+  pase de una a otra no supersede**.
+
+### 5.10 Lo que sigue abierto
+
+- **`completo_hasta`** en `padron_manifestacion`: `contador-dominio` lo quiere **en `0021`**
+  (`date not null`, sin default) con el argumento de que la tabla nace con `grant insert` y **sin**
+  `update`/`delete`, así que una manifestación sin alcance queda como premisa permanente e
+  incorregible. Sostiene que el visto de `product-owner`/`ux-designer` condiciona **P5** (quién tipea la
+  fecha y con qué valor sugerido), **no** el DDL. **Falta la convocatoria de esos dos.**
+- ⚠️ **El riesgo de gate rojo que `dba-data` declaró como «el más probable de toda la migración» quedó
+  ACOTADO, verificado por quien conduce leyendo el detector** (`catalogo.test.ts:1021`,
+  `FORMA_DOMINIO_CERRADO = /^CHECK \(\((\w+) = ANY \(ARRAY\[(.+)\]\)\)\)$/`, anclada a los dos extremos):
+  - `contrapartida_promocion_chk` (forma `CASE`) y `contrapartida_manifestacion_chk` (igualdad de
+    booleanos) **NO matchean** → no exigen fila. Riesgo descartado.
+  - El test admite **dos checks contra la misma constante**: la clave del `Set` de cobertura es
+    `d.check`, el **nombre del constraint**, no la constante (`:1109`). Riesgo descartado.
+  - **Sí** exigen fila tres: `contrapartida_estado_chk` (previsto — es lo que obliga a mover
+    `ESTADOS_RESOLUCION`), `contrapartida_match_clase_chk` (constante ya existente
+    `CLASES_IDENTIFICADOR_CONTRAPARTE`) y `contrapartida_match_regimen_chk`. 🔴 **El tercero es el punto
+    fino:** `('socio_unico','varios')` es un dominio de **dos** valores que no existe en TypeScript
+    —el real es de **tres** y vive en la generada del padre—. Se resuelve declarando una constante
+    **verdadera** («los regímenes que admiten matches», derivada de `ESTADOS_RESOLUCION`), nunca
+    inventando un dominio de dos para contentar al gate.
+- 🔴 **`ESTADOS_RESOLUCION` hay que moverla** de `apps/cli/src/resolver-contrapartida.ts:125-133` a
+  `packages/contabilidad/src/nucleo/tipos.ts` y **derivar de ella** el discriminante de
+  `ResolucionDeContraparte`, más su fila en `DOMINIOS_CERRADOS`. Es el movimiento que `0014` hizo con
+  `CLASES_RECONOCIMIENTO`.
+- **Reclasificar `padron_socio_documento.socio_id` a N2** en la misma tarea: con `socio_id` en N2 el
+  literal entra igual en la unión global, y dejarla N1 haría que el registro diga **dos cosas del mismo
+  nombre**. El gate **no** lo detecta (`redactor.test.ts:44-47` tolera N1-en-una-tabla/N2-en-otra).
+- 🔴 **Ninguna de las clasificaciones N2 nuevas tiene gate propio.** Bajar una N2 a N1 **no dispara
+  nada**: el registro atrapa el error de más (N2-R indebido) a los gritos y el de menos **en silencio**.
+  Se cierran con test de **afirmación positiva** (`nivelDe(tabla, col) === 'N2'`) + `@ts-expect-error`
+  sobre `logger.info`, y su **prueba de mutación**. Sin eso son comentarios.
+- **H-1** (`loggerAcotado` no intersecta su allowlist con `ClaveProhibida`) y **H-2**
+  (`resolver-contrapartida.ts:309` publica `sociosInvolucrados` a stdout esquivando el redactor) dejan
+  de ser hipotéticos **con esta migración**, porque es la que sube `socio_id` a N2. Van en la misma
+  tarea.
+- 🔴 **`reconocer-lote.ts` fija qué entra a capa C (`:283`), con qué fecha y con qué gate (`:288`), y
+  está FUERA del gate que existe para detectar que el motor cambió.** El test de §5.6 es un parche
+  puntual sobre un agujero general. Ítem propio para `tech-lead` + `qa-automation`.
+- 🔴 **El criterio (a) de la frescura NO tiene mecanismo** (§5.8): el conjunto de socios puede cambiar
+  después de manifestado y ninguna manifestación se entera. Ni base ni aplicación.
+- 🔴 **`padron_manifestacion` no tiene noción de «vigente»** (`arquitecto-software`). `revoca_a` encadena,
+  pero nada impide N manifestaciones no revocadas con alcances superpuestos o contradictorios, ni dos
+  revocando a la misma. Las dos tablas hermanas lo resuelven con índice único parcial (`uq_recon_vigente`
+  `0014:479`, `uq_padron_socio_vigente` `0013:363`); acá no hay equivalente. **Para `0021` es tolerable**
+  —la resolución cita un id explícito, que es el diseño elegido—; **para P5 no**: «elegir la
+  manifestación» va a nacer como un `order by completo_hasta desc limit 1` que nadie va a llamar decisión.
+- **El test de grants por conjunto EXACTO** (`toEqual` contra `information_schema.column_privileges`) deja
+  de ser «el test que falta» y pasa a ser 🔴 **condición del control de frescura**: la inmutabilidad de
+  `completo_hasta` es hoy verdadera pero **no está protegida por ningún test**, y un `grant update` de
+  **tabla** agregado en una migración futura pasaría el gate — que es exactamente lo que `0004:502`
+  demuestra que pasa.
+- **Los dos gates de `arquitecto-software` (§4.2), con tres precisiones nuevas para el primero:**
+  (i) `entrada_digest` es columna de `movimiento_bancario_crudo`, así que necesita entrada
+  **auto-referencial** en la lista o el gate nace rojo; (ii) 🔴 el emparejamiento tiene que ser por
+  **límite de palabra, nunca `includes`** — la expresión contiene `concepto_completo`, así que un
+  substring daría «cubierta» a una columna futura llamada `completo`, y contiene `concepto_banco` y
+  `concepto_banco_estrategia`, uno prefijo del otro; (iii) **motivo no vacío exigido por el test**, o la
+  lista se llena de `''` en la primera tanda y el gate mide presencia en vez de decisión.
+- **H-1 estructural**: `loggerAcotado` sigue sin intersectar su unión de claves con `ClaveProhibida`. En
+  esta tarea se sacó `'socio_id'` **a mano** de `CamposAltaSocio`; el arreglo real es una línea de tipo,
+  con su prueba de mutación, y es ítem propio.
 
 ---
 
@@ -661,8 +1129,8 @@ hecho, nunca a hoy»*) y **`completo_hasta`** en `padron_manifestacion`. El prop
 | **P0** | `digestDeEntrada()` puro, por exclusión, + 17 tests + 8 mutaciones | ✅ **CERRADO**, medido: 64 |
 | **P1** | La expresión SQL verificada contra el corpus, **como `select`, sin DDL** | ✅ **CERRADO**: 1830/1830, 0 divergencias |
 | **P2** | Trigger + `entrada_digest` en la hija + `determinante` generado + unicidad nueva + recorte del grant | ⏳ por escribir |
-| **P3** | `padron_manifestacion` + FK | ⏳ bloqueado por §5 |
-| **P4** | `reconocimiento_contrapartida` + satélite | ⏳ bloqueado por §5 |
+| **P3** | `padron_manifestacion` + FK | ⏳ **DESBLOQUEADO** — §5 reconciliada (2026-08-17). Falta el visto de `product-owner`/`ux-designer` sobre `completo_hasta` |
+| **P4** | `reconocimiento_contrapartida` + satélite | ⏳ **DESBLOQUEADO** — forma escrita y ratificada por `contador-dominio` **y** `motor-conciliacion-contable` (condición de `arquitecto-software`, §4.2), con el DDL medido por `dba-data` y la clasificación de `seguridad-datos-financieros` |
 | **P5** | *Fuera de `0021`.* Soltar el `false` de `reconocer-lote.ts:288` | ⏳ paso propio, disparador (c) |
 
 ⚠️ **Honestidad sobre la reversibilidad:** si P2–P4 van en un archivo, van en **una transacción**, y **la
@@ -766,7 +1234,7 @@ dictaminadas y su premisa **medida** (64). Las correcciones de §3.4 hay que apl
 - El test de grants con cobertura **inversa de conjunto cerrado** (§4.4).
 - Las dos diferencias de §5.
 - La deuda del **pepper** en `entrada_digest`, declarada y no cerrada (§4.3 punto 2).
-- El costo del `ADD COLUMN … GENERATED` sobre 1830 filas: **no medido**.
+- ~~El costo del `ADD COLUMN … GENERATED` sobre 1830 filas: **no medido**.~~ ✅ **MEDIDO** — ver §5.9.
 - Correcciones documentales: `0018:58-59` no se propaga; `persistible.ts:130-136` deja de ser cierto
   cuando exista capa C persistida; `0014:12` y `:429-430` citan una `0015` que es en realidad `0021`.
 
