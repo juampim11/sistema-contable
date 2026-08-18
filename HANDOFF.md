@@ -6,6 +6,39 @@
 
 ---
 
+## 2026-08-18 (72) — 🔴 **`0021` APLICADA AL PILOTO**, con el procedimiento de §1.9 corrido completo: listar, confirmar exacto, backup fresco, aplicar, verificar.
+
+**Herramienta:** Claude Code. Continuación de la entrada 71 — bloque no-bloqueante cerrado (commits
+`5d669b2`, `924ade3`, `1181088`, `755386d` sobre `feat/determinante-de-entrada`), y con eso el titular
+autorizó el pedido de `0021` al piloto, en dos pasos separados.
+
+**Paso 1 (listar y confirmar):** `ENV_FILE=.env.piloto pnpm db:migrate --estado` mostró exactamente
+UNA pendiente (`0021_determinante_de_entrada_y_capa_c.sql`) contra 20 ya aplicadas — coincide exacto
+con lo autorizado. Base sin drift: 4 tenants / 1830 movimientos / 3 lotes / 0 reconocimientos. Backup
+existente (`piloto_20260812-193122Z.dump`) tenía 6 días y era anterior a `0018`/`0019`/`0020` — se pidió
+uno nuevo antes de aplicar.
+
+**Paso 2 (aplicar), 2026-08-18:**
+
+1. **Backup fresco:** `pnpm respaldar:piloto` → `respaldos/piloto_20260818-225938Z.dump`, **602.221
+   bytes**, timestamp de hoy. SHA-256: `2683940b1d4e3615b914e6cbb7164b7a1247e483482a7fb34e1c780a23042458`.
+2. **Migración aplicada:** `ENV_FILE=.env.piloto pnpm db:migrate` → `0021` aplicada sin error. Hash en
+   `_migraciones`: `99b19eff42f7241a`, `aplicada_en = 2026-08-18 23:00:05.585936+00`.
+3. **`--estado` post-aplicación:** las 21 migraciones (0001-0021) muestran `(ya aplicada)`, CERO
+   pendientes.
+4. **Base, por consulta directa, post-aplicación:** 4 tenants / 1830 movimientos / 3 lotes / **0**
+   reconocimientos — **idéntico** a antes de aplicar. `0021` deja el esquema listo para Capa C, sin
+   escribir ni un movimiento ni un reconocimiento por sí sola (eso es P4/P5, fuera de alcance).
+5. 🔴 **`pnpm verificar` NO se corrió contra el piloto**, a propósito: incluye `pnpm test`, que siembra
+   datos sintéticos y trunca tablas (`sembrar()`) — correrlo contra el piloto habría escrito datos de
+   prueba sobre datos reales de clientes, violando la regla dura §1.4. Se corrió **localmente** en su
+   lugar, post-aplicación: **66 archivos / 1521 tests / 0 fallas**.
+
+**Estado:** piloto en `0021`, sin drift en los datos, backup fresco disponible para restaurar si hiciera
+falta. Local y piloto al mismo nivel de esquema.
+
+---
+
 ## 2026-08-18 (71) — 🔴 **PUNTO DE ENTRADA SI RETOMÁS SIN ESTE CHAT.** El panel de cierre encontró **CUATRO BLOQUEANTES con el gate en VERDE** — uno era el bug de los 64 resucitado por concurrencia. Los cuatro cerrados. Gate: 65 / 1519 / 0.
 
 **Herramienta:** Claude Code. Continuación de la entrada 70. Con `pnpm verificar` en **63 archivos /
