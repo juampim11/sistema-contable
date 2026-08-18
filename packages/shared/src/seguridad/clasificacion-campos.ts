@@ -394,6 +394,17 @@ export const CLASIFICACION = {
         nota: 'Digest de los campos de la fila. No es reversible, pero SÍ es comparable: publicarlo ' +
           'permitiría preguntar "¿tenés esta operación?" desde afuera.',
       },
+      entrada_digest: {
+        nivel: 'N2',
+        exportable: false,
+        nota: 'Digest de los SIETE campos que el motor lee de esta fila (0021). Mismo criterio y mismo ' +
+          'nivel que fila_hash, y por el mismo motivo: no es reversible pero SÍ es comparable. ⚠️ NO lleva ' +
+          'pepper —una columna generada no puede leer un secreto de entorno—, así que la misma glosa da el ' +
+          'mismo digest en dos clientes del mismo estudio. El riesgo está acotado, no cerrado: correlacionar ' +
+          'exige acceso RLS a los DOS tenants, y quien lo tiene ya puede correlacionar por concepto_banco ' +
+          '(N2, sin lectura auditada) con mejor resolución. Revisitar el día que exista un rol que vea la ' +
+          'cola de revisión SIN ver los movimientos crudos.',
+      },
       fecha: { nivel: 'N2', exportable: true },
       fecha_valor: { nivel: 'N2', exportable: true },
       descripcion: {
@@ -591,7 +602,15 @@ export const CLASIFICACION = {
     campos: {
       id: UUID_INTERNO,
       cliente_id: UUID_INTERNO,
-      socio_id: UUID_INTERNO,
+      socio_id: {
+        nivel: 'N2',
+        exportable: true,
+        nota: '🔴 SUBIDA DE N1 A N2 EN 0021, y el motivo es del REGISTRO, no de esta tabla: el registro ' +
+          'clasifica por NOMBRE DE COLUMNA globalmente (ColumnaSensible aplana el mapeo), y ' +
+          'reconocimiento_contrapartida_match.socio_id es N2. Dejarla en N1 acá haría que el registro dijera ' +
+          'DOS COSAS DEL MISMO NOMBRE — y el gate no lo detecta, porque redactor.test.ts tolera N1-en-una-tabla ' +
+          'y N2-en-otra (precedente `motivo`). El nivel efectivo ya es N2 por la unión; esto lo hace explícito.',
+      },
       documento: {
         nivel: 'N2R',
         enmascarar: 'cuit_parcial',
@@ -780,6 +799,13 @@ export const CLASIFICACION = {
         nota: 'Es `entrada.matcheo.modo === prefijo_con_cola`: propiedad de la ENTRADA DEL LÉXICO, no de la glosa. La cola en sí (el nombre de la contraparte) está prohibida por 05 §6.',
       },
       recalculo_disponible: { nivel: 'N1', exportable: true, nota: 'Booleano de workflow. Sin productor todavía.' },
+      entrada_digest: {
+        nivel: 'N2',
+        exportable: false,
+        nota: 'FOTO del movimiento_bancario_crudo.entrada_digest en el instante en que se emitió este ' +
+          'reconocimiento (0021). Mismo nivel que su origen. La llena un trigger que COPIA, no la ' +
+          'aplicación: no lleva grant de insert.',
+      },
       created_at: MARCA_TIEMPO,
     },
   },
@@ -803,6 +829,132 @@ export const CLASIFICACION = {
         nivel: 'N2',
         exportable: true,
         nota: 'Mismo criterio que reconocimiento_movimiento.evidencia_entrada_lexico_id.',
+      },
+      created_at: MARCA_TIEMPO,
+    },
+  },
+
+  /**
+   * La declaración de que el padrón de socios de un cliente está COMPLETO, con su alcance
+   * (migración 0021). Es la premisa que habilita al motor a concluir «es un tercero».
+   * Append-only: sin `update` ni `delete` para nadie, ni policy ni grant.
+   */
+  padron_manifestacion: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      revoca_a: UUID_INTERNO,
+      completo_hasta: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'La vigencia de una afirmación sobre la COMPOSICIÓN SOCIETARIA del cliente, no un parámetro ' +
+          'técnico — mismo criterio y mismo nivel que padron_socio.vigente_desde.',
+      },
+      manifestado_por: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Uuid del usuario que declaró la sesión. ⚠️ NO es prueba de autoría: app.current_user_id() es ' +
+          'un GUC que setea la propia sesión. Identidad declarada no es identidad autenticada — el límite ' +
+          'está en el comment on column de 0021 y ninguna pantalla puede presentarlo como firma.',
+      },
+      manifestado_en: MARCA_TIEMPO,
+    },
+  },
+
+  /**
+   * Qué resolvió capa C sobre un movimiento (migración 0021): uno de los 7 estados de
+   * `ResolucionDeContraparte`, con el vínculo a la manifestación en la que se apoyó. Una fila
+   * por CADA evaluación — la presencia de fila ES el hecho de que capa C corrió.
+   */
+  reconocimiento_contrapartida: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      reconocimiento_id: UUID_INTERNO,
+      padron_manifestacion_id: UUID_INTERNO,
+      resolucion_estado: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'La interpretación de ESTA transacción de ESTE cliente — mismo tier que reconocimiento_movimiento' +
+          '.tipo y .concepto. 🔴 `resolucion_estado` y NUNCA `estado`: el registro clasifica por nombre de ' +
+          'columna GLOBALMENTE, y una columna `estado` en N2 taparía lote_ingesta.estado, que es N1 a propósito.',
+      },
+      reconocimiento_clase: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Espejo de reconocimiento_movimiento.clase (N1), infalsificable por la FK de tres columnas contra ' +
+          'uq_recon_clase. Vocabulario de proceso, no del cliente.',
+      },
+      admite_matches: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Generada. 🔴 NO hereda el nivel de su insumo: AÍSLA su bit de mayor contenido — `true` significa ' +
+          '«hay evidencia positiva de que la contraparte de este movimiento es un socio del cliente». Es el ' +
+          'hecho sensible, en un booleano. Con N1, logger.info(…, {movimiento_id, admite_matches: true}) ' +
+          'compilaría y publicaría eso a un almacén sin RLS.',
+      },
+      regimen_matches: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Generada, tres valores. Mismo criterio que admite_matches: `socio_unico` afirma lo mismo con ' +
+          'más resolución.',
+      },
+      padron_completo_hasta: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'ESPEJO ESTRUCTURAL del alcance de la manifestación citada — NO ES DATO: es lo que vuelve ' +
+          'fila-local el invariante de frescura. Mismo idiom que tenant_node.parent_path. Nombre distinto del ' +
+          'de la madre a propósito, para que se lea como espejo y no como copia.',
+      },
+      resuelto_a_fecha: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'La fecha con la que se evaluó la vigencia de los socios: es una fecha de una transacción del ' +
+          'cliente, mismo nivel que movimiento_bancario_crudo.fecha. ⚠️ No es una denormalización de esa ' +
+          'columna: es el PARÁMETRO de la corrida, y la diferencia se vuelve visible el día que alguien lea ' +
+          'fecha_valor en vez de fecha (ver el comment on column de 0021).',
+      },
+      created_at: MARCA_TIEMPO,
+    },
+  },
+
+  /**
+   * Satélite 0..N de `reconocimiento_contrapartida` (migración 0021): los socios contra los que
+   * matchearon los candidatos de contraparte, con la vía. Nunca la denominación ni el documento.
+   */
+  reconocimiento_contrapartida_match: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      contrapartida_id: UUID_INTERNO,
+      admite_matches: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Generada CONSTANTE. Mismo nivel que la del padre: el registro clasifica por nombre, y declararla ' +
+          'N1 acá sería una incoherencia sin beneficio.',
+      },
+      regimen_matches: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Escribible pero infalsificable (FK). Mismo nivel que la del padre, por el mismo motivo.',
+      },
+      socio_id: {
+        nivel: 'N2',
+        exportable: true,
+        nota: '🔴 SEUDÓNIMO ESTABLE DE UNA PERSONA HUMANA ligada a este cliente: opaco pero ENLAZABLE, la misma ' +
+          'propiedad que pone a identificador_hmac en N2. Se distingue de movimiento_id (N1), que identifica una ' +
+          'transacción y no a alguien: agregado por líneas de log daría el perfil de un socio real desde un ' +
+          'almacén sin RLS. N2 y NO N2-R: con N2-R esta tabla entraría sola en tablasQueExigenRolEnLectura() y ' +
+          'la cola de revisión se volvería inusable.',
+      },
+      match_clase: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'La FORMA del identificador que matcheó, no su valor — precedente literal ' +
+          'movimiento_contraparte_identificador.clase. `match_clase` y no `clase`: ver resolucion_estado.',
       },
       created_at: MARCA_TIEMPO,
     },

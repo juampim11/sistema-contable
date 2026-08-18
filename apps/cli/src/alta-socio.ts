@@ -64,10 +64,13 @@ cargarEnv();
 
 const SALTO = String.fromCharCode(10);
 
+// 🔴 NO incluye 'socio_id' desde `0021`, que lo subió a **N2**. Y hace falta sacarlo A MANO
+// porque `loggerAcotado` NO intersecta esta unión con `ClaveProhibida` (H-1): declararlo acá
+// COMPILA, y en runtime el redactor lo degradaría a la marca — se perdería el asidero de
+// depuración sin que nada avise. El arreglo estructural de `loggerAcotado` es ítem propio.
 type CamposAltaSocio =
   | 'cliente_id'
   | 'usuario_id'
-  | 'socio_id'
   | 'documento_tipo'
   | 'pepper_id'
   | 'motivo_codigo'
@@ -250,7 +253,6 @@ export async function escribirAltaDeSocio(args: {
 
   log.info('alta_socio.creado', {
     cliente_id: args.cliente,
-    socio_id: resultado.socioId,
     documento_tipo: args.documentoTipo,
     pepper_id: resultado.pepperId,
   });
@@ -291,7 +293,7 @@ export async function escribirBajaDeSocio(args: {
         (ctx) => bajaDeSocio(tx, ctx, { clienteId: args.cliente, socioId: args.socioId, vigenteHasta: args.vigenciaHasta }),
       ),
     );
-    log.info('alta_socio.baja', { cliente_id: args.cliente, socio_id: resultado.socioId });
+    log.info('alta_socio.baja', { cliente_id: args.cliente });
     return { estado: 'baja', socioId: resultado.socioId };
   } catch (error) {
     if (error instanceof BajaDeSocioNoEncontradaError) {
