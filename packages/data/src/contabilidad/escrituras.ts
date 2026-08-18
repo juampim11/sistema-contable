@@ -75,9 +75,13 @@ export async function altaDeSocio(
   );
   if (!documentoFila[0]?.id) throw new Error('El alta del documento de socio no devolvió id.'); // H-14
 
+  // 🔴 SIN `socio_id`: `0021` lo subió a N2 (seudónimo estable de una persona humana, opaco pero
+  // ENLAZABLE — agregado por líneas de log da el perfil de un socio real desde un almacén que no
+  // tiene RLS ni frontera de tenant). El typecheck lo rechaza, y esa es la falla buena: ruidosa y
+  // en la misma tarea. Lo que queda alcanza para depurar un alta —el cliente, el tipo de documento
+  // y la versión de pepper— sin nombrar a la persona.
   logger.info('alta_socio.creado', {
     cliente_id: pedido.clienteId,
-    socio_id: socioId,
     documento_tipo: pedido.documentoTipo,
     pepper_id: pepperId,
   });
@@ -158,7 +162,9 @@ export async function bajaDeSocio(
   const id = filas[0]?.id;
   if (!id) throw new BajaDeSocioNoEncontradaError(pedido.clienteId, pedido.socioId);
 
-  logger.info('alta_socio.baja', { cliente_id: pedido.clienteId, socio_id: id });
+  // Sin `socio_id` por lo mismo que en el alta (N2 desde `0021`). La baja se depura por cliente y
+  // por el momento del evento; el uuid del socio no agrega nada que valga publicar.
+  logger.info('alta_socio.baja', { cliente_id: pedido.clienteId });
   return { socioId: id };
 }
 
@@ -271,12 +277,24 @@ export async function persistirReconocimiento(
   _ctx: ContextoAuditado,
   pedido: PedidoDePersistirReconocimiento,
 ): Promise<ResultadoDePersistirReconocimiento> {
+  // 🔴 `0021`: se traen DOS `entrada_digest` distintos y esa es la mitad del arreglo.
+  //   - `entrada_persistida`: el que tenía el movimiento CUANDO se emitió el reconocimiento vigente
+  //     (la foto histórica que copió el trigger).
+  //   - `entrada_actual`: el que tiene el movimiento HOY (columna generada, se recalcula sola en
+  //     cada UPDATE de la entrada).
+  // Comparar los dos es lo que detecta un reproceso que cambió la entrada sin cambiar la clase.
+  // Sale de la BASE y no de un cálculo en TypeScript a propósito: la columna generada es la fuente,
+  // y así el no-op no puede divergir de la unicidad que lo respalda.
   const activas = await conErroresTraducidos(undefined, () =>
-    tx.consultar<{ id: string; motor_digest: string; clase: string }>(
-      `select id::text as id, motor_digest, clase
-         from reconocimiento_movimiento
-        where cliente_id = $1 and movimiento_id = $2 and superseded_por is null
-        for update`,
+    tx.consultar<{ id: string; motor_digest: string; clase: string; entrada_persistida: string; entrada_actual: string }>(
+      `select r.id::text as id, r.motor_digest, r.clase,
+              r.entrada_digest as entrada_persistida,
+              m.entrada_digest as entrada_actual
+         from reconocimiento_movimiento r
+         join movimiento_bancario_crudo m
+           on m.cliente_id = r.cliente_id and m.id = r.movimiento_id
+        where r.cliente_id = $1 and r.movimiento_id = $2 and r.superseded_por is null
+        for update of r`,
       [pedido.clienteId, pedido.movimientoId],
     ),
   );
@@ -295,12 +313,24 @@ export async function persistirReconocimiento(
   // caso que el DDL declara fail-closed (mismo digest, misma clase, padrón distinto) sigue siendo
   // ruidoso.
   //
-  // ⚠️ LO QUE ESTO NO CUBRE, declarado: el determinante cubre el CÓDIGO, no la ENTRADA, y la
-  // entrada es MUTABLE — `recapturar-conceptos.ts` y `backfill-contraparte.ts` hacen UPDATE sobre
-  // `movimiento_bancario_crudo`. Un reproceso que cambie `concepto_banco` sin cambiar la clase
-  // (por ejemplo `concepto_no_catalogado` → `ambiguo`, las dos `sin_reconocer`) sigue dando no-op
-  // con la interpretación vieja intacta. Es el productor que le falta a `recalculo_disponible`.
-  if (activa && activa.motor_digest === pedido.motorDigest && activa.clase === pedido.clase) {
+  // 🔴 `0021` CIERRA EL AGUJERO QUE ESTE COMENTARIO DECLARABA ABIERTO. Decía: «el determinante
+  // cubre el CÓDIGO, no la ENTRADA, y la entrada es MUTABLE — `recapturar-conceptos.ts` y
+  // `backfill-contraparte.ts` hacen UPDATE sobre `movimiento_bancario_crudo`; un reproceso que
+  // cambie `concepto_banco` sin cambiar la clase sigue dando no-op con la interpretación vieja
+  // intacta». Eso se MIDIÓ antes de escribir el DDL: **64 movimientos del corpus real** de 1830
+  // cambiaban de entrada conservando la clase, o sea que quedaban con la interpretación vieja y un
+  // `no_op` silencioso.
+  //
+  // La tercera condición es la que los rescata: si la entrada de HOY no es la que se usó para
+  // emitir el reconocimiento vigente, NO es un no-op aunque el código y la clase coincidan — hay
+  // que reconocer de nuevo y superseder. El caso `entrada_persistida === entrada_actual` es el
+  // no-op verdadero, y sigue siendo el camino normal de un reproceso que no cambió nada.
+  if (
+    activa &&
+    activa.motor_digest === pedido.motorDigest &&
+    activa.clase === pedido.clase &&
+    activa.entrada_persistida === activa.entrada_actual
+  ) {
     return { estado: 'no_op', reconocimientoId: activa.id };
   }
 
@@ -325,7 +355,12 @@ export async function persistirReconocimiento(
           que_decide, motivo_codigo, evidencia_entrada_lexico_id, evidencia_caracteres_matcheados,
           evidencia_hubo_cola)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-       on conflict (cliente_id, movimiento_id, motor_digest, es_propuesta) do nothing
+       -- 0021: la tupla del ON CONFLICT es uq_recon_determinante, que ahora lleva entrada_digest.
+       -- Nombrarla acá NO la inserta (la llena el trigger que copia la foto historica): en un ON
+       -- CONFLICT se nombran las columnas del INDICE, no valores. Si esta lista deja de coincidir
+       -- EXACTO con la unicidad, Postgres responde 42P10 y todo insert muere -- ruidoso, y es la
+       -- razon por la que este renglon cambia si o si junto con el determinante.
+       on conflict (cliente_id, movimiento_id, motor_digest, entrada_digest, es_propuesta) do nothing
        returning id::text as id`,
       [
         pedido.clienteId,
