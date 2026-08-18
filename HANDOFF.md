@@ -6,6 +6,96 @@
 
 ---
 
+## 2026-08-18 (71) — 🔴 **PUNTO DE ENTRADA SI RETOMÁS SIN ESTE CHAT.** El panel de cierre encontró **CUATRO BLOQUEANTES con el gate en VERDE** — uno era el bug de los 64 resucitado por concurrencia. Los cuatro cerrados. Gate: 65 / 1519 / 0.
+
+**Herramienta:** Claude Code. Continuación de la entrada 70. Con `pnpm verificar` en **63 archivos /
+1493 tests / 0 fallas**, se convocó a `tester`, `code-reviewer` y `security-engineer`.
+🔴 **El gate verde no vio ninguno de los cuatro.** Es literal la lección del Módulo 1 que `CLAUDE.md`
+§3.1 documenta, repetida — y la razón por la que esa regla existe.
+
+> **TODO EL DETALLE, con el diseño aprobado y las mediciones, está en
+> `docs/diseno/11-migracion-0021-determinante-y-capa-c.md` §5.12.**
+
+### 1. 🔴 B-1 — La foto histórica registraba una entrada que el motor NUNCA leyó
+
+Encontrado **dos veces por caminos independientes**: `code-reviewer` lo dedujo del código, `tester` lo
+**reprodujo con una carrera medida**. `reconocerLote()` corre en UNA transacción `READ COMMITTED`; la
+evidencia se lee en el primer statement y el trigger hacía su `select` **muchos statements después**.
+Un `recapturar-conceptos` que commiteara en el medio quedaba **dentro de la ventana, que era el lote
+entero**, y la fila terminaba con la interpretación VIEJA etiquetada con la entrada NUEVA — o sea
+`no_op` para siempre. **El bug de los 64 movimientos, resucitado por concurrencia, dentro de la
+migración que existe para cerrarlo.**
+
+**Cerrado con un cambio de diseño, presentado al titular y aprobado ANTES de implementarlo:** el
+trigger pasó de **COPIAR a VERIFICAR**. La app declara `entradaDigest` sobre la misma evidencia que
+consumió el motor; el control de la app descarta **ese movimiento solo** (contado en `entradaCambio`,
+el lote sigue) y el trigger es la red que sí aborta, para la micro-ventana.
+
+🔴 **Efecto secundario que vale por sí solo:** `digestDeEntrada()` **dejó de ser código muerto**.
+Tenía 17 tests y 8 mutaciones y **ningún llamador de producción**.
+
+⚠️ Dos hallazgos al implementarlo: PostgreSQL **no admite `FOR UPDATE` sobre el lado nullable de un
+outer join**, así que la lectura quedó en dos statements —y eso deja el control **antes** de tomar el
+lock, mejor que el diseño original—; y los helpers de test tuvieron que empezar a declarar el digest.
+
+### 2. B-2 — Una secuencia legítima abortaba el lote entero, culpando al artefacto equivocado
+
+Cargar el padrón y **después** dar de baja al socio hace oscilar la clase con el mismo digest y la
+misma entrada. El no-op compara `clase` (**3** valores), la unicidad usa `es_propuesta` (**2**): la
+tercera corrida superseder, **aplicaba el `update`**, y recién ahí chocaba. Excepción → **lote muerto**
+→ movimiento irreprocesable. Y el mensaje culpaba a *«un cambio del léxico»* que nadie tocó.
+**Cerrado:** se detecta antes de tocar nada y devuelve estado.
+
+### 3. B-3 — `lpad` TRUNCA: colisión REAL del determinante
+
+`lpad(y, 4, '0')` con una cadena más larga **recorta**: el año `10000` salía `'1000'` y colisionaba
+con el año `1000`. Y el prefijo de longitud iba hardcodeado en `'10:'`, así que **no lo delataba** —
+el enmarcado por longitud existe justamente para eso. La gemela de TypeScript nunca tuvo el defecto.
+**Cerrado** con `greatest(4, length(…))` y prefijo calculado. ⚠️ **Ningún digest del corpus cambia:**
+para todo año de cuatro dígitos la cadena es idéntica, así que las 1830 coincidencias de P1 valen.
+
+### 4. 🔴 B-4 — El error de proceso más grave de la sesión, y es de quien conduce
+
+Las tres tablas nuevas se excluyeron del barrido de aislamiento con el motivo *«cobertura en
+aislamiento-modulo-2.test.ts»*. **Ese archivo no las mencionaba: CERO ocurrencias.** Es el patrón que
+este repo ya catalogó —*«tres lugares afirmaban que este test existía cuando no existía»*— repetido
+**por quien lo estaba citando**. Y `mutaciones-0021` no lo suplía: sus casos cross-tenant usan un
+usuario con membresía en los dos clientes, y su helper de dueño es superusuario — medir una policy
+por ahí **pasa en vacío**.
+
+**Cerrado** con `packages/data/tests/aislamiento-0021.test.ts` (6 casos): las dos direcciones de la
+RLS con credencial real, el `with check` cross-tenant en las tres tablas, y las dos mitades del rol.
+⚠️ Un caso hubo que reescribirlo porque medía la **unicidad** en vez de la **policy**.
+
+### 5. Y lo que el test de grants encontró de paso
+
+`security-engineer` lo escribió y **encontró más de lo que fue a buscar**: `app_request` puede
+reescribir `fecha` **y `fila_hash`** —el determinante de deduplicación de ingesta— y **borrar filas**
+de `movimiento_bancario_crudo`. Y 🔴 **`entrada_digest` nació con `UPDATE` otorgado sin que `0021`
+escribiera un solo `grant`**: el grant de TABLA de `0004:502` absorbió la columna nueva sola. Lo que
+protege el determinante es **el mecanismo de la generada, no el privilegio**.
+
+También se apartó de la especificación que le dio quien conduce, **midiendo por qué**:
+`information_schema.column_privileges` **no conoce `DELETE`** y filtra por rol habilitado, así que el
+test tal como se especificó habría quedado **verde** ante un `grant delete on padron_manifestacion` —
+que mata la frescura igual de bien que `update`.
+
+### 6. Estado
+
+| | |
+|---|---|
+| **Gate** | ✅ **65 archivos / 1519 tests / 0 fallas** |
+| **Barrido de mutación** | 20 constraints + 3 índices, **cero sobrevivientes** |
+| **Local** | `0021` aplicada sobre base recreada desde cero |
+| **Piloto** | 🔴 **INTACTO en `0020`.** No se abrió ni para leer en toda la sesión |
+
+**Lo próximo:** el bloque NO bloqueante que el panel dejó — el `on conflict` que desarma el índice de
+cardinalidad (el idiom está a doce líneas del futuro productor), la manifestación revocada citable, el
+test de H-2 con tres secretos inalcanzables, y la media docena de comentarios que afirman más de lo
+que el código sostiene. **Y recién después, la autorización del piloto.**
+
+---
+
 ## 2026-08-17 (70) — 🔴 **PUNTO DE ENTRADA SI RETOMÁS SIN ESTE CHAT.** Las dos diferencias de §5 RECONCILIADAS —una no existía—, `0021_*.sql` escrita y **APLICADA A LOCAL**, gate **VERDE** (62 / 1449 / 0), y el rewrite medido en **137 ms**. Piloto intacto.
 
 **Herramienta:** Claude Code. Continuación directa de la entrada 69. Panel de **8 agentes** convocados

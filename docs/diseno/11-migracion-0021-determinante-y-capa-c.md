@@ -1057,6 +1057,104 @@ básico (10 puntos de código vs. 11 unidades UTF-16), con su mutación `.length
   correcto —el motor no puede leer esa diferencia—, pero la consecuencia es que **un movimiento que
   pase de una a otra no supersede**.
 
+### 5.12 🔴 EL PANEL DE CIERRE — cuatro bloqueantes con el gate en verde, y dos eran míos
+
+Con `pnpm verificar` en **63 archivos / 1493 tests / 0 fallas**, se convocó a `tester`,
+`code-reviewer` y `security-engineer`. **El gate verde no vio ninguno de los cuatro.** Es literal la
+lección del Módulo 1 que `CLAUDE.md` §3.1 documenta, repetida.
+
+#### B-1 — La foto histórica registraba una entrada que el motor NUNCA leyó
+
+Encontrado **dos veces por caminos independientes**: `code-reviewer` lo dedujo del código y `tester`
+lo **reprodujo con una carrera medida**.
+
+`reconocerLote()` corre en UNA transacción `READ COMMITTED` (`conexion.ts:147` es un `begin` pelado).
+`leerEvidenciaDeMovimientos` toma su snapshot en el primer statement; el trigger hacía su `select`
+**muchos statements después**, con snapshot nuevo. Un `recapturar-conceptos` que commiteara en el
+medio quedaba **dentro de la ventana, que era el lote entero**. La fila terminaba diciendo «me
+calculé con la entrada nueva» habiéndose calculado con la vieja — y como `entrada_persistida` pasaba
+a ser igual a `entrada_actual`, **todo reproceso posterior daba `no_op`**. 🔴 **El bug de los 64
+movimientos, resucitado por concurrencia**, dentro de la migración que existe para cerrarlo.
+
+**Cerrado con un cambio de diseño, aprobado por el titular antes de implementarlo:** el trigger pasó
+de **COPIAR a VERIFICAR**. La aplicación declara `entradaDigest` —calculado con `digestDeEntrada()`
+sobre la MISMA evidencia que consumió el motor, en la misma iteración— y hay dos controles:
+
+| | Dónde | Qué compara | Qué aborta |
+|---|---|---|---|
+| **A** | la app, antes de escribir | lo que el motor leyó vs. la columna viva | **ese movimiento solo**, contado en `entradaCambio`; el lote sigue |
+| **B** | el trigger, en el `INSERT` | lo mismo, en el instante exacto | el lote — es la RED para la micro-ventana |
+
+El control A **no lanza** a propósito: lanzar abortaría la transacción de ~1830 movimientos por uno
+solo, que es el modo de falla de B-2. Y `entrada_digest` pasó a llevar `grant insert` sin debilitar
+nada: el trigger la verifica, así que mentir exige escribir el valor verdadero.
+
+**Efecto secundario que vale por sí solo:** `digestDeEntrada()` dejó de ser **código muerto**. Tenía
+17 tests y 8 mutaciones y **ningún llamador de producción** — se construyó en P0 para medir y quedó
+desconectada.
+
+⚠️ **Dos cosas aparecieron al implementarlo:** PostgreSQL **no admite `FOR UPDATE` sobre el lado
+nullable de un outer join** (`0A000`), así que la lectura quedó en dos statements — y eso deja el
+control A **antes** de tomar ningún lock, mejor que el diseño original. Y los helpers de test tuvieron
+que empezar a declarar el digest: el control funcionando sobre sus propios tests.
+
+#### B-2 — Una secuencia legítima abortaba el lote entero, culpando al artefacto equivocado
+
+Cargar el padrón y **después** dar de baja al socio hace oscilar la clase
+`decision_humana → propuesta → decision_humana` con el **mismo** `motor_digest` y la **misma**
+entrada. El no-op compara `clase` (**tres** valores) y `uq_recon_determinante` usa `es_propuesta`
+(**dos**), así que la tercera corrida decide superseder, **aplica el `update`**, y recién ahí el
+`insert … on conflict do nothing` choca contra la tupla de la primera. Devolvía 0 filas → excepción →
+**transacción del lote muerta**, y el movimiento quedaba irreprocesable (`app_request` no tiene
+`update` sobre `clase` ni `delete`). El mensaje decía *«revirtiendo un cambio del léxico»* — que en
+ese camino nadie tocó.
+
+**Cerrado:** se detecta **antes de tocar nada** y se devuelve `digest_ya_en_la_cadena`. El lote sigue.
+
+#### B-3 — `lpad` TRUNCA: colisión real del determinante
+
+`lpad(y, 4, '0')` con una cadena **más larga** que el ancho **recorta**. El año `10000` salía `'1000'`
+y colisionaba con el año `1000` — dos fechas distintas, el mismo `entrada_digest`, medido sobre la
+columna real. Y el prefijo de longitud iba hardcodeado en `'10:'`, así que **no lo delataba**: el
+enmarcado por longitud existe justamente para que el valor no pueda mentir su tamaño. La gemela de
+TypeScript nunca tuvo el defecto (`enmarcar()` usa la longitud real).
+
+**Cerrado** con `greatest(4, length(…))` y el prefijo calculado. ⚠️ **Ningún digest del corpus medido
+cambia:** para todo año de cuatro dígitos la cadena es idéntica (10 caracteres, prefijo `10:`), así
+que las 1830 coincidencias de P1 siguen valiendo.
+
+#### B-4 — Tres tablas de tenant sin una sola prueba de conducta, y el detector silenciado con una afirmación FALSA
+
+🔴 **Éste es el error de proceso más grave de la sesión, y es de quien conduce.** Las tres tablas se
+excluyeron del barrido de `aislamiento-modulo-1.test.ts` con el motivo *«cobertura de aislamiento en
+aislamiento-modulo-2.test.ts»*. **Ese archivo no las mencionaba: cero ocurrencias.** Es el patrón que
+este repo ya catalogó — *«tres lugares afirmaban que este test existía cuando no existía»* — repetido
+por quien lo estaba citando.
+
+Y `mutaciones-0021.test.ts` **no lo suplía**: todos sus casos cross-tenant usan `USUARIOS.socio`, con
+membresía en A **y** en B, explícitamente para que la RLS no frene; y su helper de dueño es
+superusuario. Medir una policy por cualquiera de esos caminos **pasa en vacío**.
+
+**Cerrado** con `packages/data/tests/aislamiento-0021.test.ts`: las dos direcciones de la RLS con la
+credencial real, el `with check` cross-tenant en las tres tablas, y **las dos mitades del rol** — que
+el `administrativo` NO pueda manifestar y SÍ pueda escribir la salida del motor. ⚠️ Uno de los casos
+hubo que reescribirlo porque medía la **unicidad** en vez de la **policy**: habría quedado verde el
+día que alguien sacara al administrativo.
+
+#### Y las guardas de las dos herramientas versionadas
+
+`barrido-de-mutacion.ts` **defaulteaba `APP_ENTORNO` a `local`** — contra `entorno.ts`, que dice
+textual que *«un default es justamente el modo de falla que esta variable existe para eliminar»* — y
+`restaurar-comentarios.ts` no tenía guard ninguno. Los dos usan ahora `entornoActual()`, validan
+`DATABASE_URL` antes de conectar (sin ella `new Client({connectionString: undefined})` **no falla**:
+cae a los defaults de libpq), y el barrido suma el guard que `sembrar.ts` llama *«el que importa»* —
+mirar el estado real de la base.
+
+⚠️ **Y ese guard tiene fricción deliberada:** no puede distinguir un extracto real de los lotes
+sintéticos que deja `pnpm verificar`, así que después de correr la suite hay que recrear la base para
+poder barrer. La alternativa era un guard que mira el nombre de la base o confía en una variable, y
+las dos fallan justo cuando importan.
+
 ### 5.10 Lo que sigue abierto
 
 - **`completo_hasta`** en `padron_manifestacion`: `contador-dominio` lo quiere **en `0021`**
