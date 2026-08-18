@@ -23,6 +23,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
+import { entornoActual } from '../src/db/entorno.ts';
 import { cargarEnv } from '../../../tools/cargar-env.ts';
 
 cargarEnv();
@@ -65,14 +66,39 @@ for (let i = 0; i < lineas.length; i += 1) {
 
 if (sentencias.length === 0) throw new Error(`No hay comentarios de constraint ni de índice en ${archivo}.`);
 
-const c = new Client({ connectionString: process.env['DATABASE_URL'] });
+/**
+ * 🔴 GUARDS. Este script es un punto de entrada independiente y ejecuta DDL (`comment on`), así que
+ * no puede confiar en que siempre lo invoque el barrido: alguien lo va a correr suelto. El impacto
+ * del dato es bajo —son comentarios— pero DDL sin autorización contra un entorno con material real
+ * es CLAUDE.md §1.9, y el criterio no depende de cuánto duele.
+ *
+ * `entornoActual()` y no un `?? 'local'` propio, por lo mismo que el barrido: `APP_ENTORNO` no tiene
+ * default a propósito.
+ */
+const dsn = process.env['DATABASE_URL'];
+if (!dsn) throw new Error('Falta DATABASE_URL. Ver .env.example.');
+
+if (entornoActual() !== 'local') {
+  throw new Error(
+    `restaurar-comentarios ejecuta DDL y sólo corre con APP_ENTORNO=local (actual: ${entornoActual()}). ` +
+      'Los comentarios de una migración se aplican aplicando la migración, no con este script.',
+  );
+}
+
+const c = new Client({ connectionString: dsn });
 await c.connect();
 try {
+  // Una sola transacción: si una sentencia falla, no queda la mitad aplicada.
+  await c.query('begin');
   for (const s of sentencias) {
     await c.query(s);
     imprimir(`  OK ${(s.split(SALTO)[0] ?? '').slice(0, 96)}`);
   }
+  await c.query('commit');
   imprimir(`${sentencias.length} comentario(s) reaplicado(s) desde ${archivo}.`);
+} catch (error) {
+  await c.query('rollback');
+  throw error;
 } finally {
   await c.end();
 }

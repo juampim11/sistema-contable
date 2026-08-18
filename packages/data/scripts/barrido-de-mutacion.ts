@@ -29,7 +29,14 @@
  * 🔴 SOLO CONTRA LOCAL, y con guard: hace DDL destructivo y `truncate`. Con `APP_ENTORNO` distinto de
  * `local` aborta antes de tocar nada.
  *
- * ## 🔴 DESPUÉS DE CORRER ESTO, RECREÁ LA BASE LOCAL
+ * ## 🔴 RECREÁ LA BASE ANTES **Y** DESPUÉS
+ *
+ * **Antes**, porque el tercer guard aborta si hay lotes de ingesta y no puede distinguir un extracto
+ * real de los lotes sintéticos que deja `pnpm verificar` — así que después de correr la suite hay que
+ * recrear para poder barrer. Es fricción deliberada: la alternativa era un guard que mira el nombre
+ * de la base o que confía en una variable, y las dos fallan justo cuando importan.
+ *
+ * **Después**, y por un motivo distinto:
  *
  *     docker compose down -v && pnpm db:up && pnpm db:migrate && pnpm db:setup
  *
@@ -71,6 +78,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
+import { entornoActual } from '../src/db/entorno.ts';
 import { cargarEnv } from '../../../tools/cargar-env.ts';
 
 cargarEnv();
@@ -127,12 +135,49 @@ function correrSuite(): Conteo {
   }
 }
 
-const c = new Client({ connectionString: process.env['DATABASE_URL'] });
+/**
+ * 🔴 TRES GUARDS, Y NINGUNO ALCANZA SOLO. Este script es MÁS destructivo que `db:seed`: dropea
+ * constraints e índices y trunca las tablas del barrido, una vez por control.
+ *
+ *   1. **`APP_ENTORNO` vía `entornoActual()`, que NO tiene default.** No se reimplementa acá con un
+ *      `?? 'local'`: `entorno.ts` dice textual que «un default es justamente el modo de falla que
+ *      esta variable existe para eliminar», y un barrido que se defaultea a `local` cuando el `.env`
+ *      falta es exactamente ese modo de falla.
+ *   2. **`DATABASE_URL` presente.** Sin ella, `new Client({connectionString: undefined})` NO falla:
+ *      cae a los defaults de libpq (`PGHOST`/`PGDATABASE`) y puede terminar en cualquier base.
+ *   3. **El estado REAL de la base**, que es el que importa — mismo criterio que `sembrar.ts`: los
+ *      dos primeros se satisfacen con una variable mal puesta, éste mira lo que hay adentro. Si
+ *      `lote_ingesta` tiene filas, alguien procesó un extracto de verdad y acá no se barre nada.
+ *
+ * Los tres corren ANTES de abrir la conexión de trabajo, salvo el tercero que la necesita.
+ */
+const dsn = process.env['DATABASE_URL'];
+if (!dsn) throw new Error('Falta DATABASE_URL. Ver .env.example.');
+
+if (entornoActual() !== 'local') {
+  throw new Error(
+    `El barrido dropea constraints y trunca tablas con el dueño del esquema, y sólo corre con ` +
+      `APP_ENTORNO=local (actual: ${entornoActual()}).`,
+  );
+}
+
+const c = new Client({ connectionString: dsn });
 await c.connect();
 
-if ((process.env['APP_ENTORNO'] ?? 'local') !== 'local') {
+const conMaterial = await c.query<{ n: string }>('select count(*)::text as n from lote_ingesta');
+if (Number(conMaterial.rows[0]?.n ?? '1') > 0) {
   await c.end();
-  throw new Error('El barrido hace DDL destructivo y truncate. Corre SOLO contra local.');
+  throw new Error(
+    'Hay lotes de ingesta en esta base. El barrido trunca las tablas que se le pasan y dropea sus ' +
+      'constraints, asi que no corre sobre una base con material — y NO puede distinguir un extracto ' +
+      'real de los lotes sinteticos que deja la suite. Si venis de correr `pnpm verificar`, recrea la ' +
+      'base antes:' +
+      SALTO +
+      '  docker compose down -v && pnpm db:up && pnpm db:migrate && pnpm db:setup' +
+      SALTO +
+      'Y volve a recrearla DESPUES del barrido, por el orden de creacion de constraints (ver el ' +
+      'docblock de este archivo).',
+  );
 }
 
 const listaTablas = TABLAS.map(identificador);
