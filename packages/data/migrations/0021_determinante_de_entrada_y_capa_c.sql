@@ -325,8 +325,12 @@ comment on column reconocimiento_movimiento.entrada_digest is
   'N2, exportable:false. FOTO del movimiento_bancario_crudo.entrada_digest en el instante en '
   'que se emitio este reconocimiento. Es la mitad del determinante que 0014 no tenia: sin '
   'ella, un reproceso que cambia la entrada sin cambiar la clase da no-op con la '
-  'interpretacion vieja intacta — medido en 64 movimientos del corpus real. Lo llena el '
-  'trigger trg_reconocimiento_entrada_digest, no la aplicacion: NO lleva grant de insert.';
+  'interpretacion vieja intacta — medido en 64 movimientos del corpus real. '
+  '🔴 LA APLICACION LA DECLARA, y SI lleva grant de insert (mas abajo, junto con el resto de las '
+  'columnas escribibles) -- resabio corregido de un comentario que describia el diseño anterior '
+  '(COPIAR) y quedo sin actualizar cuando paso a VERIFICAR: trg_reconocimiento_entrada_digest NO '
+  'la llena, la VERIFICA contra movimiento_bancario_crudo en el mismo statement y aborta si no '
+  'coincide. Mentir exige escribir el valor verdadero, que es escribir el valor verdadero.';
 
 -- 🔴 EL DETERMINANTE NUEVO. Se reemplaza la unicidad de 0014, que ignoraba la entrada.
 alter table reconocimiento_movimiento
