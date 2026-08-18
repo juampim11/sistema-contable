@@ -143,7 +143,7 @@
 --
 -- ## Lo que esta migración NO hace, a propósito
 --
--- 🔴 NO suelta el `padronDeclaradoCompleto: false` fijo de `reconocer-lote.ts:288`. Es un
+-- 🔴 NO suelta el `padronDeclaradoCompleto: false` fijo de `reconocer-lote.ts:304`. Es un
 -- paso propio, con su propia predicción falsable (cuántos movimientos cambian de estado con
 -- el gate prendido, número que HOY NO EXISTE) y con su propio plan — es disparador (c) de
 -- CLAUDE.md §3.2 por sí solo. Consecuencia declarada: `es_tercero_padron_completo` nace
@@ -488,7 +488,7 @@ comment on table padron_manifestacion is
   'La declaracion de que el padron de socios de este cliente esta COMPLETO, con su alcance. '
   'Es la premisa que habilita al motor a concluir "es un tercero" — sin ella el sistema no '
   'propone, a proposito. Append-only: una manifestacion erronea se supersede con una fila '
-  'nueva (revoca_a), nunca se edita. 🔴 NACE SIN PRODUCTOR: reconocer-lote.ts:288 pasa '
+  'nueva (revoca_a), nunca se edita. 🔴 NACE SIN PRODUCTOR: reconocer-lote.ts:304 pasa '
   'padronDeclaradoCompleto=false fijo y soltarlo es un paso propio, fuera de 0021.';
 
 comment on column padron_manifestacion.completo_hasta is
@@ -542,8 +542,16 @@ comment on column padron_manifestacion.manifestado_por is
   'de insert, sin update y sin delete: una mala atribucion reescribible es estrictamente peor. '
   '⚠️ CONDICION PARA LA INTERFAZ, no para el esquema: ninguna pantalla ni export puede '
   'presentar esta columna como PRUEBA DE AUTORIA. Si la cola dijera "padron declarado completo '
-  'por Laura", la pantalla afirmaria mas de lo que el mecanismo sostiene — que es exactamente '
-  'lo que 0019:85-90 hizo y 0020 tuvo que desmentir.';
+  'por Laura", la pantalla afirmaria mas de lo que el mecanismo sostiene — la misma leccion que '
+  'costo el primer intento de cerrar el incidente #5 en 0019: se llego a sostener que hecho_por '
+  'en NULL era informativo por si solo (distinguia al sistema del dueño), y esa misma noche se '
+  'encontro que era falso — app_job conservaba un grant sin llamador real (justificado citando '
+  'la siembra, que hace INSERT y no UPDATE), y con el se podia expulsar supervision de TODOS '
+  'los tenants dejando hecho_por = null, indistinguible de una migracion legitima del sistema. '
+  'Lo cerro 0020 (rastro_no_falsificable): manifestado_por/hecho_por dejan de tratarse como '
+  'informativos por default. (Hallazgo del intento previo a 0020, corregido antes de '
+  'commitear y por eso ausente del historial de git — fuente: registro de sesion, ver '
+  'docs/seguridad/registro-incidentes.md, incidente #5.)';
 
 
 -- -----------------------------------------------------------------------------
@@ -644,7 +652,7 @@ create table reconocimiento_contrapartida (
 
   -- N2. La fecha con la que se evaluó la vigencia de los socios. 🔴 NO es una denormalización
   -- de `movimiento.fecha`: es el PARÁMETRO con el que corrió `resolverContraparte`, que hoy
-  -- sale de `ev.fecha` (`reconocer-lote.ts:288`). Ver el `comment on column`.
+  -- sale de `ev.fecha` (`reconocer-lote.ts:304`). Ver el `comment on column`.
   resuelto_a_fecha        date not null,
 
   created_at              timestamptz not null default now(),
@@ -660,7 +668,7 @@ create table reconocimiento_contrapartida (
   --   multiples_socios             ídem
   --   socio_fuera_de_vigencia      ídem
   --   pepper_desalineado           ídem, y sólo durante una rotación
-  --   es_tercero_padron_completo   🔴 BLOQUEADO POR CÓDIGO (`reconocer-lote.ts:288`)
+  --   es_tercero_padron_completo   🔴 BLOQUEADO POR CÓDIGO (`reconocer-lote.ts:304`)
   -- ---------------------------------------------------------------------------
   constraint contrapartida_estado_chk
     check (resolucion_estado in (
@@ -871,7 +879,7 @@ comment on column reconocimiento_contrapartida.admite_matches is
 comment on column reconocimiento_contrapartida.resuelto_a_fecha is
   'N2. La fecha con la que se evaluo la vigencia de los socios — el PARAMETRO de la corrida, no '
   'la fecha del movimiento. 🔴 La diferencia importa y esta medida: hoy sale de ev.fecha '
-  '(reconocer-lote.ts:288), y ese archivo esta FUERA de la huella de VERSION_DEL_MOTOR, que '
+  '(reconocer-lote.ts:304), y ese archivo esta FUERA de la huella de VERSION_DEL_MOTOR, que '
   'solo recorre packages/contabilidad/src/nucleo. Un cambio a ev.fechaValor —existe, es N2— no '
   'moveria entrada_digest (que lee la columna fecha) ni motor_digest, y las filas historicas '
   'quedarian indistinguibles de las nuevas. NO se llena por trigger a proposito: un trigger que '
@@ -910,7 +918,7 @@ comment on constraint contrapartida_estado_chk on reconocimiento_contrapartida i
   'tipos.ts), de la que se DERIVA el discriminante de ResolucionDeContraparte. Va sobre LOS '
   'SIETE, jamas sobre los alcanzables: literal 0014 decision 7. Hoy dos se llenan en la primera '
   'corrida, cuatro esperan que alguien cargue un socio, y es_tercero_padron_completo esta '
-  'bloqueado por reconocer-lote.ts:288.';
+  'bloqueado por reconocer-lote.ts:304.';
 
 comment on constraint contrapartida_promocion_chk on reconocimiento_contrapartida is
   'La promocion de capa C, fila-local. Verificado contra motor.ts:134-166: solo es_socio y '
