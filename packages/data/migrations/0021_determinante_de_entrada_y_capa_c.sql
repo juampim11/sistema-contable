@@ -503,6 +503,31 @@ comment on constraint uq_padron_manifestacion_alcance on padron_manifestacion is
   'depende de que NUNCA se otorgue update sobre esta tabla, incluido un grant de TABLA que un '
   'grep de grants por columna no ve (0004:502 es el precedente).';
 
+comment on column padron_manifestacion.revoca_a is
+  'Encadena la manifestacion que esta reemplaza. NULL = esta es la vigente. '
+  '⚠️ REVOCAR NO RETIRA CITABILIDAD: nada en el esquema impide que una fila de '
+  'reconocimiento_contrapartida cite, via padron_manifestacion_id, el id de UNA MANIFESTACION YA '
+  'REVOCADA -- fk_recon_contrapartida_alcance (contra uq_padron_manifestacion_alcance) solo exige '
+  'existencia + completo_hasta coincidente, nunca vigencia, y esta tabla es append-only sin UPDATE '
+  'ni DELETE para nadie, asi que la fila revocada nunca desaparece. '
+  '🔴 NO SE PUEDE CERRAR CON UNA POLICY: la validacion de una FK corre a nivel del owner de la '
+  'tabla y nunca esta sujeta a RLS -- el control correcto, el dia que se decida cerrar esto, tiene '
+  'que ser un CHECK/trigger sobre la fila citante o una unicidad parcial tipo uq_recon_vigente '
+  '(0014:479), nunca una policy de SELECT que oculte las revocadas. '
+  'EL GAP NO CRUZA TENANT: las dos FK que importan (fk_padron_manifestacion_revoca y '
+  'fk_recon_contrapartida_manifestacion) llevan cliente_id, asi que solo se puede citar una '
+  'manifestacion revocada DEL MISMO cliente -- es una falla de integridad contable dentro de un '
+  'cliente, no una fuga entre clientes. '
+  'ES TOLERABLE hoy porque reconocimiento_contrapartida NACE SIN PRODUCTOR (ver comment de la '
+  'tabla) y porque es_tercero_padron_completo esta BLOQUEADO POR CODIGO -- el escritor con mas '
+  'privilegio para citar esto es administrativo, via reconocimiento_contrapartida_ins, mientras '
+  'que padron_manifestacion_ins EXCLUYE a administrativo de manifestar: quien puede citar una '
+  'manifestacion vieja no es necesariamente quien la manifesto. '
+  'DEJA DE SER TOLERABLE EN P5: "elegir la manifestacion" ahi nace como un order by completo_hasta '
+  'desc limit 1 que cita la vigente por CONVENCION DE LA APLICACION, no por garantia de la base. '
+  'Ver docs/diseno/11-migracion-0021-determinante-y-capa-c.md parrafo 5.10. Pinneado con '
+  'packages/data/tests/caracterizacion-manifestacion-revocada-citable.test.ts, no arreglado.';
+
 comment on column padron_manifestacion.manifestado_por is
   '🔴 QUE VALE Y QUE NO. Vale: que alguien con credencial de app_request y membresia '
   'habilitada sobre este cliente ejecuto esto en ese instante; la fecha no es elegible '
@@ -1038,7 +1063,17 @@ comment on index uq_recon_contrapartida_match_socio_unico is
   '(el padre admite matches) y contrapartida_match_regimen_chk pasa (varios esta en el dominio). '
   'Lo unico que cierra ese bypass es fk_recon_contrapartida_match_regimen, que ata el regimen '
   'declarado por la hija al del padre. Esa FK NO es un cinturon: junto con este indice ES la '
-  'cardinalidad. Sacarla deja el error sin detector.';
+  'cardinalidad. Sacarla deja el error sin detector. '
+  '🔴 EL VECTOR CONCRETO, medido: "on conflict (cliente_id, contrapartida_id) do nothing" PELADO no '
+  'compila contra este indice -- es parcial, y sin el WHERE que matchee su predicado Postgres no lo '
+  'toma como arbitro y aborta con "no hay restriccion unique o exclusion que coincida" antes de '
+  'escribir nada. El vector real es la forma COMPLETA: '
+  '"on conflict (cliente_id, contrapartida_id) where regimen_matches = ''socio_unico'' do nothing" '
+  '-- ese WHERE es lo que hace que Postgres SI lo tome como arbitro, y ahi la colision se traga en '
+  'silencio. Es el camino natural del que copia el idiom de escrituras.ts:458 (que usa ON CONFLICT '
+  'correctamente para OTRO indice, uq_recon_determinante, NO parcial) y lo "arregla" agregandole el '
+  'WHERE cuando la forma pelada le tira el error de arriba. El INSERT de esta tabla tiene que dejar '
+  'subir el 23505, nunca ataparlo con ON CONFLICT en ninguna de las dos formas.';
 
 -- (2)
 create index idx_reconocimiento_contrapartida_match_cliente
