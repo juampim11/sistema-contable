@@ -111,14 +111,69 @@ describe('agregarMatriz — pura, sin base', () => {
     expect(matriz.porClaseDespues).toEqual({ propuesta: 1, decision_humana: 1, sin_reconocer: 0 });
     expect(matriz.porEstadoDeResolucion.es_socio).toBe(1);
     expect(matriz.porEstadoDeResolucion.sin_match_padron_incompleto).toBe(1);
-    expect(matriz.sociosInvolucrados).toEqual(['socio-1']);
+    expect(matriz.sociosInvolucrados).toBe(1);
   });
 
-  it('lista vacía → todo en cero, nunca denominación en ningún campo del resultado', () => {
+  /** `sociosInvolucrados` es un conteo de socios DISTINTOS, no de filas ni de movimientos (H-2,
+   *  `0021`). Sin este caso, un `socios.size` cambiado por un contador de movimientos pasaría
+   *  verde: los dos dan 1 cuando hay un solo movimiento. */
+  it('cuenta socios DISTINTOS, no movimientos ni matches', () => {
+    const antes = decisionHumana();
+    const conA = propuestaDesde(antes, 'retiro_de_socio', { estado: 'es_socio', socioId: 'socio-A', matches: [] });
+    const otraDeA = propuestaDesde(antes, 'retiro_de_socio', { estado: 'es_socio', socioId: 'socio-A', matches: [] });
+    const conB = propuestaDesde(antes, 'retiro_de_socio', { estado: 'es_socio', socioId: 'socio-B', matches: [] });
+
+    expect(agregarMatriz([{ antes, despues: conA }, { antes, despues: otraDeA }]).sociosInvolucrados).toBe(1);
+    expect(agregarMatriz([{ antes, despues: conA }, { antes, despues: conB }]).sociosInvolucrados).toBe(2);
+  });
+
+  it('lista vacía → todo en cero', () => {
     const matriz = agregarMatriz([]);
     expect(matriz.porClaseAntes).toEqual({ propuesta: 0, decision_humana: 0, sin_reconocer: 0 });
-    expect(matriz.sociosInvolucrados).toEqual([]);
-    expect(JSON.stringify(matriz)).not.toMatch(/denominacion/i);
+    expect(matriz.sociosInvolucrados).toBe(0);
+  });
+
+  /**
+   * 🔴 EL TEST DE SEGURIDAD DE H-2, REESCRITO SOBRE LA PROPIEDAD.
+   *
+   * La versión anterior corría sobre `agregarMatriz([])` y afirmaba `not.toMatch(/denominacion/i)`.
+   * **No ejercía nada**: un agregado de CERO entradas no puede contener un dato del cliente viniera
+   * de donde viniera, así que el assert pasaba con o sin fuga. Es la misma falla que la mutación M4
+   * encontró en P0 de `0021` — un caso que no alcanza la propiedad que dice cubrir.
+   *
+   * La propiedad real es: **`Matriz` se publica entera a stdout con `process.stdout.write`, que
+   * ESQUIVA el redactor, así que ningún identificador de socio puede aparecer en el resultado — por
+   * más que la ENTRADA esté llena de ellos.** Por eso acá la entrada trae los tres estados que
+   * cargan `socioId` (`es_socio`, `multiples_socios`, `socio_fuera_de_vigencia`), con valores
+   * reconocibles, y se busca cada uno en el JSON serializado.
+   *
+   * Discrimina el cambio de H-2 exactamente: con la forma vieja (`sociosInvolucrados: string[]`)
+   * este test se pone ROJO, porque 'socio-secreto-A' viajaba en el resultado.
+   */
+  it('🔴 H-2: ningún identificador de socio sale en el resultado, aunque la entrada esté llena', () => {
+    const antes = decisionHumana();
+    const entradas = [
+      { antes, despues: propuestaDesde(antes, 'retiro_de_socio', {
+        estado: 'es_socio', socioId: 'socio-secreto-A', matches: [{ socioId: 'socio-secreto-A', clase: 'cuit' as const }],
+      }) },
+      { antes, despues: { ...antes, evidenciaContrapartida: {
+        estado: 'multiples_socios' as const,
+        matches: [{ socioId: 'socio-secreto-B', clase: 'cuit' as const }, { socioId: 'socio-secreto-C', clase: 'cbu' as const }],
+      } } as Reconocimiento },
+      { antes, despues: { ...antes, evidenciaContrapartida: {
+        estado: 'socio_fuera_de_vigencia' as const,
+        matches: [{ socioId: 'socio-secreto-D', clase: 'cuit' as const, vigenteDesde: '2020-01-01', vigenteHasta: '2021-01-01' }],
+      } } as Reconocimiento },
+    ];
+
+    const serializado = JSON.stringify(agregarMatriz(entradas));
+
+    for (const secreto of ['socio-secreto-A', 'socio-secreto-B', 'socio-secreto-C', 'socio-secreto-D']) {
+      expect(serializado, `el identificador ${secreto} salió en la Matriz, que se publica a stdout sin redactor`)
+        .not.toContain(secreto);
+    }
+    // Y el conteo sigue siendo información útil: cuatro socios distintos entre las tres entradas.
+    expect(agregarMatriz(entradas).sociosInvolucrados).toBeGreaterThan(0);
   });
 });
 
@@ -214,7 +269,7 @@ describe('resolverContrapartidaDeLote — flujo completo (base real)', () => {
     if (r.estado === 'reportado') {
       expect(r.porClaseDespues.propuesta).toBe(1);
       expect(r.porEstadoDeResolucion.es_socio).toBe(1);
-      expect(r.sociosInvolucrados).toHaveLength(1);
+      expect(r.sociosInvolucrados).toBe(1);
       // Nunca la denominación en el reporte.
       expect(JSON.stringify(r)).not.toMatch(/SOCIO RESOLVER SRL/);
     }

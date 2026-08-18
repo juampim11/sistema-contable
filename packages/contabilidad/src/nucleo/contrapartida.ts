@@ -10,6 +10,7 @@
  */
 
 import { hmacIguales } from '@sistema-contable/shared/seguridad';
+import type { EstadoResolucion } from './tipos.ts';
 
 /**
  * Espejo TEXTUAL de `CandidatoContraparte` (`packages/ingesta/src/contraparte.ts:39-43`) y de
@@ -99,6 +100,23 @@ export type ResolucionDeContraparte =
     }
   | { readonly estado: 'multiples_socios'; readonly matches: readonly MatchDeContraparte[] }
   | { readonly estado: 'socio_fuera_de_vigencia'; readonly matches: readonly MatchFueraDeVigencia[] };
+
+/**
+ * 🔴 EL DISCRIMINANTE Y LA CONSTANTE NO PUEDEN DIVERGIR, y esto lo hace un error de compilación en
+ * vez de una convención. `ESTADOS_RESOLUCION` (`tipos.ts`) espeja el check `contrapartida_estado_chk`
+ * de la base (`0021`), así que una rama agregada acá y no allá —o al revés— dejaría la base
+ * aceptando un estado que el motor no produce, o al motor produciendo uno que la base rechaza en el
+ * `insert`, en producción y con el lote a medio escribir.
+ *
+ * Se verifica en LAS DOS DIRECCIONES a propósito: `[A] extends [B]` sola dejaría pasar que la unión
+ * tenga ramas de más. La constante exportada es lo que fuerza la evaluación — un `type` suelto no
+ * rompe nada, y `noUnusedLocals` rechaza una variable local.
+ */
+type MismoConjunto<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
+export const DOMINIO_DE_RESOLUCION_COHERENTE: MismoConjunto<
+  EstadoResolucion,
+  ResolucionDeContraparte['estado']
+> = true;
 
 type ResultadoAlineacionPepper =
   | { readonly alineado: true }

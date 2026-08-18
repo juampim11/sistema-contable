@@ -52,6 +52,24 @@
         "reconocimiento.ts": "614150d86ac9fd0a",
         "tipos.ts": "27b02d85a401ce3c"
       }
+    },
+    {
+      "version": 2,
+      "aceptada_en": "2026-08-17",
+      "bump": false,
+      "motivo": "0021: ESTADOS_RESOLUCION se movio de apps/cli a nucleo/tipos.ts porque desde 0021 espeja un dominio cerrado DE LA BASE (contrapartida_estado_chk) y packages/data no puede importar de apps/. Se agrego REGIMENES_CON_MATCHES por lo mismo, y en contrapartida.ts un chequeo de tipos bidireccional para que el discriminante y la constante no puedan diverger. Constantes y tipos, no logica: el resultado del motor es identico para toda entrada.",
+      "archivos": {
+        "contrapartida.ts": "9225c9191a65d5cf",
+        "entrada.ts": "2ad45a0406a1a49b",
+        "indice.ts": "c93529e3a0044adb",
+        "lexico.ts": "e3ebbde02837b6c7",
+        "matcher.ts": "0a15006f1992cf32",
+        "motor.ts": "84013b228ebec162",
+        "normalizacion.ts": "17d7ecc738aad461",
+        "persistible.ts": "5f4c60577c86fdc1",
+        "reconocimiento.ts": "614150d86ac9fd0a",
+        "tipos.ts": "7a091c2672ab69c8"
+      }
     }
   ]
 }

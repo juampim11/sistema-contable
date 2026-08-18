@@ -26,10 +26,12 @@ import { describe, expect, it } from 'vitest';
 import { CONCEPTOS_CANONICOS } from '../src/nucleo/catalogo.ts';
 import {
   CLASES_RECONOCIMIENTO,
+  ESTADOS_RESOLUCION,
   LADOS,
   MOTIVOS_SIN_RECONOCER,
   POLARIDADES,
   QUE_DECIDE,
+  REGIMENES_CON_MATCHES,
   TIPOS_MOVIMIENTO,
   VIAS_EVIDENCIA,
 } from '../src/nucleo/tipos.ts';
@@ -38,9 +40,15 @@ const RAIZ_REPO = join(import.meta.dirname, '..', '..', '..');
 const CATALOGO_TEST = join(RAIZ_REPO, 'packages', 'data', 'tests', 'catalogo.test.ts');
 
 /**
- * Los OCHO dominios cerrados del motor, con el check que los espeja en la base. La lista es
+ * Los DIEZ dominios cerrados del motor, con el check que los espeja en la base. La lista es
  * NOMINADA: una constante nueva que no se agregue acá no rompe nada por sí sola — por eso el último
  * test cuenta las constantes exportadas y exige que no haya más de las declaradas.
+ *
+ * Los dos últimos entraron con `0021`, y el segundo tiene una asimetría que hay que leer con
+ * cuidado: `REGIMENES_CON_MATCHES` espeja el check de la SATÉLITE, que admite dos valores, mientras
+ * que la columna GENERADA del padre produce TRES (`socio_unico`, `varios`, `sin_matches`). No es un
+ * descuido: se espeja lo que el check afirma. El tercer valor no necesita constante porque ninguna
+ * escritura lo elige — lo calcula la generada, y la satélite que intentara usarlo no encuentra padre.
  */
 const DOMINIOS_DEL_MOTOR = [
   { constante: 'CLASES_RECONOCIMIENTO', valores: CLASES_RECONOCIMIENTO, check: 'reconocimiento_clase_chk' },
@@ -51,6 +59,8 @@ const DOMINIOS_DEL_MOTOR = [
   { constante: 'VIAS_EVIDENCIA', valores: VIAS_EVIDENCIA, check: 'reconocimiento_via_chk' },
   { constante: 'QUE_DECIDE', valores: QUE_DECIDE, check: 'reconocimiento_decide_chk' },
   { constante: 'MOTIVOS_SIN_RECONOCER', valores: MOTIVOS_SIN_RECONOCER, check: 'reconocimiento_motivo_chk' },
+  { constante: 'ESTADOS_RESOLUCION', valores: ESTADOS_RESOLUCION, check: 'contrapartida_estado_chk' },
+  { constante: 'REGIMENES_CON_MATCHES', valores: REGIMENES_CON_MATCHES, check: 'contrapartida_match_regimen_chk' },
 ] as const;
 
 describe('dominios cerrados del motor: código → base', () => {

@@ -157,3 +157,45 @@ export const MOTIVOS_SIN_RECONOCER = [
   'sin_evidencia_de_concepto',
 ] as const;
 export type MotivoSinReconocer = (typeof MOTIVOS_SIN_RECONOCER)[number];
+
+/**
+ * Los SIETE estados de `ResolucionDeContraparte` (capa C). Vivía en
+ * `apps/cli/src/resolver-contrapartida.ts` y se movió acá en `0021`, que es cuando pasó a ser un
+ * dominio cerrado DE LA BASE (`contrapartida_estado_chk`): una constante que espeja un check no
+ * puede vivir en la capa de comandos, porque el test de catálogo compara la lista de la base contra
+ * su constante de TypeScript y `packages/data` no puede importar de `apps/`. Es el mismo movimiento
+ * que `0014` hizo con `CLASES_RECONOCIMIENTO`.
+ *
+ * 🔴 La lista es de SIETE y va entera al check, jamás «los alcanzables» (literal `0014` decisión 7).
+ * Hoy `es_tercero_padron_completo` está bloqueado por código (`reconocer-lote.ts:288` pasa el gate
+ * en `false` fijo) y cuatro más esperan que alguien cargue un socio: el estado de un valor es una
+ * afirmación sobre la evidencia del corpus, no sobre el dominio.
+ *
+ * Idéntica a `contrapartida_estado_chk`; hay test de catálogo. El chequeo de que NO diverja del
+ * discriminante de `ResolucionDeContraparte` vive en `contrapartida.ts`, al lado del tipo.
+ */
+export const ESTADOS_RESOLUCION = [
+  'es_socio',
+  'es_tercero_padron_completo',
+  'sin_match_padron_incompleto',
+  'sin_candidatos',
+  'pepper_desalineado',
+  'multiples_socios',
+  'socio_fuera_de_vigencia',
+] as const;
+export type EstadoResolucion = (typeof ESTADOS_RESOLUCION)[number];
+
+/**
+ * Los regímenes de match que ADMITEN filas en la satélite de contrapartida — el dominio de
+ * `reconocimiento_contrapartida_match.regimen_matches` (`0021`).
+ *
+ * ⚠️ NO es el dominio completo de `regimen_matches`: la columna GENERADA del padre tiene TRES
+ * valores (`socio_unico`, `varios`, `sin_matches`) y la hija admite sólo los dos primeros — un match
+ * colgado de un estado sin matches es imposible. Se declara el subconjunto y no el dominio de tres
+ * porque es EL SUBCONJUNTO lo que el check de la hija afirma: inventar una constante de tres para
+ * que el gate quede contento describiría algo que ese check no dice.
+ *
+ * Idéntica a `contrapartida_match_regimen_chk`; hay test de catálogo.
+ */
+export const REGIMENES_CON_MATCHES = ['socio_unico', 'varios'] as const;
+export type RegimenConMatches = (typeof REGIMENES_CON_MATCHES)[number];

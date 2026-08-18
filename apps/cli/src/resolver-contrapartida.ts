@@ -122,16 +122,12 @@ export function parsearArgumentos(argv: readonly string[]): ArgumentosResolucion
 // La matriz — pura, sin base. Testable con datos sintéticos.
 // -----------------------------------------------------------------------------
 
-export const ESTADOS_RESOLUCION = [
-  'es_socio',
-  'es_tercero_padron_completo',
-  'sin_match_padron_incompleto',
-  'sin_candidatos',
-  'pepper_desalineado',
-  'multiples_socios',
-  'socio_fuera_de_vigencia',
-] as const;
-export type EstadoResolucion = (typeof ESTADOS_RESOLUCION)[number];
+// 🔴 `ESTADOS_RESOLUCION` se MOVIÓ a `packages/contabilidad/src/nucleo/tipos.ts` en `0021`: desde
+// que existe `contrapartida_estado_chk`, la constante espeja un dominio cerrado DE LA BASE, y el
+// test de catálogo que los compara vive en `packages/data`, que no puede importar de `apps/`. Se
+// re-exporta acá para no romper a quien la importaba de este módulo.
+import { ESTADOS_RESOLUCION, type EstadoResolucion } from '@sistema-contable/contabilidad';
+export { ESTADOS_RESOLUCION, type EstadoResolucion };
 
 export const CLASES = ['propuesta', 'decision_humana', 'sin_reconocer'] as const;
 export type Clase = (typeof CLASES)[number];
@@ -140,7 +136,13 @@ export type Matriz = {
   readonly porClaseAntes: Record<Clase, number>;
   readonly porClaseDespues: Record<Clase, number>;
   readonly porEstadoDeResolucion: Record<EstadoResolucion, number>;
-  readonly sociosInvolucrados: readonly string[];
+  /** 🔴 EL CONTEO, NUNCA LA LISTA (H-2, cerrado por `0021`). Esta estructura se publica entera a
+   *  stdout con `process.stdout.write`, que **esquiva el redactor**, y `socio_id` pasó a **N2** con
+   *  `0021`: la variante anterior (`readonly string[]`) dejaba en disco, sin clasificar y sin
+   *  rastro, la lista de socios de un cliente ante un simple `pnpm resolver:contrapartida > x.json`.
+   *  El conteo responde la única pregunta que el reporte necesita —cuántos socios distintos
+   *  aparecieron— sin nombrar a ninguno. */
+  readonly sociosInvolucrados: number;
   /** Movimientos de un banco sin léxico registrado (fuera del roster de 3 bancos del piloto) —
    *  se saltan del cálculo, pero CONTADOS acá (Ronda 3, `code-reviewer`): sin esto, el total
    *  reportado no reflejaría el tamaño real del lote sin que el operador se entere. */
@@ -184,7 +186,7 @@ export function agregarMatriz(
     porClaseAntes,
     porClaseDespues,
     porEstadoDeResolucion,
-    sociosInvolucrados: [...socios],
+    sociosInvolucrados: socios.size,
     sinLexico,
   };
 }
