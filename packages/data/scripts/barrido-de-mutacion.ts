@@ -45,6 +45,23 @@
  * relajar la aserción a `/foreign key/`, y eso destruye justamente la discriminación que estos tests
  * existen para tener.
  *
+ * ## 🔴 CÓMO LEER LA SALIDA — el barrido contamina sus PROPIAS mediciones posteriores
+ *
+ * Consecuencia directa de lo anterior: desde que recrea el PRIMER constraint, los tests
+ * order-dependent quedan rojos para todo el resto de la corrida y aparecen en la lista de nombres de
+ * cada control siguiente. Eso es RUIDO, no cobertura.
+ *
+ * La lectura correcta, y es la que importa:
+ *   - **«0 rojos» es CONFIABLE.** El ruido sólo AGREGA rojos, nunca los quita, así que un control
+ *     que sobrevive sobrevivió de verdad. Ése es el veredicto del script y su código de salida.
+ *   - **La lista de NOMBRES no es confiable** después del primer control recreado: los que se repiten
+ *     en todas las filas son el ruido de orden. Para atribuir con precisión qué test cubre qué
+ *     control, hay que recrear la base y barrer ese control solo.
+ *
+ * Se deja así —en vez de recrear la base entre control y control— porque eso multiplicaría por
+ * veintitantos el costo de una corrida para mejorar un dato secundario. El veredicto que el barrido
+ * existe para dar no se ve afectado.
+ *
  * ⚠️ La lista de controles se DERIVA del catálogo, nunca se escribe a mano: un constraint nuevo entra
  * al barrido solo. Es el mismo argumento por el que `version.ts` hashea POR EXCLUSIÓN — con una lista
  * a mano, el control nuevo nace fuera del barrido y en silencio.
