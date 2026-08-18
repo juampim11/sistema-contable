@@ -1,9 +1,20 @@
 /**
  * Utilidades compartidas por los tests de base: conexión como dueño del esquema y siembra sintética.
  *
- * La siembra usa `conJob` (BYPASSRLS) porque el nodo raíz NO lo puede crear el dueño del esquema:
- * `force row level security` le aplica las políticas también a él y no hay ninguna que permita crear
- * un nodo sin padre. Salió de correrlo, está documentado en ADR-0002 §C.0.
+ * La siembra usa `conJob` (BYPASSRLS) por consistencia con el camino de producción de un job.
+ *
+ * ⚠️ **CORREGIDO en `0021`.** Este docblock decía que el nodo raíz «NO lo puede crear el dueño del
+ * esquema porque `force row level security` le aplica las políticas también a él». **Es falso, y se
+ * midió:** `sistema_contable` es `rolsuper = true` —y por lo tanto `rolbypassrls`— en los dos
+ * entornos (premisa **P-1**, declarada en `docs/diseno/11-migracion-0021-...md` §0), así que el
+ * insert del nodo raíz le funciona sin GUC ninguno. `force row level security` fuerza las policies
+ * al dueño de la TABLA, pero **no** al superusuario.
+ *
+ * 🔴 Importa más de lo que parece, y por eso se corrige en vez de borrarse: la conclusión de abajo
+ * —que `clienteDuenio()` sirve para medir MECANISMO— sigue en pie, pero por otra razón. Y de la
+ * premisa falsa se sigue una trampa: **cualquier test que intente medir una POLICY a través de
+ * `clienteDuenio()` va a pasar EN VACÍO**, porque el superusuario nunca las evalúa. Es la misma
+ * forma de R7, que `security-engineer` ya midió como vacua bajo P-1.
  */
 
 import { Client } from 'pg';
@@ -143,7 +154,13 @@ export async function sembrar(): Promise<Sembrado> {
       // cuelga de `reconocimiento_movimiento`, que cuelga de `movimiento_bancario_crudo` con
       // `on delete restrict`. Nombrarlas no es redundante con `cascade` — es lo que hace que
       // agregar una tabla nueva y olvidarla se note acá y no dos suites después.
-      'truncate reconocimiento_candidato, reconocimiento_movimiento, ' +
+      // Las de `0021` van primero que `reconocimiento_movimiento`, que es de quien cuelgan con
+      // `on delete restrict`. El `cascade` del final las alcanzaría igual —así que esto NO es un
+      // arreglo de un fallo—, pero nombrarlas es lo único que hace que la próxima tabla del Módulo 2
+      // se note acá. Es literal la lección que este bloque ya documenta para `membership_historia`:
+      // `0019` la agregó y esta lista no se enteró.
+      'truncate reconocimiento_contrapartida_match, reconocimiento_contrapartida, ' +
+        'padron_manifestacion, reconocimiento_candidato, reconocimiento_movimiento, ' +
         'movimiento_contraparte_identificador, padron_socio_documento, padron_socio, ' +
         'movimiento_origen_crudo, movimiento_bancario_crudo, lote_ingesta_cuenta, ' +
         'lote_ingesta, cuenta_bancaria_identificador, cuenta_bancaria, banco, ' +

@@ -549,12 +549,35 @@ describe('0014 — aislamiento y forma de reconocimiento_movimiento', () => {
     ).rejects.toBeInstanceOf(ReconocimientoDigestYaEnLaCadenaError);
   });
 
-  it('🔴 un reconocimiento NO puede colgar de un movimiento de otro cliente (FK compuesta)', async () => {
+  /**
+   * 🔴 EL INVARIANTE NO CAMBIÓ; CAMBIÓ QUIÉN LO ATAJA PRIMERO, y `0021` es la razón.
+   *
+   * Hasta `0020`, `cliente_id` de A con `movimiento_id` de B moría por `fk_recon_movimiento`. Desde
+   * `0021` muere ANTES, por `entrada_digest` nula: el trigger `BEFORE INSERT` que copia la foto
+   * histórica busca `(cliente_id, movimiento_id)` en `movimiento_bancario_crudo`, no encuentra la
+   * fila —porque es de otro cliente—, deja NULL, y el `not null` de la columna rechaza. Los
+   * triggers `BEFORE` corren antes de que se evalúe cualquier constraint.
+   *
+   * Es exactamente la propiedad que hace que ese trigger sea seguro y que un trigger que CUENTA no
+   * lo sea: **contar sin filas visibles da 0 y falla ABIERTO; copiar sin filas visibles deja NULL y
+   * falla CERRADO.** Acá se ve funcionando sobre un caso que no es de RLS sino de tenant cruzado.
+   *
+   * ⚠️ La FK compuesta NO quedó de adorno: sigue siendo la red para el camino que saltea triggers
+   * (`session_replication_role = 'replica'`, que sólo el dueño del esquema puede usar — premisa
+   * P-1, ya declarada). Por eso el invariante ahora está sostenido por DOS mecanismos y este test
+   * afirma el que dispara primero.
+   *
+   * ⚠️ Y el costo, dicho para que nadie lo descubra depurando: el diagnóstico EMPEORÓ. `null value
+   * in column "entrada_digest"` no dice «movimiento de otro cliente», que era lo que decía el
+   * nombre del constraint anterior. Se acepta porque el control es el mismo y falla igual de
+   * cerrado, pero quien vea ese error en producción tiene que poder llegar acá.
+   */
+  it('🔴 un reconocimiento NO puede colgar de un movimiento de otro cliente (trigger de 0021, con la FK como red)', async () => {
     // `cliente_id` de A con un `movimiento_id` de B. El socio tiene membresía en los dos, así que la
-    // policy NO lo frena: lo único que queda en pie es la FK compuesta tenant-consistente.
+    // policy NO lo frena.
     await expect(
       persistir(USUARIOS.socio, propuestaDe(escenario.movimientoB, s.clienteA, DIGEST_A)),
-    ).rejects.toThrow(/fk_recon_movimiento|foreign key/i);
+    ).rejects.toThrow(/ING_NOT_NULL|entrada_digest|not.?null/i);
   });
 
   it('🔴 un candidato NO puede colgar de una propuesta (FK de tres columnas)', async () => {

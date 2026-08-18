@@ -160,6 +160,16 @@ const FUERA_DEL_MODULO_1: Readonly<Record<string, string>> = {
     'packages/data/tests/aislamiento-modulo-2.test.ts.',
   reconocimiento_candidato:
     'Satélite 0..N de reconocimiento_movimiento (0014), misma razón que su padre.',
+  padron_manifestacion:
+    'Tabla del Módulo 2 (migración 0021): la declaración de que el padrón de socios está completo. ' +
+    'La ingesta no la toca —es una premisa que carga una persona, no un dato que salga de un ' +
+    'extracto— y hoy NO TIENE PRODUCTOR: reconocer-lote.ts:288 pasa el gate en false fijo, así que ' +
+    'nace vacía a propósito. Cobertura de aislamiento en aislamiento-modulo-2.test.ts.',
+  reconocimiento_contrapartida:
+    'Tabla del Módulo 2 (migración 0021): qué resolvió capa C sobre un movimiento. Misma razón que ' +
+    'reconocimiento_movimiento — la escribe el motor, que corre después de la ingesta.',
+  reconocimiento_contrapartida_match:
+    'Satélite 0..N de reconocimiento_contrapartida (0021), misma razón que su padre.',
 };
 
 /** Las tablas que el pipeline de ingesta **tiene que** haber llenado en los dos clientes. */

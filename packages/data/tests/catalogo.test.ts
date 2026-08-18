@@ -46,10 +46,12 @@ import { CLASES_IDENTIFICADOR_CONTRAPARTE, TIPOS_DOCUMENTO_SOCIO } from '@sistem
 import { CONCEPTOS_CANONICOS } from '../../contabilidad/src/nucleo/catalogo.ts';
 import {
   CLASES_RECONOCIMIENTO,
+  ESTADOS_RESOLUCION,
   LADOS,
   MOTIVOS_SIN_RECONOCER,
   POLARIDADES,
   QUE_DECIDE,
+  REGIMENES_CON_MATCHES,
   TIPOS_MOVIMIENTO,
   VIAS_EVIDENCIA,
 } from '../../contabilidad/src/nucleo/tipos.ts';
@@ -926,6 +928,37 @@ const DOMINIOS_CERRADOS: DominioCerrado[] = [
     constante: 'CLASES_IDENTIFICADOR_CONTRAPARTE',
     valores: CLASES_IDENTIFICADOR_CONTRAPARTE,
     migracion: '0013',
+  },
+  // Los tres de `0021`. El segundo apunta a la MISMA constante que `mov_contraparte_clase_chk`:
+  // la clave de cobertura de este test es el NOMBRE DEL CHECK, no la constante, así que dos checks
+  // pueden espejar el mismo dominio — y acá es lo correcto, porque la vía por la que matcheó un
+  // socio y la clase del identificador capturado son el mismo vocabulario.
+  {
+    check: 'contrapartida_estado_chk',
+    tabla: 'reconocimiento_contrapartida',
+    columna: 'resolucion_estado',
+    constante: 'ESTADOS_RESOLUCION',
+    valores: ESTADOS_RESOLUCION,
+    migracion: '0021',
+  },
+  {
+    check: 'contrapartida_match_clase_chk',
+    tabla: 'reconocimiento_contrapartida_match',
+    columna: 'match_clase',
+    constante: 'CLASES_IDENTIFICADOR_CONTRAPARTE',
+    valores: CLASES_IDENTIFICADOR_CONTRAPARTE,
+    migracion: '0021',
+  },
+  // ⚠️ El SUBCONJUNTO que admite la satélite, no el dominio de tres de la generada del padre. Se
+  // espeja lo que el check afirma; una constante de tres inventada para contentar al gate
+  // describiría algo que este check no dice.
+  {
+    check: 'contrapartida_match_regimen_chk',
+    tabla: 'reconocimiento_contrapartida_match',
+    columna: 'regimen_matches',
+    constante: 'REGIMENES_CON_MATCHES',
+    valores: REGIMENES_CON_MATCHES,
+    migracion: '0021',
   },
   {
     check: 'padron_socio_documento_tipo_chk',
