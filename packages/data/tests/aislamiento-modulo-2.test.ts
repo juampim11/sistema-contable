@@ -25,7 +25,6 @@ import {
 } from '../src/contabilidad/lecturas.ts';
 import {
   persistirReconocimiento,
-  ReconocimientoDigestYaEnLaCadenaError,
   type PedidoDePersistirReconocimiento,
 } from '../src/contabilidad/escrituras.ts';
 import { leerReconocimientosActivos } from '../src/contabilidad/lecturas.ts';
@@ -44,6 +43,10 @@ const escenario = {
   socioA: '',
   socioB: '',
 };
+
+/** `movimiento_id -> entrada_digest` real de la base, leído en el `beforeAll`. Ver el comentario
+ *  donde se puebla: el escritor de `0021` rechaza un pedido cuyo digest no coincida. */
+const DIGESTS_DE_ENTRADA = new Map<string, string>();
 
 beforeAll(async () => {
   s = await sembrar();
@@ -137,6 +140,21 @@ beforeAll(async () => {
          values ($1, $2, 'cuit', $3, 'v1')`,
         [clienteId, movimientoId, hmacDocumento('cuit', '30712345678', clienteId)],
       );
+    }
+
+    // 🔴 `0021`: el pedido de persistencia declara QUÉ ENTRADA leyó el motor, y el escritor lo
+    // compara contra la columna generada del movimiento. Un valor inventado acá haría que todos
+    // estos tests devolvieran `entrada_cambio_durante_la_corrida` en vez de escribir — que es
+    // exactamente el control funcionando, pero mediría otra cosa. Se lee el real.
+    for (const [clienteId, movimientoId] of [
+      [s.clienteA, escenario.movimientoA],
+      [s.clienteB, escenario.movimientoB],
+    ] as const) {
+      const f = await tx.consultar<{ d: string }>(
+        'select entrada_digest as d from movimiento_bancario_crudo where cliente_id = $1 and id = $2',
+        [clienteId, movimientoId],
+      );
+      DIGESTS_DE_ENTRADA.set(movimientoId, f[0]?.d as string);
     }
 
     // Un socio por cliente, con su documento en la satélite N2-R.
@@ -373,6 +391,7 @@ function propuestaDe(movimientoId: string, clienteId: string, digest: string): P
     movimientoId,
     reconocimientoId: randomUUID(),
     motorDigest: digest,
+    entradaDigest: DIGESTS_DE_ENTRADA.get(movimientoId) ?? 'sin-digest-de-entrada',
     clase: 'propuesta',
     tipo: 'comision_bancaria',
     concepto: 'comision_de_transferencia',
@@ -539,24 +558,58 @@ describe('0014 — aislamiento y forma de reconocimiento_movimiento', () => {
     expect(total, 'el reconocimiento superseded se borró en vez de conservarse').toBe(2);
   });
 
-  it('🔴 volver a un digest ya superseded se corta con código, no se adivina', async () => {
+  /**
+   * 🔴 EL INVARIANTE NO CAMBIÓ; CAMBIÓ CÓMO SE REPORTA, y el motivo importa.
+   *
+   * Volver a un digest ya superseded sigue sin escribirse: sigue siendo una decisión humana y no un
+   * reproceso. Lo que cambió es que ya NO SE LANZA. Antes se descubría recién en el `on conflict do
+   * nothing` del INSERT —o sea DESPUÉS de haber aplicado el `update` de supersesión—, y la excepción
+   * abortaba la transacción del LOTE ENTERO por un solo movimiento, dejándolo además irreprocesable
+   * (`app_request` no tiene `update` sobre `clase` ni `delete`).
+   *
+   * El camino que lo produce no es exótico: cargar el padrón y DESPUÉS dar de baja al socio hace
+   * oscilar la clase `decision_humana → propuesta → decision_humana` con el mismo `motor_digest` y la
+   * misma entrada. Y el mensaje culpaba a un cambio del léxico, que en ese camino nadie tocó.
+   *
+   * Ahora se detecta ANTES de tocar nada y se devuelve como estado: el lote sigue, el movimiento se
+   * cuenta, y quien lea el reporte ve `digestYaEnLaCadena` en vez de un lote muerto.
+   */
+  it('🔴 volver a un digest ya superseded NO se escribe — y ya no aborta el lote entero', async () => {
     await persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A));
     await persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_B));
 
-    await expect(
-      persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A)),
-      'volver a un digest histórico es una decisión humana, no un reproceso',
-    ).rejects.toBeInstanceOf(ReconocimientoDigestYaEnLaCadenaError);
+    const r = await persistir(USUARIOS.contadorA, propuestaDe(escenario.movimientoA, s.clienteA, DIGEST_A));
+    expect(r.estado, 'volver a un digest histórico es una decisión humana, no un reproceso').toBe(
+      'digest_ya_en_la_cadena',
+    );
+
+    // Y no escribió: la cadena sigue teniendo dos filas, con la de DIGEST_B vigente.
+    const cadena = await conUsuario(USUARIOS.contadorA, async (tx) => {
+      const f = await tx.consultar<{ n: string; vigentes: string }>(
+        `select count(*)::text as n,
+                count(*) filter (where superseded_por is null)::text as vigentes
+           from reconocimiento_movimiento where movimiento_id = $1`,
+        [escenario.movimientoA],
+      );
+      return f[0];
+    });
+    expect(Number(cadena?.n), 'escribió una fila que no correspondía').toBe(2);
+    expect(Number(cadena?.vigentes), 'la supersesión se aplicó igual y dejó la cadena sin vigente').toBe(1);
   });
 
   /**
    * 🔴 EL INVARIANTE NO CAMBIÓ; CAMBIÓ QUIÉN LO ATAJA PRIMERO, y `0021` es la razón.
    *
    * Hasta `0020`, `cliente_id` de A con `movimiento_id` de B moría por `fk_recon_movimiento`. Desde
-   * `0021` muere ANTES, por `entrada_digest` nula: el trigger `BEFORE INSERT` que copia la foto
-   * histórica busca `(cliente_id, movimiento_id)` en `movimiento_bancario_crudo`, no encuentra la
-   * fila —porque es de otro cliente—, deja NULL, y el `not null` de la columna rechaza. Los
-   * triggers `BEFORE` corren antes de que se evalúe cualquier constraint.
+   * `0021` muere ANTES y MÁS ARRIBA: el escritor lee el movimiento para comparar la entrada, no lo
+   * encuentra —porque es de otro cliente— y corta con `MovimientoAjenoAlClienteError`, que dice
+   * exactamente qué pasó.
+   *
+   * 🔴 AHORA HAY TRES CAPAS SOBRE EL MISMO INVARIANTE, y cada una ataja lo que la anterior no ve:
+   *   1. el escritor (acá), que da el mejor diagnóstico y no toca la base;
+   *   2. el trigger que VERIFICA el `entrada_digest`, para quien escriba por SQL directo;
+   *   3. `fk_recon_movimiento`, la red para el camino que saltea triggers
+   *      (`session_replication_role = 'replica'`, premisa P-1).
    *
    * Es exactamente la propiedad que hace que ese trigger sea seguro y que un trigger que CUENTA no
    * lo sea: **contar sin filas visibles da 0 y falla ABIERTO; copiar sin filas visibles deja NULL y
@@ -567,17 +620,17 @@ describe('0014 — aislamiento y forma de reconocimiento_movimiento', () => {
    * P-1, ya declarada). Por eso el invariante ahora está sostenido por DOS mecanismos y este test
    * afirma el que dispara primero.
    *
-   * ⚠️ Y el costo, dicho para que nadie lo descubra depurando: el diagnóstico EMPEORÓ. `null value
-   * in column "entrada_digest"` no dice «movimiento de otro cliente», que era lo que decía el
-   * nombre del constraint anterior. Se acepta porque el control es el mismo y falla igual de
-   * cerrado, pero quien vea ese error en producción tiene que poder llegar acá.
+   * ⚠️ El diagnóstico había EMPEORADO cuando el trigger sólo COPIABA: `null value in column
+   * "entrada_digest"` no decía «movimiento de otro cliente». Quedó MEJOR que antes de `0021`, y no
+   * por buscarlo: salió de cerrar la carrera. El escritor ahora tiene que leer el movimiento igual, y
+   * un movimiento ausente es una condición que ya sabía nombrar.
    */
   it('🔴 un reconocimiento NO puede colgar de un movimiento de otro cliente (trigger de 0021, con la FK como red)', async () => {
     // `cliente_id` de A con un `movimiento_id` de B. El socio tiene membresía en los dos, así que la
     // policy NO lo frena.
     await expect(
       persistir(USUARIOS.socio, propuestaDe(escenario.movimientoB, s.clienteA, DIGEST_A)),
-    ).rejects.toThrow(/ING_NOT_NULL|entrada_digest|not.?null/i);
+    ).rejects.toThrow(/no pertenecen al cliente/);
   });
 
   it('🔴 un candidato NO puede colgar de una propuesta (FK de tres columnas)', async () => {
@@ -608,6 +661,11 @@ describe('0014 — aislamiento y forma de reconocimiento_movimiento', () => {
     };
     const r = await persistir(USUARIOS.contadorA, pedido);
     expect(r.estado).toBe('creado');
+    // El estrechamiento por `estado` no es ceremonia: desde `0021` hay dos resultados que NO llevan
+    // `reconocimientoId` (`entrada_cambio_durante_la_corrida` y `digest_ya_en_la_cadena`), así que
+    // el tipo obliga a decir cuál se espera — y eso es lo que impide leer un id de un caso en el que
+    // no se escribió nada.
+    if (r.estado !== 'creado') throw new Error(`se esperaba "creado" y vino "${r.estado}"`);
 
     const n = await conUsuario(USUARIOS.contadorA, async (tx) => {
       const f = await tx.consultar<{ n: string }>(

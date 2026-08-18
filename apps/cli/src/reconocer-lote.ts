@@ -49,6 +49,7 @@ import {
   aplicarContrapartida,
   construirIndice,
   digestDeBanco,
+  digestDeEntrada,
   idsDelLexico,
   lexicoDe,
   marcarCapaCCorrida,
@@ -158,11 +159,20 @@ function comoSocioDelPadron(s: SocioDelPadronLeido): SocioDelPadron {
  */
 export function comoPedidoDePersistencia(
   fila: FilaDeReconocimiento,
-  ids: { readonly clienteId: string; readonly movimientoId: string; readonly motorDigest: string },
+  ids: {
+    readonly clienteId: string;
+    readonly movimientoId: string;
+    readonly motorDigest: string;
+    /** 🔴 `digestDeEntrada()` sobre la MISMA evidencia que consumió `reconocer()`. Es el testigo de
+     *  la lectura que ya ocurrió, no una lectura nueva: eso es lo que permite que el escritor
+     *  compare «lo que el motor leyó» contra «lo que la base tiene ahora». */
+    readonly entradaDigest: string;
+  },
 ): PedidoDePersistirReconocimiento {
   return {
     clienteId: ids.clienteId,
     movimientoId: ids.movimientoId,
+    entradaDigest: ids.entradaDigest,
     // 🔴 uuid del cliente, no `default gen_random_uuid()`: la supersesión escribe `superseded_por`
     // apuntando a esta fila ANTES de que exista.
     reconocimientoId: randomUUID(),
@@ -220,6 +230,12 @@ export type ReporteDeReconocimiento = {
   readonly creados: number;
   readonly supersedidos: number;
   readonly noOp: number;
+  /** 🔴 Carreras DETECTADAS, no errores: la entrada del movimiento cambió mientras corría el lote y
+   *  su clasificación quedó obsoleta, así que no se escribió. La corrida siguiente los reconoce con
+   *  la entrada nueva. Antes de `0021` esto se persistía mal y en silencio. */
+  readonly entradaCambio: number;
+  /** Determinantes que ya figuraban en la cadena. Antes abortaban el lote entero. */
+  readonly digestYaEnLaCadena: number;
 };
 
 export async function reconocerLote(
@@ -312,6 +328,12 @@ export async function reconocerLote(
         clienteId: args.cliente,
         movimientoId: ev.movimientoId,
         motorDigest: digest,
+        // 🔴 Se calcula acá, en la MISMA iteración que llamó a `reconocer()`, sobre la MISMA fila
+        // que se leyó. NO se relee la base: si se releyera, volvería exactamente el problema que
+        // esto cierra. Y va sobre `ev` entera y no sobre `evidenciaDeMotorDesde(ev)` —que proyecta
+        // sólo los seis campos de capa B— porque el principio es que el digest cubre TODO lo que el
+        // motor puede leer, y lo que el motor puede leer ES `EvidenciaDeMovimientoLeida`.
+        entradaDigest: digestDeEntrada(ev),
       }));
     }
 
@@ -333,7 +355,7 @@ export async function reconocerLote(
         total_movimientos: pedidos.length,
         aplicar: false,
       });
-      return { ...base, aplicado: false, creados: 0, supersedidos: 0, noOp: 0 };
+      return { ...base, aplicado: false, creados: 0, supersedidos: 0, noOp: 0, entradaCambio: 0, digestYaEnLaCadena: 0 };
     }
 
     // Un solo evento de auditoría por LOTE, no por movimiento: `recursoId` es el lote. Auditar cada
@@ -366,6 +388,8 @@ export async function reconocerLote(
       creados: resumen.creados,
       supersedidos: resumen.supersedidos,
       noOp: resumen.noOp,
+      entradaCambio: resumen.entradaCambio,
+      digestYaEnLaCadena: resumen.digestYaEnLaCadena,
     };
   });
 }

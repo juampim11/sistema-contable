@@ -221,9 +221,26 @@ alter table movimiento_bancario_crudo
         || '|' || case when concepto_completo is null then '-:'
                        when concepto_completo then '4:true' else '5:false' end
         || '|' || length(contraparte_captura)::text || ':' || contraparte_captura
-        || '|' || '10:' || lpad(date_part('year',  fecha)::text, 4, '0')
-                        || '-' || lpad(date_part('month', fecha)::text, 2, '0')
-                        || '-' || lpad(date_part('day',   fecha)::text, 2, '0')
+        -- 🔴 `greatest(4, …)` y NO `lpad(…, 4, '0')` pelado: `lpad` con una cadena MÁS LARGA que el
+        -- ancho pedido **TRUNCA**, no rellena. Con `lpad(y, 4, '0')`, el año 10000 sale `'1000'` y
+        -- colisiona con el año 1000 — dos fechas distintas, el MISMO digest, medido sobre la columna
+        -- real. Y el prefijo de longitud iba hardcodeado en `'10:'`, así que ni siquiera lo delataba:
+        -- el enmarcado por longitud existe justamente para que el valor no pueda mentir su tamaño.
+        -- Se calcula la longitud REAL, como hace la gemela de TypeScript (`enmarcar()` usa
+        -- `[...texto].length`), que nunca tuvo este defecto.
+        -- ⚠️ Para toda fecha de año de CUATRO dígitos la cadena es idéntica a la anterior (10
+        -- caracteres, prefijo `10:`), así que **ningún digest del corpus medido cambia**: las 1830
+        -- coincidencias de P1 siguen valiendo.
+        || '|' || length(
+                    lpad(date_part('year',  fecha)::text,
+                         greatest(4, length(date_part('year', fecha)::text)), '0')
+                 || '-' || lpad(date_part('month', fecha)::text, 2, '0')
+                 || '-' || lpad(date_part('day',   fecha)::text, 2, '0')
+                  )::text
+              || ':' || lpad(date_part('year',  fecha)::text,
+                             greatest(4, length(date_part('year', fecha)::text)), '0')
+                     || '-' || lpad(date_part('month', fecha)::text, 2, '0')
+                     || '-' || lpad(date_part('day',   fecha)::text, 2, '0')
       ), 16)
     ) stored
     not null;
@@ -257,30 +274,52 @@ alter table reconocimiento_movimiento
 -- `search_path` explícito de 0015. Si la RLS oculta el movimiento, el `select` no devuelve
 -- fila, la asignación deja NULL y el `not null` de arriba rechaza el insert. Es el punto 3
 -- del encabezado.
-create or replace function app.copiar_entrada_digest() returns trigger
+create or replace function app.verificar_entrada_digest() returns trigger
   language plpgsql
   set search_path = pg_catalog, public, app, pg_temp
 as $$
+declare
+  vivo text;
 begin
-  select m.entrada_digest into new.entrada_digest
+  select m.entrada_digest into vivo
     from public.movimiento_bancario_crudo m
    where m.cliente_id = new.cliente_id
      and m.id = new.movimiento_id;
+
+  -- Sin fila visible (movimiento inexistente, de otro cliente, u oculto por RLS) `vivo` queda NULL y
+  -- la comparación de abajo da UNKNOWN: se cae por el `raise`. Es el mismo fail-closed que tenía la
+  -- versión que COPIABA — con la diferencia de que ahora la razón se dice en el mensaje.
+  if vivo is null or new.entrada_digest is distinct from vivo then
+    raise exception
+      'entrada_digest no coincide con el movimiento %: la fila declara % y el movimiento tiene %',
+      new.movimiento_id, coalesce(new.entrada_digest, '<null>'), coalesce(vivo, '<sin fila visible>')
+      using errcode = 'P0001';
+  end if;
   return new;
 end $$;
 
-comment on function app.copiar_entrada_digest() is
-  'Toma la FOTO HISTÓRICA del entrada_digest del movimiento en el instante del insert del '
-  'reconocimiento. NO es una FK y no puede serlo: una FK afirma un hecho PRESENTE y esto '
-  'registra uno HISTÓRICO — medido que con on update restrict el primer reconocimiento '
-  'congela concepto_banco para siempre (recapturar-conceptos.ts muere con 23503) y que con '
-  'cascade reescribe el digest de una interpretacion ya emitida. Sin security definer a '
-  'proposito: COPIA en vez de CONTAR, asi que sin filas visibles deja NULL y el not null '
-  'rechaza. Contar y copiar fallan en direcciones opuestas.';
+comment on function app.verificar_entrada_digest() is
+  '🔴 VERIFICA que el entrada_digest que la aplicacion DECLARA haber leido coincida con el que el '
+  'movimiento tiene en el instante del insert. NO lo COPIA, y ese es el punto: copiarlo registraba '
+  'una entrada que el motor podia no haber leido nunca. Medido con una carrera real: reconocer:lote '
+  'corre en UNA transaccion READ COMMITTED, lee la evidencia en el primer statement y insertaba '
+  'muchos statements despues; un recapturar-conceptos que commitee en el medio quedaba DENTRO de la '
+  'ventana, y la fila terminaba diciendo "me calcule con la entrada nueva" habiendose calculado con '
+  'la vieja. Como entrada_persistida pasaba a ser igual a entrada_actual, todo reproceso posterior '
+  'daba no_op: la interpretacion vieja quedaba para siempre. Era el bug de los 64 movimientos '
+  'resucitado por concurrencia. '
+  'NO es una FK y no puede serlo: una FK afirma un hecho PRESENTE y esto registra uno HISTORICO — '
+  'medido que con on update restrict el primer reconocimiento congela concepto_banco para siempre y '
+  'que con cascade reescribe el digest de una interpretacion ya emitida. Sin security definer a '
+  'proposito: sin filas visibles el select deja NULL y el raise dispara igual. '
+  '⚠️ Este trigger ABORTA LA TRANSACCION, o sea el lote entero. Es la RED, no el control primario: '
+  'la aplicacion compara lo mismo ANTES de escribir (escrituras.ts) y descarta ese movimiento SOLO, '
+  'contandolo en el reporte. Para llegar aca la entrada tiene que cambiar en los milisegundos entre '
+  'esa lectura y este insert.';
 
 create trigger trg_reconocimiento_entrada_digest
   before insert on reconocimiento_movimiento
-  for each row execute function app.copiar_entrada_digest();
+  for each row execute function app.verificar_entrada_digest();
 
 comment on column reconocimiento_movimiento.entrada_digest is
   'N2, exportable:false. FOTO del movimiento_bancario_crudo.entrada_digest en el instante en '
@@ -328,9 +367,14 @@ comment on constraint uq_recon_determinante on reconocimiento_movimiento is
 -- que adivinar 122 bits de CSPRNG de una fila que no se ve. Aceptado y declarado.
 revoke insert on reconocimiento_movimiento from app_request;
 
+-- 🔴 `entrada_digest` VA EN EL GRANT, y no debilita nada: es la aplicación DECLARANDO qué entrada
+-- leyó, y `trg_reconocimiento_entrada_digest` la verifica contra el movimiento en el mismo statement.
+-- Mentir exige escribir el valor verdadero, que es escribir el valor verdadero. Lo que se gana a
+-- cambio es lo que la versión anterior no podía dar: cuando el trigger COPIABA, la fila registraba
+-- la entrada del INSTANTE DEL INSERT, que bajo READ COMMITTED puede no ser la que el motor leyó.
 grant insert (
-    id, cliente_id, movimiento_id, motor_digest, clase, tipo, concepto, polaridad, lado,
-    que_decide, motivo_codigo, via, evidencia_entrada_lexico_id,
+    id, cliente_id, movimiento_id, motor_digest, entrada_digest, clase, tipo, concepto, polaridad,
+    lado, que_decide, motivo_codigo, via, evidencia_entrada_lexico_id,
     evidencia_caracteres_matcheados, evidencia_hubo_cola
   ) on reconocimiento_movimiento to app_request;
 

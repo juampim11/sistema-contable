@@ -16,6 +16,7 @@ import { logger } from '@sistema-contable/shared/observabilidad';
 import type { ContextoAuditado } from '../db/auditoria.ts';
 import type { Tx } from '../db/conexion.ts';
 import { conErroresTraducidos, ErrorDeBase } from '../db/errores-pg.ts';
+import { MovimientoAjenoAlClienteError } from './lecturas.ts';
 
 export type PedidoDeAltaDeSocio = {
   readonly clienteId: string;
@@ -200,6 +201,16 @@ export type PedidoDePersistirReconocimiento = {
    */
   readonly reconocimientoId: string;
   readonly motorDigest: string;
+  /**
+   * 🔴 EL DIGEST DE LA ENTRADA QUE EL MOTOR EFECTIVAMENTE LEYÓ, calculado por `digestDeEntrada()`
+   * sobre la MISMA evidencia que consumió `reconocer()`. No es una lectura nueva de la base: es el
+   * testigo de la lectura que ya ocurrió.
+   *
+   * Existe porque sin él nadie podía atar las dos lecturas de `entrada_digest` que hay en una
+   * corrida —la del motor, en el primer statement, y la del trigger, en el insert— y bajo READ
+   * COMMITTED están separadas por el lote entero.
+   */
+  readonly entradaDigest: string;
   readonly clase: string;
   readonly tipo: string | null;
   readonly concepto: string | null;
@@ -217,7 +228,26 @@ export type PedidoDePersistirReconocimiento = {
 export type ResultadoDePersistirReconocimiento =
   | { readonly estado: 'no_op'; readonly reconocimientoId: string }
   | { readonly estado: 'creado'; readonly reconocimientoId: string }
-  | { readonly estado: 'supersedido'; readonly reconocimientoId: string; readonly anteriorId: string };
+  | { readonly estado: 'supersedido'; readonly reconocimientoId: string; readonly anteriorId: string }
+  /**
+   * 🔴 La entrada del movimiento CAMBIÓ entre que el motor la leyó y este momento, así que la
+   * clasificación que trae el pedido es obsoleta y NO se escribe. No es un error del llamador ni de
+   * los datos: es una carrera legítima contra `recapturar-conceptos.ts` o `backfill-contraparte.ts`.
+   *
+   * Se devuelve como ESTADO y no como excepción a propósito: el lote sigue, este movimiento se
+   * cuenta, y la corrida siguiente lo reclasifica con la entrada nueva.
+   */
+  | { readonly estado: 'entrada_cambio_durante_la_corrida' }
+  /**
+   * 🔴 El determinante que se iba a escribir YA EXISTE en la cadena de este movimiento, en una fila
+   * superseded. Antes esto lanzaba `ReconocimientoDigestYaEnLaCadenaError` DESPUÉS de haber aplicado
+   * el `update` de supersesión, así que abortaba la transacción del lote entero — y el mensaje
+   * culpaba a un cambio del léxico aunque la causa más frecuente sea otra (un padrón que se carga y
+   * después se da de baja hace oscilar la `clase` con el mismo digest y la misma entrada).
+   *
+   * Ahora se detecta ANTES de tocar nada y se devuelve como estado: el lote sigue.
+   */
+  | { readonly estado: 'digest_ya_en_la_cadena'; readonly anteriorId: string };
 
 export const CODIGO_DIGEST_YA_EN_LA_CADENA = 'RECON_DIGEST_YA_SUPERSEDIDO' as const;
 
@@ -277,28 +307,60 @@ export async function persistirReconocimiento(
   _ctx: ContextoAuditado,
   pedido: PedidoDePersistirReconocimiento,
 ): Promise<ResultadoDePersistirReconocimiento> {
-  // 🔴 `0021`: se traen DOS `entrada_digest` distintos y esa es la mitad del arreglo.
-  //   - `entrada_persistida`: el que tenía el movimiento CUANDO se emitió el reconocimiento vigente
-  //     (la foto histórica que copió el trigger).
-  //   - `entrada_actual`: el que tiene el movimiento HOY (columna generada, se recalcula sola en
-  //     cada UPDATE de la entrada).
-  // Comparar los dos es lo que detecta un reproceso que cambió la entrada sin cambiar la clase.
-  // Sale de la BASE y no de un cálculo en TypeScript a propósito: la columna generada es la fuente,
-  // y así el no-op no puede divergir de la unicidad que lo respalda.
-  const activas = await conErroresTraducidos(undefined, () =>
-    tx.consultar<{ id: string; motor_digest: string; clase: string; entrada_persistida: string; entrada_actual: string }>(
-      `select r.id::text as id, r.motor_digest, r.clase,
-              r.entrada_digest as entrada_persistida,
-              m.entrada_digest as entrada_actual
-         from reconocimiento_movimiento r
-         join movimiento_bancario_crudo m
-           on m.cliente_id = r.cliente_id and m.id = r.movimiento_id
-        where r.cliente_id = $1 and r.movimiento_id = $2 and r.superseded_por is null
-        for update of r`,
+  // 🔴 `0021`: la lectura arranca EN EL MOVIMIENTO y llega al reconocimiento por `left join`. Antes
+  // era al revés —el movimiento entraba por un `join` interno— y eso dejaba sin comparación el caso
+  // más frecuente: la PRIMERA corrida de un movimiento, donde todavía no hay reconocimiento vigente.
+  //
+  // Se traen DOS `entrada_digest` de la base, más el que declara el pedido:
+  //   - `entrada_actual`: el que el movimiento tiene AHORA (la columna generada).
+  //   - `entrada_persistida`: el que se registró cuando se emitió el reconocimiento vigente.
+  //   - `pedido.entradaDigest`: el que el MOTOR LEYÓ para producir esta clasificación.
+  // 🔴 DOS statements, y no un `left join` con `for update of r`: PostgreSQL **no admite FOR UPDATE
+  // sobre el lado nullable de un outer join** (`0A000`). Partirlo además ordena mejor el trabajo —
+  // el control de entrada corre ANTES de tomar ningún lock, así que un movimiento que se va a
+  // descartar no bloquea a nadie.
+  const delMovimiento = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ entrada_actual: string }>(
+      `select entrada_digest as entrada_actual
+         from movimiento_bancario_crudo
+        where cliente_id = $1 and id = $2`,
       [pedido.clienteId, pedido.movimientoId],
     ),
   );
-  const activa = activas[0];
+  const entradaActual = delMovimiento[0]?.entrada_actual;
+  // H-14: la RLS sin match da 0 filas, no excepción. Un movimiento inexistente o de otro cliente
+  // llega acá como AUSENCIA, y hay que nombrarlo antes de intentar escribir.
+  if (entradaActual === undefined) {
+    throw new MovimientoAjenoAlClienteError(pedido.clienteId, [pedido.movimientoId]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 🔴 CONTROL A — lo que el motor LEYÓ contra lo que la base tiene AHORA.
+  //
+  // Si difieren, alguien reescribió la entrada (`recapturar-conceptos.ts`, `backfill-contraparte.ts`)
+  // entre la lectura del motor y este momento, y la clasificación que traemos es OBSOLETA.
+  // Persistirla dejaría una fila afirmando haberse calculado con una entrada que nunca vio — y como
+  // el no-op compara `entrada_persistida` contra `entrada_actual`, esa fila daría `no_op` PARA
+  // SIEMPRE con la interpretación vieja adentro. Es el bug de los 64 movimientos por otra puerta.
+  //
+  // ⚠️ NO SE LANZA: se devuelve un estado y el llamador sigue con el resto del lote. Lanzar acá
+  // abortaría la transacción de ~1830 movimientos por uno solo. La corrida siguiente reclasifica
+  // este movimiento con la entrada nueva y lo persiste normal.
+  // ---------------------------------------------------------------------------
+  if (pedido.entradaDigest !== entradaActual) {
+    return { estado: 'entrada_cambio_durante_la_corrida' };
+  }
+
+  const activas = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string; motor_digest: string; clase: string; entrada_persistida: string }>(
+      `select id::text as id, motor_digest, clase, entrada_digest as entrada_persistida
+         from reconocimiento_movimiento
+        where cliente_id = $1 and movimiento_id = $2 and superseded_por is null
+        for update`,
+      [pedido.clienteId, pedido.movimientoId],
+    ),
+  );
+  const activa = activas[0] === undefined ? undefined : { ...activas[0], entrada_actual: entradaActual };
 
   // 🔴 EL NO-OP COMPARA DIGEST **Y CLASE**, no solo el digest. Hallazgo independiente de
   // `qa-funcional` y `code-reviewer` (Ronda 3): capa C corre con el MISMO léxico y por lo tanto el
@@ -334,6 +396,39 @@ export async function persistirReconocimiento(
     return { estado: 'no_op', reconocimientoId: activa.id };
   }
 
+  // ---------------------------------------------------------------------------
+  // 🔴 EL DETERMINANTE YA EN LA CADENA — SE DETECTA ANTES DE TOCAR NADA.
+  //
+  // Antes, este caso se descubría recién en el `on conflict do nothing` del INSERT, o sea DESPUÉS
+  // de haber aplicado el `update` de supersesión: se lanzaba, la transacción del lote entero moría,
+  // y el movimiento quedaba irreprocesable (`app_request` no tiene `update` sobre `clase` ni
+  // `delete`).
+  //
+  // El camino que lo produce no es raro ni exótico: cargar el padrón y DESPUÉS dar de baja al socio
+  // hace oscilar la clase `decision_humana → propuesta → decision_humana` con el MISMO
+  // `motor_digest` y la MISMA entrada. El no-op compara `clase` (tres valores) y la unicidad usa
+  // `es_propuesta` (dos), así que la tercera corrida decide superseder y choca contra la tupla de la
+  // primera, que está superseded.
+  //
+  // Y el mensaje culpaba al léxico —que en ese camino nadie tocó— porque cuando se escribió, revertir
+  // el léxico era la única forma de llegar acá. Con `entrada_digest` en el determinante hay más.
+  // ---------------------------------------------------------------------------
+  const enLaCadena = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string }>(
+      `select id::text as id
+         from reconocimiento_movimiento
+        where cliente_id = $1 and movimiento_id = $2
+          and motor_digest = $3 and entrada_digest = $4
+          and es_propuesta = ($5::text = 'propuesta')
+        limit 1`,
+      [pedido.clienteId, pedido.movimientoId, pedido.motorDigest, pedido.entradaDigest, pedido.clase],
+    ),
+  );
+  const yaEnLaCadena = enLaCadena[0]?.id;
+  if (yaEnLaCadena !== undefined && yaEnLaCadena !== activa?.id) {
+    return { estado: 'digest_ya_en_la_cadena', anteriorId: yaEnLaCadena };
+  }
+
   if (activa) {
     const cerradas = await conErroresTraducidos(undefined, () =>
       tx.consultar<{ id: string }>(
@@ -351,10 +446,10 @@ export async function persistirReconocimiento(
   const creadas = await conErroresTraducidos(undefined, () =>
     tx.consultar<{ id: string }>(
       `insert into reconocimiento_movimiento
-         (cliente_id, id, movimiento_id, motor_digest, clase, tipo, concepto, polaridad, lado, via,
-          que_decide, motivo_codigo, evidencia_entrada_lexico_id, evidencia_caracteres_matcheados,
-          evidencia_hubo_cola)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         (cliente_id, id, movimiento_id, motor_digest, entrada_digest, clase, tipo, concepto,
+          polaridad, lado, via, que_decide, motivo_codigo, evidencia_entrada_lexico_id,
+          evidencia_caracteres_matcheados, evidencia_hubo_cola)
+       values ($1, $2, $3, $4, $16, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        -- 0021: la tupla del ON CONFLICT es uq_recon_determinante, que ahora lleva entrada_digest.
        -- Nombrarla acá NO la inserta (la llena el trigger que copia la foto historica): en un ON
        -- CONFLICT se nombran las columnas del INDICE, no valores. Si esta lista deja de coincidir
@@ -378,6 +473,10 @@ export async function persistirReconocimiento(
         pedido.entradaLexicoId,
         pedido.caracteresMatcheados,
         pedido.huboCola,
+        // $16 — `entrada_digest`. Va al final de la lista de parámetros y no en su posición del
+        // INSERT a propósito: agregarlo en el medio habría renumerado los quince anteriores, que es
+        // el cambio con más riesgo de error silencioso que se puede hacer en una query posicional.
+        pedido.entradaDigest,
       ],
     ),
   );
@@ -405,6 +504,22 @@ export type ResumenDePersistencia = {
   readonly creados: number;
   readonly supersedidos: number;
   readonly noOp: number;
+  /**
+   * 🔴 Movimientos cuya ENTRADA cambió mientras corría el lote, así que su clasificación quedó
+   * obsoleta y NO se escribió. **Un valor > 0 no es un error: es una carrera detectada.** Significa
+   * que alguien corrió `recapturar-conceptos` o `backfill-contraparte` en paralelo, y que esos
+   * movimientos hay que volver a reconocerlos — la corrida siguiente lo hace sola.
+   *
+   * Existe porque el modo de falla que reemplaza era SILENCIOSO: antes se persistía la
+   * clasificación vieja con la entrada nueva estampada encima, y el movimiento quedaba dando
+   * `no_op` para siempre.
+   */
+  readonly entradaCambio: number;
+  /**
+   * Movimientos cuyo determinante ya figuraba en la cadena, en una fila superseded. Antes esto
+   * abortaba la transacción del lote entero; ahora se cuenta y el lote sigue.
+   */
+  readonly digestYaEnLaCadena: number;
 };
 
 /**
@@ -425,11 +540,15 @@ export async function persistirReconocimientos(
   let creados = 0;
   let supersedidos = 0;
   let noOp = 0;
+  let entradaCambio = 0;
+  let digestYaEnLaCadena = 0;
 
   for (const pedido of pedidos) {
     const r = await persistirReconocimiento(tx, ctx, pedido);
     if (r.estado === 'creado') creados += 1;
     else if (r.estado === 'supersedido') supersedidos += 1;
+    else if (r.estado === 'entrada_cambio_durante_la_corrida') entradaCambio += 1;
+    else if (r.estado === 'digest_ya_en_la_cadena') digestYaEnLaCadena += 1;
     else noOp += 1;
   }
 
@@ -440,7 +559,9 @@ export async function persistirReconocimientos(
     creados,
     supersedidos,
     no_op: noOp,
+    entrada_cambio: entradaCambio,
+    digest_ya_en_la_cadena: digestYaEnLaCadena,
   });
 
-  return { creados, supersedidos, noOp };
+  return { creados, supersedidos, noOp, entradaCambio, digestYaEnLaCadena };
 }

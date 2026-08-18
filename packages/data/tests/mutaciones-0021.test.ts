@@ -287,11 +287,15 @@ async function crearReconocimiento(
   if (clase === 'sin_reconocer') {
     const f = await una(
       ej,
+      // 🔴 `entrada_digest` se DECLARA, no se copia: desde el arreglo de la carrera, el trigger
+      // `trg_reconocimiento_entrada_digest` VERIFICA que coincida con el movimiento en vez de
+      // estamparlo solo. Un insert que no lo nombre muere con P0001 — que es el control funcionando,
+      // pero taparía el constraint que cada caso de este archivo quiere medir.
       `insert into reconocimiento_movimiento
-         (cliente_id, movimiento_id, motor_digest, clase, motivo_codigo)
-       values ($1, $2, $3, 'sin_reconocer', 'ambiguo')
+         (cliente_id, movimiento_id, motor_digest, entrada_digest, clase, motivo_codigo)
+       values ($1, $2, $3, $4, 'sin_reconocer', 'ambiguo')
        returning id::text as id`,
-      [cuenta.clienteId, mov.id, digest],
+      [cuenta.clienteId, mov.id, digest, mov.entradaDigest],
     );
     return { id: String(f['id']), movimientoId: mov.id, entradaDigest: mov.entradaDigest };
   }
@@ -299,9 +303,10 @@ async function crearReconocimiento(
   const f = await una(
     ej,
     `insert into reconocimiento_movimiento
-       (cliente_id, movimiento_id, motor_digest, clase, tipo, concepto, polaridad, lado, via,
-        que_decide, evidencia_entrada_lexico_id, evidencia_caracteres_matcheados, evidencia_hubo_cola)
-     values ($1, $2, $3, $4, 'comision_bancaria', 'comision_de_transferencia', 'normal', 'debe',
+       (cliente_id, movimiento_id, motor_digest, entrada_digest, clase, tipo, concepto, polaridad,
+        lado, via, que_decide, evidencia_entrada_lexico_id, evidencia_caracteres_matcheados,
+        evidencia_hubo_cola)
+     values ($1, $2, $3, $6, $4, 'comision_bancaria', 'comision_de_transferencia', 'normal', 'debe',
              'texto_literal_exacto', $5, 'galicia.comision_de_transferencia', 12, false)
      returning id::text as id`,
     [
@@ -310,6 +315,7 @@ async function crearReconocimiento(
       digest,
       clase,
       clase === 'decision_humana' ? 'distinguir_tercero_de_socio' : null,
+      mov.entradaDigest,
     ],
   );
   return { id: String(f['id']), movimientoId: mov.id, entradaDigest: mov.entradaDigest };
@@ -1697,11 +1703,24 @@ describe('0021 F — el determinante y la foto histórica (2 mutaciones, 2 legí
       const ej = desdeTx(tx);
       const mov = await crearMovimiento(ej, escenario.a, { conceptoBanco: 'CONCEPTO VIEJO' });
 
-      const pedido = (id: string): PedidoDePersistirReconocimiento => ({
+      // 🔴 `0021`: el pedido declara QUÉ ENTRADA leyó el motor, y el escritor lo compara contra la
+      // columna generada ANTES de escribir. Acá se pasa el digest vivo en cada momento, que es lo
+      // que hace `reconocer-lote.ts` con `digestDeEntrada(ev)` sobre la evidencia recién leída:
+      // simula un motor que leyó y escribió sin que nadie tocara la entrada en el medio. La carrera
+      // —leer una entrada y escribir con otra— tiene su propio caso, más abajo.
+      const digestVivo = async (): Promise<string> =>
+        String(
+          (await una(ej, 'select entrada_digest from movimiento_bancario_crudo where id = $1', [mov.id]))[
+            'entrada_digest'
+          ],
+        );
+
+      const pedido = (id: string, entradaDigest: string): PedidoDePersistirReconocimiento => ({
         clienteId: escenario.a.clienteId,
         movimientoId: mov.id,
         reconocimientoId: id,
         motorDigest: DIGEST_FIJO,
+        entradaDigest,
         clase: 'decision_humana',
         tipo: 'pago_a_proveedor_transferencia',
         concepto: 'pago_con_transferencia_generico',
@@ -1728,17 +1747,24 @@ describe('0021 F — el determinante y la foto histórica (2 mutaciones, 2 legí
           (ctx) => persistirReconocimiento(tx, ctx, p),
         );
 
-      const primera = await escribir(pedido(randomUUID()));
+      const primera = await escribir(pedido(randomUUID(), await digestVivo()));
 
       // Un reproceso que NO cambió nada: el no-op verdadero. Es el caso legítimo del par.
-      const noOp = await escribir(pedido(randomUUID()));
+      const noOp = await escribir(pedido(randomUUID(), await digestVivo()));
+
+      const r0 = await digestVivo();
 
       // 🔴 Ahora la ENTRADA cambia (es exactamente lo que hace `recapturar-conceptos.ts`), y el
       // léxico y la clase quedan IGUALES.
       await ej(`update movimiento_bancario_crudo set concepto_banco = 'CONCEPTO NUEVO' where id = $1`, [
         mov.id,
       ]);
-      const conEntradaNueva = await escribir(pedido(randomUUID()));
+      const conEntradaNueva = await escribir(pedido(randomUUID(), await digestVivo()));
+
+      // 🔴 LA CARRERA, que es lo que el CONTROL A ataja: el motor leyó la entrada de ANTES del
+      // update y escribe después. Con el trigger que COPIABA, esto persistía la clasificación vieja
+      // con la entrada nueva estampada encima y el movimiento quedaba en `no_op` para siempre.
+      const conEntradaVieja = await escribir(pedido(randomUUID(), r0));
 
       const total = await una(
         ej,
@@ -1761,6 +1787,7 @@ describe('0021 F — el determinante y la foto histórica (2 mutaciones, 2 legí
         primera: primera.estado,
         noOp: noOp.estado,
         conEntradaNueva: conEntradaNueva.estado,
+        conEntradaVieja: conEntradaVieja.estado,
         total: Number(total['n']),
         vigente: String(vigente['entrada_digest']),
         actual: String(actual['entrada_digest']),
@@ -1778,6 +1805,19 @@ describe('0021 F — el determinante y la foto histórica (2 mutaciones, 2 legí
      * `conEntradaNueva` pase de `supersedido` a `no_op`. Corrida y confirmada: con la condición
      * fuera, este `it` es el ÚNICO que se pone rojo en toda la suite.
      */
+    /**
+     * 🔴 Y LA CARRERA, que es el mismo bug por otra puerta y que el trigger que COPIABA no podía ver:
+     * el motor lee la entrada X, alguien commitea un `recapturar-conceptos` en el medio, y el insert
+     * ocurre con la entrada Y viva. Antes, el trigger estampaba Y sobre una interpretación hecha con
+     * X y el movimiento quedaba en `no_op` PARA SIEMPRE. Ahora la aplicación lo detecta antes de
+     * escribir y descarta ESE movimiento —sin abortar el lote—, para que la corrida siguiente lo
+     * reconozca con la entrada nueva.
+     */
+    expect(
+      r.conEntradaVieja,
+      'una clasificación hecha con la entrada VIEJA se persistió igual: la foto histórica vuelve a mentir',
+    ).toBe('entrada_cambio_durante_la_corrida');
+
     expect(r.primera, 'la primera escritura no creó').toBe('creado');
     expect(r.noOp, 'el no-op verdadero (nada cambió) dejó de serlo: toda corrida escribiría fila nueva').toBe(
       'no_op',
