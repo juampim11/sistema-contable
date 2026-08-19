@@ -6,6 +6,69 @@
 
 ---
 
+## 2026-08-19 (77) — Módulo de liquidaciones de tarjeta: investigación y diseño CERRADOS, plan aprobado por JP. NADA implementado — ningún archivo de código de este plan existe en el filesystem.
+
+**Herramienta:** Claude Code. Sesión de research + diseño (explícitamente sin implementación),
+disparada por tres liquidaciones reales de un cliente del estudio (Visa débito, Visa crédito, Cabal
+débito — mismo banco pagador, mismo mes), analizadas y verificadas aritméticamente palabra por
+palabra en la conversación. Resultado: `docs/diseno/14-liquidaciones-tarjeta-plan.md`, plan formal
+de CLAUDE.md §3.2, con los tres dictámenes que lo sostienen.
+
+### Por qué existe este módulo
+
+La regla 11 del material de la contadora (acreditación de tarjeta) llega al extracto **neta** de
+arancel, IVA y retenciones — esos componentes no están en ningún lado del extracto, están en la
+liquidación del adquirente, que hoy el sistema no sabe leer. El catálogo canónico ya tiene 78+
+movimientos de `acreditacion_tarjeta` esperando exactamente este dato
+(`packages/contabilidad/src/nucleo/catalogo.ts`, `queDecide:
+'completar_con_liquidacion_del_adquirente'`). Sin este módulo, esa regla queda mal para siempre.
+
+### Convocatoria cumplida (con `Agent()` real, no narrada)
+
+- **`contador-dominio`**: asiento tipo completo; posición fundada sobre "Deudores por ventas" vs.
+  cuenta específica; el caveat de cómputo fiscal modelado como `registrado` ≠
+  `computable_confirmado`; contado vs. cuotas registrados por separado; SIRTAC como hipótesis, no
+  norma. Advierte: `knowledge/` sigue esqueleto — toda afirmación normativa del plan 14 es "no
+  tengo esa fuente cargada", marcada así explícitamente. Validar con profesional matriculado.
+- **`motor-conciliacion-contable`**: escalera de matching (nro. de liquidación → fecha+neto →
+  agregado del día, en ese orden); corrigió el enum de verificación propuesto (de un eje colapsado
+  y sin estado de falla a TRES ejes ortogonales: aritmética / checksum del emisor / cruce contra
+  extracto); conexión con el catálogo canónico vía dimensión nueva (`fuenteDeComponentes`), no vía
+  nueva en `VIAS_EVIDENCIA`; límite categórico: el catálogo N0 nunca lleva porcentajes, solo
+  estructura — los % esperados, si llegan a existir, van en tabla N2 por cliente con vigencia.
+- **`arquitecto-software`**: subárbol `packages/ingesta/src/liquidaciones/` (NO paquete nuevo — la
+  analogía con `cotizaciones` era falsa); catálogo de conceptos como unión cerrada en TS junto al
+  parser; catálogo N0 propio `formato_liquidacion` (gemelo de `banco`, nunca filas en `banco`);
+  SIRTAC como entidad es prematuro con un solo agente medido; sin ADR nuevo; secuencia de 4 commits
+  (vocabulario → primer adapter con dry-run → migración → persistencia+CLI).
+
+### Decisiones que JP tomó en esta sesión (ya reflejadas en el plan 14, no quedan abiertas)
+
+1. Subárbol en `ingesta`, no paquete `liquidaciones-tarjeta` aparte.
+2. No se re-pregunta a Laura la cuenta destino por ahora (Deudores por ventas ya respondida queda
+   vigente; la analítica de adquirente+nro. de liquidación se conserva igual en el renglón).
+3. Percepción IVA de dos tasas sigue pendiente — no se resuelve en este plan.
+4. Las cinco discrepancias documentación↔código detectadas (docs 04/05/08 desactualizados respecto
+   del catálogo real) se corrigen en un commit de documentación **aparte**, sin relación de
+   precedencia con este módulo.
+5. La implementación arranca en una **sesión futura** — esta sesión cierra en diseño, no en código.
+
+### Qué NO existe en el filesystem (explícito, para que la próxima sesión no asuma nada)
+
+Ningún archivo de código de este plan: ni `packages/ingesta/src/liquidaciones/`, ni migración, ni
+`formato_liquidacion`, ni `lote_liquidacion`, ni ninguna regla nueva en `reglas-de-codigo.test.ts`.
+**El piloto no se tocó en ningún momento de esta sesión.** Los tres documentos reales analizados
+viven en `privado/tarjetas/` (gitignored) — sus montos, el nombre del cliente y sus datos de cuenta
+no están en ningún archivo de `docs/`.
+
+### Próxima sesión
+
+Leer `docs/diseno/14-liquidaciones-tarjeta-plan.md` **completo** antes de tocar cualquiera de los
+cuatro pasos de su §5. El primer paso revertible es vocabulario + contrato, cero base — no arrancar
+por la migración.
+
+---
+
 ## 2026-08-19 (76) — Cotización BNA, paso 1 CERRADO: migración `0022` + `packages/cotizaciones` (solo adapter), en local. `actualizar-cotizaciones.ts` sigue sin escribirse.
 
 **Herramienta:** Claude Code. Cierra el "paso revertible más chico" de `docs/diseno/12-cotizacion-bna-plan.md`
