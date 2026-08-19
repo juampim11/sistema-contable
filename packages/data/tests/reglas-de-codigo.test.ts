@@ -863,3 +863,163 @@ describe('R-K — FilaDeReconocimiento espeja PedidoDePersistirReconocimiento (0
     expect(CAMPOS_ESPEJADOS.length).toBeGreaterThan(8);
   });
 });
+
+// -----------------------------------------------------------------------------
+describe('R-M — las dos familias de adapters no se conocen (plan 14 §1)', () => {
+  /**
+   * El Módulo 1 lee **extractos bancarios** (`src/adaptadores/`); el módulo de liquidaciones de
+   * tarjeta lee **liquidaciones de adquirente** (`src/liquidaciones/`). Viven en el mismo paquete a
+   * propósito —comparten la infraestructura de extracción (`texto-pdf.ts`), el parseo de importes AR
+   * (`parseo-ar.ts`) y el hash de archivo (`hash.ts`)— pero **no comparten contrato**, y el plan 14 §1
+   * documenta los tres bloqueos duros que lo impiden: `lote_ingesta.banco_codigo` es
+   * `not null references banco(codigo)` y Visa/Cabal no son bancos; la salida bancaria es
+   * `CuentaConMovimientos[]`, que no tiene forma de liquidación; y compartir el registro ampliaría la
+   * superficie del caso `ambiguo` (precedente real: un PDF de Credicoop byte-idéntico a uno de ICBC)
+   * sin ganar nada.
+   *
+   * Esta regla es lo que hace que esa separación sea cierta en el código y no solo en el documento. Lo
+   * que NO prohíbe, y es deliberado: importar la infraestructura compartida del paquete
+   * (`../texto-pdf.ts`, `../parseo-ar.ts`, `../hash.ts`, `../esquema.ts`) — ese reuso medido es
+   * exactamente la razón por la que el módulo es un subárbol de `ingesta` y no un paquete nuevo.
+   *
+   * Es hermana de la regla de aislamiento entre bancos de más arriba: aquella impide que un banco
+   * rompa a otro; esta impide que una FAMILIA rompa a la otra.
+   */
+  const PATRON_IMPORTA_ADAPTADORES = /from ['"][^'"]*\/adaptadores\/[^'"]+['"]/;
+  const PATRON_IMPORTA_LIQUIDACIONES = /from ['"][^'"]*\/liquidaciones\/[^'"]+['"]/;
+
+  it('ningún archivo de `liquidaciones/` importa del contrato bancario', () => {
+    const deLiquidaciones = FUENTES.filter((r) =>
+      rel(r).startsWith('packages/ingesta/src/liquidaciones/'),
+    );
+    const infractores = deLiquidaciones.filter((ruta) =>
+      PATRON_IMPORTA_ADAPTADORES.test(readFileSync(ruta, 'utf8')),
+    );
+    expect(
+      infractores.map(rel),
+      'el contrato de liquidaciones es propio (plan 14 §1): reusa la infraestructura del paquete, ' +
+        'nunca el contrato de extractos bancarios',
+    ).toEqual([]);
+  });
+
+  it('ningún archivo de `adaptadores/` importa del contrato de liquidaciones', () => {
+    const deAdaptadores = FUENTES.filter((r) =>
+      rel(r).startsWith('packages/ingesta/src/adaptadores/'),
+    );
+    const infractores = deAdaptadores.filter((ruta) =>
+      PATRON_IMPORTA_LIQUIDACIONES.test(readFileSync(ruta, 'utf8')),
+    );
+    expect(
+      infractores.map(rel),
+      'la dirección inversa importa igual: un adapter bancario que dependa del vocabulario de ' +
+        'liquidaciones ata los ocho bancos al calendario de otro módulo',
+    ).toEqual([]);
+  });
+
+  it('los patrones detectan la infracción plantada y no confunden la infraestructura compartida', () => {
+    expect(
+      PATRON_IMPORTA_ADAPTADORES.test("import { ErrorDeAdaptador } from '../adaptadores/contrato.ts';"),
+    ).toBe(true);
+    expect(
+      PATRON_IMPORTA_LIQUIDACIONES.test("import type { Renglon } from '../liquidaciones/esquema.ts';"),
+    ).toBe(true);
+    // Lo que NO es infracción: la infraestructura compartida del paquete y los hermanos de la familia.
+    expect(PATRON_IMPORTA_ADAPTADORES.test("import { agruparEnFilas } from '../texto-pdf.ts';")).toBe(false);
+    expect(PATRON_IMPORTA_ADAPTADORES.test("import { parsearImporteAr } from '../parseo-ar.ts';")).toBe(false);
+    expect(PATRON_IMPORTA_ADAPTADORES.test("import { ESTADOS_VERIFICACION } from '../esquema.ts';")).toBe(false);
+    expect(PATRON_IMPORTA_LIQUIDACIONES.test("import { toolkit } from './toolkit.ts';")).toBe(false);
+    // Y una mención en prosa no es un import.
+    expect(PATRON_IMPORTA_ADAPTADORES.test('// ver `adaptadores/contrato.ts` para el espejo')).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-N — el barrido VE el subárbol de liquidaciones (sin esto, R-M pasa por vacío)', () => {
+  /**
+   * R-M filtra por prefijo de path. Si el subárbol se renombra, se mueve o queda fuera del glob de
+   * `FUENTES`, las dos primeras pruebas de R-M pasan sobre una lista **vacía** y siguen verdes: el
+   * aislamiento dejaría de estar vigilado sin que nada se ponga rojo.
+   *
+   * Es la misma protección que ya tiene el barrido general más arriba (`cobertura del barrido`),
+   * aplicada al directorio que R-M necesita ver. Método rojo→verde del plan 12: esta regla se escribió
+   * ANTES de crear el subárbol y se verificó **roja** por ausencia, que es la única forma de saber que
+   * reacciona.
+   */
+  it('los tres archivos del contrato de liquidaciones están en FUENTES', () => {
+    const delSubarbol = FUENTES.map(rel).filter((r) =>
+      r.startsWith('packages/ingesta/src/liquidaciones/'),
+    );
+    expect(delSubarbol).toContain('packages/ingesta/src/liquidaciones/contrato.ts');
+    expect(delSubarbol).toContain('packages/ingesta/src/liquidaciones/registro.ts');
+    expect(delSubarbol).toContain('packages/ingesta/src/liquidaciones/esquema.ts');
+    expect(delSubarbol.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-O — cero porcentajes y cero decimales en el vocabulario compartido de liquidaciones', () => {
+  /**
+   * Dictamen de `seguridad-datos-financieros` (hallazgo L-2, sesión 2026-08-19): el arancel es un
+   * **término negociado por comercio** y la alícuota de retención depende de un padrón por
+   * contribuyente. Un porcentaje escrito en `liquidaciones/` —que es código compartido entre TODOS los
+   * tenants, versionado y público para siempre en el historial— es un dato de la relación comercial de
+   * un cliente filtrado a los demás (H-6), y **la agregación no desclasifica**.
+   *
+   * Y el barrido de fuga NO lo detecta: sus candidatos salen solo de `DETECTORES`
+   * (`tools/barrido-fuga.ts`), cuyo único detector de importes exige al menos un grupo de miles y dos
+   * decimales — una tasa chica y todo importe menor a mil no matchean nunca. El verde del barrido
+   * sobre esta familia es verde-por-vacío; esta regla es el control que sí existe.
+   *
+   * **Enunciada sin excepción, a propósito.** "Cero porcentajes, salvo los normativos" tiene la forma
+   * exacta de R33 y de la R25 vieja: la regla nombra su propia excepción, y la excepción exige un
+   * juicio caso-por-caso —¿esta tasa es normativa o negociada?— que alguien va a hacer mal el día que
+   * escriba un arancel esperado. Lo que la regla mira son **valores**: un decimal en posición de valor
+   * y un signo de porcentaje. Un número de norma entero (`percepcion_iva_rg2408`, `impuesto_25413`) no
+   * es una tasa y sigue siendo legítimo.
+   */
+  const PATRON_DECIMAL_EN_VALOR = /[:=]\s*-?\d+[.,]\d+/;
+  const PATRON_PORCENTAJE = /\d\s*%/;
+
+  it('ningún archivo de `liquidaciones/` escribe un decimal en posición de valor', () => {
+    const deLiquidaciones = FUENTES.filter((r) =>
+      rel(r).startsWith('packages/ingesta/src/liquidaciones/'),
+    );
+    const infractores = deLiquidaciones.filter((ruta) =>
+      PATRON_DECIMAL_EN_VALOR.test(readFileSync(ruta, 'utf8')),
+    );
+    expect(
+      infractores.map(rel),
+      'una tasa cableada en el vocabulario compartido es H-6: la tasa efectiva se calcula de cada ' +
+        'liquidación real, y una esperada —si algún día existe— va en tabla N2 por cliente con vigencia',
+    ).toEqual([]);
+  });
+
+  it('ningún archivo de `liquidaciones/` escribe un porcentaje', () => {
+    const deLiquidaciones = FUENTES.filter((r) =>
+      rel(r).startsWith('packages/ingesta/src/liquidaciones/'),
+    );
+    const infractores = deLiquidaciones.filter((ruta) =>
+      PATRON_PORCENTAJE.test(readFileSync(ruta, 'utf8')),
+    );
+    expect(
+      infractores.map(rel),
+      'ni siquiera en un comentario: el historial de git no se rota, y una tasa no se puede rotar ' +
+        'como se rota una credencial',
+    ).toEqual([]);
+  });
+
+  it('los patrones detectan la infracción plantada y no confunden el caso legítimo', () => {
+    // Las dos formas en que una tasa medida entraría de verdad.
+    expect(PATRON_DECIMAL_EN_VALOR.test('const ALICUOTA_ARANCEL = 1.0;')).toBe(true);
+    expect(PATRON_DECIMAL_EN_VALOR.test('  alicuotaEsperada: 3.5,')).toBe(true);
+    expect(PATRON_PORCENTAJE.test('// el arancel medido es 1,0% de las ventas')).toBe(true);
+    expect(PATRON_PORCENTAJE.test('  retencionSirtac: "3,50 %"')).toBe(true);
+    // Caso legítimo: números de norma enteros, referencias a secciones de documentos, y los enteros
+    // de configuración. Ninguno es una tasa.
+    expect(PATRON_DECIMAL_EN_VALOR.test("'percepcion_iva_rg2408',")).toBe(false);
+    expect(PATRON_DECIMAL_EN_VALOR.test('// ver `docs/diseno/14-liquidaciones-tarjeta-plan.md` §5.1')).toBe(false);
+    expect(PATRON_DECIMAL_EN_VALOR.test('export function formaDeLinea(texto: string, largoMaximo = 60)')).toBe(false);
+    expect(PATRON_DECIMAL_EN_VALOR.test('  archivoHash: z.string().length(64),')).toBe(false);
+    expect(PATRON_PORCENTAJE.test("  concepto: 'iva_sobre_arancel',")).toBe(false);
+  });
+});

@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./liquidaciones": "./src/liquidaciones/index.ts"
   },
   "dependencies": {
     "@sistema-contable/shared": "workspace:*",
