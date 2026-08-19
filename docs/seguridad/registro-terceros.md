@@ -12,7 +12,7 @@
 
 | Destino | Qué se manda | Nivel máximo | Base / motivo | Autorizado por | Fecha | Redacción aplicada |
 |---|---|---|---|---|---|---|
-| _(vacío — ningún destino externo autorizado todavía)_ | | | | | | |
+| `api.argentinadatos.com` | `moneda` + `fecha` (parámetros de la URL de consulta — sin dato de ningún cliente) | N0 | Cotización oficial BNA pública, ya validada en producción por el proyecto hermano `control-gestion`; investigación cerrada, JP aceptó la fuente explícitamente (`docs/diseno/12-cotizacion-bna-plan.md`) | JP | 2026-08-19 | n/a — no aplica, no viaja dato de cliente |
 
 ## Destinos evaluados y rechazados
 

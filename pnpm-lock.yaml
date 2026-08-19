@@ -82,6 +82,12 @@ importers:
         specifier: ^4.1.13
         version: 4.4.3
 
+  packages/cotizaciones:
+    dependencies:
+      zod:
+        specifier: ^4.1.13
+        version: 4.4.3
+
   packages/data:
     dependencies:
       '@sistema-contable/shared':

@@ -240,13 +240,13 @@ describe('las dependencias entre paquetes no pueden hacer ciclo', () => {
     const infractores = deData.filter((ruta) => {
       if (rel(ruta).includes('/tests/')) return false; // un test puede armar el escenario completo
       const c = readFileSync(ruta, 'utf8');
-      return /@sistema-contable\/(?:ingesta|almacenamiento|contabilidad)/.test(c);
+      return /@sistema-contable\/(?:ingesta|almacenamiento|contabilidad|cotizaciones)/.test(c);
     });
 
     expect(
       infractores.map(rel),
-      'ciclo de paquetes: data no puede depender de ingesta, almacenamiento ni contabilidad. Si el ' +
-        'comando necesita varias capas, va en apps/.',
+      'ciclo de paquetes: data no puede depender de ingesta, almacenamiento, contabilidad ni ' +
+        'cotizaciones. Si el comando necesita varias capas, va en apps/.',
     ).toEqual([]);
   });
 
@@ -283,6 +283,26 @@ describe('las dependencias entre paquetes no pueden hacer ciclo', () => {
       'un léxico que puede leer la base es un léxico que puede aprender solo (05 §7, H-6). Si tu ' +
         'código necesita un dato de la base, recibilo como argumento de una función pura.',
     ).toEqual([]);
+  });
+
+  /**
+   * R-B (cont.) — `packages/contabilidad/src/nucleo` (el motor puro) no puede importar
+   * `packages/cotizaciones`. La cotización llega como ARGUMENTO ya resuelto (mismo idiom que
+   * `PadronConsultado`), nunca como un `await` de red colado dentro del motor — eso rompería R-J.
+   * Invariante declarada en `docs/diseno/12-cotizacion-bna-plan.md` §1 ("No cambia"); esta regla
+   * la hace cumplir ANTES de que exista ningún consumidor real, para frenar un import directo por
+   * apuro cuando llegue la etapa de valuación (fuera de alcance de esta tarea).
+   */
+  it('`packages/contabilidad/src/nucleo` no importa `packages/cotizaciones`', () => {
+    const deNucleo = FUENTES.filter((r) => rel(r).startsWith('packages/contabilidad/src/nucleo/'));
+    expect(deNucleo.length, 'no se está barriendo packages/contabilidad/src/nucleo').toBeGreaterThan(0);
+
+    const infractores = deNucleo.filter((ruta) => {
+      if (rel(ruta).includes('/tests/')) return false;
+      return /@sistema-contable\/cotizaciones/.test(readFileSync(ruta, 'utf8'));
+    });
+
+    expect(infractores.map(rel)).toEqual([]);
   });
 });
 // -----------------------------------------------------------------------------

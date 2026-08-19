@@ -52,7 +52,8 @@ export type MotivoJob =
   | 'reparentar_nodo'
   | 'mantenimiento'
   | 'export_cliente_archivado'
-  | 'siembra_sintetica';
+  | 'siembra_sintetica'
+  | 'cargar_cotizaciones';
 
 /**
  * Forma de un uuid, sin exigir versión ni variante RFC.

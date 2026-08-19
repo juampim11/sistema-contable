@@ -959,6 +959,27 @@ export const CLASIFICACION = {
       created_at: MARCA_TIEMPO,
     },
   },
+
+  // ---------------------------------------------------------------------------
+  // `cotizacion_bna` (`0022_cotizacion_bna.sql`) — caché de cotización BNA. Ver
+  // `docs/diseno/12-cotizacion-bna-plan.md`.
+  // ---------------------------------------------------------------------------
+
+  cotizacion_bna: {
+    columnaTenant: 'ninguna',
+    motivoSinTenant:
+      'Catálogo N0: la cotización oficial del BNA es idéntica para todos los clientes, sin dato de ' +
+      'ningún cliente. Se escribe por conJob(\'cargar_cotizaciones\'), nunca por la aplicación en ' +
+      'nombre de un cliente.',
+    campos: {
+      moneda: { nivel: 'N0', exportable: true },
+      fecha: { nivel: 'N0', exportable: true },
+      compra: { nivel: 'N0', exportable: true },
+      venta: { nivel: 'N0', exportable: true },
+      fuente: { nivel: 'N0', exportable: true },
+      created_at: MARCA_TIEMPO,
+    },
+  },
 } as const satisfies Record<string, ClasificacionTabla>;
 
 export type NombreTabla = keyof typeof CLASIFICACION;

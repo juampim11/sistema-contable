@@ -106,7 +106,8 @@ sistema-contable/
 
 **Regla dura (§1 de `CLAUDE.md`):** ningún servicio de negocio llama **directamente** a un SDK
 propietario. El SDK del proveedor queda **detrás de un adapter**, reemplazable sin tocar el negocio.
-Los tres únicos puntos de contacto con el proveedor son datos, auth y almacenamiento.
+Los puntos de contacto con un proveedor externo son datos, auth, almacenamiento y —desde `0022`—
+datos de referencia (§3.5): ya no son tres, son cuatro.
 
 ### 3.1. Datos — Drizzle sobre Postgres, con RLS portable
 
@@ -212,6 +213,41 @@ cuentas de servicio en MinIO y el código las usa como tales. El proceso que emi
 necesita poder escribir**, y el que ingesta no necesita leer objetos de otros lotes. Con una sola
 credencial, un RCE en cualquiera de los dos caminos tiene los dos permisos. En AWS son dos políticas de
 IAM; en GCP, dos claves HMAC. El código no cambia.
+
+---
+
+### 3.5. Datos de referencia — cuarto punto de contacto con un proveedor externo
+
+**Decisión: `packages/cotizaciones`, mismo patrón de interfaz + adapter reemplazable que ya rige
+datos/auth/almacenamiento.** Origen: el motor necesita valuar movimientos en USD contra la
+cotización oficial del Banco Nación (comprador/vendedor por fecha) — `docs/diseno/12-cotizacion-bna-plan.md`.
+No hay API oficial de BNA con histórico accesible; se usa `api.argentinadatos.com`, ya validada en
+producción por el proyecto hermano `control-gestion`.
+
+```ts
+// Contrato (packages/cotizaciones/src/proveedor.ts).
+export type ProveedorCotizaciones = {
+  readonly consultar: (moneda: string, fecha: Date) => Promise<Cotizacion | null>;
+};
+```
+
+El dominio nunca importa el cliente HTTP de un proveedor de cotizaciones a mano: pasa por
+`ProveedorCotizaciones`, con `argentinadatos.ts` como único adapter concreto hoy (fetch inyectable
+para testear sin red, respuesta validada con Zod antes de tocar cualquier otra capa, timeout
+explícito porque `fetch` de Node no lo trae por default, URL por variable de entorno con el valor
+actual como default de desarrollo — nunca hardcodeada). Si el proveedor cambia, se escribe un
+adapter nuevo **detrás de la misma interfaz**; el negocio no se toca.
+
+**`null` es "el proveedor no publicó cotización para esa fecha", nunca "hubo un fallo".** Un
+timeout, un error de red o una respuesta con forma inesperada se LANZAN: confundirlos con ausencia
+de dato haría que el motor tratara un fallo de infraestructura como si el mercado no hubiera
+cotizado ese día.
+
+**`cotizacion_bna` es un catálogo N0 sin `cliente_id`**, mismo patrón que `banco` (§3.1, 0004): la
+cotización oficial es idéntica para todos los clientes, sin dato de nadie. `packages/cotizaciones`
+en sí no importa `packages/data` ni ningún otro paquete del monorepo — el comando que escribe la
+caché (fetch fuera de la transacción → `conJob('cargar_cotizaciones')` corto) es una capa aparte,
+en `apps/cli`, y un paso posterior a este primer commit.
 
 ---
 

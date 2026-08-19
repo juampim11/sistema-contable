@@ -66,8 +66,10 @@ let db: Client;
  *
  * - `banco`: catálogo GLOBAL de entidades bancarias, idéntico para todos los clientes y sin un solo
  *   dato de nadie. No tiene columna de tenant porque no le corresponde ninguna.
+ * - `cotizacion_bna`: catálogo GLOBAL de cotización oficial BNA por moneda y fecha, idéntica para
+ *   todos los clientes y sin un solo dato de nadie (`docs/diseno/12-cotizacion-bna-plan.md`).
  */
-const SIN_RLS_CON_MOTIVO = new Set<string>(['banco']);
+const SIN_RLS_CON_MOTIVO = new Set<string>(['banco', 'cotizacion_bna']);
 
 /** Tablas reales del esquema `public`, sin las internas del aplicador de migraciones. */
 async function tablasDelEsquema(): Promise<string[]> {

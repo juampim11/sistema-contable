@@ -155,6 +155,12 @@ const GRANTS_POR_COLUMNA: readonly {
   { tabla: 'anexo_extracto', rol: 'app_request', privilegio: 'SELECT', columnas: ['alicuota_publicada', 'atribucion_cuenta', 'cliente_id', 'concepto_literal', 'created_at', 'cuenta_bancaria_id', 'id', 'importe_declarado', 'lote_ingesta_id', 'moneda', 'orden_en_lote', 'pagina_pdf', 'periodo_dato', 'periodo_desde', 'periodo_hasta', 'relacion_con_movimientos'] },
   { tabla: 'banco', rol: 'app_job', privilegio: 'SELECT', columnas: ['activo', 'capacidades', 'codigo', 'created_at', 'nombre'] },
   { tabla: 'banco', rol: 'app_request', privilegio: 'SELECT', columnas: ['activo', 'capacidades', 'codigo', 'created_at', 'nombre'] },
+  // `cotizacion_bna` (0022): grants acotados por columna, no de tabla — `app_job` puede insertar y
+  // corregir el VALOR cacheado (compra/venta/fuente), nunca la identidad de la fila (moneda/fecha
+  // son la PK). `app_job` no tiene SELECT: la lectura para el motor es de `app_request`.
+  { tabla: 'cotizacion_bna', rol: 'app_job', privilegio: 'INSERT', columnas: ['compra', 'fecha', 'fuente', 'moneda', 'venta'] },
+  { tabla: 'cotizacion_bna', rol: 'app_job', privilegio: 'UPDATE', columnas: ['compra', 'fuente', 'venta'] },
+  { tabla: 'cotizacion_bna', rol: 'app_request', privilegio: 'SELECT', columnas: ['compra', 'created_at', 'fecha', 'fuente', 'moneda', 'venta'] },
   { tabla: 'credencial_fiscal', rol: 'app_firmador', privilegio: 'INSERT', columnas: ['alg', 'ambiente', 'cliente_id', 'created_at', 'fingerprint_sha256', 'id', 'kek_id', 'material_cifrado', 'rotada_en', 'servicio', 'vence_en'] },
   { tabla: 'credencial_fiscal', rol: 'app_firmador', privilegio: 'SELECT', columnas: ['alg', 'ambiente', 'cliente_id', 'created_at', 'fingerprint_sha256', 'id', 'kek_id', 'material_cifrado', 'rotada_en', 'servicio', 'vence_en'] },
   { tabla: 'credencial_fiscal', rol: 'app_firmador', privilegio: 'UPDATE', columnas: ['alg', 'ambiente', 'cliente_id', 'created_at', 'fingerprint_sha256', 'id', 'kek_id', 'material_cifrado', 'rotada_en', 'servicio', 'vence_en'] },
@@ -294,6 +300,7 @@ const GRANTS_A_NIVEL_TABLA: readonly string[] = [
   'anexo_extracto|app_request|SELECT',
   'banco|app_job|SELECT',
   'banco|app_request|SELECT',
+  'cotizacion_bna|app_request|SELECT',
   'credencial_fiscal|app_firmador|INSERT',
   'credencial_fiscal|app_firmador|SELECT',
   'credencial_fiscal|app_firmador|UPDATE',
