@@ -6,6 +6,97 @@
 
 ---
 
+## 2026-08-19 (78) — Plan 14, commit 1 (vocabulario + contrato): verificación de cierre COMPLETA. `pnpm verificar` 68/1564/0.
+
+**Herramienta:** Claude Code. Retoma el commit `2e4d89e` ("wip(liquidaciones): commit 1 del plan 14 —
+trabajo cortado por límite de sesión"), que había quedado explícitamente marcado como **NO
+VERIFICADO** en su propio mensaje. Esta sesión corre la verificación de cierre que el plan
+14 §"Qué se mide" pedía y que la sesión anterior no llegó a hacer, encuentra dos hallazgos reales,
+los corrige (con el visto bueno de JP) y cierra.
+
+### Qué se implementó (ya estaba en `2e4d89e`, ahora verificado)
+
+`packages/ingesta/src/liquidaciones/{contrato,registro,esquema}.ts` + `index.ts` (sub-entrypoint
+propio, `@sistema-contable/ingesta/liquidaciones`, no reexportado desde el índice raíz — evita el
+choque de nombres que el plan señalaba como riesgo: `ESTADOS_VERIFICACION`, `limpiarRegistro` y
+una docena más se solapan estructuralmente con el vocabulario bancario). El contrato de un adapter
+de liquidación (3 reglas: no autocertificar, declarar capacidades, no descartar en silencio — mismo
+patrón que el Módulo 1, contrato propio por los tres bloqueos duros del plan §1). El registro
+(declarar + detectar + comparar, 4 respuestas posibles, nunca revela qué formato detectó si no
+coincide con lo declarado). El vocabulario Zod de `LiquidacionProcesada` con los seis conceptos
+medidos en los tres documentos reales. Tres reglas nuevas en `reglas-de-codigo.test.ts` (no dos,
+ver hallazgo abajo): R-M (aislamiento entre las dos familias de adapters, las dos direcciones), R-N
+(guard de cobertura del barrido sobre el subárbol nuevo), R-O (cero porcentajes/decimales en el
+vocabulario compartido — H-6).
+
+### Lo que esta sesión verificó, con evidencia real
+
+- **`pnpm verificar` completo, dos corridas.** Primera corrida (contra `2e4d89e` tal cual):
+  **2 fallas** — ver hallazgos abajo. Segunda corrida (después de los dos fixes): **limpio — 68
+  archivos de test / 1564 tests (1557 verdes, 7 todo) / 0 fallas.** (Línea de base pre-commit: 67 /
+  1529 / 0 — el delta es exactamente el commit 1: un archivo de test nuevo y las reglas nuevas.)
+- **R-N, rojo→verde real, no narrada.** Se movió el subárbol `packages/ingesta/src/liquidaciones/`
+  fuera de `packages/ingesta/src/` (a un directorio temporal), se corrió el test → rojo (`expected []
+  to include '.../contrato.ts'`), se devolvió el subárbol → verde. `git status` limpio en todo
+  momento; no hizo falta el camino alternativo (documentar la limitación) que el plan de retomada
+  contemplaba como fallback — el rojo→verde salió limpio por el camino directo.
+- **R-M, rojo→verde en las DOS direcciones, real.** Se plantó un import prohibido
+  `liquidaciones/contrato.ts → ../adaptadores/contrato.ts` → rojo → revertido → verde. Después, en
+  la dirección inversa, `adaptadores/contrato.ts → ../liquidaciones/contrato.ts` → rojo → revertido
+  → verde. Cada plantado y cada reversión confirmados por separado, `git status` limpio entre pasos.
+- **Sin colisión de nombres en `packages/ingesta/src/index.ts`.** El índice raíz no reexporta
+  `liquidaciones/`; `package.json` de `ingesta` declara `./liquidaciones` como sub-entrypoint
+  separado. `pnpm typecheck` (parte de `pnpm verificar`) pasa limpio.
+- **Barrido de fuga**: no se repitió (ya había corrido limpio, 955 archivos, en el commit de
+  resguardo) — no se tocó nada que lo afectara.
+
+### Dos hallazgos reales, corregidos esta sesión (no estaban en el plan 14, los produjo el propio gate)
+
+1. **Falso positivo de R37** (`tools/barrido-credenciales.test.ts`): la constante
+   `TOKEN_NUMERICO` de `contrato.ts` contiene la substring `TOKEN`, que dispara el patrón
+   `NOMBRE_SECRETO` del barrido de credenciales — el barrido capturaba el regex literal asignado
+   como si fuera un valor de credencial. **Fix**: rename a `PATRON_NUMERICO` (sin tocar
+   `PERMITIDOS` de `barrido-credenciales.ts` — la excepción a propósito, para no dejar precedente
+   de allowlist ante el próximo choque de vocabulario "token léxico" vs. "token de credencial").
+   Verificado verde después del rename.
+2. **Test desactualizado** (`packages/ingesta/tests/liquidaciones-registro.test.ts`, caso "no toca
+   los enteros sueltos"): el test esperaba el comportamiento VIEJO de `formaDeLineaDeLiquidacion`
+   (un entero suelto queda como máscara de dígitos `#######`). El código actual (documentado en
+   `contrato.ts:119-140`) enmascara también los enteros sueltos con `<$>`, a propósito: el número de
+   liquidación del adquirente es N2, y la máscara de dígitos publicaba su orden de magnitud. El
+   código estaba bien: **se corrigió el test**, no `contrato.ts` — ahora exige `<$>` y prohíbe `#`
+   y el valor crudo, con un comentario que cita `contrato.ts:119-140` como fuente del porqué.
+
+### Discrepancia de numeración en el mensaje del commit de resguardo (anotada, no corregida)
+
+`2e4d89e` dice "las 2 reglas nuevas R-M/R-N" — el diff trae **tres**: R-M, R-N y también **R-O**
+("cero porcentajes y cero decimales en el vocabulario compartido de `liquidaciones/`"), atribuida
+en su propio docblock a un hallazgo L-2 de `seguridad-datos-financieros` (sesión 2026-08-19) que
+**no está documentado en `docs/diseno/14-liquidaciones-tarjeta-plan.md` tal como se leyó al
+retomar esta tarea**. R-O pasa verde y el código la cumple; queda registrado acá porque el plan es
+la fuente de verdad que la próxima sesión va a leer, y hoy no menciona esta regla ni el hallazgo
+que la origina.
+
+### R-L — hallazgo previo, confirmado que sigue sin corregir (no se tocó, según instrucción)
+
+`packages/contabilidad/src/nucleo/entrada.ts:79` sigue mencionando "R-L" en un comentario
+(`vigila R-L (packages/data/tests/reglas-de-codigo.test.ts)`), y `reglas-de-codigo.test.ts` sigue
+sin ningún `describe('R-L...')` — la numeración salta de R-K a R-M. No es un hallazgo de esta
+sesión ni se corrige acá.
+
+### Qué NO se hizo — explícito para la próxima sesión
+
+**Ningún otro paso del plan 14 §5 arrancó.** Siguen sin empezar: commit 2 (primer adapter Visa
+débito + invariantes + dry-run, sin persistir), commit 3 (la migración: `formato_liquidacion` +
+`lote_liquidacion` + renglones, con `dba-data` + `security-engineer` + `seguridad-datos-financieros`
+convocados sin excepción), commit 4 (persistencia + comando CLI). No se tocó el piloto ni
+`packages/cotizaciones` en ningún momento de esta sesión.
+
+**Antes de continuar con el commit 2, releer `docs/diseno/14-liquidaciones-tarjeta-plan.md`
+completo.**
+
+---
+
 ## 2026-08-19 (77) — Módulo de liquidaciones de tarjeta: investigación y diseño CERRADOS, plan aprobado por JP. NADA implementado — ningún archivo de código de este plan existe en el filesystem.
 
 **Herramienta:** Claude Code. Sesión de research + diseño (explícitamente sin implementación),

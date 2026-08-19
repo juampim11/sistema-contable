@@ -144,10 +144,14 @@ describe('formaDeLineaDeLiquidacion — la magnitud del importe no llega al log 
     expect(formaDeLineaDeLiquidacion('ARANCEL  100,00  -25,00')).toBe('AAAAAAA  <$>  <$>');
   });
 
-  it('no toca los enteros sueltos: un número de liquidación sigue siendo forma, no valor', () => {
+  it('SÍ toca los enteros sueltos: un número de liquidación también se enmascara con <$> (contrato.ts:119-140)', () => {
+    // El número de liquidación del adquirente es N2 (esquema.ts). Dejarlo pasar como máscara de
+    // dígitos (`#######`, el mecanismo genérico de `formaParaLog`) publicaría su orden de magnitud,
+    // que es exactamente la fuga que este paso extra existe para tapar — ver contrato.ts:119-140.
     const forma = formaDeLineaDeLiquidacion('LIQUIDACION 00012345');
     expect(forma).not.toContain('00012345');
-    expect(forma).toContain('#');
+    expect(forma).not.toContain('#');
+    expect(forma).toContain('<$>');
   });
 });
 

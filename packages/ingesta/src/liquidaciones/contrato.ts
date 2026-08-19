@@ -138,7 +138,7 @@ export class ErrorDeLiquidacion extends Error {
  * Lo que se conserva —cuántos campos hay, dónde caen las columnas, los separadores, el signo— es todo lo
  * que el diagnóstico del parser necesita.
  */
-const TOKEN_NUMERICO = /-?\d[\d.,]*\d|-?\d/g;
+const PATRON_NUMERICO = /-?\d[\d.,]*\d|-?\d/g;
 
 /** Lo que reemplaza al número. Sin letras ni dígitos, así `forma()` lo deja intacto. */
 const MARCA_NUMERO = '<$>';
@@ -164,5 +164,5 @@ const MARCA_NUMERO = '<$>';
  * diagnóstico y el contexto es distinto, así que `formaParaLog` no cambia.
  */
 export function formaDeLineaDeLiquidacion(texto: string, largoMaximo = 60): string {
-  return formaParaLog(texto.replace(TOKEN_NUMERICO, MARCA_NUMERO), largoMaximo);
+  return formaParaLog(texto.replace(PATRON_NUMERICO, MARCA_NUMERO), largoMaximo);
 }
