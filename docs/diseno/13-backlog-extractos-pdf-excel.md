@@ -39,6 +39,68 @@ documento real, no contra lo que alguien recuerda que decía").
    contesta que sí, cerraría (o acotaría) el `pendienteDeLaura` de `transferencia_cuentas_propias`
    sin necesitar la respuesta de Laura.
 
+## Conclusión de la investigación (cerrada 2026-08-19)
+
+🔴 **Ni el PDF ni el Excel nativo de Galicia traen CBU/CVU/cuenta destino para
+`TRANSF. CTAS PROPIAS`.** Verificado contra el archivo real de junio 2026
+(`privado/extractos/.../Banco Cta - Cte/Galicia/06-2026.xlsx` y `.pdf`), las 11 filas del literal
+(§14 de `02-formato-galicia.md`):
+
+- **Fila cruda del Excel** (`.xlsx`, hoja `Movimientos`; columnas `Leyendas Adicionales 1-4`).
+  Estructura real, con los valores propios del cliente **redactados** (no son datos sintéticos
+  del seed — son el material real del piloto, y no viajan a un documento del repo):
+  ```
+  ["<fecha>","Transf. Ctas Propias","",0,<importe>,
+   "000907 - Transferencias","917312 - TRANSF. CTAS PROPIAS","","","",
+   "<razón social del cliente>","<CUIT del cliente>","VARIOS","BANCO DE GALICIA Y BUENOS AIRES SAU",
+   "Imputado",<saldo>]
+  ```
+  `Leyendas Adicionales 1` = razón social del propio cliente, `2` = su propio CUIT, `3` =
+  `"VARIOS"` (genérico), `4` = nombre del banco (genérico) — ningún campo es una cuenta ni un
+  CBU/CVU. Las 11 filas del literal tienen la misma forma.
+- **Comparación de control, mismo archivo:** las filas de `Pago Con Transferencia` usan el MISMO
+  layout (`Leyendas Adicionales 3` y `4`) y ahí sí traen un CBU real de 22 dígitos (valor
+  redactado, mismo motivo). O sea: el banco **puede** publicar CBU en esas columnas — para
+  `TRANSF. CTAS PROPIAS` específicamente, no lo hace.
+- **PDF, mismas 11 filas** (`pdftotext -layout`): misma razón social (truncada a 20 caracteres,
+  perdiendo la forma societaria final) y mismo CUIT — el Excel solo agrega lo que el PDF trunca.
+  Cero dato de cuenta destino en ninguno de los dos formatos.
+
+**Esta vía no alcanza.** Ni PDF ni Excel identifican CUÁL de las cuentas propias del cliente es
+la contraparte de cada transferencia — solo confirman que es "cuentas propias" (mismo CUIT que
+el titular). La pregunta de dirección para `transferencia_cuentas_propias`
+(`catalogo.ts` — `pendienteDeLaura`) **sigue pendiente de Laura**; no se resuelve con el material
+disponible hoy.
+
+El tamaño del problema descrito abajo (fusión PDF+Excel como cambio arquitectónico) queda igual:
+no hay evidencia que lo justifique para este caso puntual, y sigue sin diseñarse.
+
+## Hallazgo aparte: la evidencia de `lado: 'ambos'` en `catalogo.ts:437` no mide dirección
+
+> No relacionado con la conclusión de arriba — se anota acá porque salió a la luz investigando el
+> mismo archivo. **No tocar el catálogo por esto todavía.**
+
+`transferencia_cuentas_propias` en `packages/contabilidad/src/nucleo/catalogo.ts` (línea ~437)
+cita como evidencia:
+
+```
+porLiteral: [{ literal: 'TRANSF. CTAS PROPIAS', movimientos: 11, lado: 'ambos' }],
+```
+
+con fuente `docs/diseno/02-formato-galicia.md §14`. Verificado contra esa sección: **§14 es una
+lista de frecuencia de literales** (`TRANSF. CTAS PROPIAS (11)`), no mide lado. No hay medición
+de "debe" vs "haber" detrás del `'ambos'` citado.
+
+Y el único período muestreado hasta ahora (Galicia, 06/2026, el mismo `.xlsx` inspeccionado
+arriba) arma la contradicción: **las 11 filas son 100 % crédito** (`Débitos = 0`, `Créditos > 0`
+en las 11) — ningún débito. Un solo mes no alcanza para confirmar ni refutar "ambos lados" en
+general (podría ser que el cliente solo recibió, nunca envió, en junio) — pero tampoco hay
+evidencia que hoy sostenga `'ambos'` tal como está escrito.
+
+**Antes de tocar el catálogo:** confirmar con más períodos (si hay extractos de otros meses en
+`privado/extractos/`) o con la respuesta de Laura — no cambiar `lado: 'ambos'` a partir de un
+solo mes.
+
 ## El tamaño del problema si esto avanza a diseño real
 
 Si la investigación confirma que el Excel nativo trae un dato que el PDF no tiene (o viceversa,
