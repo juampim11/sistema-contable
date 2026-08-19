@@ -6,6 +6,53 @@
 
 ---
 
+## 2026-08-19 (75) — 🔴 Bug encontrado (no corregido): `pnpm db:seed` falla siempre contra una base local recién creada — la lista de `TRUNCATE` de `sembrar.ts` no se actualizó desde `0012`.
+
+**Herramienta:** Claude Code. Encontrado como efecto colateral de implementar el primer paso del plan de
+cotización BNA (entrada siguiente) — no tiene relación con ese trabajo, se documenta aparte a propósito.
+
+### El bug
+
+`packages/data/scripts/sembrar.ts` trunca las tablas de dominio con una lista **enumerada a mano y sin
+`cascade`** (decisión deliberada, documentada en el propio archivo: un `cascade` se había comido
+`acceso_auditoria` — el rastro append-only — sin que nadie lo pidiera; el diseño actual prefiere que un
+olvido falle RUIDOSO en vez de borrar en silencio). El problema: la lista **quedó congelada en `0012`** y
+nunca se actualizó con las tablas que las migraciones `0013`–`0021` agregaron colgando de `tenant_node` o
+de `movimiento_bancario_crudo`. Faltan, medido contra el esquema real:
+
+- `movimiento_contraparte_identificador` (`0013`)
+- `reconocimiento_movimiento` (`0014`)
+- `padron_manifestacion`, `padron_socio`, `padron_socio_documento` (`0013`/entradas posteriores)
+- `reconocimiento_candidato`, `reconocimiento_contrapartida`, `reconocimiento_contrapartida_match`
+- `membership_historia` (`0019`)
+
+Con cualquiera de estas tablas conteniendo aunque sea cero filas, Postgres rechaza el `TRUNCATE` igual —
+el error (`cannot truncate a table referenced in a foreign key constraint` / `heap_truncate_check_FKs`)
+no depende de si hay datos: depende de que la tabla referenciada no esté en la misma sentencia. Por
+diseño (el mismo comentario que explica el `cascade` sacado), el olvido es ruidoso — y acá está sonando:
+**`pnpm db:seed` no corre nunca contra una base local recién migrada**, sin necesidad de tocar datos
+reales ni el piloto para reproducirlo.
+
+### Cómo se reprodujo y cómo se rodeó (sin tocarlo)
+
+Recreé la base local dos veces en esta sesión (motivo en la entrada siguiente) y en ambas
+`pnpm db:seed` falló con el error de arriba apenas se corrió sobre una base recién migrada, cero datos.
+Para poder sembrar y terminar de verificar el trabajo de cotización BNA, apliqué un parche **temporal**
+(agregar `CASCADE` a la sentencia de `sembrar.ts`, solo para esa corrida puntual) y lo **revertí
+inmediatamente después** (`git checkout -- packages/data/scripts/sembrar.ts`) — confirmado sin diff
+contra `HEAD` antes de cerrar esta sesión. `sembrar.ts` no cambia en el commit de cotización BNA.
+
+### Qué falta (tarea propia, no se convocó a nadie para esto)
+
+Actualizar la lista enumerada de `packages/data/scripts/sembrar.ts` (función `limpiar()`, la sentencia
+`truncate` con las trece — pronto más— tablas nombradas) para que incluya las ocho tablas de arriba, en
+el orden correcto de dependencia (hijo antes o junto con el padre, mismo criterio que ya usa la lista
+actual). Candidato natural para `dba-data`, dado que es sobre integridad del esquema de siembra, no
+sobre lógica de aplicación. No es urgente para el piloto (nunca corre ahí — el guard de `entornoActual()
+!== 'local'` lo impide), pero bloquea a cualquiera que recree su base local desde cero.
+
+---
+
 ## 2026-08-19 (74) — 🔴 **PUNTO DE ENTRADA SI RETOMÁS SIN ESTE CHAT.** Frente 1 y Frente 2 del material de Laura, CERRADOS. Plan de cotización BNA, aprobado y documentado, NO implementado. Backlog de PDF+Excel de Galicia, investigación abierta, sin decisión.
 
 **Herramienta:** Claude Code. Continuación de la entrada 73 — cierre de sesión, con foco en que
