@@ -6,6 +6,48 @@
 
 ---
 
+## 2026-08-19 (74) — 🔴 **PUNTO DE ENTRADA SI RETOMÁS SIN ESTE CHAT.** Frente 1 y Frente 2 del material de Laura, CERRADOS. Plan de cotización BNA, aprobado y documentado, NO implementado. Backlog de PDF+Excel de Galicia, investigación abierta, sin decisión.
+
+**Herramienta:** Claude Code. Continuación de la entrada 73 — cierre de sesión, con foco en que
+la próxima sesión (posiblemente con otra cuenta) pueda retomar sin memoria de esta conversación.
+
+### Frente 1 (padrón de socios) y Frente 2 (léxico) — CERRADOS
+
+Detalle completo ya en la entrada 73 (Frente 1) y en el commit `ec21ec2` (Frente 2, las 6 reglas
+de `catalogo.ts`). Resumen de una línea: los 3 socios confirmados cargados en `padron_socio` del
+piloto, y 6 reglas de negocio de Laura reflejadas en el catálogo canónico — `es_socio` sube de
+0 a 5/1830, `propuesta` de 209 (11,4%) a 214 (11,7%). El detalle punto por punto del material de
+Laura (14+2 consultas + 2 audios) vive en Project Knowledge de claude.ai (documentos 02 y 05),
+fuera de este repo — no se duplica acá.
+
+### Frente 3 — cotización BNA: plan aprobado, NO implementado
+
+`docs/diseno/12-cotizacion-bna-plan.md` — plan formal de CLAUDE.md §3.2, con los cuatro
+dictámenes de agentes que lo sostienen (`dba-data`, `security-engineer`,
+`seguridad-datos-financieros`, `arquitecto-software`). Tabla `cotizacion_bna` (N0, sin RLS,
+patrón `banco`), paquete nuevo `packages/cotizaciones`, motivo nuevo `cargar_cotizaciones` en
+`MotivoJob`. **Nada de esto existe en el filesystem todavía** — ni migración `0022`, ni el
+paquete, ni tocó el piloto. Quedan dos decisiones de negocio explícitamente abiertas para la
+próxima etapa (qué hace el motor sin cotización cacheada; si una corrección retroactiva reabre
+asientos ya propuestos) — a convocar `contador-dominio` + `motor-conciliacion-contable` cuando
+se retome.
+
+### Backlog — PDF+Excel de Galicia: investigación sin terminar
+
+`docs/diseno/13-backlog-extractos-pdf-excel.md` — si el Excel nativo del banco trae un dato
+(cuenta destino/CBU/CVU en transferencias entre cuentas propias) que el PDF no tiene, podría
+cerrar el `pendienteDeLaura` de `transferencia_cuentas_propias` sin esperar respuesta de Laura.
+**No hay decisión tomada** sobre si esto avanza a diseño real — faltan los tres pasos de
+investigación que el propio documento numera. Frente independiente de la cotización BNA, sin
+relación ni orden de precedencia entre los dos.
+
+### Próxima sesión
+
+Empezar leyendo `docs/diseno/12` y `docs/diseno/13` antes de tocar cualquiera de los dos frentes.
+Piloto: intacto, sin ninguna migración nueva aplicada desde `0021` (entrada 72).
+
+---
+
 ## 2026-08-19 (73) — Material de Laura procesado (`privado/laura-respuestas-2026-08.md`) y Frente 1 cerrado: los 3 socios confirmados cargados en `padron_socio` del piloto.
 
 **Herramienta:** Claude Code. Continuación de la entrada 72. Con `0021` ya aplicada al piloto, arrancó el
