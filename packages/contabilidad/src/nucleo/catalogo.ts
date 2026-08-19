@@ -440,29 +440,16 @@ export const CATALOGO_CANONICO = {
 
   // === cobranza_de_cliente =============================================================================
   acreditamiento: {
+    // Confirmado por Laura (privado/laura-respuestas-2026-08.md, sección C, 2026-08-18/19): ES
+    // adquirente de tarjetas (Visa/Master vía Prisma/FirstData) — cierra la pregunta que quedaba
+    // abierta acá. Cuenta destino: DEUDORES POR VENTAS (Capa D, todavía sin mapeo en código).
+    // ⚠️ El asiento queda INCOMPLETO hasta el devengamiento (comisión + IVA + retenciones) —
+    // funcionalidad no construida, afecta entre 136 y 211 movimientos (misma nota de Laura).
     polaridad: 'normal',
     ladoEsperado: 'haber',
     resuelve: 'decide_una_persona',
-    tipo: 'cobranza_de_cliente',
-    queDecide: 'confirmar_hipotesis_del_lexico',
-    pendienteDeLaura: {
-      pregunta:
-        '¿ACREDITAMIENTO (78 mov., el concepto más frecuente) es acreditación de un adquirente de ' +
-        'tarjetas, o transferencia/cobranza recibida genérica? Si es adquirente, va a decisión humana ' +
-        'por falta de la liquidación; si es genérico, es candidato natural a 13a cobranza_de_cliente.',
-      // Corregido por analista-funcional: la hipótesis original citaba 'SERVICIO ACREDITAMIENTO DE'
-      // como evidencia de tarjetas — ERROR, es la comisión de acreditación de sueldos (ver el concepto
-      // comision_de_acreditacion_de_haberes arriba). Evidencia real de la hipótesis "adquirente" queda
-      // limitada a ANULAC. ACRED. FIRSTDATA. (3 de 78 mov., 4%) — débil.
-      hipotesis:
-        'Débil: solo ANULAC. ACRED. FIRSTDATA. (3 de 78 mov., 4%) sugiere adquirente de tarjetas — y ' +
-        'que la anulación SÍ nombre FIRSTDATA mientras ACREDITAMIENTO a secas nunca lo nombra abre una ' +
-        'lectura alternativa igual de plausible: cajón genérico de créditos recibidos (13a, resuelve ' +
-        'por padrón, sin necesitar esta hipótesis). Se usa 13a como default hasta que Laura confirme, ' +
-        'porque no asume la lectura más restrictiva sin evidencia fuerte.',
-      referencia: 'docs/diseno/05-motor-de-reconocimiento.md §10',
-      desde: '2026-08-12',
-    },
+    tipo: 'acreditacion_tarjeta',
+    queDecide: 'completar_con_liquidacion_del_adquirente',
     procedencia: {
       fuente: 'corpus_medido',
       documento: 'docs/diseno/02-formato-galicia.md',
@@ -501,23 +488,14 @@ export const CATALOGO_CANONICO = {
 
   // === acreditacion_tarjeta =============================================================================
   anulacion_acreditamiento_firstdata: {
-    // No se modela como `reversaDe: 'acreditamiento'`: el concepto base ('acreditamiento') tiene su
-    // propio tipo sin confirmar (pendienteDeLaura), y forzar una relación de reversa formal presumiría
-    // un vínculo que todavía no está verificado. Se deja como concepto propio, con la misma pregunta
-    // abierta — más honesto que una relación de reversa sin evidencia sólida.
+    // No se modela como `reversaDe: 'acreditamiento'`: aunque ACREDITAMIENTO ya está confirmado como
+    // adquirente de tarjetas (Laura, privado/laura-respuestas-2026-08.md sección C, 2026-08-18/19), no
+    // hay evidencia de que ESTE literal sea su reversa formal — se deja como concepto propio, mismo tipo.
     polaridad: 'normal',
     ladoEsperado: 'debe',
     resuelve: 'decide_una_persona',
     tipo: 'acreditacion_tarjeta',
     queDecide: 'completar_con_liquidacion_del_adquirente',
-    pendienteDeLaura: {
-      pregunta: 'Ver la pregunta de ACREDITAMIENTO — esta es su probable anulación (FIRSTDATA es un ' +
-        'procesador de tarjetas real), pero la identidad del concepto base todavía no está confirmada.',
-      hipotesis: 'Reversa económica de ACREDITAMIENTO cuando ese concepto resulte ser adquirente de ' +
-        'tarjetas — mismo motivo que la pregunta de acreditamiento.',
-      referencia: 'docs/diseno/05-motor-de-reconocimiento.md §10',
-      desde: '2026-08-12',
-    },
     procedencia: {
       fuente: 'corpus_medido',
       documento: 'docs/diseno/02-formato-galicia.md',
@@ -567,8 +545,14 @@ export const CATALOGO_CANONICO = {
     resuelve: 'sin_tipo_asignado',
     categoriaDelHueco: 'implementacion_diferida',
     motivoDelHueco:
-      'El tipo compra_con_tarjeta_debito existe en 04 §3.1 ("tiene que existir igual") pero su cuenta ' +
-      'destino no está ratificada — no se asigna hasta que ESTADO_DE_LOS_TIPOS lo marque habilitado.',
+      'El tipo compra_con_tarjeta_debito existe en 04 §3.1 ("tiene que existir igual"). La cuenta ' +
+      'destino depende de cruzar contra el Libro IVA Compras del cliente — documento que hoy NO se ' +
+      'ingiere (Laura, privado/laura-respuestas-2026-08.md sección C, 2026-08-18/19): (a) si hay ' +
+      'factura A/C con mismo CUIT/importe → PROVEEDORES; si no hay factura, (b.1) gasto de empresa sin ' +
+      'factura exigible (ej. patente) → IMPUESTOS Y TASAS; (b.2) gasto de empresa que omitió pedir ' +
+      'factura → GASTO NO DEDUCIBLE DE GANANCIAS; (b.3) gasto personal de socio con tarjeta corporativa ' +
+      '→ CUENTA PARTICULAR - SOCIO XX o GASTO NO DEDUCIBLE DE GANANCIAS. No se asigna hasta que exista ' +
+      'la ingesta del Libro IVA Compras — mientras tanto, permanece en decisión_humana.',
     referencia: 'docs/diseno/04-imputacion-contable.md §3.1',
     procedencia: {
       fuente: 'corpus_medido',
@@ -583,9 +567,12 @@ export const CATALOGO_CANONICO = {
     resuelve: 'sin_tipo_asignado',
     categoriaDelHueco: 'implementacion_diferida',
     motivoDelHueco:
-      'Criterio contable conocido (asiento simple + reimputación PEPS, resuelto por Laura en esta ' +
-      'sesión), pero la implementación (capa D/E, el dato de cuotapartes vive en un documento separado ' +
-      'del extracto bancario) queda fuera de esta etapa — decisión de ingesta de Módulo 1 pendiente.',
+      'Criterio contable conocido y reconfirmado por Laura (privado/laura-respuestas-2026-08.md, ' +
+      'sección C, 2026-08-18/19): el RESCATE registra el MONTO TOTAL rescatado al HABER en ' +
+      '"Inversiones - FCI" — el ajuste PEPS (segregar capital vs. rendimiento) es un trabajo APARTE, ' +
+      'posterior, fuera de esta capa. La implementación (Capa D/E, el dato de cuotapartes vive en un ' +
+      'documento separado del extracto bancario) queda fuera de esta etapa — decisión de ingesta de ' +
+      'Módulo 1 pendiente.',
     referencia: 'docs/diseno/05-motor-de-reconocimiento.md §10',
     procedencia: {
       fuente: 'corpus_medido',
@@ -599,7 +586,9 @@ export const CATALOGO_CANONICO = {
     ladoEsperado: 'debe',
     resuelve: 'sin_tipo_asignado',
     categoriaDelHueco: 'implementacion_diferida',
-    motivoDelHueco: 'Mismo motivo que rescate_fci.',
+    motivoDelHueco:
+      'Mismo motivo que rescate_fci — con Laura reconfirmando que la SUSCRIPCIÓN va al DEBE en ' +
+      '"Inversiones - FCI", con la leyenda "suscripción".',
     referencia: 'docs/diseno/05-motor-de-reconocimiento.md §10',
     procedencia: {
       fuente: 'corpus_medido',
@@ -810,22 +799,20 @@ export const CATALOGO_CANONICO = {
   },
 
   // === sin tipo asignado — discriminado por `categoriaDelHueco` (ver la nota completa en la sección de
-  // Galicia): echeq_recibido_debito y debito_automatico_generico son 'identidad_incierta';
-  // impuesto_de_sellos (más abajo) es 'sin_tipo_en_catalogo'.
+  // Galicia): debito_automatico_generico es 'identidad_incierta'; impuesto_de_sellos (más abajo) es
+  // 'sin_tipo_en_catalogo'. (echeq_recibido_debito salió de este grupo — resuelto por Laura, ver abajo.)
   echeq_recibido_debito: {
-    // 🔴 Hallazgo de analista-funcional: los DOS literales de Echeq miden DÉBITO pese a decir
-    // "recibido" — contradice la lectura obvia (13c depósito de cheques de terceros, régimen haber
-    // fijo). Sin hipótesis razonable — se deja sin tipo, en vez de forzar 13c contra la evidencia medida.
+    // Confirmado por Laura (privado/laura-respuestas-2026-08.md, sección C, 2026-08-18/19): la lectura
+    // obvia estaba invertida a propósito — "recibido" describe que el BANCO recibe el echeq para
+    // canje/clearing, no que el cliente cobra. Es un cheque electrónico EMITIDO por la empresa,
+    // presentado al cobro por el beneficiario → mismo tratamiento que pago_con_cheque_propio. Laura
+    // ofreció separar por medio de pago (transferencia/cheque) en líneas distintas — no es necesario,
+    // va todo a la misma cuenta (PROVEEDORES, Capa D).
     polaridad: 'normal',
     ladoEsperado: 'debe',
-    resuelve: 'sin_tipo_asignado',
-    categoriaDelHueco: 'identidad_incierta',
-    motivoDelHueco:
-      '"Echeq...recibido" mide DÉBITO en los dos literales (canje interno 24hs y clearing 48hs), lo que ' +
-      'contradice la lectura obvia de depósito de cheques de terceros (13c, régimen haber fijo). Podría ' +
-      'ser el banco recibiendo el echeq para canje (no el cliente cobrándolo), una comisión asociada, o ' +
-      'un movimiento de otra naturaleza — sin evidencia suficiente para una hipótesis única razonable.',
-    referencia: 'docs/diseno/06-formato-santander.md §12',
+    resuelve: 'decide_una_persona',
+    tipo: 'pago_con_cheque_propio',
+    queDecide: 'distinguir_tercero_de_socio',
     procedencia: {
       fuente: 'corpus_medido',
       documento: 'docs/diseno/06-formato-santander.md',
@@ -873,6 +860,10 @@ export const CATALOGO_CANONICO = {
 
   // === percepcion_impositiva ============================================================================
   iva_21_regimen_transparencia_fiscal: {
+    // Laura confirmó (privado/laura-respuestas-2026-08.md sección C, "Confirmaciones rápidas",
+    // 2026-08-18/19): IVA de gastos/comisiones es 21% → IVA CRÉDITO FISCAL. El checkpoint
+    // `confirmar_computo_de_credito_fiscal` NO se cierra — la tasa está confirmada, la cómputo sigue
+    // dependiendo de condición IVA/afectación/prorrateo caso por caso.
     polaridad: 'normal',
     ladoEsperado: 'debe',
     resuelve: 'decide_una_persona',
@@ -886,6 +877,10 @@ export const CATALOGO_CANONICO = {
     },
   },
   iva_10_5_regimen_transparencia_fiscal: {
+    // Laura confirmó (privado/laura-respuestas-2026-08.md sección C, "Confirmaciones rápidas",
+    // 2026-08-18/19): IVA de intereses de financiación es 10,5% → IVA CRÉDITO FISCAL, con un renglón
+    // aparte opcional ("iva 10.5%") si se detecta — a evaluar si vale la complejidad (pregunta abierta
+    // de Laura, no bloqueante). El checkpoint `confirmar_computo_de_credito_fiscal` NO se cierra.
     polaridad: 'normal',
     ladoEsperado: 'debe',
     resuelve: 'decide_una_persona',
@@ -963,6 +958,12 @@ export const CATALOGO_CANONICO = {
     },
   },
   pago_de_honorarios: {
+    // `distinguir_tercero_de_socio` ya resuelve la rama (a) de Laura (privado/laura-respuestas-2026-08.md
+    // sección C, 2026-08-18/19: si el CUIT es de un socio → HONORARIOS A PAGAR) usando el padrón cargado
+    // en Frente 1. Las ramas (b)/(c) —si no es socio, cruzar contra Libro IVA Compras (PROVEEDORES) o,
+    // sin factura, GASTOS NO DEDUCIBLES— NO tienen dónde vivir: dependen del Libro IVA Compras, que hoy
+    // no se ingiere. No se cambia `resuelve` para no perder la resolución por socio que ya funciona —
+    // el caso no-socio sigue en decisión_humana, sin discriminar (b) de (c), hasta que exista esa ingesta.
     polaridad: 'normal',
     ladoEsperado: 'debe',
     resuelve: 'decide_una_persona',
@@ -1127,6 +1128,10 @@ export const CATALOGO_CANONICO = {
 
   // === percepcion_impositiva ============================================================================
   debito_fiscal_iva_basico: {
+    // Laura confirmó el tratamiento general (privado/laura-respuestas-2026-08.md sección C,
+    // 2026-08-18/19): contra IVA CRÉDITO FISCAL. El checkpoint `confirmar_computo_de_credito_fiscal`
+    // NO se cierra: la cómputo sigue dependiendo de condición IVA/afectación/prorrateo caso por caso
+    // (misma razón que iva_sobre_comision_bancaria, más arriba).
     polaridad: 'normal',
     ladoEsperado: 'debe',
     resuelve: 'decide_una_persona',
@@ -1353,7 +1358,10 @@ export const CATALOGO_CANONICO = {
   },
   cheque_circuito_cerrado: {
     // contador-dominio: no hay tipo que encaje — no es 12c/13c (eso es un tercero), el circuito cerrado
-    // es un acuerdo con el banco. No hay hipótesis razonable.
+    // es un acuerdo con el banco. No hay hipótesis razonable. Laura confirmó el tratamiento de CUENTA
+    // (privado/laura-respuestas-2026-08.md sección C, 2026-08-18/19): mismo circuito que cualquier
+    // cheque — débito → PROVEEDORES, crédito → DEUDORES POR VENTAS (Capa D, sin mapeo en código
+    // todavía) — pero eso no cambia esta clasificación: sigue sin ser 12c/13c por la razón de arriba.
     polaridad: 'normal',
     ladoEsperado: 'debe',
     resuelve: 'sin_tipo_asignado',
@@ -1361,7 +1369,12 @@ export const CATALOGO_CANONICO = {
     motivoDelHueco:
       'El catálogo de 31 tipos no tiene ninguno para el cheque de pago diferido en circuito cerrado — ' +
       'no es pago_con_cheque_propio (12c) ni deposito_cheques_terceros (13c): el circuito cerrado es un ' +
-      'acuerdo con el banco, no una operación con un tercero identificable.',
+      'acuerdo con el banco, no una operación con un tercero identificable. ⚠️ Excepción declarada por ' +
+      'Laura, sin literal propio medido en el corpus (07-formato-macro.md §12 no distingue un "cheque ' +
+      'rechazado" del resto de los 5 CCERR): si la descripción del movimiento dice "cheque rechazado", ' +
+      'revertir contra PROVEEDORES en vez de cancelar la deuda. No se modela como concepto propio ' +
+      'porque no hay literal que lo distinga en el vocabulario medido (PROP-6) — queda anotado acá para ' +
+      'Capa D/E, y para el día que el corpus mida un literal distinguible.',
     referencia: 'docs/diseno/07-formato-macro.md §12.1',
     procedencia: {
       fuente: 'corpus_medido',
