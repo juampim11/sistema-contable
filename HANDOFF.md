@@ -6,6 +6,80 @@
 
 ---
 
+## 2026-08-19 (76) — Cotización BNA, paso 1 CERRADO: migración `0022` + `packages/cotizaciones` (solo adapter), en local. `actualizar-cotizaciones.ts` sigue sin escribirse.
+
+**Herramienta:** Claude Code. Cierra el "paso revertible más chico" de `docs/diseno/12-cotizacion-bna-plan.md`
+§5 (plan aprobado en la entrada 74, sin implementar hasta esta sesión). Commits: `8e5aa1c` (entrada 75,
+bug de `sembrar.ts`, aparte) y `54d353d` (el trabajo de este cierre).
+
+### Qué quedó hecho
+
+- **Migración `0022_cotizacion_bna.sql`** aplicada limpia en local (recreada la base dos veces en la
+  sesión, siempre `sistema_contable` puerto 5442 — nunca el piloto): tabla `cotizacion_bna` (N0, sin
+  RLS, patrón `banco`), `numeric(12,4)` MEDIDO contra la serie completa de `api.argentinadatos.com`
+  (5707 registros, 2011-2026: máximo real 2 decimales, no una estimación), grants acotados por columna.
+- **Los tres barridos, verdes**: `catalogo.test.ts` (`SIN_RLS_CON_MOTIVO`), `grants-conjunto-cerrado.test.ts`
+  con evidencia rojo→verde MEDIDA (12 tests fallando antes de agregar las 4 filas de `cotizacion_bna`,
+  20 verdes después — no narrado, corrido dos veces), `reglas-de-codigo.test.ts`.
+- **Guarda nueva** (pedido explícito de esta sesión, no estaba en el plan original): `reglas-de-codigo.test.ts`
+  prohíbe a `packages/contabilidad/src/nucleo` importar `packages/cotizaciones`, puesta ANTES de que
+  exista ningún consumidor real — para frenar un import directo por apuro cuando llegue la etapa de
+  valuación.
+- **`packages/cotizaciones`**, solo el adapter: `ProveedorCotizaciones` + `argentinadatos.ts` (fetch
+  inyectable, Zod, `AbortController` con timeout por `Promise.race` contra un timer propio — no un
+  simple pase del signal).
+- **El test del mock-que-cuelga**, la predicción falsable más importante del plan: prueba que el adapter
+  NUNCA se cuelga para siempre aunque el `fetch` inyectado ignore el `AbortSignal` (rechaza en <500ms
+  con `timeoutMs: 30`). Documenta explícito, en su propio comentario, qué NO prueba todavía: que el
+  pool de jobs (`max: 4`) no se sature — esa mitad depende de que `actualizar-cotizaciones.ts` corra el
+  fetch afuera de un `conJob()`, y ese comando no existe en este cierre.
+- **`MotivoJob`** con el séptimo literal, `cargar_cotizaciones`.
+- **Las tres actualizaciones de documentación**: `ADR-0000-stack-infra.md` §3.5 (no §3.4, ver desvío
+  abajo), fila `R19` de `ADR-0002-seguridad.md` reescrita, primera fila real de
+  `docs/seguridad/registro-terceros.md` (`api.argentinadatos.com`).
+
+### Dos hallazgos que se resolvieron antes de cerrar
+
+1. **Colisión de nombre**: el método del adapter, `obtener(moneda, fecha)` tal como decía el plan
+   escrito, chocaba con la regla que reserva `.obtener(` en este repo para el choke point de lectura de
+   `ObjectStorage` (`reglas-de-codigo.test.ts`, R30/R31). Renombrado a **`consultar`** en el paquete y
+   en el ADR — verificado sin otra colisión.
+2. **Grant de más, encontrado por `dba-data`** al revisar el DDL final: `grant insert` de `app_job`
+   incluía `created_at`, que el propio comentario de la migración dice que pone el `default now()`, no
+   `app_job`. Como `0022` todavía no tenía commit ni push, se corrigió editándola directamente (no con
+   una `0023` aparte) y se reverificó rojo→verde en `grants-conjunto-cerrado.test.ts`.
+
+### Desvío de numeración contra el plan escrito
+
+El plan decía "ADR-0000 §3.4 nueva" — **`§3.4` ya estaba ocupada** (inventario de paquetes del Módulo 1,
+agregado después de escribirse el plan). La sección nueva quedó en `§3.5`, sin renumerar la existente.
+
+### Qué NO quedó hecho, a propósito
+
+- **`apps/cli/src/actualizar-cotizaciones.ts` sigue sin escribirse.** No es un olvido: el plan lo separa
+  explícitamente como paso posterior (§5), y esta sesión lo respetó de punta a punta — nunca se tocó ese
+  archivo ni se armó una versión mínima para poder probar algo. Es el paso siguiente, con su propio
+  commit chico.
+- **El piloto no se tocó en ningún momento** — ni la migración, ni ningún dato, ni ninguna corrida contra
+  `sistema_contable_piloto`. Todo el trabajo (incluidas las dos recreaciones de base) fue contra la base
+  local.
+- La valuación en el motor de contabilidad (qué hace con la cotización, cómo entra al asiento) sigue sin
+  diseñar — convoca `contador-dominio` + `motor-conciliacion-contable` cuando se retome, tal como fija
+  el plan.
+
+### Medido al cerrar
+
+`pnpm verificar`: **67 archivos / 1529 tests / 0 fallas / 7 todo** (línea base antes de esta sesión:
+66 / 1521 / 0).
+
+### Próxima sesión
+
+Si se retoma cotización BNA: `actualizar-cotizaciones.ts` es el siguiente paso (fetch afuera de la
+transacción → walk-back → `upsert` corto dentro de `conJob('cargar_cotizaciones')`). Aparte, sin relación:
+el bug de `sembrar.ts` de la entrada 75 sigue sin corregir.
+
+---
+
 ## 2026-08-19 (75) — 🔴 Bug encontrado (no corregido): `pnpm db:seed` falla siempre contra una base local recién creada — la lista de `TRUNCATE` de `sembrar.ts` no se actualizó desde `0012`.
 
 **Herramienta:** Claude Code. Encontrado como efecto colateral de implementar el primer paso del plan de
