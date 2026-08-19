@@ -6,6 +6,82 @@
 
 ---
 
+## 2026-08-19 (73) — Material de Laura procesado (`privado/laura-respuestas-2026-08.md`) y Frente 1 cerrado: los 3 socios confirmados cargados en `padron_socio` del piloto.
+
+**Herramienta:** Claude Code. Continuación de la entrada 72. Con `0021` ya aplicada al piloto, arrancó el
+trabajo con el material real de la contadora: 14+2 puntos de consulta + 2 audios, procesados por el
+titular en `privado/laura-respuestas-2026-08.md` (gitignored, nunca en este archivo).
+
+### Diagnóstico previo a cargar nada
+
+Antes de la carga, se cruzó el CUIT de cada socio/representante contra `movimiento_contraparte_identificador`
+del lote correspondiente — por HMAC con el pepper real del piloto, nunca en cleartext contra la base:
+
+| Socio/representante | Cliente | Apariciones en su lote |
+|---|---|---|
+| Carolina Andrea Bracci | Galicia | 4 |
+| Mamani, José Abel (representante El Prat) | Santander | 0 (probado también como DNI) |
+| Martin, Gabriela Isabel (representante ROKA) | Macro | 1 |
+
+También se resolvió, por separado, el hallazgo del gap de Galicia (filas 245-248, sección D del documento
+de Laura): **no fue nunca un bug** — las 4 filas de Bracci están capturadas y exportadas correctamente desde
+el primer día (verificado contra el export real del 12/08, antes del incidente de Docker, y contra el
+export actual). Explicación más probable: filtro de Excel o comparación contra el archivo equivocado del
+lado de Laura. Cerrado sin re-entrega.
+
+### Frente 1 — carga de `padron_socio` (solo los 3 mapeos confirmados)
+
+Los 3 `pnpm alta:socio` corridos por el titular, en modo interactivo (el CUIT nunca pasa por argumento —
+prompt oculto con doble tipeo, por diseño de `alta-socio.ts`):
+
+| Cliente | Denominación | Documento | Vigencia desde |
+|---|---|---|---|
+| Galicia (Bracci Repuestos SAS) | Carolina Andrea Bracci | cuit | 2025-10-20 |
+| Santander (El Prat S.A.S.) | Mamani, José Abel | cuit | 2025-10-20 |
+| Macro (ROKA repuestos S.A.S.) | Martin, Gabriela Isabel | cuit | 2025-10-20 |
+
+🔴 **`2025-10-20` es CONVENCIONAL, no la fecha real de incorporación del socio.** Es la fecha del
+movimiento más antiguo entre los tres lotes del piloto — y ese mínimo sale del lote de **Macro**
+(2025-10-20 a 2025-11-28), un período distinto al de Galicia/Santander (junio 2026). Verificado en
+`padron_socio` después de la carga: los tres quedaron con esa fecha, `vigente_hasta` nulo (activos), sin
+drift.
+
+**Los otros 9 CUIT de la sección B del documento de Laura NO se cargaron** — son clientes reales del
+estudio sin cuenta bancaria ingerida en el piloto; no hay nada contra qué resolver todavía.
+
+### Medición — cuánto del techo de Capa C resuelve ahora
+
+El techo estructural (`889/1830 = 48,6%`, movimientos con al menos un candidato de contraparte, medido en
+la entrada 49) **no se mueve** — es una propiedad de la captura de ingesta, no de `padron_socio`. Lo que
+sí se movió, corriendo `resolver-contrapartida.ts` en dry-run contra los tres lotes después de la carga:
+
+| Cliente | `es_socio` (antes: 0 en los tres) |
+|---|---|
+| Galicia | 4 |
+| Santander | 0 |
+| Macro | 1 |
+| **Total** | **5 / 1830** (0,27% del total, 0,56% del techo de 889) |
+
+Coincide exacto con el cruce por HMAC de arriba. `es_tercero_padron_completo` sigue en 0 en los tres —
+sigue bloqueado por código (`reconocer-lote.ts:304`, `padronDeclaradoCompleto: false` fijo), como está
+declarado en el propio DDL de `0021`. El resto de los movimientos con candidato sigue en
+`sin_match_padron_incompleto`/`sin_candidatos`, esperando más socios del padrón real (sección B) o el
+gate de padrón completo (fuera de alcance, declarado en `0021`).
+
+**No se corrió `--padron-completo`** en ninguno de los tres dry-run: el padrón cargado es "socio conocido",
+no lista cerrada — corresponde a la advertencia explícita de Laura en la sección B del documento.
+
+### Estado
+
+| | |
+|---|---|
+| `padron_socio` (piloto) | 3 filas, una por cliente, vigencia convencional declarada |
+| Capa C, `es_socio` | 5/1830 (antes: 0/1830) |
+| Piloto | Sin migración pendiente, sin drift de datos (4/1830/3/0 en el resto de las tablas) |
+| Frente 2 (léxico, sección C del documento de Laura) | 🔴 **NO empezado** — a la espera de instrucciones puntuales por regla, según pidió el titular |
+
+---
+
 ## 2026-08-18 (72) — 🔴 **`0021` APLICADA AL PILOTO**, con el procedimiento de §1.9 corrido completo: listar, confirmar exacto, backup fresco, aplicar, verificar.
 
 **Herramienta:** Claude Code. Continuación de la entrada 71 — bloque no-bloqueante cerrado (commits
