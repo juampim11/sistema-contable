@@ -1128,6 +1128,17 @@ export const CLAVES_SENSIBLES_EXTERNAS = [
   'glosa_original',
   'candidatos_identificacion',
   'identificadores',
+  /**
+   * 🔴 Agregada ANTES de que exista el tipo que la produce (plan 15, OCR de liquidaciones — commit 2
+   * del plan 14, retomado 2026-08-19). `ConfianzaDeCampo.valorLeido` (`liquidaciones/captura.ts`) va a
+   * traer el texto que el OCR reconoció de una liquidación de tarjeta real: facturación de un comercio
+   * identificable. El documento real va a estar abierto en la sesión de desarrollo del adapter — es
+   * exactamente el momento en que un `logger.info(...)` de depuración saca ese dato a una terminal o a
+   * un log de CI. Cerrar el hueco antes de que el tipo exista es la condición bloqueante del paso 0 del
+   * plan 15: R27 tiene que rechazar `{ valorLeido: … }` en compilación desde el primer commit que lo
+   * use, no desde que alguien se acuerde de agregarlo.
+   */
+  'valor_leido',
 ] as const satisfies readonly string[];
 
 /**

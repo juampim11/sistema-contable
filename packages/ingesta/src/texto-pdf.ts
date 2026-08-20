@@ -28,6 +28,7 @@
  * `substring(i, j)` es inviable. Las columnas sí existen, pero en puntos PDF.
  */
 
+import zlib from 'node:zlib';
 import { getDocumentProxy } from 'unpdf';
 
 export type TextoDelPdf = {
@@ -287,4 +288,169 @@ async function paginasDeTexto(contenido: Uint8Array): Promise<readonly string[]>
   const pdf = await documento(contenido);
   const { text } = await extractText(pdf as never, { mergePages: false });
   return (Array.isArray(text) ? text : [text]).map((p) => p ?? '');
+}
+
+// -----------------------------------------------------------------------------
+// Imagen embebida de una página — plan 15, para el OCR de liquidaciones escaneadas.
+// -----------------------------------------------------------------------------
+
+/**
+ * La imagen embebida de una página, si tiene una, codificada como **PNG**. `null` si la página no trae
+ * ninguna imagen extraíble.
+ *
+ * ## Lo que se midió antes de escribir esto (plan 15 §2, predicción falsable)
+ *
+ * `unpdf` expone `extractImages()`, que usa el decodificador de imagen **propio de `pdf.js`** (el mismo
+ * motor que ya trae `getDocumentProxy`) para devolver los **píxeles ya decodificados** de cada
+ * `paintImageXObject` de la página — nunca hace falta rasterizar la página entera con un canvas.
+ * `@napi-rs/canvas` es un *peer dependency opcional* de `unpdf`, usado solo por `renderPageAsImage()`
+ * (que sí dibuja la página completa); `extractImages()` no lo toca, y no está instalado en este repo.
+ * O sea: la predicción "el `/Image` es extraíble sin rasterizar" se confirma, pero con una salvedad —
+ * lo que se obtiene no son los bytes JPEG crudos del stream `/DCTDecode`, sino los píxeles YA
+ * decodificados (`Uint8ClampedArray` + ancho + alto + canales). Evita la dependencia nueva igual, así
+ * que el resultado práctico es el mismo: nada de `node-canvas`/`@napi-rs/canvas`.
+ *
+ * ## Por qué PNG y no BMP (🔴 corregido contra el documento real, no una elección de estilo)
+ *
+ * La primera versión reempaquetaba como BMP —trivial de escribir a mano, y Leptonica lo soporta nativo.
+ * **Rompió contra el documento real.** El cuerpo de cada página mide 2110×3033 px × 3 canales ≈ 19,2
+ * millones de bytes, y `tesseract.js` normaliza **todo** BMP con `bmp-js` (`worker-script/utils/setImage.js`:
+ * *"Leptonica supports some but not all bmp files"*) haciendo `Buffer.from(Array.from({ ...image, length:
+ * Object.keys(image).length }))` — ese `{ ...image }` convierte cada byte del array en una propiedad
+ * enumerable propia, y V8 tira `RangeError: Too many properties to enumerate` bastante antes de los 19,2
+ * millones. Es un límite real de `tesseract.js` v7 para BMP grandes, no una hipótesis: se midió corriendo
+ * el pipeline completo contra la página 1 del documento real.
+ *
+ * PNG evita ese camino entero: `setImage.js` solo pasa por `bmp-js` cuando los dos primeros bytes son
+ * `BM`; cualquier otro formato reconocido por Leptonica (PNG incluido) va directo a
+ * `TessModule.FS.writeFile('/input', image)`, sin la conversión que rompe. Y no hace falta una
+ * dependencia nueva para comprimir: `node:zlib` (built-in) alcanza para el `IDAT` — la única pieza no
+ * trivial de un PNG mínimo, sin filtros por fila (tipo 0, "None") y con CRC32 tabulado a mano (ver
+ * `crc32Png`, más abajo).
+ *
+ * ## La imagen de MAYOR ÁREA, nunca "la primera"
+ *
+ * 🔴 Medido contra el archivo real, y corrigiendo un supuesto equivocado de la primera versión: cada
+ * página del documento real trae **dos** imágenes (`extractImages` devuelve un arreglo de 2), no una —
+ * un encabezado/logo chico (1297×137 px, ~178 mil px) y el cuerpo escaneado de la página completa
+ * (2110×3033 px, ~6,4 millones de px). Tomar "la primera" del arreglo (el orden de aparición en la
+ * lista de operadores de dibujo, que no tiene por qué coincidir con el orden visual) le daba el
+ * encabezado al OCR y nunca el cuerpo — silencioso: no fallaba, devolvía 3 palabras por página en vez de
+ * un error. Es exactamente el modo de falla que este proyecto ya conoce: un resultado plausible con el
+ * dato equivocado adentro. La imagen de mayor `ancho × alto` es la heurística correcta mientras el
+ * documento real siga trayendo un logo chico y un cuerpo grande — si algún formato futuro trajera dos
+ * imágenes de tamaño comparable, esta función seguiría eligiendo una sola y ese caso queda sin cubrir,
+ * no inventado.
+ */
+export async function imagenDePagina(contenido: Uint8Array, pagina: number): Promise<Uint8Array | null> {
+  const { extractImages } = await import('unpdf');
+  // Copia del buffer: mismo motivo que `documento()` — `pdf.js` deja el `ArrayBuffer` original detached.
+  const imagenes = await extractImages(new Uint8Array(contenido), pagina);
+  const primera = imagenes.reduce<(typeof imagenes)[number] | null>((mayor, actual) => {
+    const area = actual.width * actual.height;
+    const areaMayor = mayor ? mayor.width * mayor.height : -1;
+    return area > areaMayor ? actual : mayor;
+  }, null);
+  if (!primera) return null;
+  return codificarPng(primera.data, primera.width, primera.height, primera.channels);
+}
+
+const FIRMA_PNG = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+
+/** Tabla de CRC32 (IEEE 802.3), precomputada una vez. Es el checksum que exige cada chunk PNG. */
+const TABLA_CRC32 = (() => {
+  const tabla = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    tabla[n] = c >>> 0;
+  }
+  return tabla;
+})();
+
+function crc32Png(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc = (TABLA_CRC32[(crc ^ byte) & 0xff] ?? 0) ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/** Un chunk PNG: longitud del payload (4, BE) + tipo (4 ASCII) + payload + CRC32 de (tipo+payload). */
+function chunkPng(tipo: string, payload: Uint8Array): Uint8Array {
+  const salida = new Uint8Array(12 + payload.length);
+  const vista = new DataView(salida.buffer);
+  vista.setUint32(0, payload.length, false);
+  for (let i = 0; i < 4; i += 1) salida[4 + i] = tipo.charCodeAt(i);
+  salida.set(payload, 8);
+  const paraCrc = salida.subarray(4, 8 + payload.length);
+  vista.setUint32(8 + payload.length, crc32Png(paraCrc), false);
+  return salida;
+}
+
+/**
+ * Empaqueta píxeles crudos (1, 3 o 4 canales) como un PNG truecolor de 8 bits sin filtros de fila.
+ *
+ * Cada scanline lleva el byte de filtro `0` (`None`, sin predicción) antepuesto — es lo único que exige
+ * el formato antes de comprimir; no hace falta ninguno de los otros cuatro filtros para que el archivo
+ * sea válido, solo para que comprima mejor, y acá el tamaño del archivo no es la prioridad. La
+ * compresión la hace `zlib.deflateSync` (built-in de Node, no una dependencia nueva).
+ */
+function codificarPng(
+  pixeles: Uint8ClampedArray,
+  ancho: number,
+  alto: number,
+  canales: 1 | 3 | 4,
+): Uint8Array {
+  const leerPixel = (indice: number): { r: number; g: number; b: number } => {
+    const base = indice * canales;
+    if (canales === 1) {
+      const g = pixeles[base] ?? 0;
+      return { r: g, g, b: g };
+    }
+    return { r: pixeles[base] ?? 0, g: pixeles[base + 1] ?? 0, b: pixeles[base + 2] ?? 0 };
+  };
+
+  const anchoFila = 1 + ancho * 3; // byte de filtro + RGB por píxel
+  const crudo = new Uint8Array(anchoFila * alto);
+  for (let y = 0; y < alto; y += 1) {
+    const inicioFila = y * anchoFila;
+    crudo[inicioFila] = 0; // filtro None
+    for (let x = 0; x < ancho; x += 1) {
+      const { r, g, b } = leerPixel(y * ancho + x);
+      const destino = inicioFila + 1 + x * 3;
+      crudo[destino] = r;
+      crudo[destino + 1] = g;
+      crudo[destino + 2] = b;
+    }
+  }
+
+  const ihdr = new Uint8Array(13);
+  const vistaIhdr = new DataView(ihdr.buffer);
+  vistaIhdr.setUint32(0, ancho, false);
+  vistaIhdr.setUint32(4, alto, false);
+  ihdr[8] = 8; // profundidad de bit
+  ihdr[9] = 2; // tipo de color: truecolor RGB
+  ihdr[10] = 0; // compresión: deflate (el único valor válido en PNG)
+  ihdr[11] = 0; // filtro: adaptativo por fila (el byte por scanline decide; acá siempre 0)
+  ihdr[12] = 0; // sin interlace
+
+  const idat = new Uint8Array(zlib.deflateSync(crudo));
+
+  const partes = [
+    FIRMA_PNG,
+    chunkPng('IHDR', ihdr),
+    chunkPng('IDAT', idat),
+    chunkPng('IEND', new Uint8Array(0)),
+  ];
+  const total = partes.reduce((n, p) => n + p.length, 0);
+  const salida = new Uint8Array(total);
+  let offset = 0;
+  for (const parte of partes) {
+    salida.set(parte, offset);
+    offset += parte.length;
+  }
+  return salida;
 }

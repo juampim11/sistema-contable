@@ -1103,3 +1103,52 @@ describe('R-O2 — ningún adapter de liquidaciones cablea una tasa esperada por
     expect(PATRON_TASA_CABLEADA.test("concepto: 'retencion_iibb_sirtac',")).toBe(false);
   });
 });
+
+// -----------------------------------------------------------------------------
+describe('R-P — único punto de conexión con `tesseract.js` (plan 15, OCR de liquidaciones)', () => {
+  /**
+   * Hermana de R17 (*"un único punto de conexión"*, más arriba en este archivo): sin `langPath`/
+   * `corePath`/`workerPath` apuntando a los paquetes locales ya instalados, `tesseract.js` intenta bajar
+   * de `cdn.jsdelivr.net` en silencio (CLAUDE.md §1.4). Esa configuración vive en un único archivo
+   * (`packages/ingesta/src/ocr.ts`, ver su comentario de cabecera) precisamente para que solo haya UN
+   * lugar que revisar cuando se audita "¿algún documento de un cliente puede salir a un tercero?" — un
+   * segundo import de `tesseract.js` en cualquier otro archivo es un segundo lugar donde esa garantía
+   * podría faltar, y nadie lo estaría mirando.
+   *
+   * Dictamen de `security-engineer` (plan 15): la guardia de cardinalidad de abajo es obligatoria —sin
+   * ella, si `ocr.ts` dejara de existir o quedara fuera de `FUENTES`, la regla de aislamiento pasaría en
+   * verde vacío y dejaría de vigilar nada, el mismo modo de falla que R-N ya corrige para R-M.
+   */
+  const PATRON_IMPORTA_TESSERACT = /from\s+['"]tesseract\.js['"]/;
+
+  /** `ocr.ts` y sus tests (incluidos los scripts de soporte que necesitan el import directo para la
+   * prueba de mutación del propio guard de red) son el único caso legítimo. */
+  const PERMITIDOS_R_P = ['packages/ingesta/src/ocr.ts', 'packages/ingesta/tests/'];
+
+  it('ningún archivo fuera de `ocr.ts` (y sus tests) importa `tesseract.js`', () => {
+    expect(
+      infractores(PATRON_IMPORTA_TESSERACT, PERMITIDOS_R_P),
+      'solo `packages/ingesta/src/ocr.ts` puede configurar langPath/corePath/workerPath: un segundo ' +
+        'punto de conexión es un segundo lugar donde esa configuración podría faltar',
+    ).toEqual([]);
+  });
+
+  it('guardia de cardinalidad: la regla VE un caso positivo real (si no, vigila el vacío)', () => {
+    const importan = FUENTES.filter(
+      (r) => rel(r) !== ESTE_ARCHIVO && PATRON_IMPORTA_TESSERACT.test(readFileSync(r, 'utf8')),
+    ).map(rel);
+    expect(importan).toContain('packages/ingesta/src/ocr.ts');
+    expect(importan.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('el patrón detecta la infracción plantada y no confunde la infraestructura vecina', () => {
+    expect(PATRON_IMPORTA_TESSERACT.test("import { createWorker } from 'tesseract.js';")).toBe(true);
+    expect(PATRON_IMPORTA_TESSERACT.test('import type { Block } from "tesseract.js";')).toBe(true);
+    // Lo que NO es infracción: importar `tesseract.js-core` o `@tesseract.js-data/spa` (nombres
+    // parecidos, paquetes distintos) y una mención en prosa.
+    expect(PATRON_IMPORTA_TESSERACT.test("import x from 'tesseract.js-core';")).toBe(false);
+    expect(PATRON_IMPORTA_TESSERACT.test("require('@tesseract.js-data/spa')")).toBe(false);
+    // Y una mención en prosa —sin `from '...'`— no es un import.
+    expect(PATRON_IMPORTA_TESSERACT.test('// ver `ocr.ts`, que importa tesseract.js')).toBe(false);
+  });
+});

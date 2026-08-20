@@ -441,6 +441,19 @@ describe('el tipo y el redactor bloquean el MISMO conjunto, en las dos grafías'
   });
 
   /**
+   * Paso 0 del plan 15 (OCR de liquidaciones): `valor_leido`/`valorLeido` — el campo que va a traer
+   * `ConfianzaDeCampo.valorLeido` (`packages/ingesta/src/liquidaciones/captura.ts`) — cerrado ANTES de
+   * que ese tipo exista. Sin este par, `logger.info('x', { valorLeido: … })` compilaría el día que
+   * alguien lo escriba para depurar el adapter con el documento real abierto en la sesión.
+   */
+  it('el TIPO rechaza `valor_leido`/`valorLeido` (plan 15, antes de que exista el productor)', () => {
+    // @ts-expect-error — clave externa nueva, snake_case.
+    logger.info('t', { valor_leido: 'x' });
+    // @ts-expect-error — la misma en camelCase, la grafía real del campo en TS.
+    logger.info('t', { valorLeido: 'x' });
+  });
+
+  /**
    * La contracara: si la derivación ensanchara de más, el logger dejaría de aceptar los campos de
    * diagnóstico y el pipeline se quedaría sin observabilidad. Estos SÍ tienen que compilar.
    */

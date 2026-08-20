@@ -6,6 +6,144 @@
 
 ---
 
+## 2026-08-20 (80) — Plan 15 (OCR) implementado, paso 1 — commit 2 del plan 14 (Visa débito) DESBLOQUEADO y corriendo contra el documento real. Dry-run, sin persistir. `pnpm verificar` 72/1599/0.
+
+**Herramienta:** Claude Code. Retoma la entrada 79: el commit 2 del plan 14 estaba frenado porque el
+documento real de Visa débito es un escaneo/foto sin texto extraíble. Esta sesión implementa el paso 1
+de `docs/diseno/15-ocr-liquidaciones-plan.md` (OCR local vía `tesseract.js`) y con eso completa el
+adapter de Visa débito — modo plan formal (CLAUDE.md §3.2) aprobado por JP en vivo, con dos
+condiciones explícitas, antes de tocar código.
+
+### Convocatoria previa (obligatoria por dependencia nueva + datos de clientes, matriz §3.1), con `Agent()` real
+
+- **`security-engineer`**: sin CVE bloqueante en `tesseract.js@7.0.0`/`tesseract.js-core`/
+  `@tesseract.js-data/spa` (verificado contra el registro npm real). Exigió: guardia de cardinalidad
+  para la regla de choke point nueva (mismo mecanismo que R-N), prueba de mutación (ADR-0002 §B.0),
+  límite de tamaño/dimensión + timeout antes de `recognize()`, y que el test de "sin red" verifique
+  comportamiento real, no solo que la configuración apunte a rutas locales. Señaló una anomalía de
+  versionado real en el registro de `tesseract.js-core` (dist-tag `latest` movido a una versión
+  anterior el mismo día de publicar `7.0.0`) — motivo para pinear versión exacta, no rango.
+- **`seguridad-datos-financieros`**: dos hallazgos bloqueantes, los dos resueltos antes de escribir
+  `captura.ts`/`ocr.ts` en forma final: (1) agregar `'valor_leido'` a `CLAVES_SENSIBLES_EXTERNAS`
+  (`packages/shared/src/seguridad/clasificacion-campos.ts`) ANTES de que existiera el tipo que lo
+  produce — para que R27 lo rechace en compilación desde el primer commit; (2) verificar `workerPath`
+  (un tercer path de configuración de `tesseract.js`, no nombrado en el plan 15 original) contra la
+  versión real instalada, no asumirlo resuelto por analogía. Clasificó `ConfianzaDeCampo` completa
+  como N2 (por `valorLeido`, que arrastra el peor caso de lo que puede transportar).
+
+### Lo que quedó implementado, verificado por mí de forma independiente (no solo el reporte del subagente)
+
+- **`packages/ingesta/src/ocr.ts`** (nuevo): choke point único de `tesseract.js` (regla **R-P** nueva,
+  hermana de R17, con guardia de cardinalidad — evidencia rojo→verde confirmada por mí: planté un
+  import fuera de `ocr.ts`, dio rojo, revertí, dio verde). `langPath`/`corePath`/`workerPath` como
+  constantes internas, resueltas con `require.resolve()` contra los paquetes reales instalados
+  (confirmé yo mismo que las tres rutas resuelven correctamente). Medido contra el código fuente real
+  de la v7 instalada (no de memoria): en Node, `corePath` no se usa para nada (el core siempre es
+  local por `require`) y `workerPath` ya default-ea local — el único vector de red real es `langPath`.
+  **Lo comprobé de forma concluyente yo mismo**: comenté `langPath` en `ocr.ts`, corrí el test de "red
+  cortada" (`packages/ingesta/tests/ocr.test.ts`), y el proceso intentó de verdad bajar
+  `https://cdn.jsdelivr.net/npm/@tesseract.js-data/spa/...` — la guardia lo atrapó y el test falló como
+  correspondía. Revertido, test verde de nuevo. No es una prueba vacía: distingue una configuración
+  rota de una correcta, con el vector de fuga real disparándose de verdad.
+  Límite de 25 MB / 6000 px + timeout de 90s antes de `recognize()`. `pnpm-workspace.yaml`:
+  `tesseract.js: false` explícito (el `postinstall` de `opencollective-postinstall` es un cartel de
+  donación estático, sin red — confirmado antes de decidir, no asumido).
+- **`packages/ingesta/src/liquidaciones/captura.ts`** (nuevo): el cuarto eje de verificación
+  (`confiable`/`dudoso`/`no_evaluable`), separado del tri-estado de `verificacion.ts`, nunca fusionado.
+  **Condición 1 de JP, con evidencia real**: `UMBRAL_CONFIANZA_MINIMA = 70`, fijado con la distribución
+  real de confianza por palabra medida contra las 8 páginas del documento real —
+  **5649 palabras reconocidas: 3354 con confianza ≥90, 999 entre 70-89, 403 entre 50-69, 893 <50,
+  promedio 78,5** — documentado en el propio código con el razonamiento (el bloque <50 concentra el
+  ruido real del escaneo; la decisión es conservadora, sube más a revisión de lo estrictamente
+  necesario). Test de regresión + mutación en el límite exacto.
+- **`packages/ingesta/src/liquidaciones/formatos/visa-debito.ts`** (nuevo, 461 líneas): el adapter
+  real. Estrategia por etiqueta + proximidad (se probó primero banding fijo como los bancos y se
+  descartó con evidencia: la foto no tiene la estabilidad geométrica del PDF vectorial). Tolerancia de
+  fila de 20px, elegida con un barrido medido contra el documento real (10/13/16/20/25/30px).
+- **`packages/ingesta/src/liquidaciones/registro.ts`**: `EntradaDeLiquidacion` cambiada — la apuesta
+  del commit 1 (`{ filas: FilaGeometrica[] }`) quedó refutada por el documento real (100% escaneado,
+  `FilaGeometrica[]` siempre habría estado vacío) tal como el propio comentario de entonces anticipaba
+  ("si la refuta, se cambia antes de que haya un segundo adapter que la copie"). Nueva forma:
+  `{ paginas: (FilaGeometrica[] | PaginaOcr)[], usoOcrEnPagina: boolean[] }`. `SalidaDeLiquidacion` gana
+  `confianzaDeCaptura?: ConfianzaDeCampo[]`. `packages/ingesta/tests/liquidaciones-registro.test.ts`
+  actualizado a la nueva forma.
+- **`packages/ingesta/src/texto-pdf.ts`**: export nuevo `imagenDePagina`. Camino real medido contra el
+  archivo real: `unpdf.extractImages()` da píxeles ya decodificados. Dos hallazgos reales en el
+  camino: (a) cada página trae DOS imágenes (logo + cuerpo) — tomar "la primera" daba el logo, corregido
+  a la de mayor área; (b) el primer encoder (BMP) rompía `tesseract.js` v7 con imágenes grandes
+  (`RangeError: Too many properties to enumerate`, medido contra el documento real) — reemplazado por
+  PNG con `node:zlib` (ya built-in, sin dependencia nueva).
+- **`docs/seguridad/registro-terceros.md`**: los cuatro rechazos que plan 15 ya había fundamentado
+  (Google Vision, AWS Textract, Azure API estándar, Azure disconnected) — agregados, cerrando la
+  condición de §1.4.
+
+### Condición 2 de JP — confirmada de forma independiente: NO ocurrió ningún caso
+
+**No apareció ningún `no_cuadra`, en ninguna liquidación.** Lo confirmé yo mismo corriendo el pipeline
+completo contra el documento real: **eje 1 = 0 cuadra / 0 no_cuadra / 5 no_verificable** (motivo
+`concepto_con_efecto_no_determinado`, la regla que ya existía desde el commit 2 anterior —
+`percepcion_iva_rg2408` aparece con monto ≠ 0, comportamiento esperado, no un bug nuevo). Por lo tanto
+la instrucción de JP ("si aparece no_cuadra + confiable, PARÁ, no toques esquema.ts") no llegó a
+aplicarse — no hubo ningún caso al que aplicarla. No se tocó `esquema.ts` en ningún momento de esta
+sesión (salvo por el motivo `concepto_con_efecto_no_determinado`, que ya se había agregado en la
+entrada 79, previa a esta sesión).
+
+### Resultado medido, agregado (nunca por liquidación, nunca un valor real)
+
+- **5 liquidaciones** cerradas válidas contra el esquema (`liquidacionProcesadaSchema`), de un
+  documento que el propio plan 14 (§Contexto, ya público) declara con 21 liquidaciones en el mes.
+  **Cobertura parcial, honesta, no un pipeline terminado**: 52 líneas quedaron en
+  `lineasNoInterpretadas`. Causa dominante medida: `parsearImporte` (estricto a propósito, mismo
+  criterio que los ocho adaptadores bancarios) rechaza tokens de importe que el OCR degradó (pierde
+  separador de miles o coma decimal) en vez de adivinarlos — **la decisión correcta**: un importe
+  adivinado mal y aceptado es peor que uno declarado no interpretado.
+- **Eje 4: 46 campos evaluados — 41 confiable / 5 dudoso / 0 no_evaluable.**
+- El eje 2 (checksum del emisor) da `no_cuadra` — artefacto de la cobertura parcial (suma sobre 5 de
+  ~21 liquidaciones), no una contradicción del dato.
+- Candidatos para la próxima iteración, documentados en el propio adapter, **sin implementar**:
+  preprocesado de imagen antes de OCR (binarizar/contraste — mediría si hace falta una dependencia
+  nueva), o búsqueda de importe por vecino-más-cercano en vez de "última palabra con forma de importe
+  en la fila".
+
+### Qué concepto dispara `concepto_con_efecto_no_determinado` — pedido explícito de JP, dato puntual sin investigar más
+
+**Es el mismo concepto en las 5 liquidaciones, siempre `percepcion_iva_rg2408` — nunca otro.** Es
+estructuralmente el único candidato posible hoy: `percepcion_iva_rg2408` es el único concepto del
+catálogo (`esquema.ts`) con `efectoSobreElNeto: 'no_determinado'`, así que el motivo no puede dispararlo
+ningún otro concepto tal como está el catálogo actual. Lo que sí es un dato nuevo: las 5 liquidaciones
+tienen exactamente los mismos cuatro renglones (`arancel`, `iva_21_sobre_arancel`,
+`retencion_iibb_sirtac`, `percepcion_iva_rg2408`), y en las 5 la percepción viene con monto ≠ 0 — el
+patrón es **consistente, no disperso**: no hay una liquidación "rara" con un concepto distinto o con la
+percepción en cero. No se investigó más allá de esto ni se tocó nada — es la pista que pidió JP para
+decidir mañana.
+
+### Hallazgo menor sin corregir, anotado para quien lo toque después
+
+`visa-debito.ts:446-447`, el comentario de `caveatDeComputoFiscal: false` dice *"se busca la frase, y
+ausente es false"* — pero no hay ninguna búsqueda de esa frase en el código, es un `false`
+incondicional. El comportamiento es correcto (nunca asume `true` sin medir), pero el comentario
+sobreclaims lo que el código hace. No lo corregí — queda anotado.
+
+### `pnpm verificar` / `pnpm barrido` — corridos por mí de forma independiente, no solo el reporte del subagente
+
+**72 archivos de test / 1599 tests (1592 verdes, 7 todo) / 0 fallas.** Barrido de fuga: 966 archivos,
+limpio. El test contra el documento real (`liquidaciones-visa-debito.test.ts`) corrió de verdad en
+esta máquina (no `skip`) y lo repetí yo mismo dos veces más (una vía `vitest run`, otra vía un script
+aparte que imprime solo las distribuciones agregadas) — los números coinciden exactamente con el
+reporte del subagente en las tres corridas.
+
+### Qué falta, explícito
+
+- **Nada de esto se commiteó todavía** — pendiente de tu revisión final antes de commitear (mismo
+  protocolo que las veces anteriores).
+- La cobertura parcial (5 de ~21 liquidaciones) es una limitación conocida y documentada, no oculta —
+  mejorarla es la iteración siguiente, sin implementar esta noche.
+- Commits 3 (migración) y 4 (CLI + persistencia) del plan 14 siguen sin arrancar.
+- El hallazgo menor del comentario de `caveatDeComputoFiscal` (arriba) sigue sin corregir.
+- Nada de Visa crédito ni Cabal. Piloto y `packages/cotizaciones` sin tocar en toda la sesión.
+
+---
+
 ## 2026-08-19 (79) — Plan 14, commit 2: FRENADO por documento escaneado — R-O acotada + R-O2 + `verificacion.ts` cerrados; adapter de Visa débito no existe. Deriva en plan 15 (research OCR), no implementado.
 
 **Herramienta:** Claude Code. Intento de implementar el commit 2 del plan 14 (primer adapter real,

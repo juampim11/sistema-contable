@@ -4,4 +4,11 @@ packages:
 allowBuilds:
   # esbuild es dependencia de Vitest y necesita su script de post-instalación para bajar el binario.
   esbuild: true
-
+  # `tesseract.js` declara `postinstall: opencollective-postinstall` — un cartel de donación estático
+  # (`index.js` de 793B, sin red: confirmado leyendo el paquete antes de decidir esto). No hace falta
+  # para que el módulo funcione: `langPath`/`corePath`/`workerPath` de `ocr.ts` apuntan directo a los
+  # archivos ya instalados. `false` explícito, no una omisión: deja constancia de que se evaluó y se
+  # decidió NO correrlo — la misma disciplina de "cero scripts de más" que ya usa este archivo.
+  # `tesseract.js-core` y `@tesseract.js-data/spa` no declaran ningún script — no aparecen acá porque
+  # pnpm no tiene nada que preguntar sobre ellos.
+  tesseract.js: false

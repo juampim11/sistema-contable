@@ -33,7 +33,9 @@
  * una regla ya probada, por un choque de nombres de carpeta y nada más.
  */
 
+import type { PaginaOcr } from '../ocr.ts';
 import type { FilaGeometrica } from '../texto-pdf.ts';
+import type { ConfianzaDeCampo } from './captura.ts';
 import type {
   CapacidadesDeFormato,
   LineaNoInterpretadaDeLiquidacion,
@@ -41,15 +43,25 @@ import type {
 } from './esquema.ts';
 
 /**
- * La entrada de un adapter: las **filas geométricas** del PDF, la misma vista que necesitó el primer
- * banco real (`pdf.js` emite un espacio por hueco, así que no hay columnas de ancho fijo en caracteres).
+ * La entrada de un adapter: una página, o bien **geometría nativa** del PDF (`FilaGeometrica[]`), o bien
+ * **el resultado del OCR** (`PaginaOcr`) para las páginas sin texto — la misma forma que arma
+ * `extraerConOcrSiHaceFalta()` (`../ocr.ts`), que corre en el CALLER, no en el adapter (mismo patrón que
+ * ya fija este archivo desde el commit 1: el adapter recibe datos ya resueltos, nunca abre el archivo).
  *
- * ⚠️ **Elegida sin ningún adapter de liquidación medido.** Es la apuesta más barata —reusa la extracción
- * que ya existe— pero acá no hay evidencia todavía, a diferencia del contrato bancario, donde el shape lo
- * pidió un documento real. El commit 2 (Visa débito) la confirma o la refuta; si la refuta, se cambia
- * antes de que haya un segundo adapter que la copie.
+ * 🔴 **Refutada y corregida contra el documento real (commit 2, plan 15).** La versión del commit 1 era
+ * `{ filas: readonly FilaGeometrica[] }` —geometría nativa pura, la apuesta más barata— y el propio
+ * comentario de entonces avisaba: *"el commit 2 la confirma o la refuta; si la refuta, se cambia antes
+ * de que haya un segundo adapter que la copie"*. Se refutó: el documento real de Visa débito
+ * (`privado/tarjetas/01-extracto_visa_debito_roka.pdf`) es enteramente escaneado, ocho páginas, cero
+ * caracteres nativos — `FilaGeometrica[]` habría estado siempre vacío. Un adapter de liquidaciones tiene
+ * que poder leer las dos vistas, porque no hay forma de saber de antemano cuál va a traer un formato
+ * nuevo.
  */
-export type EntradaDeLiquidacion = { readonly filas: readonly FilaGeometrica[] };
+export type EntradaDeLiquidacion = {
+  readonly paginas: readonly (readonly FilaGeometrica[] | PaginaOcr)[];
+  /** `true` en la posición `i` si `paginas[i]` es `PaginaOcr` (vino de OCR), `false` si es geometría nativa. */
+  readonly usoOcrEnPagina: readonly boolean[];
+};
 
 /**
  * Lo que un adapter devuelve. El sobre con lo que identifica al archivo —hash, páginas, capacidades— lo
@@ -67,6 +79,17 @@ export type SalidaDeLiquidacion = {
    * significa "no hay eje 2 que correr", **nunca** "cuadra".
    */
   readonly totalConsolidadoDeclarado?: string | undefined;
+  /**
+   * El eje 4 (confianza de captura, `captura.ts`), agregado en el commit 2 del plan 14 (plan 15).
+   * **Separado de `liquidaciones`, nunca fusionado adentro**: cada entrada es una RUTA de campo (ej.
+   * `"liquidaciones[3].netoAcreditado"`) con su valor leído y su confianza — mismo espíritu que ya usa el
+   * proyecto para evidencia (qué campo, con qué score), nunca un score global de documento.
+   *
+   * `undefined` (el default para un adapter que no usa OCR) significa "este adapter no corrió el eje 4
+   * en absoluto" — distinto de un arreglo vacío, que significaría "corrió y no encontró nada que
+   * evaluar". Ningún adapter de la Fase 0 lo declara todavía; Visa débito es el primero.
+   */
+  readonly confianzaDeCaptura?: readonly ConfianzaDeCampo[];
 };
 
 /**

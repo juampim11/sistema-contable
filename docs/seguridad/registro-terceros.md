@@ -21,7 +21,10 @@ en seis meses sin memoria de por qué se dijo no.
 
 | Destino | Para qué se evaluó | Por qué no | Fecha |
 |---|---|---|---|
-| _(vacío)_ | | | |
+| Google Vision | OCR de liquidaciones de tarjeta escaneadas (plan 15) | Descartado por CLAUDE.md §1.4 — mandaría el documento completo de un cliente (facturación, CUIT) a un tercero sin decisión registrada | 2026-08-19 |
+| AWS Textract | OCR de liquidaciones de tarjeta escaneadas (plan 15) | Descartado por CLAUDE.md §1.4 — mandaría el documento completo de un cliente (facturación, CUIT) a un tercero sin decisión registrada | 2026-08-19 |
+| Azure Document Intelligence (API estándar) | OCR de liquidaciones de tarjeta escaneadas (plan 15) | Descartado por CLAUDE.md §1.4 — mandaría el documento completo de un cliente (facturación, CUIT) a un tercero sin decisión registrada | 2026-08-19 |
+| Azure Document Intelligence (contenedores *disconnected*, on-premise) | OCR de liquidaciones de tarjeta escaneadas (plan 15) — caso límite investigado porque sí cumpliría la regla de datos | Descartado igual, por costo/operación desproporcionados (licencia comercial + 8 cores/10-24GB dedicados) contra el volumen real | 2026-08-19 |
 
 ## Cómo se agrega un destino
 

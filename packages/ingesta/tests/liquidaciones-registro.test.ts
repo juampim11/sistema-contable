@@ -29,7 +29,7 @@ import {
   type EntradaDeLiquidacion,
 } from '../src/liquidaciones/registro.ts';
 
-const ENTRADA: EntradaDeLiquidacion = { filas: [] };
+const ENTRADA: EntradaDeLiquidacion = { paginas: [], usoOcrEnPagina: [] };
 
 function adaptadorFalso(formatoCodigo: string, reconoce: boolean): AdaptadorDeLiquidacion {
   return {
