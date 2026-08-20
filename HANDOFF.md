@@ -6,6 +6,142 @@
 
 ---
 
+## 2026-08-20 (88) — Adapter Visa crédito construido y cerrado: commit 2b del plan 14. Dos reglas de matching resueltas con evidencia (arancel por pipe/corchete, `interes_financiacion_cuotas` sin depender del signo `-`), acumulador de percepción IVA a dos tasas con test de mutación, `descuento_contado_adquirente` deliberadamente sin implementar. `pnpm verificar` 75/1605/0 limpio (corrida limpia, sin contención de recursos). Sin push.
+
+**Herramienta:** Claude Code, misma sesión que la entrada 87. Convocados `seguridad-datos-financieros`
+y `security-engineer` antes del primer `Write` de código de producción (mismo requisito que plan 16);
+`backend-dev` escribió el adapter completo con la evidencia ya diagnosticada. Este es el **último
+paso de la sesión** — JP pidió explícitamente no seguir con Cabal, los commits 3/4 del plan 14, ni
+cotización BNA después de esto.
+
+### Lo construido
+
+- `packages/ingesta/src/liquidaciones/formatos/visa-credito.ts` (nuevo) — mismo mecanismo que
+  `visa-debito.ts` (agrupamiento OCR por fila, lectura por etiqueta+proximidad, reintento acotado de
+  `neto_acreditado`, reimplementado local, nunca importado entre adapters — mismo criterio R-M).
+- `packages/ingesta/tests/liquidaciones-visa-credito.test.ts` (nuevo) — contra el documento real,
+  aserciones estructurales.
+- `packages/ingesta/tests/liquidaciones-visa-credito-percepcion.test.ts` (nuevo) — 100% sintético,
+  prueba de mutación puntual para el acumulador de percepción IVA a dos tasas.
+- `packages/ingesta/src/liquidaciones/formatos/visa-debito.ts` — un solo cambio: comentario `TODO`
+  agregado en `MARCAS` (ver más abajo, hallazgo colateral). Ninguna línea de comportamiento tocada.
+
+### Las dos reglas de matching, resueltas con evidencia medida (sesión completa: entradas 87-88)
+
+1. **`arancel`**: `t.includes('ARANCEL') && !/[|[\]]/.test(textoCrudoDeLaFila)` — el pipe/corchete es
+   un artefacto de borde de tabla en encabezados/leyendas, no vocabulario. Medido: separa limpio 20
+   filas reales de 19 sospechosas, sin falso negativo en la muestra. **No** es el mismo token
+   `FINANC` que usa débito — verificado, acá `FINANC` sola solo explica 10 de 19 sospechosas.
+2. **`interes_financiacion_cuotas`** (el catálogo la llama "interés de financiación"; Laura marcó en
+   el documento real que es una **comisión**, no un interés — nota dejada en el código, identificador
+   del catálogo no renombrado): `t.includes('FINANC') && !(t.includes('VENTA') && t.includes('CUOTA'))
+   && !/[|[\]]/.test(cruda)`. **Deliberadamente sin el signo `-` como condición** — medido y
+   descartado: 2/20 filas de `arancel` limpias y 1/21 de `SIRTAC` (ambas confirmadas como deducciones
+   reales) tienen el signo corrompido o ausente por OCR; con el signo como gate, esas filas se
+   habrían perdido en silencio, ni siquiera como `renglon_sin_monto`.
+
+### El acumulador de percepción IVA a dos tasas — con su propio test de mutación
+
+El documento trae **dos renglones de `percepcion_iva_rg2408` por bloque** (dos tasas, plan 14 línea
+217: mismo concepto, no dos conceptos separados). El acumulador `pendientes` pasó de
+`Map<string, TotalLeido>` (un valor) a `Map<string, TotalLeido[]>` (lista) — pero la lista es
+GENÉRICA en el tipo, no en el uso: `CONCEPTOS_SINGULARES` (`arancel`, `iva_21_sobre_arancel`,
+`retencion_iibb_sirtac`, `interes_financiacion_cuotas`, `neto_acreditado`) siguen leyéndose como un
+único valor — no se generalizó el consumo a lo que no se midió repitiendo.
+
+`seguridad-datos-financieros` señaló el riesgo real de este cambio: escribir
+`pendientes.set(concepto, [total])` en vez de acumular con spread pisaría en silencio la primera
+tasa. `acumularPendiente()` es el único punto que escribe en `pendientes` (a propósito, para que ese
+bug solo pueda colarse en un lugar), y
+`liquidaciones-visa-credito-percepcion.test.ts` planta exactamente esa mutación a mano y confirma que
+el test se pone rojo (documentado en el propio archivo: se aplicó, se confirmó el fallo, se revirtió
+antes de cerrar) — cumple CLAUDE.md §1.8 con una prueba de mutación puntual, no el proceso completo
+de ADR-0002 §B.0 (no es una regla verificable de seguridad).
+
+### `descuento_contado_adquirente` — en el catálogo, sin `LineaDeTotal`, a propósito
+
+El catálogo lo define desde el commit 1, pero no se encontró evidencia limpia de una línea propia en
+el documento real: "DESCUENTO" aparece mayormente solapado con `interes_financiacion_cuotas` (24 de
+40 filas coinciden). Queda sin matching, con un comentario explícito en el código — mejor no capturar
+que adivinar un patrón ambiguo que podría absorber la línea equivocada sin que el eje de verificación
+lo note (el peor tipo de error: "cuadra" igual, mal categorizado).
+
+### 🔴 Hallazgo colateral, señalado y NO corregido (fuera de alcance): `reconoceVisaDebito` tiene un bug de detección
+
+Verificado con los dos documentos reales: `"RESUMEN MENSUAL DE LIQUIDACIONES A COMERCIOS"` (la marca
+genérica) aparece en AMBOS documentos, débito y crédito. `reconoceVisaDebito` (ya commiteado, entrada
+80) usa `.some(...)` (OR) entre esa marca y `"TARJETA DE DEBITO PESOS"` — así que esa frase genérica
+sola alcanza para que débito reconozca un documento de crédito como propio. `reconoceVisaCredito`, acá,
+usa AND explícito (marca genérica + `"TARJETA DE CREDITO PESOS"`, verificado que esta última NO
+aparece en el documento de débito — simetría confirmada).
+
+`security-engineer` lo clasificó: **no es un problema de aislamiento entre clientes** (el resolver
+compartido, `registro.ts`, falla cerrado a `ambiguo` cuando dos adapters compiten, sin exponer dato
+de cliente en ese caso), pero **sí es bloqueante funcional** para el día que ambos adapters queden
+registrados juntos contra el resolver real: el 100% de los documentos de crédito reales resolverían
+`ambiguo`, no un caso borde. **No corregido en esta sesión** — es un archivo ya commiteado y
+revisado, fuera del alcance de "construir el adapter de crédito", requiere su propia autorización.
+Dejado como comentario `TODO` explícito en la línea de `MARCAS` de `visa-debito.ts`, apuntando a esta
+entrada — CLAUDE.md §1.8: un hallazgo señalado en prosa y no convertido en trabajo real no cuenta.
+**Corregir antes de registrar los dos adapters juntos** (commit 4, CLI/persistencia, sin arrancar
+todavía).
+
+### Timeout del test real de crédito — medido, no adivinado
+
+El test contra el documento real usaba el timeout heredado de débito (360 000 ms, 8 páginas). Medido
+en esta sesión: **379 s** con 9 páginas + varios reintentos de `neto_acreditado` disparados — más que
+débito, insuficiente. Corregido a 600 000 ms, con la misma salvedad de HANDOFF 83 (la duración de un
+pipeline con OCR real puede variar entre lanzamientos, no se toma como cifra estable).
+
+### El resultado medido contra el documento real — honesto, no un pipeline terminado
+
+Una corrida real interpretó 6 bloques completos de las 17 liquidaciones confirmadas (misma limitación
+de cobertura parcial de OCR que ya documenta débito extensamente). De esos 6, **dos trajeron 3 y 4
+renglones de `percepcion_iva_rg2408` en vez de 2** — la causa medida no es el acumulador (que tiene su
+propio test de mutación verde): es que `ES_LINEA_CIERRE` no reconoció la línea de cierre de una
+liquidación real, así que sus renglones se fusionaron con los del siguiente cierre que sí se
+reconoció. No es invisible: el eje 1 (`verificarAritmeticaPorLiquidacion`) da `no_cuadra` sobre un
+bloque así, porque la suma de dos liquidaciones no reproduce el neto de una sola. **No corregido con
+una heurística sin medir** (por ejemplo "más de 2 percepciones ⇒ cortar el bloque" sería adivinar cuál
+de los dos cierres reales es el correcto) — queda como candidato de iteración futura, no bloqueante.
+
+Con esta salvedad de HANDOFF 83 explícita: la cobertura exacta (6 de 17, o el conteo de renglones por
+bloque) es una medición puntual de esta sesión, no una cifra estable — puede variar entre
+lanzamientos del proceso, misma causa no identificada que documenta esa entrada.
+
+### Verificación — corrida limpia, sin contención de recursos
+
+Se detectó y descartó una fuente de ruido durante esta sesión: correr el gate completo en paralelo
+con la propia verificación del agente `backend-dev` (dos-tres procesos de OCR real compitiendo por
+memoria/CPU al mismo tiempo) produjo fallas espurias en tests **no relacionados** con este adapter
+(`anexos.test.ts`, `inv6-resolucion.test.ts`, `persistir.test.ts` — este último con una aserción de
+**aislamiento entre clientes**, que preocupó lo suficiente como para verificarla aparte). Las tres
+pasan limpio en aislamiento, sin nada compitiendo — confirmado, no es una regresión real ni un
+problema de aislamiento. La corrida limpia final (sin contención):
+
+- `pnpm verificar`: **75 archivos / 1605 tests pasados / 7 todo / 0 fallas** (335 s).
+- `pnpm barrido`: 971 archivos, 1544 candidatos, limpio.
+- `pnpm typecheck`: limpio.
+- R-P: `ocr.ts` sigue siendo el único importador de `tesseract.js`.
+
+### Qué falta, explícito
+
+- **`reconoceVisaDebito` sigue con el bug de detección** (arriba) — corregir antes de registrar
+  ambos adapters juntos, commit 4 (CLI/persistencia).
+- Los bloques que se fusionan por `ES_LINEA_CIERRE` no reconocido (percepción con 3-4 renglones)
+  quedan sin investigar — candidato de iteración futura.
+- `descuento_contado_adquirente` sigue sin matching — necesita evidencia más limpia del documento
+  real, o una decisión explícita de JP de no implementarlo.
+- El margen de reintento de `neto_acreditado` (70px) se heredó de débito, **no se remidió
+  específicamente contra el documento de crédito** — pendiente si hiciera falta optimizar cobertura.
+- Commits 3/4 del plan 14 (migración de esquema, CLI/persistencia), Visa crédito con Cabal, y
+  cotización BNA **no arrancan en esta sesión** — instrucción explícita de JP, quedan para la
+  próxima.
+- Piloto y cotización BNA sin tocar en toda la sesión (confirmado: `git status` no muestra ningún
+  archivo fuera de `packages/ingesta/` y `HANDOFF.md`).
+
+---
+
 ## 2026-08-20 (87) — Diagnóstico de Visa crédito (02-extracto_visa_credito_roka.pdf), antes de escribir el adapter: 9 páginas, enteramente escaneado (requiere OCR), 17 bloques/liquidaciones (dos métodos independientes coinciden), los 7 conceptos pedidos existen en el texto real — pero `arancel` repite el mismo riesgo de falso positivo que débito, y `descuento_financiacion` tiene uno NUEVO y más serio: colisiona con `venta_cuotas` por compartir el token `FINANC`. Sin escribir ningún adapter ni código de producción.
 
 **Herramienta:** Claude Code, misma sesión. JP pidió el mismo método que se usó para débito antes del

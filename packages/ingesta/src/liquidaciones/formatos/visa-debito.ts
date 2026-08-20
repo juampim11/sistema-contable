@@ -104,7 +104,25 @@ export const CAPACIDADES_VISA_DEBITO: CapacidadesDeFormato = {
   traePercepcionIva: true,
 };
 
-/** Marcas del formato (vocabulario impreso por Visa, igual para todo comercio — nunca un dato del cliente). */
+/**
+ * Marcas del formato (vocabulario impreso por Visa, igual para todo comercio — nunca un dato del
+ * cliente).
+ *
+ * 🔴 **TODO — bug funcional, no de aislamiento, confirmado con evidencia (HANDOFF, entrada del
+ * diagnóstico de Visa crédito, 2026-08-20): la primera marca ("RESUMEN MENSUAL DE LIQUIDACIONES A
+ * COMERCIOS") también aparece en el documento real de Visa crédito** — verificado contra
+ * `privado/tarjetas/02-extracto_visa_credito_roka.pdf`. `reconoceVisaDebito` usa `.some(...)` (OR)
+ * más abajo, así que esa sola frase alcanza para que este adapter reconozca un documento de crédito
+ * como propio. Confirmado por `security-engineer`: no es una fuga entre clientes (el resolver
+ * compartido, `registro.ts`, falla cerrado a `ambiguo` cuando dos adapters compiten y no expone dato
+ * de cliente en ese caso) pero SÍ es bloqueante para el día que ambos adapters queden registrados
+ * juntos — con `reconoceVisaCredito` ya exigiendo AND (marca genérica + marca específica de
+ * crédito), el 100 % de los documentos de crédito reales resolverían `ambiguo` contra el resolver
+ * real, no un caso borde. **Corregir antes de esa integración**: cambiar esta detección a AND (marca
+ * genérica + `TARJETA DE DEBITO PESOS`), mismo criterio que ya usa `reconoceVisaCredito`. No
+ * corregido acá a propósito — fuera del alcance de la tarea que lo encontró (construir el adapter de
+ * crédito), requiere su propia confirmación antes de tocar un adapter ya commiteado y revisado.
+ */
 const MARCAS = [/RESUMEN MENSUAL DE LIQUIDACIONES A COMERCIOS/, /TARJETA DE DEBITO PESOS/];
 
 /** Ver el comentario de cabecera: medido contra la página 1 del documento real. */
