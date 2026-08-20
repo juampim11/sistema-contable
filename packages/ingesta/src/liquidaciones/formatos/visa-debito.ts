@@ -156,13 +156,21 @@ const MARGEN_REINTENTO_NETO_PX = 70;
 /**
  * Tope de reintentos de OCR por `reconocerRecorte` en TODO el documento — cuenta **intentos** (cada
  * llamada, éxito o fracaso), no solo fallos: lo que se acota es tiempo/CPU total del lote, no la tasa de
- * éxito. El documento real tiene 21 liquidaciones (una llamada como máximo por liquidación, porque el
- * reintento solo dispara para `neto_acreditado`); un documento mensual legítimo del mismo comercio podría
- * llegar a ~31. 30 da margen sobre eso sin dejar que un bug de matching (una etiqueta que hiciera
- * `esLinea` positivo de más, por ejemplo) dispare cientos de reintentos contra un documento degenerado.
- * Al llegar al tope, `SalidaDeLiquidacion.topeDeReintentosAlcanzado = true` y las filas restantes que
- * hubieran disparado un reintento caen directo a `renglon_sin_monto` sin intentarlo — ver
- * `reintentarNetoAcreditado`.
+ * éxito (una llamada como máximo por liquidación, porque el reintento solo dispara para
+ * `neto_acreditado`).
+ *
+ * El número de liquidaciones de un documento es el conteo de líneas de cierre (`ES_LINEA_CIERRE`) que
+ * detecta este mismo adapter — **no** un valor fijo citado de memoria: una cifra así queda
+ * desactualizada en cuanto cambia el documento de medición o el método usado para contarlo (pasó una
+ * vez ya: HANDOFF 86 corrige un "21" que en realidad contaba filas con forma de etiqueta de
+ * `neto_acreditado`, HANDOFF 83, no bloques/líneas de cierre — el número real, verificado por dos
+ * caminos independientes, es 19: 18 líneas de cierre + 1 bloque sin cerrar al final del documento).
+ * `TOPE = 30` da margen amplio (casi el doble) sobre esa medición, y sigue dando margen razonable
+ * aunque el conteo real de liquidaciones de otro documento varíe — sin dejar que un bug de matching
+ * (una etiqueta que hiciera `esLinea` positivo de más, por ejemplo) dispare cientos de reintentos
+ * contra un documento degenerado. Al llegar al tope, `SalidaDeLiquidacion.topeDeReintentosAlcanzado =
+ * true` y las filas restantes que hubieran disparado un reintento caen directo a `renglon_sin_monto`
+ * sin intentarlo — ver `reintentarNetoAcreditado`.
  */
 export const TOPE_REINTENTOS_NETO_POR_DOCUMENTO = 30;
 

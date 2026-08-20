@@ -6,6 +6,147 @@
 
 ---
 
+## 2026-08-20 (86) — Corregida la premisa "21 liquidaciones": el "21" de las entradas 83/84 contaba filas con forma de etiqueta de `neto_acreditado`, no bloques/líneas de cierre — se propagó sin verificar. El número real, confirmado por dos caminos independientes, es 19 (18 líneas de cierre + 1 bloque sin cerrar al final). La medición 13/19 de la entrada 85 sigue siendo el dato válido; el tope de 30 no se ve afectado (sigue casi el doble de margen). Comentario de `visa-debito.ts` corregido para describir el método, no citar una cifra fija.
+
+**Herramienta:** Claude Code, misma sesión. JP pidió investigar la diferencia 19 vs. 21 (entrada 85)
+antes de commitear, con prioridad sobre los residuales de página 8. Diagnóstico puro, sin tocar
+código de producción — dos scripts temporales, corridos y borrados al terminar.
+
+### De dónde salió el "21", y cómo se propagó sin verificar
+
+El "21" no nació como un conteo de liquidaciones. Viene de HANDOFF 83, que midió algo distinto y lo
+dice explícito en su propio texto: *"agrupar filas OCR con tolerancia 20px,
+`t.includes('IMPORTE') && t.includes('NETO') && t.includes('PAGO')` normalizada"* — eso cuenta
+**filas con forma de etiqueta de `neto_acreditado`** (cuántas veces aparece algo que parece la
+etiqueta "IMPORTE NETO DE PAGOS"), no líneas de cierre ni bloques de liquidación.
+
+Al escribir el comentario de `TOPE_REINTENTOS_NETO_POR_DOCUMENTO` en `visa-debito.ts` durante la
+entrada 84, ese "21" se citó como *"el documento real tiene 21 liquidaciones"* — heredando el número
+de HANDOFF 83 sin verificar que las dos métricas (filas-de-etiqueta-neto vs. bloques-de-liquidación)
+fueran la misma cosa. No lo son necesariamente, y en este documento no lo son: la relación entre
+"cuántas filas parecen la etiqueta de neto" y "cuántos bloques cierra el adapter" nunca se confirmó
+antes de escribirse como hecho.
+
+### La verificación cruzada: dos caminos independientes, mismo resultado — 19, no 21
+
+1. **El script de medición de la entrada 85** llamó directo a las funciones exportadas de producción
+   (`extraerConOcrSiHaceFalta`, `reconoceVisaDebito`, `leerVisaDebito`), sin reimplementar nada —
+   contó 19 bloques totales (13 completos + 6 incompletos) por el mecanismo real del adapter: cada
+   línea de cierre (`ES_LINEA_CIERRE`) que se detecta cierra un bloque, más una entrada sintética que
+   `leerVisaDebito` agrega una sola vez al final del documento si algo quedó pendiente sin cerrar.
+2. **Un segundo script, de solo lectura**, copió textualmente (sin modificar el archivo original) las
+   funciones privadas `agruparPalabrasEnFilas`/`ES_LINEA_CIERRE`/`TOLERANCIA_FILA_OCR` para contar
+   las líneas de cierre reales de forma independiente, sobre las 612 filas OCR de las 8 páginas:
+   **18 líneas de cierre reales**. `18 + 1 (bloque sin cerrar al final) = 19` — coincide exacto con
+   el resultado 1, confirmando que no hay divergencia de criterio entre el script de medición y el
+   código de producción.
+
+Búsqueda adicional de "casi cierre" (filas con `ACRED` sin `PAGO`, o `PAGO` sin `ACRED` — 52 en
+total, forma enmascarada vía `formaDeLineaDeLiquidacion`, nunca texto ni dígitos reales): ninguna
+tiene forma de línea de cierre corrompida por OCR parcial. Las de solo `PAGO` son la propia etiqueta
+de `neto_acreditado`; las de solo `ACRED` aparecen de forma uniforme (1-3 veces) en las 8 páginas —
+forma de un elemento distinto y recurrente del documento, no de un cierre perdido. **Sin evidencia
+de que existan 2 bloques reales que el agrupamiento no detecte.**
+
+### Qué queda establecido, y qué sigue igual
+
+- **19 es el número correcto** de bloques totales que este adapter detecta hoy en el documento real
+  (13 completos, 6 incompletos) — no 21. El "21" de las entradas 83/84 medía filas-de-etiqueta-neto,
+  una cosa distinta, y no debe leerse como "liquidaciones del documento".
+- **La medición 13/19 (68%) de la entrada 85 sigue siendo el dato válido** — no cambia con esta
+  corrección, que es sobre el denominador citado en un comentario, no sobre el resultado medido.
+- **El tope `TOPE_REINTENTOS_NETO_POR_DOCUMENTO = 30` no se ve afectado en la práctica**: seguía
+  dando margen amplio sobre 21, y sigue dando margen amplio (casi el doble) sobre el número correcto,
+  19. No hace falta recalcularlo.
+- **Comentario corregido en `visa-debito.ts`**: en vez de citar una cifra fija (que ya quedó
+  desactualizada una vez), ahora describe el **método** — "el número de liquidaciones es el conteo
+  de líneas de cierre que detecta este mismo adapter" — y cita esta entrada como la verificación más
+  reciente. Cambio de comentario únicamente, sin cambio de comportamiento: `MARGEN_REINTENTO_NETO_PX`,
+  `TOPE_REINTENTOS_NETO_POR_DOCUMENTO` y toda la lógica de `reintentarNetoAcreditado` quedan
+  intactos.
+
+### Qué falta, explícito
+
+- Los 6 residuales (páginas 3, 5×2, 6, 7, 8) de la entrada 85 siguen sin investigar — JP los dejó
+  como prioridad menor a esta corrección, siguen pendientes.
+- No se investigó si el residual de página 8 de esta medición es el mismo caso "página 8" que
+  documentó la entrada 83 (fragmentos con estructura pero sin forma de importe válida) o si es la
+  entrada sintética de "bloque sin cerrar al final del documento" — quedan sin distinguir.
+- Ningún código de comportamiento se tocó — solo el comentario de `visa-debito.ts`. `pnpm verificar`
+  se corrió de nuevo después del cambio para confirmarlo (ver resultado en el commit).
+
+---
+
+## 2026-08-20 (85) — Medición de cobertura total del adapter Visa débito post-commit a84c76b: 13/19 liquidaciones cierran completas, estable en dos lanzamientos separados — PERO "página 8" YA NO es el único residual (aparecen 6 bloques incompletos en páginas 3/5/5/6/7/8) y el total de bloques detectados bajó de 21 a 19 frente a la medición de la entrada 83/84. Solo medición, sin tocar código.
+
+**Herramienta:** Claude Code, misma sesión. JP pidió medir la cobertura total del adapter (las 21
+liquidaciones del documento completo, no una muestra) contra lo ya commiteado en `a84c76b`, con el
+mismo criterio de estabilidad usado para `MARGEN` (dos corridas, en lanzamientos de proceso
+separados) y preguntando explícitamente si "página 8" seguía siendo el único caso residual ahora que
+el reintento de `neto_acreditado` está activo. **No se tocó código de producción** — se escribió un
+test temporal (`packages/ingesta/tests/tmp-medir-cobertura-total.test.ts`), se corrió dos veces, y se
+borró al terminar (confirmado con `git status` limpio).
+
+### Método
+
+Mismo pipeline real que ya usa `liquidaciones-visa-debito.test.ts` (`extraerConOcrSiHaceFalta` +
+`reconoceVisaDebito` + `leerVisaDebito` contra `privado/tarjetas/01-extracto_visa_debito_roka.pdf`),
+sin mocks. `salida.liquidaciones` ya son, por diseño del adapter, exactamente los bloques con los
+tres campos obligatorios completos (`ventasBrutas`, `netoAcreditado`, `fechaPresentacion`) — un
+bloque incompleto nunca llega ahí, cae en `lineasNoInterpretadas` con código
+`bloque_de_totales_no_interpretado`. El script solo imprimió conteos y `paginaPdf` — nunca texto ni
+importes reales (mismo criterio anti-fuga del resto del paquete).
+
+### Resultado — **estable en las dos corridas, idéntico byte a byte**
+
+Dos lanzamientos de proceso separados (`npx vitest run` invocado dos veces, procesos de Node
+distintos, no la misma corrida repetida):
+
+| corrida | cierran / total detectado | residuales (página, código) |
+|---|---|---|
+| 1 | 13/19 | (3), (5), (5), (6), (7), (8) — todos `bloque_de_totales_no_interpretado` |
+| 2 | 13/19 | (3), (5), (5), (6), (7), (8) — idéntico |
+
+**A diferencia de la variación entre lanzamientos que documentó la entrada 83**, acá las dos corridas
+dieron el mismo resultado exacto. Con el criterio de la entrada 83: esto es evidencia de estabilidad
+en **estas dos** corridas puntuales, no una garantía general — la entrada 83 también partió de
+mediciones que parecían estables dentro de una tanda y variaron entre tandas separadas por horas.
+
+### 🔴 Página 8 ya NO es el único caso residual — y el total de bloques detectados cambió
+
+Dos hallazgos que contradicen la expectativa con la que se cerró la entrada 84:
+
+1. **Aparecen 6 bloques incompletos, no 1.** La entrada 83 documentaba "página 8" como el único
+   residual sobre una muestra de 12 filas que fallaban. Esta medición, contra el documento completo y
+   con el reintento de `neto_acreditado` ya activo, encuentra bloques incompletos en **5 páginas
+   distintas** (3, 5 —dos veces—, 6, 7, 8). No se investigó todavía **por qué** cada uno queda
+   incompleto (podría ser `neto_acreditado` fuera del alcance del reintento por algún motivo, o
+   cualquiera de los otros 4 conceptos de `LINEAS_DE_TOTAL`, que no tienen reintento) — eso queda
+   como trabajo pendiente, no una conclusión de esta entrada.
+2. **El total de bloques detectados es 19, no 21.** Las entradas 81-84 citan consistentemente "21
+   liquidaciones"/"21 bloques" como el punto de partida fijo del documento. Esta medición ve 19. Esto
+   es una discrepancia **adicional** a la ya documentada en la entrada 83 (que era sobre cuántas
+   *pasan*, no sobre cuántas se *detectan* en primer lugar) — no se investigó la causa en esta
+   entrada; se deja registrada como dato nuevo, no como ruido a ignorar.
+
+**Consecuencia directa para el criterio de reporte de la entrada 83**: la salvedad de "puede variar
+entre lanzamientos del proceso" sigue vigente y ahora se confirma que no es solo sobre el conteo de
+filas que pasan — también puede afectar cuántos bloques se detectan en primer lugar. Ninguna cifra de
+este módulo (13/19, 19 bloques totales, ni la lista de páginas residuales) se trata como estable más
+allá de estas dos corridas.
+
+### Qué falta, explícito
+
+- **No se investigó la causa de ninguno de los dos hallazgos** (los 5 residuales nuevos, ni la
+  diferencia 19 vs. 21) — JP pidió solo medir, no tocar código. Ambas quedan como próximo paso a
+  decidir con JP.
+- El test temporal se borró — si se quiere repetir esta medición, hay que rehacerlo (no quedó en el
+  repo a propósito, mismo criterio que los scripts de medición anteriores de esta sesión).
+- Nada de esto tocó `ocr.ts`/`visa-debito.ts`/`parseo-ar.ts` ni el commit `a84c76b`. Piloto y
+  cotización BNA sin tocar.
+
+---
+
 ## 2026-08-20 (84) — Plan 16 implementado en 3 pasos revertibles (recorte+reintento OCR para `neto_acreditado`): `leer()` async, `MARGEN` remedido a 70px, tope de 30 con señal `topeDeReintentosAlcanzado`, `code-reviewer` y `tester` convocados y sin bloqueantes. `pnpm verificar` 73/1602/0 (7 todo), barrido limpio. Sin commitear — a la espera de confirmación de JP.
 
 **Herramienta:** Claude Code, misma sesión que las entradas 81-83. JP aprobó el plan formal (modo
