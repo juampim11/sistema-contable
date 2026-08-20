@@ -29,7 +29,7 @@ import {
   type EntradaDeLiquidacion,
 } from '../src/liquidaciones/registro.ts';
 
-const ENTRADA: EntradaDeLiquidacion = { paginas: [], usoOcrEnPagina: [] };
+const ENTRADA: EntradaDeLiquidacion = { paginas: [], usoOcrEnPagina: [], pixelesDePagina: [] };
 
 function adaptadorFalso(formatoCodigo: string, reconoce: boolean): AdaptadorDeLiquidacion {
   return {
@@ -41,7 +41,8 @@ function adaptadorFalso(formatoCodigo: string, reconoce: boolean): AdaptadorDeLi
       traePercepcionIva: false,
     },
     reconoce: () => reconoce,
-    leer: () => ({ liquidaciones: [], lineasNoInterpretadas: [] }),
+    // `leer` es `Promise` desde el plan 16 paso 3 (ver `registro.ts`): el falso de prueba también.
+    leer: () => Promise.resolve({ liquidaciones: [], lineasNoInterpretadas: [] }),
   };
 }
 

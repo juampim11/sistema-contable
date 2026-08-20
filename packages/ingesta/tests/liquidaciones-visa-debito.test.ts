@@ -45,7 +45,7 @@ describe.skipIf(!TIENE_FIXTURE)('adapter Visa débito contra el documento real',
     async () => {
       const contenido = new Uint8Array(await readFile(RUTA_FIXTURE));
 
-      const [{ paginas, usoOcrEnPagina }, texto] = await Promise.all([
+      const [{ paginas, usoOcrEnPagina, pixelesDePagina }, texto] = await Promise.all([
         extraerConOcrSiHaceFalta(contenido),
         extraerTexto(contenido),
       ]);
@@ -54,13 +54,17 @@ describe.skipIf(!TIENE_FIXTURE)('adapter Visa débito contra el documento real',
       expect(texto.requiereOcr).toBe(true);
       expect(usoOcrEnPagina.every((u) => u === true)).toBe(true);
 
-      const entrada: EntradaDeLiquidacion = { paginas, usoOcrEnPagina };
+      const entrada: EntradaDeLiquidacion = { paginas, usoOcrEnPagina, pixelesDePagina };
 
       expect(reconoceVisaDebito(entrada)).toBe(true);
 
-      const salida = leerVisaDebito(entrada);
+      const salida = await leerVisaDebito(entrada);
 
-      // Al menos una liquidación reconocida — el documento trae varias por página.
+      // Al menos una liquidación reconocida — el documento trae varias por página. Desde el plan 16
+      // paso 3 (reintento sobre recorte para `neto_acreditado`) este conteo puede ser mayor que antes,
+      // pero sigue sin fijarse como cifra puntual: HANDOFF 83 documentó que la cobertura de OCR sobre
+      // este mismo documento varió entre lanzamientos del proceso (7/14 y 9/12 filas, causa no
+      // identificada) — medido en esta sesión (2026-08-20), puede variar entre lanzamientos.
       expect(salida.liquidaciones.length).toBeGreaterThan(0);
 
       const procesada = liquidacionProcesadaSchema.safeParse({
@@ -106,7 +110,8 @@ describe.skipIf(!TIENE_FIXTURE)('adapter Visa débito contra el documento real',
         expect(/\d{3,}/.test(linea.forma)).toBe(false);
       }
     },
-    // OCR real sobre 8 páginas: medido en ~90s en esta máquina. Margen generoso.
-    240_000,
+    // OCR real sobre 8 páginas (~90s medido) + hasta 14 reintentos reales de `reconocerRecorte` (plan
+    // 16 paso 3, uno por fila de `neto_acreditado` que falle en la primera lectura). Margen generoso.
+    360_000,
   );
 });

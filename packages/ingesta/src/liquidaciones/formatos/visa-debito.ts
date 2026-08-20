@@ -78,8 +78,8 @@
 
 import { parsearFecha, parsearImporte } from '../../parseo-ar.ts';
 import { normalizar } from '@sistema-contable/shared/texto';
-import type { PalabraOcr, PaginaOcr } from '../../ocr.ts';
-import type { FilaGeometrica } from '../../texto-pdf.ts';
+import { reconocerRecorte, type PalabraOcr, type PaginaOcr } from '../../ocr.ts';
+import type { FilaGeometrica, PixelesDePagina } from '../../texto-pdf.ts';
 import { formaDeLineaDeLiquidacion } from '../contrato.ts';
 import { evaluarConfianzaDeCaptura, type ConfianzaDeCampo } from '../captura.ts';
 import type {
@@ -109,6 +109,62 @@ const MARCAS = [/RESUMEN MENSUAL DE LIQUIDACIONES A COMERCIOS/, /TARJETA DE DEBI
 
 /** Ver el comentario de cabecera: medido contra la página 1 del documento real. */
 const TOLERANCIA_FILA_OCR = 20;
+
+/**
+ * Margen vertical (px) de la banda `[fila.y − MARGEN, fila.y + MARGEN)` que se recorta para el
+ * reintento de `neto_acreditado` (plan 16, paso 3). Recortada contra `[0, pixeles.height]` — ver
+ * `reintentarNetoAcreditado`.
+ *
+ * ## La evidencia que lo fija — barrido real, mismo criterio que `UMBRAL_CONFIANZA_MINIMA` (`captura.ts`)
+ *
+ * Medido corriendo el pipeline real (`extraerConOcrSiHaceFalta` + `reconocerRecorte`, la función de
+ * producción, no una reimplementación) contra las 8 páginas del documento real
+ * (`privado/tarjetas/01-extracto_visa_debito_roka.pdf`), sobre las **14 filas de `neto_acreditado` que
+ * fallan hoy** (21 detectadas, 7 pasan / 14 fallan — coincide con HANDOFF 81/82 y con la medición
+ * histórica de HANDOFF 83). Para cada margen candidato se recortó `[fila.y − margen, fila.y + margen)`
+ * y se contó cuántas de las 14 filas recuperan un token con forma de importe válida
+ * (`parsearImporte`, no negativo):
+ *
+ * | margen (px) | recuperadas / 14 |
+ * |---|---|
+ * | 30 | 13 |
+ * | 40 | 13 |
+ * | 50 | 13 |
+ * | 60 | 13 |
+ * | 70 | **14** |
+ *
+ * **70px es el único valor que recupera el 100 % de la muestra** — los otros cuatro empatan en 13/14
+ * (la misma fila queda sin recuperar en los cuatro). Corrida **dos veces**, en lanzamientos de proceso
+ * separados: el patrón fue **idéntico byte a byte** las dos veces (mismo total detectado, mismos
+ * conteos por margen) — sin la variación entre lanzamientos que documenta HANDOFF 83 para la medición
+ * de *cobertura del pipeline completo*. No se puede afirmar que esta medición puntual (recuperación
+ * estructural por margen, sin pasar por `leerVisaDebito` entero) esté exenta de esa variación en
+ * general — dos corridas no cierran esa duda —, pero el resultado observado acá es estable y el
+ * patrón (70 gana, con margen claro sobre 30-60) es lo que gobierna la elección, no un número puntual
+ * frágil.
+ *
+ * Por qué no se probó más allá de 70: fuera del alcance pedido para este paso (barrido 30-70). Un
+ * margen mayor arriesga capturar contenido de la fila vecina (el documento es denso, con liquidaciones
+ * apiladas) — si eso ocurriera, sería un "recuperado" estructuralmente correcto pero con el valor de
+ * otra fila, y el eje 1 (`verificarAritmeticaPorLiquidacion`) es la red que lo detectaría, no esta
+ * medición. Ver también: el mecanismo solo puede MEJORAR la cobertura (nunca la empeora) porque el
+ * reintento únicamente se dispara cuando la primera lectura ya falló — no hay regresión posible sobre
+ * las filas que hoy pasan.
+ */
+const MARGEN_REINTENTO_NETO_PX = 70;
+
+/**
+ * Tope de reintentos de OCR por `reconocerRecorte` en TODO el documento — cuenta **intentos** (cada
+ * llamada, éxito o fracaso), no solo fallos: lo que se acota es tiempo/CPU total del lote, no la tasa de
+ * éxito. El documento real tiene 21 liquidaciones (una llamada como máximo por liquidación, porque el
+ * reintento solo dispara para `neto_acreditado`); un documento mensual legítimo del mismo comercio podría
+ * llegar a ~31. 30 da margen sobre eso sin dejar que un bug de matching (una etiqueta que hiciera
+ * `esLinea` positivo de más, por ejemplo) dispare cientos de reintentos contra un documento degenerado.
+ * Al llegar al tope, `SalidaDeLiquidacion.topeDeReintentosAlcanzado = true` y las filas restantes que
+ * hubieran disparado un reintento caen directo a `renglon_sin_monto` sin intentarlo — ver
+ * `reintentarNetoAcreditado`.
+ */
+export const TOPE_REINTENTOS_NETO_POR_DOCUMENTO = 30;
 
 // -----------------------------------------------------------------------------
 // Filas visuales sobre palabras OCR — reimplementado local, nunca importado de `toolkit.ts` (R-M).
@@ -248,6 +304,60 @@ function leerLineaDeTotal(fila: FilaOcr): TotalLeido | null {
   return { monto, palabraMonto: ultimo };
 }
 
+/** Estado mutable del reintento de `neto_acreditado`, compartido por todo el documento. */
+type EstadoReintentoNeto = { contador: number; topeAlcanzado: boolean };
+
+/**
+ * Reintento ACOTADO, solo para `neto_acreditado` (nunca para los otros cuatro conceptos de
+ * `LINEAS_DE_TOTAL`): cuando `leerLineaDeTotal` no encontró un importe válido en la fila agrupada por
+ * texto, se recorta la banda vertical `[fila.y − MARGEN, fila.y + MARGEN)` de la página cruda —recortada
+ * contra `[0, pixeles.height]`— y se le vuelve a pedir a Tesseract que la lea SOLA, sin el resto de la
+ * página densa compitiendo por la segmentación automática (dictamen `arquitecto-software`,
+ * `docs/diseno/16-preprocesamiento-neto-acreditado-plan.md`: aislar la fila en su propio recorte, sin
+ * preprocesar un solo píxel, recupera el 100 % de la muestra medida — ninguna técnica de preprocesamiento
+ * la supera).
+ *
+ * **Nunca propaga una excepción.** Un `ErrorDeOcr` (cualquiera de sus códigos) o cualquier otro error de
+ * `reconocerRecorte` se trata exactamente igual que "el reintento no recuperó nada": cae a
+ * `renglon_sin_monto` como si no se hubiera intentado. El texto de la fila o el error crudo nunca entran
+ * a un string armado — si hace falta describir algo, es `formaDeLineaDeLiquidacion`, nunca el texto ni el
+ * objeto de error.
+ *
+ * `estado.contador` cuenta **intentos** (cada llamada a `reconocerRecorte`, éxito o fracaso), no solo
+ * fallos: lo que se acota es tiempo/CPU total del lote, no la tasa de éxito. Ver
+ * `TOPE_REINTENTOS_NETO_POR_DOCUMENTO`.
+ */
+async function reintentarNetoAcreditado(
+  pixeles: PixelesDePagina | null | undefined,
+  numeroPagina: number,
+  fila: FilaOcr,
+  estado: EstadoReintentoNeto,
+): Promise<TotalLeido | null> {
+  if (!pixeles) return null; // sin píxeles disponibles para esta página: no hay nada que recortar.
+
+  if (estado.contador >= TOPE_REINTENTOS_NETO_POR_DOCUMENTO) {
+    estado.topeAlcanzado = true;
+    return null;
+  }
+
+  const y0 = Math.max(0, fila.y - MARGEN_REINTENTO_NETO_PX);
+  const y1 = Math.min(pixeles.height, fila.y + MARGEN_REINTENTO_NETO_PX);
+  if (y0 >= y1) return null; // banda degenerada (página sin alto útil): nada que recortar, no es un intento.
+
+  estado.contador += 1;
+  try {
+    const recorte = await reconocerRecorte(pixeles, y0, y1);
+    const filaRecorte: FilaOcr = {
+      pagina: numeroPagina,
+      y: fila.y,
+      palabras: [...recorte.palabras].sort((a, b) => a.x - b.x),
+    };
+    return leerLineaDeTotal(filaRecorte);
+  } catch {
+    return null;
+  }
+}
+
 type CierreLeido = {
   readonly fechaDePago: string | null;
   readonly palabraFechaDePago: PalabraOcr | null;
@@ -279,11 +389,12 @@ function leerLineaDeCierre(fila: FilaOcr): CierreLeido {
 // El adapter
 // -----------------------------------------------------------------------------
 
-export function leerVisaDebito(entrada: EntradaDeLiquidacion): SalidaDeLiquidacion {
+export async function leerVisaDebito(entrada: EntradaDeLiquidacion): Promise<SalidaDeLiquidacion> {
   const liquidaciones: LiquidacionLeida[] = [];
   const lineasNoInterpretadas: LineaNoInterpretadaDeLiquidacion[] = [];
   const confianzaDeCaptura: ConfianzaDeCampo[] = [];
   let totalConsolidadoDeclarado: string | undefined;
+  const estadoReintento: EstadoReintentoNeto = { contador: 0, topeAlcanzado: false };
 
   // Acumulador del bloque en construcción: lo que se leyó desde el último cierre.
   let pendientes = new Map<string, TotalLeido>();
@@ -354,7 +465,16 @@ export function leerVisaDebito(entrada: EntradaDeLiquidacion): SalidaDeLiquidaci
       const linea = LINEAS_DE_TOTAL.find((l) => l.esLinea(textoNormalizado));
       if (linea === undefined) continue; // encabezado de tabla, renglón de detalle, ruido: reconocido, se ignora.
 
-      const total = leerLineaDeTotal(fila);
+      let total = leerLineaDeTotal(fila);
+      if (total === null && linea.concepto === 'neto_acreditado') {
+        // Reintento ACOTADO, solo para este concepto. Ver `reintentarNetoAcreditado`.
+        total = await reintentarNetoAcreditado(
+          entrada.pixelesDePagina[indicePagina],
+          numeroPagina,
+          fila,
+          estadoReintento,
+        );
+      }
       if (total === null) {
         lineasNoInterpretadas.push({
           codigo: 'renglon_sin_monto',
@@ -384,6 +504,9 @@ export function leerVisaDebito(entrada: EntradaDeLiquidacion): SalidaDeLiquidaci
     lineasNoInterpretadas,
     ...(totalConsolidadoDeclarado === undefined ? {} : { totalConsolidadoDeclarado }),
     confianzaDeCaptura,
+    // `undefined` (omitido) cuando no se activó — mismo patrón que `totalConsolidadoDeclarado`: la
+    // ausencia se representa, nunca se rellena con `false`.
+    ...(estadoReintento.topeAlcanzado ? { topeDeReintentosAlcanzado: true } : {}),
   };
 }
 

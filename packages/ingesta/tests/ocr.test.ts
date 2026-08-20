@@ -8,7 +8,8 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dimensionesImagen, reconocerImagen, ErrorDeOcr } from '../src/ocr.ts';
+import { dimensionesImagen, reconocerImagen, reconocerRecorte, ErrorDeOcr } from '../src/ocr.ts';
+import type { PixelesDePagina } from '../src/texto-pdf.ts';
 
 // -----------------------------------------------------------------------------
 // `dimensionesImagen` — sin decodificar, solo cabecera.
@@ -84,6 +85,40 @@ describe('reconocerImagen — guardas de tamaño y dimensión', () => {
       expect(e).toBeInstanceOf(ErrorDeOcr);
       expect((e as ErrorDeOcr).codigo).toBe('imagen_demasiado_grande');
     }
+  });
+});
+
+// -----------------------------------------------------------------------------
+// `reconocerRecorte` — plan 16, paso 2. Rectángulo sintético de un solo color, nunca un documento real.
+// -----------------------------------------------------------------------------
+
+/** Un rectángulo gris parejo, 1 canal — mismo criterio anti-fuga que el resto del archivo. */
+function pixelesSinteticos(width: number, height: number): PixelesDePagina {
+  const data = new Uint8ClampedArray(width * height);
+  data.fill(128);
+  return { data, width, height, channels: 1 };
+}
+
+describe('reconocerRecorte', () => {
+  it('recorta la banda [y0, y1) y termina en un reconocimiento real (caso feliz)', async () => {
+    const pixeles = pixelesSinteticos(40, 80);
+    const resultado = await reconocerRecorte(pixeles, 10, 50);
+    expect(resultado.pagina).toBe(1);
+    // Un rectángulo liso no tiene por qué reconocer palabras: lo que importa es que COMPLETÓ.
+    expect(resultado.palabras).toEqual([]);
+  }, 120_000);
+
+  it.each([
+    ['y0 negativo', -1, 10],
+    ['y0 >= y1', 10, 5],
+    ['y0 === y1 (banda vacía)', 10, 10],
+    ['y1 fuera de rango (> height)', 0, 200],
+    ['y0 no entero', 1.5, 10],
+  ] as const)('rechaza la región inválida (%s) con region_de_recorte_invalida', async (_caso, y0, y1) => {
+    const pixeles = pixelesSinteticos(40, 80);
+    await expect(reconocerRecorte(pixeles, y0, y1)).rejects.toMatchObject({
+      codigo: 'region_de_recorte_invalida',
+    });
   });
 });
 

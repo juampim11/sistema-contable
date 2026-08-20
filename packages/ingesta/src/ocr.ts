@@ -51,7 +51,14 @@
 import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import { createWorker, type Block } from 'tesseract.js';
-import { aFilas, extraerTexto, imagenDePagina, type FilaGeometrica } from './texto-pdf.ts';
+import {
+  aFilas,
+  codificarPng,
+  extraerTexto,
+  pixelesDePagina,
+  type FilaGeometrica,
+  type PixelesDePagina,
+} from './texto-pdf.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -90,7 +97,8 @@ export type CodigoErrorOcr =
   | 'dimensiones_excesivas'
   | 'formato_de_imagen_no_reconocido'
   | 'timeout_de_reconocimiento'
-  | 'motor_ocr_fallo';
+  | 'motor_ocr_fallo'
+  | 'region_de_recorte_invalida';
 
 /** Error con código, nunca con mensaje armado: acá el "dato" sería el contenido de la imagen. */
 export class ErrorDeOcr extends Error {
@@ -287,20 +295,62 @@ export async function reconocerImagen(
 }
 
 /**
+ * Recorta la banda vertical `[y0, y1)` de `pixeles.data` (mismo origen que `PixelesDePagina`: `y` hacia
+ * ABAJO, fila 0 arriba), la codifica a PNG con el mismo encoder que usa `imagenDePagina` en
+ * `texto-pdf.ts` (`codificarPng`, ninguna segunda implementación) y la reconoce con `reconocerImagen`.
+ *
+ * Plan 16, paso 2 — la primitiva. Termina en un `await reconocerImagen(...)` real (no una copia de su
+ * cuerpo ni un `createWorker` propio) para heredar sin reimplementar `MAX_BYTES_IMAGEN`,
+ * `MAX_DIMENSION_PX` y `TIMEOUT_RECONOCIMIENTO_MS` — pedido de `security-engineer` en la revisión
+ * previa a este commit. El enganche (con su tope de reintentos y su `try/catch`) es el paso 3:
+ * `reintentarNetoAcreditado` en `liquidaciones/formatos/visa-debito.ts`, el único caller hoy.
+ */
+export async function reconocerRecorte(
+  pixeles: PixelesDePagina,
+  y0: number,
+  y1: number,
+): Promise<PaginaOcr> {
+  // Fail-closed: la región se valida ANTES de croppear, nunca un crop silencioso sobre un buffer
+  // degenerado (segundo pedido de `security-engineer`, bloqueante). `Number.isInteger` descarta
+  // también `NaN`/fraccionarios, que de otro modo pasarían la comparación numérica sin ofrecer un
+  // corte de fila válido.
+  if (
+    !Number.isInteger(y0) ||
+    !Number.isInteger(y1) ||
+    y0 < 0 ||
+    y0 >= y1 ||
+    y1 > pixeles.height
+  ) {
+    throw new ErrorDeOcr('region_de_recorte_invalida');
+  }
+
+  const bytesPorFila = pixeles.width * pixeles.channels;
+  const recorte = pixeles.data.subarray(y0 * bytesPorFila, y1 * bytesPorFila);
+  const png = codificarPng(recorte, pixeles.width, y1 - y0, pixeles.channels);
+  return await reconocerImagen(png);
+}
+
+/**
  * Extrae el texto del PDF, y para las páginas SIN texto nativo (`requiereOcr`/`paginasSinTexto` de
- * `texto-pdf.ts`), pide su imagen embebida (`imagenDePagina`) y corre OCR. Así los siete adapters
+ * `texto-pdf.ts`), pide sus píxeles embebidos (`pixelesDePagina`) y corre OCR. Así los siete adapters
  * bancarios y `texto-pdf.ts` en sí nunca cargan `tesseract.js`: solo el adapter de liquidaciones que de
  * verdad recibe documentos escaneados importa esta función.
  *
  * `usoOcrEnPagina[i]` dice, por página (0-based, igual que `paginas`), si esa entrada vino de OCR o de
  * la geometría nativa del PDF — es el dato que la cola de revisión necesita para no mostrar un valor de
  * OCR como si fuera texto nativo (dictamen `contador-dominio`, plan 15).
+ *
+ * `pixelesDePagina[i]` (mismo índice) es `null` para una página de texto nativo y los píxeles crudos
+ * usados para el OCR en una página que lo necesitó — plan 16, paso 3: es la entrada de
+ * `EntradaDeLiquidacion.pixelesDePagina` (`liquidaciones/registro.ts`), que `leerVisaDebito` consume
+ * para el reintento acotado de `neto_acreditado`.
  */
 export async function extraerConOcrSiHaceFalta(
   contenido: Uint8Array,
 ): Promise<{
   readonly paginas: readonly (readonly FilaGeometrica[] | PaginaOcr)[];
   readonly usoOcrEnPagina: readonly boolean[];
+  readonly pixelesDePagina: readonly (PixelesDePagina | null)[];
 }> {
   const texto = await extraerTexto(contenido);
   const sinTexto = new Set(texto.paginasSinTexto);
@@ -308,20 +358,24 @@ export async function extraerConOcrSiHaceFalta(
 
   const paginas: (readonly FilaGeometrica[] | PaginaOcr)[] = [];
   const usoOcrEnPagina: boolean[] = [];
+  const pixelesPorPagina: (PixelesDePagina | null)[] = [];
 
   for (let pagina = 1; pagina <= texto.paginas.length; pagina += 1) {
     if (!sinTexto.has(pagina)) {
       paginas.push(filas.filter((f) => f.pagina === pagina));
       usoOcrEnPagina.push(false);
+      pixelesPorPagina.push(null);
       continue;
     }
 
-    const imagen = await imagenDePagina(contenido, pagina);
-    if (imagen === null) throw new ErrorDeOcr('formato_de_imagen_no_reconocido');
-    const reconocida = await reconocerImagen(imagen);
+    const pixeles = await pixelesDePagina(contenido, pagina);
+    if (pixeles === null) throw new ErrorDeOcr('formato_de_imagen_no_reconocido');
+    const png = codificarPng(pixeles.data, pixeles.width, pixeles.height, pixeles.channels);
+    const reconocida = await reconocerImagen(png);
     paginas.push({ ...reconocida, pagina });
     usoOcrEnPagina.push(true);
+    pixelesPorPagina.push(pixeles);
   }
 
-  return { paginas, usoOcrEnPagina };
+  return { paginas, usoOcrEnPagina, pixelesDePagina: pixelesPorPagina };
 }

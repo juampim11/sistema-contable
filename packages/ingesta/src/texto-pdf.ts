@@ -342,17 +342,45 @@ async function paginasDeTexto(contenido: Uint8Array): Promise<readonly string[]>
  * imágenes de tamaño comparable, esta función seguiría eligiendo una sola y ese caso queda sin cubrir,
  * no inventado.
  */
-export async function imagenDePagina(contenido: Uint8Array, pagina: number): Promise<Uint8Array | null> {
+
+/**
+ * Los píxeles crudos de la imagen de mayor área embebida en una página, tal cual los devuelve
+ * `unpdf.extractImages` (ya decodificados, sin codificar a ningún formato de archivo). `null` si la
+ * página no trae ninguna imagen extraíble.
+ *
+ * Separado de `imagenDePagina` (plan 16, paso 1) para que un llamador que necesite los píxeles antes de
+ * decidir CÓMO codificarlos —el reintento sobre un recorte, plan 16 paso 3— no tenga que decodificar un
+ * PNG que esta misma función acaba de producir. La elección "mayor área, nunca la primera" es la misma
+ * de siempre: ver el comentario de `imagenDePagina`, no se repite acá.
+ */
+export type PixelesDePagina = {
+  readonly data: Uint8ClampedArray;
+  readonly width: number;
+  readonly height: number;
+  readonly channels: 1 | 3 | 4;
+};
+
+export async function pixelesDePagina(
+  contenido: Uint8Array,
+  pagina: number,
+): Promise<PixelesDePagina | null> {
   const { extractImages } = await import('unpdf');
   // Copia del buffer: mismo motivo que `documento()` — `pdf.js` deja el `ArrayBuffer` original detached.
   const imagenes = await extractImages(new Uint8Array(contenido), pagina);
-  const primera = imagenes.reduce<(typeof imagenes)[number] | null>((mayor, actual) => {
+  const mayor = imagenes.reduce<(typeof imagenes)[number] | null>((mayor, actual) => {
     const area = actual.width * actual.height;
     const areaMayor = mayor ? mayor.width * mayor.height : -1;
     return area > areaMayor ? actual : mayor;
   }, null);
-  if (!primera) return null;
-  return codificarPng(primera.data, primera.width, primera.height, primera.channels);
+  if (!mayor) return null;
+  return { data: mayor.data, width: mayor.width, height: mayor.height, channels: mayor.channels };
+}
+
+/** Envoltorio delgado sobre `pixelesDePagina`: mismos píxeles, codificados a PNG. */
+export async function imagenDePagina(contenido: Uint8Array, pagina: number): Promise<Uint8Array | null> {
+  const pixeles = await pixelesDePagina(contenido, pagina);
+  if (!pixeles) return null;
+  return codificarPng(pixeles.data, pixeles.width, pixeles.height, pixeles.channels);
 }
 
 const FIRMA_PNG = Uint8Array.of(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
@@ -397,8 +425,14 @@ function chunkPng(tipo: string, payload: Uint8Array): Uint8Array {
  * el formato antes de comprimir; no hace falta ninguno de los otros cuatro filtros para que el archivo
  * sea válido, solo para que comprima mejor, y acá el tamaño del archivo no es la prioridad. La
  * compresión la hace `zlib.deflateSync` (built-in de Node, no una dependencia nueva).
+ *
+ * Exportada (plan 16, paso 2) para que `ocr.ts` la reuse tal cual al codificar un RECORTE vertical de
+ * `pixelesDePagina()` en `reconocerRecorte`. Nunca una segunda implementación: el precedente es el bug
+ * de BMP de acá arriba, que costó reproducir el pipeline completo contra el documento real para
+ * encontrarlo — dos caminos que "deberían" producir el mismo PNG y no lo hacen es exactamente esa
+ * clase de bug.
  */
-function codificarPng(
+export function codificarPng(
   pixeles: Uint8ClampedArray,
   ancho: number,
   alto: number,

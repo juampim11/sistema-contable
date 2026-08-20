@@ -34,7 +34,7 @@
  */
 
 import type { PaginaOcr } from '../ocr.ts';
-import type { FilaGeometrica } from '../texto-pdf.ts';
+import type { FilaGeometrica, PixelesDePagina } from '../texto-pdf.ts';
 import type { ConfianzaDeCampo } from './captura.ts';
 import type {
   CapacidadesDeFormato,
@@ -61,6 +61,13 @@ export type EntradaDeLiquidacion = {
   readonly paginas: readonly (readonly FilaGeometrica[] | PaginaOcr)[];
   /** `true` en la posición `i` si `paginas[i]` es `PaginaOcr` (vino de OCR), `false` si es geometría nativa. */
   readonly usoOcrEnPagina: readonly boolean[];
+  /**
+   * Los píxeles crudos de la página (mismo índice que `paginas`), cuando esa página vino de OCR — tal
+   * cual los devuelve `extraerConOcrSiHaceFalta` (`../ocr.ts`). `null` para una página de texto nativo.
+   * Plan 16, paso 3: es la entrada de `reconocerRecorte` para el reintento acotado de `neto_acreditado`
+   * en `leerVisaDebito` — nadie más lo consume todavía.
+   */
+  readonly pixelesDePagina: readonly (PixelesDePagina | null)[];
 };
 
 /**
@@ -90,6 +97,14 @@ export type SalidaDeLiquidacion = {
    * evaluar". Ningún adapter de la Fase 0 lo declara todavía; Visa débito es el primero.
    */
   readonly confianzaDeCaptura?: readonly ConfianzaDeCampo[];
+  /**
+   * Plan 16, paso 3. `true` si esta lectura activó el tope de reintentos por documento (ver
+   * `TOPE_REINTENTOS_NETO_POR_DOCUMENTO` en `visa-debito.ts`) — distingue "el OCR falló en varias filas"
+   * (ocr normal, ya cubierto por `lineasNoInterpretadas` y el eje 4) de "se cortó el reintento por el
+   * límite de seguridad contra un documento degenerado". `undefined`/`false`: no se activó (o el adapter
+   * no usa reintentos).
+   */
+  readonly topeDeReintentosAlcanzado?: boolean;
 };
 
 /**
@@ -110,7 +125,12 @@ export type AdaptadorDeLiquidacion = {
   readonly version: number;
   readonly capacidades: CapacidadesDeFormato;
   reconoce(entrada: EntradaDeLiquidacion): boolean;
-  leer(entrada: EntradaDeLiquidacion): SalidaDeLiquidacion;
+  /**
+   * `Promise` desde el plan 16 paso 3: el reintento acotado sobre un recorte (`reconocerRecorte`, OCR
+   * real) es async, y un adapter que use ese mecanismo no puede quedar síncrono. `reconoce()` sigue
+   * síncrono a propósito — solo mira texto ya extraído, nunca dispara un segundo OCR.
+   */
+  leer(entrada: EntradaDeLiquidacion): Promise<SalidaDeLiquidacion>;
 };
 
 export type ResolucionDeLiquidacion =

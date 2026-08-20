@@ -6,6 +6,238 @@
 
 ---
 
+## 2026-08-20 (84) — Plan 16 implementado en 3 pasos revertibles (recorte+reintento OCR para `neto_acreditado`): `leer()` async, `MARGEN` remedido a 70px, tope de 30 con señal `topeDeReintentosAlcanzado`, `code-reviewer` y `tester` convocados y sin bloqueantes. `pnpm verificar` 73/1602/0 (7 todo), barrido limpio. Sin commitear — a la espera de confirmación de JP.
+
+**Herramienta:** Claude Code, misma sesión que las entradas 81-83. JP aprobó el plan formal (modo
+plan §3.2, `docs/diseno/16-preprocesamiento-neto-acreditado-plan.md` + el plan de implementación
+derivado) con tres condiciones explícitas: `leer()` async tal como estaba diseñado; `MARGEN` **no**
+se fija de memoria del research, se remide contra el documento real dentro de esta implementación,
+con la evidencia mostrada antes de fijarla como constante; este commit primero, la investigación de
+"página 8" (el residual sin recuperar) queda para después, sin competir por la misma sesión.
+
+### Los tres pasos, cada uno mostrado y confirmado por separado antes de seguir al siguiente
+
+1. **`texto-pdf.ts`**: `imagenDePagina` se partió en `pixelesDePagina(contenido, pagina):
+   Promise<PixelesDePagina | null>` (los píxeles crudos de `unpdf.extractImages`, sin codificar) +
+   un envoltorio delgado que codifica a PNG — mismo comportamiento observable para los llamadores
+   existentes. `codificarPng` pasó de privado a exportado (reuso, sin duplicar el encoder — lección
+   del bug de encoder BMP de una sesión anterior).
+2. **`ocr.ts`**: nueva función exportada `reconocerRecorte(pixeles, y0, y1): Promise<PaginaOcr>` —
+   valida la región (`Number.isInteger(y0/y1) && y0 >= 0 && y0 < y1 && y1 <= pixeles.height`, si no
+   tira `ErrorDeOcr('region_de_recorte_invalida')`), recorta, codifica y termina en
+   `await reconocerImagen(png)` real — sin reimplementar el pipeline. `ocr.ts` sigue siendo el único
+   archivo que importa `tesseract.js` (R-P intacta). `extraerConOcrSiHaceFalta` gana
+   `pixelesDePagina: readonly (PixelesDePagina | null)[]` en su retorno.
+3. **`registro.ts` + `visa-debito.ts`**: `EntradaDeLiquidacion` gana `pixelesDePagina`;
+   `SalidaDeLiquidacion` gana `topeDeReintentosAlcanzado?: boolean`; `AdaptadorDeLiquidacion.leer()`
+   pasa de síncrono a `Promise<SalidaDeLiquidacion>` (blast radius bajo: hoy un solo adapter de
+   liquidaciones, sin CLI todavía enganchado). En `leerVisaDebito`, cuando falla el parseo de
+   `neto_acreditado` en la lectura de página completa, se recorta `[fila.y − MARGEN, fila.y + MARGEN)`
+   (clampeado a `[0, pixeles.height]`) y se reintenta vía `reconocerRecorte`. Acotado a propósito:
+   **ningún otro concepto de `LINEAS_DE_TOTAL` dispara el reintento**.
+
+### `MARGEN_REINTENTO_NETO_PX` — remedido contra el documento real, no tomado de memoria del research
+
+Barrido real (`extraerConOcrSiHaceFalta` + `reconocerRecorte`, la función de producción) contra las
+14 filas de `neto_acreditado` que fallan hoy en las 8 páginas del documento real
+(`privado/tarjetas/01-extracto_visa_debito_roka.pdf`):
+
+| margen (px) | recuperadas / 14 |
+|---|---|
+| 30 | 13 |
+| 40 | 13 |
+| 50 | 13 |
+| 60 | 13 |
+| 70 | **14** |
+
+**Medido en dos corridas separadas, en lanzamientos de proceso distintos: idéntico en ambas** — 70px
+fue, las dos veces, el único margen de los cinco probados que recuperó las 14/14 filas de la muestra
+(30-60px empatan en 13/14, la misma fila sin recuperar en los cuatro), patrón idéntico byte a byte
+entre ambas corridas. **Sin garantía de estabilidad más allá de esas dos corridas**, dado el
+fenómeno de variación entre lanzamientos que documenta la entrada 83 — se reporta como el resultado
+observado en dos mediciones, nunca como "70px = 100 % de cobertura" sin ese matiz.
+
+El **valor de la constante** sí queda fijado sin ambigüedad: `MARGEN_REINTENTO_NETO_PX = 70` es una
+decisión de configuración (el margen que mejor resultado dio en lo medido, con margen claro sobre
+30-60), independiente de que la cifra de cobertura que lo motivó sea o no estable a futuro — fijar el
+número no exige que la medición que lo justificó sea una cifra cerrada. Misma evidencia, con el mismo
+matiz, en el comentario de cabecera del propio código (`visa-debito.ts`), no solo acá.
+
+### Tope de reintentos y su señal — requisito agregado por `security-engineer`, no estaba en el plan original
+
+Antes de escribir el código del paso 3, JP pidió el origen del tope y del try/catch antes de
+aprobarlos. Origen real: al convocar a `security-engineer` y `seguridad-datos-financieros` (paso
+obligatorio antes del primer `Write` de código de producción, según exige el propio plan), ninguno
+de los dos aprobó el enganche sin un límite superior de reintentos por documento — un documento
+degenerado (o un bug futuro en el matching de `esLinea`) podría disparar reintentos sin cota. Se fijó
+`TOPE_REINTENTOS_NETO_POR_DOCUMENTO = 30` (el documento real tiene 21 liquidaciones, una llamada
+como máximo por liquidación porque el reintento solo dispara para `neto_acreditado`; 30 da margen
+sobre un documento mensual algo más grande sin dejar que un matching roto dispare cientos de
+llamadas). El contador cuenta **intentos** (éxito o fracaso), no solo fallos — lo que se acota es
+tiempo/CPU del lote, no la tasa de éxito. JP agregó un requisito propio no pedido originalmente:
+que alcanzar el tope quede **distinguible** en la salida del adapter de un fallo normal de OCR — de
+ahí `SalidaDeLiquidacion.topeDeReintentosAlcanzado?: boolean`, presente solo cuando el tope se
+alcanzó (mismo patrón de spread condicional que ya usa `totalConsolidadoDeclarado`).
+
+El try/catch (`reintentarNetoAcreditado`) envuelve la llamada completa a `reconocerRecorte` sin
+filtrar por tipo de error — cubre tanto `ErrorDeOcr('region_de_recorte_invalida')` como cualquier
+excepción real de Tesseract — y nunca propaga ni aborta el documento: una fila que revienta el
+reintento cae al mismo `renglon_sin_monto`/`bloque_de_totales_no_interpretado` que ya existía antes
+de este plan.
+
+### Verificación — `code-reviewer` y `tester` convocados de verdad (`Agent()` real), sin bloqueantes
+
+El propio plan (§4) exigía convocar a `code-reviewer` y `tester` "para escribir y cerrar" — al llegar
+a este punto, un grep del transcript de la sesión mostró que **no se habían convocado todavía** (solo
+`seguridad-datos-financieros`, `security-engineer`, `arquitecto-software` y `backend-dev`). Se
+convocaron los dos, en paralelo, antes de escribir esta entrada y antes de pedir confirmación de
+commit:
+
+- **`code-reviewer`**: veredicto "listo para mergear". Grepeó todos los callers reales de `.leer(`
+  en el repo — los de banco (`AdaptadorDeBanco`) no se tocan, es un tipo distinto; el único
+  implementador de `AdaptadorDeLiquidacion` es el mismo `visa-debito.ts` de este diff, sin CLI
+  enganchado todavía. Confirmó doble capa de clamp (`Math.max`/`Math.min` en el caller +
+  validación independiente en `reconocerRecorte`), tope sin desfasaje entre contador y señal, y
+  cero `console.*`/`logger.*` nuevos en todo el diff. Un solo señalamiento menor no bloqueante:
+  `docs/diseno/16-preprocesamiento-neto-acreditado-plan.md` sigue sin trackear pese a que el código
+  ya lo cita como fuente — se agrega en el mismo commit.
+- **`tester`**: "sobrevive". Escribió y corrió 8 tests adversariales sintéticos (archivo temporal,
+  borrado y confirmado sin rastro al terminar) contra las preguntas del propio plan: el reintento no
+  se cuela para otro concepto (`.find` para en el primer match y solo una entrada tiene
+  `concepto: 'neto_acreditado'`); `estadoReintento` es una variable **local** a cada invocación de
+  `leerVisaDebito`, verificado corriendo dos documentos en paralelo real (`Promise.all`) — uno agota
+  el tope, el otro no lo hereda; `pixelesDePagina` corto o con `null` en la página que falla no
+  revienta (con `noUncheckedIndexedAccess` de por medio); bandas pegadas a cualquiera de los dos
+  bordes de página quedan clampeadas antes de llegar a `reconocerRecorte`, haciendo inalcanzable
+  `region_de_recorte_invalida` desde este caller (y aun si no lo fuera, el catch la absorbe); el tope
+  se resetea correctamente entre documentos sucesivos. Corrió además la suite completa del paquete
+  con el pipeline OCR real contra el documento real: **24 archivos, 633 tests, 0 fallas** (incluye la
+  corrida real de 128s contra `01-extracto_visa_debito_roka.pdf`).
+
+### Gate
+
+- `pnpm verificar`: **73 archivos / 1602 tests pasados / 7 todo / 0 fallas**.
+- `pnpm barrido`: 968 archivos, 1541 candidatos, limpio — ningún valor de `privado/` aparece en el
+  repo.
+- R-P: `ocr.ts` sigue siendo el único importador de `tesseract.js`.
+
+### Qué falta, explícito
+
+- **Sin commitear todavía** — a la espera de que JP vea este resumen y confirme, mismo protocolo de
+  siempre ("mostrame todo el resultado antes de commitear").
+- La investigación de "página 8" (la única fila de la muestra ampliada de la entrada 83 que el
+  recorte no recupera) sigue diferida, no bloqueante, por instrucción explícita de JP.
+- El reintento sigue acotado a `neto_acreditado` — generalizarlo a los otros 4 conceptos de
+  `LINEAS_DE_TOTAL` queda como decisión futura, con más evidencia, no decidida en esta sesión.
+- Commits 3/4 del plan 14 (migración de esquema, CLI/persistencia), Visa crédito y Cabal siguen sin
+  arrancar. Piloto y cotización BNA sin tocar en toda la sesión.
+
+---
+
+## 2026-08-20 (83) — Research de preprocesamiento para `neto_acreditado` (plan 16): refutada la hipótesis del recuadro, recorte+reintento recupera 11/12 de una muestra ampliada — PERO la medición de cobertura varía entre lanzamientos del proceso, causa no identificada tras investigación acotada. Sin implementar nada de producto.
+
+**Herramienta:** Claude Code, misma sesión que las entradas 81/82. Convocado `arquitecto-software`
+(`Agent()` real) para investigar si preprocesamiento de imagen (JS o Python/OpenCV) resuelve el
+cuello de botella de `neto_acreditado` (HANDOFF 81, 67% de fallo). Resultado en
+`docs/diseno/16-preprocesamiento-neto-acreditado-plan.md` — research puro, nada commiteado de
+producto.
+
+### El hallazgo central del research, verificado por mí de forma independiente
+
+**La hipótesis del recuadro/énfasis visual NO se sostiene.** De 12 técnicas de preprocesamiento
+probadas contra el documento real (6 en JS puro, 6 con OpenCV en un venv Python aislado —
+117 corridas de OCR reales, nunca instalado nada en el repo), ninguna superó a la alternativa más
+simple: **aislar la fila en su propio recorte, sin tocar un solo píxel, y volver a pedirle a
+Tesseract que la lea.** La técnica que apuntaba directo a la hipótesis del recuadro con la
+herramienta correcta (morfología de OpenCV) fue la de **peor** desempeño entre las que funcionan.
+**Consecuencia: cero dependencia nueva** — se corrigió además una premisa falsa del pedido original
+(`sharp` NO está instalado en el repo, verificado con grep sobre todos los `package.json`).
+
+Repetí el experimento central yo mismo, de forma independiente: tomé una fila real que falla contra
+el pipeline de página completa, la recorté (±60px, sin preprocesar), la pasé por
+`reconocerImagen()` real — recuperó un importe válido, confianza 92. Coincide con el hallazgo del
+subagente. Limpieza confirmada: sin `sharp`/`jimp`, sin scripts temporales, sin venv de Python, sin
+ninguna imagen del documento real persistida en ningún lado.
+
+### Medí contra las 14 filas completas que fallaban (no solo la muestra de 6 del research) — y ahí apareció la anomalía
+
+JP pidió medir el enfoque contra las 14 filas completas antes de aprobar cualquier plan de
+implementación. Al recalcular el punto de partida (mismo método de siempre: agrupar filas OCR con
+tolerancia 20px, `t.includes('IMPORTE') && t.includes('NETO') && t.includes('PAGO')` normalizada),
+el resultado fue **21 filas candidatas, 9 pasan / 12 fallan** — no el **7 pasan / 14 fallan** que
+reportan las entradas 81/82 y que `arquitecto-software` había reproducido como control hace horas,
+en la misma sesión.
+
+Sobre las 12 filas que fallan con este nuevo baseline, el recorte+reintento recuperó **11/12
+(91,7%)** — 1 sigue sin recuperar (página 8, tokens con dígito sin forma de importe válida, un caso
+distinto al patrón de HANDOFF 81: no son dígitos corridos sin separador, son fragmentos con
+estructura pero rechazados igual).
+
+### Investigación acotada de la causa de la variación entre lanzamientos — sin causa identificada
+
+JP pidió, con límite de 15-20 minutos: confirmar si hay un parámetro de semilla en tesseract.js, y
+si `ocr.ts` fija PSM/OEM explícitamente o usa defaults. Se hizo, con evidencia real, no supuesta:
+
+- **Sin parámetro de semilla**: cero coincidencias de "seed" en toda la documentación y el código
+  fuente empaquetado de `tesseract.js`. La única mención de "no-determinístico" en sus docs es sobre
+  *schedulers* repartiendo trabajos entre varios workers — no aplica acá (un worker por llamada).
+- **Corrida 3 veces seguidas, sin nada que fijar**: las tres dieron el resultado **exactamente
+  idéntico**, byte a byte (21/9/12, mismo patrón por página). No hay jitter dentro de una tanda de
+  corridas — la variación parece ocurrir entre lanzamientos de proceso separados en el tiempo, no
+  dentro de uno.
+- **`ocr.ts` no fija PSM ni OEM explícitamente** — es un default de la librería, no un hueco de
+  nuestro código. Se investigaron los dos, con la fuente exacta:
+  - **OEM**: `createWorker(idioma, undefined, {...})` — el `undefined` cae en el default de la
+    propia firma de `tesseract.js` (`oem = OEM.LSTM_ONLY`), una **constante fija**, no una fuente de
+    variación.
+  - **`rotateAuto`** (candidato real, no descartado por corazonada): mecanismo interno de
+    `tesseract.js` que calcula un ángulo de inclinación y rota la imagen si supera 0.005 radianes
+    antes de reconocer — el tipo exacto de cálculo sensible a diferencias de punto flotante entre
+    lanzamientos. Rastreado hasta su default (`constants/defaultOptions.js`): nunca está activado,
+    ni por defecto ni por nuestro código (`ocr.ts` pasa `{}` como opciones de `recognize`).
+    Descartado con evidencia de código, no por suposición.
+  - **PSM**: nunca se fija en ningún punto del código propio ni de `tesseract.js` (fuera de la rama
+    de `rotateAuto`, que no corre) — queda en el default interno del binario WASM compilado, que no
+    cambió entre mediciones (mismo `pnpm-lock.yaml`, sin `pnpm install` de por medio). No se pudo
+    confirmar al 100% que esto sea inmune a variación entre lanzamientos sin instrumentar el binario
+    — se sale del tiempo acotado.
+- **Version pinning verificado sin cambios**: `tesseract.js@7.0.0`/`tesseract.js-core@7.0.0`/
+  `@tesseract.js-data/spa@1.0.0`, mismo hash de integridad en `pnpm-lock.yaml` en las tres
+  mediciones (histórica, la de `arquitecto-software`, la mía) — sin reinstalación de por medio.
+
+**Sin causa identificada tras la investigación acotada. Se para acá, como se acordó de antemano.**
+
+### 🔴 Criterio de reporte para cualquier medición de cobertura futura, a partir de ahora
+
+**Dos mediciones conocidas del mismo baseline** (misma versión de código, mismas dependencias,
+mismo documento): **7 pasan / 14 fallan** (histórica, entradas 81/82, reproducida por
+`arquitecto-software` como control) y **9 pasan / 12 fallan** (esta sesión, estable en 3 corridas
+seguidas). Ninguna es "la correcta" — son dos observaciones reales de un sistema cuyo comportamiento
+puede variar entre lanzamientos del proceso, por una causa no identificada.
+
+**A partir de esta entrada**: ninguna medición de cobertura de OCR se reporta como un número puntual
+sin contexto — se reporta como *"medido en fecha X, puede variar entre lanzamientos del proceso"*, y
+cualquier decisión de diseño que dependa de un porcentaje exacto (no de la distinción binaria
+"funciona" vs. "no funciona") se trata con cautela hasta que esto se entienda mejor. Esto no invalida
+el hallazgo cualitativo del research (recorte+reintento funciona, preprocesamiento no aporta) —
+ambas mediciones coinciden en que la aritmética/motivo cualitativo se sostiene; lo que no es estable
+es el conteo exacto de cuántas filas se recuperan.
+
+### Qué falta, explícito
+
+- **No se implementó nada de producto en esta sesión** — ni el research (plan 16), ni la medición
+  ampliada, ni la investigación de la anomalía tocaron `ocr.ts`/`visa-debito.ts`/`parseo-ar.ts`.
+- El plan de implementación formal (modo plan §3.2) para el reintento sobre recorte, que JP iba a
+  pedir si el 100% sostenía, **queda pendiente de una decisión explícita de JP** — el resultado no
+  fue el 100% limpio esperado, así que no se generó automáticamente.
+- El caso de la página 8 (la única que no se recupera con recorte+reintento) sigue sin investigar —
+  JP pidió resolver primero la duda de la variación entre lanzamientos, que quedó como fenómeno
+  documentado, no resuelto.
+- Commits 3/4 del plan 14 y Visa crédito/Cabal siguen sin arrancar. Piloto y cotización BNA sin
+  tocar en toda la sesión.
+
+---
+
 ## 2026-08-20 (82) — R37 corregido (rename) + causa raíz de la anomalía CONFIRMADA (git ls-files no ve archivos sin trackear) + CERRADA con R37 agregado al pre-commit hook, verificado frenando un commit real. `pnpm verificar` 72/1599/0 limpio.
 
 **Herramienta:** Claude Code, misma sesión que la entrada 81. JP pidió no solo el rename sino la causa
