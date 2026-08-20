@@ -6,6 +6,118 @@
 
 ---
 
+## 2026-08-20 (87) — Diagnóstico de Visa crédito (02-extracto_visa_credito_roka.pdf), antes de escribir el adapter: 9 páginas, enteramente escaneado (requiere OCR), 17 bloques/liquidaciones (dos métodos independientes coinciden), los 7 conceptos pedidos existen en el texto real — pero `arancel` repite el mismo riesgo de falso positivo que débito, y `descuento_financiacion` tiene uno NUEVO y más serio: colisiona con `venta_cuotas` por compartir el token `FINANC`. Sin escribir ningún adapter ni código de producción.
+
+**Herramienta:** Claude Code, misma sesión. JP pidió el mismo método que se usó para débito antes del
+commit 2: diagnóstico primero, código después. Dos scripts temporales (solo lectura, sin
+reimplementar nada que ya existiera con otro criterio — lección HANDOFF 86), corridos y borrados al
+terminar. Ninguno persistió texto real ni dígitos: todo pasó por `formaDeLineaDeLiquidacion` antes de
+loguearse.
+
+### 1. ¿Requiere OCR?
+
+Sí, igual que débito, pero **verificado, no asumido** por venir del mismo lote: `extraerTexto()` →
+9 páginas, `requiereOcr: true`, `paginasSinTexto` = las 9 páginas completas. Documento enteramente
+escaneado.
+
+### 2 y 4. Los 7 conceptos — presentes en el texto real, con dos riesgos de falso positivo distintos
+
+Corrida `extraerConOcrSiHaceFalta` contra las 9 páginas (677 filas OCR agrupadas con el mismo
+criterio de `visa-debito.ts`: `agruparPalabrasEnFilas`, `TOLERANCIA_FILA_OCR = 20`). Para cada
+concepto, forma enmascarada de las coincidencias (nunca texto ni dígitos reales):
+
+- **`venta_contado`**: 6 coincidencias, todas con forma corta y consistente ("+ VENTAS
+  &lt;palabra&gt; CONTADO $ &lt;importe&gt;") — sin ruido de encabezado. **Riesgo bajo**, con la
+  salvedad de que no aparece en las 9 páginas — algunos bloques podrían no tener venta contado, cosa
+  razonable en un comercio real.
+- **`venta_cuotas`**: 22 coincidencias, mayoría con forma limpia y repetida ("+ VENTAS
+  &lt;S/INT o similar&gt; CUOTAS PROPIAS. &lt;tipo&gt;. $"), pero **una es un párrafo de aviso
+  legal** (forma larga, en minúsculas, estilo prosa) que matchea por contener las palabras "venta" y
+  "cuota" en una oración — **mismo tipo de riesgo que ya se corrigió en débito** (`esLinea` sin
+  exclusión cae en avisos legales). También aparecen **más coincidencias que bloques** (22 sobre 17):
+  el formato de crédito parece tener más de una línea de "venta en cuotas" por bloque (posibles
+  variantes S/INT vs. C/INT, o plan propio vs. plan especial) — a confirmar con más diagnóstico
+  cuando se escriba el adapter, no una alarma en sí.
+- **`arancel`**: 39 coincidencias totales — separadas en **20 "limpias"** (forma corta,
+  "- ARANCEL $ &lt;importe&gt;", sin `|`/`[`/`]`) y **19 "sospechosas"** (forma larga, con `|`, `[`,
+  múltiples palabras — forma de fila de encabezado de tabla o de un aviso). **Mismo riesgo exacto que
+  encontró HANDOFF 81 en débito** (`t.includes('ARANCEL')` solo, sin exclusión, matchea también el
+  encabezado de columna) — el adapter de crédito va a necesitar la misma clase de exclusión, con su
+  propio token a determinar cuando se escriba (no ahora).
+- **`descuento_financiacion`** (buscado por `FINANC`, la única pista de vocabulario disponible hoy):
+  **76 coincidencias — el hallazgo más importante de este diagnóstico**. De esas 76, **21 son en
+  realidad filas de `venta_cuotas`** que también contienen `FINANC` (probablemente "VENTAS
+  FINANCIADAS EN CUOTAS" o una etiqueta similar) — **colisión real entre dos conceptos distintos**,
+  no ruido de encabezado. De las 55 restantes ("solo deducción"), varias también tienen forma de
+  encabezado/ruido de tabla, con el mismo patrón que `arancel`. Esto **confirma la "confusión" que
+  Laura marcó en el PDF**: un simple `includes('FINANC')` no alcanza para aislar esta línea — hace
+  falta un criterio que excluya explícitamente las filas de venta (por ejemplo, exigir el signo `-`
+  de deducción que ya se ve en la forma enmascarada, o un token más específico que `FINANC` solo, a
+  determinar con el texto real al escribir el adapter).
+- **`sirtac_iibb`** (buscado por `SIRTAC` o `IIBB`+`RETEN`): 21 coincidencias, todas con forma
+  limpia y consistente, sin encabezados de tabla mezclados. **Riesgo bajo** en lo que se ve acá —
+  aunque comparte el mismo *molde* de fila que `descuento_financiacion` (ambas tienen forma
+  "- &lt;comprobante&gt; &lt;categoría&gt;.&lt;subcategoría&gt;. &lt;tipo&gt; $ &lt;importe&gt;"),
+  la distinción es por la palabra de categoría (no por la forma), así que el riesgo real ahí es de
+  OCR leyendo mal esa palabra puntual, no de que el patrón de matching se confunda estructuralmente.
+- **`percepcion_iva`** (`PERCEP`+`IVA`): 37 coincidencias, con **al menos 4 largos de forma
+  distintos** (`A{14}`, `A{15}`, `A{16}`, `A{10}` + palabra corta) — consistente con que el
+  documento trae **más de una tasa de percepción IVA en filas distintas**, tal como anticipó JP. No
+  se pudo determinar cuál forma corresponde a cuál tasa (los dígitos están enmascarados) — queda
+  para cuando se escriba el adapter, con más contexto textual.
+- **línea de cierre** (`ACRED`+`PAGO`, el mismo patrón que usa `visa-debito.ts`): **17
+  coincidencias**, forma larga y consistente en las 9 páginas, sin variación estructural sospechosa.
+  Búsqueda de "casi cierre" (filas con `ACRED` sin `PAGO`, o viceversa): ninguna fila tiene `ACRED`
+  sin `PAGO` — el patrón no se está perdiendo casos por un token roto. (La búsqueda de "solo `PAGO`"
+  da muchos falsos positivos triviales porque "PAGO" es una palabra muy común en este documento —
+  aparece también en la etiqueta de neto — así que no es señal útil por sí sola; lo que importa es
+  que `ACRED` nunca aparece aislado.)
+
+**Hallazgo adicional, no pedido pero relevante**: existe una línea con forma
+`"AAAAAAA AAAA AA AAAAA $ ..."` — **la misma forma de "IMPORTE NETO DE PAGOS" que débito** — con
+**20 coincidencias**, muy cerca de las 17 líneas de cierre. Visa crédito **sí tiene** un
+`neto_acreditado` equivalente al de débito (JP no lo había pedido explícito en la lista de 7, pero
+aparece igual en el documento — se deja registrado para cuando se defina el modelo de conceptos del
+adapter).
+
+### 3. Conteo de bloques — dos métodos independientes, mismo resultado: **17**
+
+Con el aprendizaje de HANDOFF 86 bien presente (nunca reportar un conteo de bloques sin verificarlo
+por más de un camino, y confirmar que ambos midan lo mismo):
+
+1. **Líneas de cierre** (`ES_LINEA_CIERRE`, copia textual y de solo lectura de la función privada de
+   `visa-debito.ts`, sobre las 677 filas agrupadas): **17**, distribuidas en las 9 páginas
+   (1/2/1/1/3/3/2/2/2 por página).
+2. **Candidatas a `neto_acreditado`** (`IMPORTE`+`NETO`+`PAGO`, el mismo patrón textual que débito):
+   **20** — mismo orden de magnitud que 17, con la diferencia explicable por ruido de OCR (variantes
+   con caracteres extra, mismo fenómeno que HANDOFF 83 documentó para débito).
+
+**17 es el número que se reporta** — los dos métodos son consistentes entre sí (no exactamente
+iguales, por ruido esperable de OCR, pero en la misma magnitud, sin una discrepancia como la de
+HANDOFF 86). Con la salvedad ya establecida: esto es una medición puntual, sobre una corrida, no
+verificada todavía en un segundo lanzamiento de proceso — si se necesita ese nivel de confianza antes
+de fijar un tope de reintentos (como se hizo con `TOPE_REINTENTOS_NETO_POR_DOCUMENTO` en débito),
+haría falta repetirlo, igual que se hizo allá.
+
+### Qué falta, explícito
+
+- **No se escribió ningún adapter ni código de producción** — este diagnóstico no tocó
+  `visa-debito.ts` ni ningún archivo nuevo bajo `formatos/`.
+- **`descuento_financiacion` necesita resolver la colisión con `venta_cuotas` ANTES de escribir el
+  matching** — es el hallazgo más importante para el diseño del adapter, no un detalle a ajustar
+  después.
+- `arancel` necesita la misma clase de exclusión que ya tiene débito (encabezado de tabla) — el
+  token exacto a excluir no se determinó todavía (hace falta ver más contexto textual real al
+  escribir el adapter, con más cuidado que un `grep` estructural).
+- No se determinó a qué corresponde cada una de las variantes de forma de `percepcion_iva` (cuál es
+  cada tasa) — pendiente para cuando se escriba el adapter.
+- No se investigó el `numeroDeLiquidacion` ni la `fechaPresentacion` de crédito en este paso — JP
+  pidió los 7 conceptos puntuales, no un diagnóstico exhaustivo de todos los campos.
+- Medición de bloques (17) hecha en una sola corrida — sin la verificación de estabilidad
+  entre-lanzamientos que sí se hizo para MARGEN/cobertura de débito (HANDOFF 84/85).
+
+---
+
 ## 2026-08-20 (86) — Corregida la premisa "21 liquidaciones": el "21" de las entradas 83/84 contaba filas con forma de etiqueta de `neto_acreditado`, no bloques/líneas de cierre — se propagó sin verificar. El número real, confirmado por dos caminos independientes, es 19 (18 líneas de cierre + 1 bloque sin cerrar al final). La medición 13/19 de la entrada 85 sigue siendo el dato válido; el tope de 30 no se ve afectado (sigue casi el doble de margen). Comentario de `visa-debito.ts` corregido para describir el método, no citar una cifra fija.
 
 **Herramienta:** Claude Code, misma sesión. JP pidió investigar la diferencia 19 vs. 21 (entrada 85)
