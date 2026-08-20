@@ -1,13 +1,24 @@
 #!/bin/sh
 #
-# Pre-commit: barrido de fuga sobre el repo — condición de salida nº 4 del Módulo 1.
+# Pre-commit: barrido de fuga + R37 (barrido de credenciales) — condición de salida nº 4 del Módulo 1,
+# más el cierre de HANDOFF (2026-08-20, entrada 82).
 #
-# Corre ANTES de que el valor entre al historial, que es el único momento en que sirve: por ADR-0002
-# §E.4.8, lo que ya está commiteado se considera público para siempre y no hay rotación posible para un
-# importe. CI también lo corre, pero CI avisa cuando el commit ya existe.
+# R37 corre ACÁ, y no solo como test de `pnpm verificar`, por un hallazgo real: `archivosTrackeados()`
+# usa `git ls-files`, que solo ve archivos ya indexados. Un `pnpm verificar` corrido ANTES de `git add`
+# —el orden normal al escribir código nuevo— no puede ver un archivo recién creado, así que pasa
+# "limpio" sin haber mirado nada de ese archivo. Confirmado con un experimento reproducible: un archivo
+# nuevo con una credencial real adentro pasa R37 en verde mientras está sin trackear, y da rojo apenas
+# se hace `git add`. Este hook corre siempre contra el estado que se va a commitear — el único
+# momento en que ya pasó por `git add` y todavía se puede frenar antes de que entre al historial.
 #
-# En esta máquina `privado/` existe, así que el barrido corre en MODO ESTRICTO: cruza cada candidato
-# contra el material real de los clientes. Ese es el control de verdad, y es el que solo puede correr acá.
+# Los dos controles corren ANTES de que el valor entre al historial, que es el único momento en que
+# sirven: por ADR-0002 §E.4.8, lo que ya está commiteado se considera público para siempre y no hay
+# rotación posible para un importe ni para una credencial. CI también los corre, pero CI avisa cuando
+# el commit ya existe.
+#
+# En esta máquina `privado/` existe, así que el barrido de fuga corre en MODO ESTRICTO: cruza cada
+# candidato contra el material real de los clientes. Ese es el control de verdad, y es el que solo
+# puede correr acá.
 #
 # Instalación:  pnpm hooks:instalar
 # Salteo puntual y consciente:  git commit --no-verify   (queda en tu criterio, no en el mío)
@@ -15,8 +26,9 @@
 set -e
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "pre-commit: node no está en el PATH; se saltea el barrido de fuga." >&2
+  echo "pre-commit: node no está en el PATH; se saltea el barrido de fuga y R37." >&2
   exit 0
 fi
 
 node tools/barrido-fuga.ts
+node_modules/.bin/vitest run tools/barrido-credenciales.test.ts

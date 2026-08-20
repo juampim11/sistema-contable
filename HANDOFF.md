@@ -6,6 +6,237 @@
 
 ---
 
+## 2026-08-20 (82) — R37 corregido (rename) + causa raíz de la anomalía CONFIRMADA (git ls-files no ve archivos sin trackear) + CERRADA con R37 agregado al pre-commit hook, verificado frenando un commit real. `pnpm verificar` 72/1599/0 limpio.
+
+**Herramienta:** Claude Code, misma sesión que la entrada 81. JP pidió no solo el rename sino la causa
+de por qué el fallo de R37 no se detectó anoche con el mismo commit `300f29a` — "si `pnpm verificar`
+puede reportar limpio con un fallo real presente, es un problema de confianza en el propio gate, más
+serio que el rename en sí". Se investigó y se confirmó con un experimento controlado, no se dejó como
+hipótesis sin probar.
+
+### Rename aplicado, R37 verde
+
+`packages/ingesta/src/liquidaciones/formatos/visa-debito.ts`: `RE_FECHA_TOKEN` → `RE_FECHA`,
+`RE_ENTERO_TOKEN` → `RE_ENTERO` (las únicas dos ocurrencias de la substring `TOKEN` en el archivo,
+confirmado por grep antes y después). Mismo patrón que `TOKEN_NUMERICO` → `PATRON_NUMERICO`
+(`contrato.ts`, plan 14): rename sobre excepción en `PERMITIDOS`, sin tocarlo. R37 verde, confirmado
+en aislado y dentro del `pnpm verificar` completo.
+
+### Causa raíz — CONFIRMADA con experimento, no solo razonada
+
+**Hipótesis 3 (¿el propio commit `300f29a` ya tenía el problema?): sí, confirmado.**
+`git show 300f29a:packages/ingesta/src/liquidaciones/formatos/visa-debito.ts` muestra
+`RE_FECHA_TOKEN`/`RE_ENTERO_TOKEN` con el contenido EXACTO que falla hoy — no hay ninguna diferencia
+de contenido entre lo commiteado anoche y lo que se scaneó hoy. El código nunca cambió; lo que cambió
+fue el momento de la corrida.
+
+**Hipótesis 1 y 2 (orden de operaciones + mecanismo de scope): confirmadas juntas, con un experimento
+reproducible, no solo inferidas.** `archivosTrackeados()` (`tools/barrido-credenciales.ts`) usa
+`git ls-files -z` — que lista únicamente archivos **ya indexados** (trackeados o `git add`eados), no
+el árbol de trabajo completo. Se probó de forma directa:
+
+1. Se creó un archivo NUEVO, sin trackear, con una constante cuyo nombre incluye la palabra PASSWORD
+   asignada a un string de prueba arbitrario, sin ningún valor real.
+2. **R37 corrido con el archivo sin trackear: verde.** No lo vio — no es que el detector lo evaluara y
+   lo dejara pasar, es que `git ls-files` no lo devuelve.
+3. `git add` sobre ese mismo archivo (sin commitear).
+4. **R37 corrido de nuevo: rojo**, detecta la constante correctamente.
+5. Archivo de prueba borrado y sin dejar rastro (`git restore --staged` + `rm`, confirmado con
+   `git status`).
+
+**Reconstrucción de lo que pasó anoche, con esta evidencia:** `backend-dev` escribió
+`visa-debito.ts` (entre otros) con `Write` — archivo nuevo, sin trackear. Se revisaron los diffs, se
+corrió `pnpm verificar` (ahí reportó limpio — **cierto en ese momento**, porque R37 estructuralmente
+no podía ver un archivo que todavía no existía para `git`). Recién después se hizo `git add` +
+`git commit`; el hook de pre-commit corre `tools/barrido-fuga.ts` (la fuga de datos reales de
+`privado/`, un control DISTINTO), no la suite de vitest — así que R37 nunca se volvió a correr después
+de que el archivo se volviera visible para `git`. La entrada 80 de HANDOFF no mintió: describió el
+resultado real de esa corrida, en ese momento — pero ese momento era anterior al punto en que el gate
+podía ver todo lo que se iba a commitear.
+
+### 🔴 Esto es un hallazgo de proceso, no solo del código de hoy
+
+**El flujo "escribir → `pnpm verificar` → `git add` → `git commit`" tiene un punto ciego real: R37
+nunca valida contra el conjunto exacto de archivos que se van a commitear si corre antes del `git
+add`.** No es específico de esta sesión ni de este archivo — cualquier archivo NUEVO (no una edición
+a uno ya trackeado) que introduzca una asignación con forma de credencial real pasaría el mismo camino
+sin que R37 lo viera, siempre que el `pnpm verificar` final corra antes de stagear. El pre-commit hook
+actual (`tools/barrido-fuga.ts`) cubre una clase de fuga distinta (datos reales de `privado/`) y no
+sustituye a R37.
+
+### CERRADO, no solo documentado: R37 agregado al pre-commit hook
+
+De las dos mitigaciones posibles, JP eligió la más robusta — no depende de que nadie recuerde correr
+`pnpm verificar` después de stagear, el hook lo fuerza siempre. `.githooks/pre-commit` corre ahora
+`node_modules/.bin/vitest run tools/barrido-credenciales.test.ts` justo después del barrido de fuga.
+
+**Verificado con el mismo tipo de experimento que confirmó la causa — esta vez intentando un commit
+real, no solo `git add`:** se creó un archivo nuevo con una constante de nombre sospechoso (contiene
+PASSWORD) asignada a un valor de prueba, se hizo `git add`, y se corrió `git commit` de verdad (no
+solo el barrido suelto). **El hook lo frenó**: `git commit` devolvió código de salida 1, `HEAD` no se
+movió (confirmado comparando el hash antes y después), el commit nunca se concretó. Archivo de prueba
+revertido del índice y borrado, sin dejar rastro.
+
+**Efecto colateral real que salió de la propia verificación**: la primera versión de esta misma
+entrada de HANDOFF citaba el experimento anterior con la sintaxis literal
+`NOMBRE = 'valor-de-prueba'` — y el hook, correctamente, la atrapó a ELLA también (una asignación con
+forma de credencial en un archivo trackeado es una asignación con forma de credencial, esté en código
+o en prosa de una bitácora). Reescrita para describir la constante sin la sintaxis de asignación
+literal — confirmado R37 verde después.
+
+### `pnpm verificar` — ahora sí limpio, con el archivo ya trackeado desde anoche
+
+**72 archivos de test / 1599 tests (1592 verdes, 7 todo) / 0 fallas.** `pnpm barrido`: 966 archivos,
+limpio. Diferencia con la corrida de la entrada 81 (que reportó el mismo fallo de R37): esta vez el
+rename ya está aplicado, y de todos modos esta corrida SÍ ve `visa-debito.ts` completo porque el
+archivo ya estaba trackeado desde el commit `300f29a` — la edición de hoy (rename) es sobre un
+archivo ya indexado, no uno nuevo, así que no repite el problema de timing que causó la anomalía.
+
+### Qué falta, explícito
+
+- El rename de R37, el fix de `arancel` (entrada 81) y el hook actualizado quedan para un solo commit
+  que junta las tres cosas — pendiente de tu revisión final antes de aplicarlo.
+- `neto_acreditado` sigue siendo el cuello de botella principal, sin tocar (entrada 81).
+- El hallazgo de proceso ya está cerrado (hook), no queda como recomendación suelta.
+
+---
+
+## 2026-08-20 (81) — Diagnóstico de la cobertura parcial de Visa débito: fix de `arancel` aplicado (0 regresión, ruido -20 líneas), `neto_acreditado` diagnosticado y dejado sin tocar (evidencia real de por qué), y un fallo de gate pre-existente sin corregir (R37 sobre `RE_FECHA_TOKEN`/`RE_ENTERO_TOKEN`).
+
+**Herramienta:** Claude Code, sesión nueva. Retoma la entrada 80 con verificación fresca del estado
+real (git, piloto vía consulta directa a la base, HANDOFF) antes de tocar nada — confirmado todo:
+HEAD en `300f29a`, piloto con 4 `tenant_node` / 3 con `lote_ingesta` / 1830 movimientos / 3 lotes
+(coincide), entrada 80 fiel a lo reportado.
+
+### Incidente propio, resuelto: credenciales del piloto impresas en un comando de diagnóstico
+
+Al filtrar `.env.piloto` para la consulta del piloto, un `grep` mal armado imprimió las
+`DATABASE_URL` reales (con password) en el output de una herramienta. Verificado que no quedó
+persistido: `history` está `off` en el shell no interactivo (`.bash_history` sin tocar desde marzo),
+PowerShell history sin escritura ese día hasta el chequeo mismo, y ningún archivo de scratchpad
+contiene la cadena. Sin acción de rotación pedida por JP.
+
+### Hallazgo aparte, más serio: página real del documento persistida fuera de `privado/`
+
+`pagina-1.png` (4,4 MB, 2110×3033 px — coincide exactamente con las dimensiones que cita
+`visa-debito.ts` para el documento real) apareció en el scratchpad de la sesión de anoche, generado
+durante el debugging de `imagenDePagina`/OCR. Fuera de `privado/` (gitignored) y fuera del repo git,
+pero persistido en disco. Borrado con `Remove-Item`, sin abrirlo, confirmado. Barrido del resto del
+directorio por firma de bytes (no por extensión): ningún otro archivo binario, todos los restantes
+son `.mjs`/`.cjs` de texto plano.
+
+### Diagnóstico de la cobertura parcial — por línea, con evidencia real enmascarada
+
+Se midió, con el mismo método que la entrada 80 usó para `percepcion_iva_rg2408` (agrupar filas OCR
+reales igual que el adapter, aplicar la regla exacta de `esLinea`, enmascarar todo número), las 5
+líneas de total restantes + la línea de cierre. Tabla completa (antes del fix de `arancel`):
+
+| Línea | Filas que matchean | Sin importe capturado |
+|---|---|---|
+| `ventas_brutas` | 20 | 0 |
+| `arancel` | 42 | 22 |
+| `iva_21_sobre_arancel` | 20 | 0 |
+| `retencion_iibb_sirtac` | 21 | 1 |
+| `neto_acreditado` | 21 | 14 |
+| línea de cierre | 18 (de ~21) | 1 sin fecha, 1 sin número |
+
+**Conclusión: no hay un solo patrón de degradación de OCR disperso — hay dos causas puntuales y
+distintas**, más ruido cosmético (`$` leído como `s`/`Ss`/`S`/`E` en casi todas las líneas, que **no**
+rompe nada porque `parsearImporte` no depende de leer bien el símbolo de moneda).
+
+### `arancel` — aplicado, verificado sin regresión
+
+`esLinea: (t) => t.includes('ARANCEL')` también matcheaba el **encabezado de columnas** de la tabla
+de comprobantes ("... Dto. Arancel Dto. Financ ..."), repetido por página. Fix aplicado en
+`packages/ingesta/src/liquidaciones/formatos/visa-debito.ts`:
+
+```ts
+esLinea: (t) => t.includes('ARANCEL') && !t.includes('FINANC')
+```
+
+Medido antes/después contra el documento real: **42→22 filas matcheadas, 22→2 sin importe, 0
+regresión** (verificado explícitamente: ninguna fila real con importe quedó excluida). `FINANC` se
+eligió sobre `VENTAS` porque el OCR corrompió "Ventas" a "venias" en una de las tres variantes del
+encabezado medidas — `FINANC` sobrevivió intacto en las tres.
+
+### `neto_acreditado` — diagnosticado, DEJADO SIN TOCAR, con la evidencia completa
+
+Antes de proponer nada se confirmó: `parsearImporte` (`parseo-ar.ts`) hoy la llama **solo**
+`visa-debito.ts` (grep en todo `packages/ingesta/src/`) — pero es un wrapper delgado sobre
+`importeACentavos`, el núcleo que **sí** comparten los ocho adaptadores bancarios. El mecanismo de
+extensión ya existente para este caso es `Tolerancias` (`enteroPelado`/`unSoloDecimal`), pasado
+por-llamada, sin afectar a ningún banco.
+
+**Pero el diagnóstico a nivel de carácter (dígito por dígito enmascarado, todo lo demás intacto) de
+los 6 tokens que fallan da:**
+
+```
+"“NNNNNNNN"   (comilla + 8 dígitos, SIN separador)
+"NNNNNNNN"    (8 dígitos, SIN separador)
+"“NNNNNNN"    (comilla + 7 dígitos, SIN separador)
+"NNNNNNNNN"   (9 dígitos, SIN separador)
+"NNNNNNNN"    (8 dígitos, SIN separador)
+"datosaNo"    (basura de OCR, ni siquiera es un número)
+```
+
+**Ninguna de las dos rutas propuestas por JP resuelve esto:**
+- **Limpieza previa** (sacar la comilla): no alcanza — quitar la `"` deja un dígito-run sin separador,
+  que sigue rechazado por la regla de siempre. La comilla no es la causa del rechazo.
+- **Ampliar tolerancia** (`enteroPelado: true`): en `parseo-ar.ts:172`, un entero pelado se interpreta
+  como **pesos enteros, sin centavos** (`decimales` se rellena `'00'`). Si el número real tenía
+  separador de miles y centavos (como todos los `neto_acreditado` que sí se leyeron bien) y el OCR se
+  comió el carácter separador, activar `enteroPelado` **no reconstruye el valor real** — produce un
+  importe con la magnitud y los centavos equivocados, que además pasa la validación como si fuera
+  bueno. Es exactamente el caso que el propio adapter ya documenta como el peor ("un importe adivinado
+  mal y aceptado es peor que uno declarado no interpretado").
+
+**Decisión: `parsearImporte` y `parseo-ar.ts` NO se tocan.** El rechazo actual es correcto. La mejora
+real, si existe, viene de preprocesamiento de imagen antes del OCR (ya anotado como candidato en la
+entrada 80) — no de la capa de parseo. Documentado acá con el detalle completo para que nadie proponga
+"aflojar la tolerancia" sin ver este análisis primero.
+
+### Cobertura medida después del fix de `arancel`
+
+**No mejoró el conteo de liquidaciones completas: sigue en 5.** Sí bajó el ruido: `lineasNoInterpretadas`
+pasó de 52 a 32 (las 20 filas de encabezado que ya no generan una entrada `renglon_sin_monto` de
+más). Es el resultado esperado, no una sorpresa: `arancel` nunca fue uno de los tres campos
+obligatorios para cerrar un bloque (`ventasBrutas`, `netoAcreditado`, `fechaPresentacion` —
+`cerrarLiquidacion`, `visa-debito.ts`) — el cuello de botella real (`neto_acreditado`, 67% de fallo)
+sigue intacto y sin resolver.
+
+### 🔴 Hallazgo sin corregir: `pnpm verificar` NO da limpio — R37 sobre nombres, no sobre el fix de hoy
+
+Al correr `pnpm verificar` después del fix de `arancel` apareció una falla en
+`tools/barrido-credenciales.test.ts` (R37), **preexistente, no causada por el cambio de hoy**:
+`RE_FECHA_TOKEN` y `RE_ENTERO_TOKEN` (`visa-debito.ts`, ya estaban en el commit `300f29a` de anoche,
+sin tocar hoy) contienen la substring `TOKEN`, que dispara `NOMBRE_SECRETO` del barrido de
+credenciales — mismo mecanismo, mismo tipo de falso positivo que ya se corrigió una vez esta sesión
+(`TOKEN_NUMERICO` → `PATRON_NUMERICO` en `contrato.ts`, plan 14). Reproducido de forma aislada y
+determinística (no es flaky): la regex `ASIGNACION` del barrido captura `"/^\d{1"` (se corta en la
+coma de `\d{1,2}`) como si fuera un valor de credencial asignado a una clave con nombre sospechoso.
+
+**No lo corregí** — quedó pendiente de confirmación de JP, mismo criterio que la vez anterior
+(rename preferido sobre excepción en `PERMITIDOS`, para no dejar precedente de allowlist). **Punto
+abierto real: este fallo debería haber aparecido también en la verificación de la entrada 80 (mismo
+archivo, mismos nombres, sin cambios desde entonces) y no quedó registrado como tal — no se pudo
+determinar en esta sesión por qué la entrada 80 reportó `pnpm verificar` limpio con este mismo código
+ya en el commit.** No se investigó más a fondo por instrucción explícita de parar.
+
+### `pnpm verificar` — NO limpio, motivo arriba. Medición aparte, fuera del gate
+
+La cobertura (5 liquidaciones, `lineasNoInterpretadas: 32`) se midió con un script directo contra el
+pipeline real, no contra el gate completo — el número es válido, pero no viene acompañado de un
+"`pnpm verificar` limpio" como en las entradas anteriores.
+
+### Qué falta, explícito
+
+- El fix de `arancel` está aplicado pero **no commiteado** — pendiente de tu revisión.
+- El fallo de R37 sigue sin corregir y sin decisión — bloquea un `pnpm verificar` limpio.
+- `neto_acreditado` sigue siendo el cuello de botella principal (67% de fallo), documentado, sin tocar.
+- Nada de preprocesamiento de imagen, nada de otro concepto — por instrucción explícita de JP.
+
+---
+
 ## 2026-08-20 (80) — Plan 15 (OCR) implementado, paso 1 — commit 2 del plan 14 (Visa débito) DESBLOQUEADO y corriendo contra el documento real. Dry-run, sin persistir. `pnpm verificar` 72/1599/0.
 
 **Herramienta:** Claude Code. Retoma la entrada 79: el commit 2 del plan 14 estaba frenado porque el

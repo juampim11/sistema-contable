@@ -164,8 +164,10 @@ function importesDeFila(fila: FilaOcr): readonly PalabraOcr[] {
   });
 }
 
-const RE_FECHA_TOKEN = /^\d{1,2}\/\d{1,2}\/\d{2,4}$/;
-const RE_ENTERO_TOKEN = /^\d{3,}$/;
+// Sin sufijo "_TOKEN" a propósito: dispara R37 (barrido de credenciales) por la substring "TOKEN",
+// mismo falso positivo ya corregido una vez en contrato.ts (TOKEN_NUMERICO → PATRON_NUMERICO).
+const RE_FECHA = /^\d{1,2}\/\d{1,2}\/\d{2,4}$/;
+const RE_ENTERO = /^\d{3,}$/;
 
 // -----------------------------------------------------------------------------
 // Reconocimiento
@@ -200,7 +202,14 @@ const LINEAS_DE_TOTAL: readonly LineaDeTotal[] = [
     concepto: 'ventas_brutas',
     esLinea: (t) => t.includes('VENTA') && t.includes('CONTADO') && t.includes('DESCUENTO'),
   },
-  { concepto: 'arancel', esLinea: (t) => t.includes('ARANCEL') },
+  {
+    concepto: 'arancel',
+    // `!includes('FINANC')` excluye el encabezado de columnas de la tabla de comprobantes ("... Dto.
+    // Arancel Dto. Financ ..."), que también contiene "ARANCEL" y no tiene importe que capturar.
+    // Medido contra el documento real: 42 → 22 coincidencias, 22 → 2 sin importe, 0 regresión sobre
+    // líneas reales (HANDOFF, entrada del 2026-08-20).
+    esLinea: (t) => t.includes('ARANCEL') && !t.includes('FINANC'),
+  },
   {
     concepto: 'iva_21_sobre_arancel',
     esLinea: (t) => t.includes('IVA') && t.includes('ARANC') && !t.includes('PERCEP'),
@@ -249,8 +258,8 @@ type CierreLeido = {
 };
 
 function leerLineaDeCierre(fila: FilaOcr): CierreLeido {
-  const fechas = fila.palabras.filter((p) => RE_FECHA_TOKEN.test(p.texto));
-  const enteros = fila.palabras.filter((p) => RE_ENTERO_TOKEN.test(p.texto));
+  const fechas = fila.palabras.filter((p) => RE_FECHA.test(p.texto));
+  const enteros = fila.palabras.filter((p) => RE_ENTERO.test(p.texto));
 
   const fechaPagoTok = fechas[0] ?? null;
   const fechaPresTok = fechas.length > 1 ? (fechas.at(-1) ?? null) : null;
