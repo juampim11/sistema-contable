@@ -6,6 +6,168 @@
 
 ---
 
+## 2026-08-20 (89) — Diagnóstico de Cabal (03-extracto_cabal_liquidacion_roka.pdf), antes de escribir el adapter: 2 páginas, enteramente escaneado (OCR), documento MUCHO más corto que los dos Visa (111 filas agrupadas vs. 600+). Dos métodos de conteo de bloques dieron 5 y 4 — **resuelto contra el conteo manual de JP (5 liquidaciones, verificadas aritméticamente una por una antes de escribir código): el método 1 (5) es el correcto, y la 5ª liquidación (la última, cerca del final de la página 2) es la que pierde la línea de cierre "fecha de pago + número de liquidación" en el OCR** — no falta el bloque, falta esa fila puntual, mismo tipo de limitación de cobertura de OCR que ya documenta Visa, pero acá la fila entera está ausente (no un dígito garabateado). **Confirmado contra el documento real, no solo contra el audio de Laura: cero evidencia de un total consolidado del período** (el eje 2 va a necesitar de verdad el caso general `no_verificable`/`emisor_no_publica_total` que `verificacion.ts` ya dejó anotado como pendiente de este adapter) **y `percepcion_iva_rg2408` no aparece en ningún bloque real** (la única coincidencia de "PERCEP" del documento entero cae en el párrafo de términos y condiciones del pie, no en una liquidación). Sin escribir ningún adapter ni código de producción.
+
+**Herramienta:** Claude Code, sesión nueva. JP pidió el mismo método que Visa crédito (HANDOFF 87):
+diagnóstico primero, read-only, antes de escribir código. Un script temporal (`packages/ingesta/scripts/
+_diagnostico-cabal-temp.ts`, solo lectura, nunca imprime texto ni dígitos reales — solo formas vía
+`formaDeLineaDeLiquidacion`, conteos, índices de fila y distribución por página), corrido dos veces con
+resultados **idénticos bit a bit** (mismos 111 índices en ambos lanzamientos) y borrado al terminar.
+
+### 0. Antes de este diagnóstico: la premisa de sesión abierta hoy
+
+Al confirmar el estado del repo se abrió la sesión con `git log`/`git status` (limpio, sobre `686ef67`),
+la lectura completa de HANDOFF 85-88 y una consulta directa contra la base del piloto (no estado del
+contenedor) — `tenant_node=4 cuenta_bancaria=6 lote_ingesta=3 movimiento_bancario_crudo=1830
+movimiento_origen_crudo=1830 _migraciones=21`, intacta. Ningún hallazgo nuevo en ese paso, se deja
+registrado para trazabilidad de la sesión.
+
+### 1. ¿Requiere OCR? Sí — confirmado, no asumido
+
+`extraerTexto()` → 2 páginas, `requiereOcr: true`, `paginasSinTexto: [1,2]`. Documento enteramente
+escaneado, igual que los dos Visa, pero muchísimo más corto: 2 páginas contra 8-9, y 111 filas OCR
+agrupadas (`TOLERANCIA_FILA_OCR = 20`, mismo criterio que los dos adapters ya escritos) contra los
+600-700+ de cada Visa.
+
+### 2. Conteo de bloques — dos métodos independientes, resultado NO coincidente: 5 vs. 4
+
+Sin resumen consolidado (confirmado abajo, punto 5) no hay un tercer ancla obvia como la que tuvo Visa.
+Se usaron dos candidatas de vocabulario, cada una buscada por sustring sobre el texto normalizado, sin
+asumir cuál es el término real del documento:
+
+1. **Candidata a línea de inicio del segundo desglose** (la familia de forma que matchea simultáneamente
+   `VENTA` + `NETO` + una variante de `LIQUIDA`, `"AAAA A A{8} AAA AAAAAA <$>"` y variantes cercanas):
+   **5** coincidencias, una por página par de índices (33, 47, 63, 83, 98 sobre 111 filas totales).
+2. **Candidata a línea de cierre "fecha de pago + número de liquidación"** (matchea `PAGO` + `FECHA` +
+   `LIQUIDA` a la vez, forma `"AAAAA AA AAAA : <$>/<$>/<$> A{11} AAA. : <$> AAAAAA A/A{9} AAAAAA : AA
+   <$><$><$>"` y variantes): **4** coincidencias (índices 34, 49, 65, 85).
+
+**Discrepancia de uno, mismo patrón que HANDOFF 83/85 ya documentó para Visa** (una liquidación cuya
+línea de cierre no se reconoce, casi siempre al final del documento — acá el bloque candidato sin cierre
+cae cerca del final de la página 2, antes del párrafo de términos y condiciones). Con una salvedad
+propia de este documento: al ser tan corto, **una liquidación de diferencia pesa 1 en 4-5, no 1 en
+17-19 como en Visa** — la muestra es chica y el margen de error relativo es mayor.
+
+**Señal adicional, más débil, sin usarse como método de conteo:** 10 de las 11 coincidencias del token
+`DEBITO` caen dentro del cuerpo del documento (la 11ª es el mismo párrafo de términos y condiciones del
+punto 5) — exactamente **2 por bloque si hay 5 bloques** (10 ÷ 2 = 5), lo que corrobora el 5 del método
+1 por un tercer camino independiente, aunque no es una prueba (podría ser casualidad de un vocabulario
+que se repite dos veces por liquidación, sin ser un contador de bloques en sí). Y 3 filas "casi vacías"
+(candidatas a la línea punteada que separa liquidaciones, según Laura) — orden de magnitud consistente
+con 4-5 bloques pero no exacto, tampoco usable como método de conteo por sí solo (el OCR no aísla la
+línea punteada de forma confiable como fila propia).
+
+### 2b. Residual resuelto: JP confirma 5 por conteo manual verificado aritméticamente — cuál de las 5 pierde el cierre, y por qué
+
+JP ya había contado y verificado a mano, ANTES de este diagnóstico, las cinco liquidaciones reales del
+documento (los cinco netos cierran exacto contra su propia aritmética) — dato que este diagnóstico no
+tenía y que resuelve la ambigüedad: **5 es el número correcto, el método 2 (4, la línea de cierre) está
+perdiendo una.**
+
+Un segundo script temporal (mismo método: solo lectura, solo formas, borrado al terminar) volcó el
+vecindario completo (±5 filas) de cada una de las 5 candidatas del método 1 (índices 33, 47, 63, 83, 98)
+y lo comparó con las 4 líneas de cierre confirmadas (34, 49, 65, 85). Resultado: **las primeras 4
+candidatas (33, 47, 63, 83) tienen su línea de cierre inmediatamente después** (2-3 filas más abajo,
+mismo patrón en las cuatro). **La 5ª (índice 98, página 2, la última liquidación del documento) NO
+tiene ninguna fila con esa forma después** — el documento pasa directo de la fila del neto (índice 99,
+misma forma que ya comparte con los bloques 3 y 4 en los índices 64 y 84) al párrafo de términos y
+condiciones (índice 100 en adelante). No es una fila garabateada con dígitos incorrectos —el mismo modo
+de falla que sufre `neto_acreditado` en débito y que tiene su propio reintento acotado—, es una fila
+**ausente por completo** del texto que devolvió el OCR: un modo de falla distinto, sin mecanismo de
+reintento hoy porque nunca se necesitó (Visa siempre tuvo su línea de cierre presente, aunque a veces
+con dígitos rotos).
+
+**Por qué no hace falta una heurística nueva para esto:** el mecanismo que YA tienen los dos adapters
+Visa —si al final del documento queda algo en `pendientes` sin una línea de cierre que lo cronara, se
+reporta como `bloque_de_totales_no_interpretado` en vez de descartarse en silencio (contrato.ts, regla
+3)— cubre exactamente este caso sin escribir nada nuevo: la 5ª liquidación de Cabal va a caer ahí sola,
+igual que "el bloque sin línea de cierre al final del documento" que ya documentan `visa-debito.ts` y
+`visa-credito.ts`. **Se documenta como caso residual conocido, no como código nuevo** — mismo criterio
+que HANDOFF 88 aplicó a los bloques fusionados de crédito: no se adivina una heurística sin medir, y acá
+tampoco: hace falta escribir el adapter, correrlo contra el documento y ver si el eje 1
+(`verificarAritmeticaPorLiquidacion`) confirma que las otras 4 sí cuadran limpio (evidencia indirecta de
+que el mecanismo real, no solo el script de diagnóstico, coincide con el conteo manual de JP).
+
+### 3. Los 5 conceptos pedidos — forma real y riesgo de falso positivo
+
+- **`total de ventas`** (buscado por `VENTA`): 25 coincidencias (18 en p1, 7 en p2), con más de una
+  forma distinta por bloque — consistente con la descripción de Laura: el desglose se repite dos veces
+  por liquidación (una vez parcial —total de ventas, arancel, IVA del arancel—, una vez completo —venta,
+  arancel, retención, neto—), así que una búsqueda por `VENTA` sola matchea ambas apariciones. **Riesgo
+  bajo de falso positivo por vocabulario** (no se ve una fila de encabezado de tabla contaminando esta
+  búsqueda, ver el punto de pipe/corchete abajo), pero el adapter va a necesitar distinguir la primera
+  aparición de la segunda por posición, no por vocabulario — no determinado hoy.
+- **`arancel`** (1%, confirmado igual que débito): 21 coincidencias (13 en p1, 8 en p2). **Cero** de esas
+  21 filas traen pipe o corchete — a diferencia de los dos Visa, acá **no se repite el riesgo de borde de
+  tabla** que forzó la exclusión por `!/[|[\]]/.test(cruda)` en ambos adapters existentes. 12 de las 21
+  filas traen 2+ tokens con forma de número — consistente con alícuota y monto publicados en la misma
+  línea (mismo patrón que ya resuelve `leerLineaDeTotal` en los dos adapters existentes: primer token =
+  alícuota, último = monto), no evidencia de una fila que fusione dos conceptos distintos.
+- **`iva_21_sobre_arancel`** (buscado por `IVA`): 17 coincidencias (10 en p1, 7 en p2), 0 con
+  pipe/corchete. Buena parte de las formas contienen también `ARANCEL` en la misma fila (esperable: "IVA
+  s/arancel" es una etiqueta compuesta) — no es una colisión de conceptos, es la etiqueta real.
+- **`retencion_iibb_sirtac`** (3,5%, buscado por `SIRTAC`, `IIBB`/`INGRESOS BRUTOS` y `RETEN` por
+  separado): las tres búsquedas devuelven casi el mismo conjunto de filas (5-7 coincidencias, muy
+  solapadas) — sugiere que el término real del documento trae más de una de estas palabras juntas en la
+  misma etiqueta (ninguna de las tres aísla el concepto por sí sola, a diferencia de Visa donde `SIRTAC`
+  alcanza). **2 de esas filas traen pipe/corchete** — investigado por índice: una es ruido de la
+  carátula/encabezado del documento (antes de la primera liquidación, forma de prosa, no una fila de
+  totales real) y la otra es ruido de OCR dentro de una fila real (un carácter suelto, no un patrón
+  estructural de borde de tabla como en Visa). No se trata como el mismo riesgo que Visa hasta escribir
+  el adapter y medirlo con más cuidado.
+- **`neto final a liquidar`**: no se aisló como búsqueda propia — el token `NETO` (9 coincidencias) se
+  solapa casi exactamente con la candidata de conteo de bloques del punto 2 (línea de inicio del segundo
+  desglose), consistente con que el neto vive en la misma sección que cierra el bloque, no en una línea
+  aparte y fácil de aislar por vocabulario propio.
+
+### 4. `percepcion_iva_rg2408` — confirmado que NO aparece en ningún bloque real
+
+Dato que JP ya tenía del análisis manual, verificado ahora contra la lectura OCR completa del documento:
+**una sola coincidencia de `PERCEP`** en las 111 filas, y esa única fila cae en el párrafo de términos y
+condiciones del pie de la página 2 (mismo tipo de "ruido de aviso legal" que HANDOFF 87 ya documentó para
+`venta_cuotas` en Visa crédito) — no en una liquidación. Búsqueda adicional del literal `2408`: **cero**
+coincidencias en todo el documento. `traePercepcionIva: false` para `cabal_debito` (ya así en el
+comentario de `capacidadesDeFormatoSchema`, esquema.ts) queda sostenido por esta lectura, no solo por el
+análisis manual previo.
+
+### 5. Eje 2 (checksum del emisor) — el caso que fuerza el diseño general, confirmado contra el documento
+
+Cero coincidencias del patrón que usan los dos adapters Visa para el total consolidado (`NETO` + `PAGO`
+sin `IMPORTE`). Se amplió la búsqueda a cualquier fila con `TOTAL` en todo el documento (21 coincidencias)
+y **ninguna cae en el encabezado/carátula** (filas anteriores a la primera liquidación candidata) como
+total del período — todas están dentro de las liquidaciones individuales o en el texto legal del pie.
+**No hay ningún total consolidado contra el cual sumar**, consistente con lo que describió Laura en el
+audio ("no te hace un resumen... es liquidación por liquidación") y con el comentario que
+`verificarChecksumDelEmisorMinimo` (`verificacion.ts` líneas 93-95) ya dejó anotado como pendiente:
+"el diseño completo del eje 2 ... se define recién con el adapter de Cabal, que no tiene total declarado
+y va a forzar el caso general con `no_verificable, emisor_no_publica_total`". Este diagnóstico confirma
+la premisa contra el documento real — el diseño del caso general queda para cuando se escriba el
+adapter, no resuelto acá.
+
+### Qué falta, explícito
+
+- **No se escribió ningún adapter ni código de producción** — este diagnóstico no tocó ningún archivo
+  bajo `formatos/` ni `verificacion.ts`.
+- **El conteo de bloques está resuelto (5, ver 2b)**, pero el mecanismo real (`ES_LINEA_CIERRE` +
+  fallback de bloque sin cierre al final del documento) todavía no se corrió contra el documento — la
+  confirmación de que el adapter realmente produce 5 liquidaciones, con la 5ª como
+  `bloque_de_totales_no_interpretado`, queda pendiente de la corrida real cuando se escriba el adapter.
+- No se determinó la etiqueta exacta de ninguno de los 5 conceptos — solo formas, nunca texto real; a
+  determinar con más cuidado cuando se escriba el adapter, mismo método que los dos Visa.
+- El diseño general del eje 2 (`no_verificable`/`emisor_no_publica_total`, cómo se reporta cuando no hay
+  total contra el cual sumar) sigue sin escribirse — este diagnóstico confirma que Cabal es el caso que
+  lo va a forzar, no lo diseña.
+- 🔴 **Elevado por JP, más urgente que otros pendientes del backlog:** el bug de detección de
+  `reconoceVisaDebito` (HANDOFF 88, `TODO` ya dejado en `visa-debito.ts`) se vuelve **activo**, no
+  solo teórico, en el momento en que Cabal y Visa crédito queden registrados junto a débito — no es
+  algo que pueda esperar indefinidamente al commit 4 (CLI/persistencia). Sigue sin corregir en esta
+  sesión (fuera de alcance de un diagnóstico read-only), pero queda marcado como prioridad alta para la
+  próxima vez que se toque `registro.ts` o se registren los tres adapters juntos.
+- Piloto sin tocar en toda la sesión (confirmado por consulta directa a la base al abrir la sesión, y
+  por `git status` limpio salvo `HANDOFF.md` al cerrar este paso).
+
+---
+
 ## 2026-08-20 (88) — Adapter Visa crédito construido y cerrado: commit 2b del plan 14. Dos reglas de matching resueltas con evidencia (arancel por pipe/corchete, `interes_financiacion_cuotas` sin depender del signo `-`), acumulador de percepción IVA a dos tasas con test de mutación, `descuento_contado_adquirente` deliberadamente sin implementar. `pnpm verificar` 75/1605/0 limpio (corrida limpia, sin contención de recursos). Sin push.
 
 **Herramienta:** Claude Code, misma sesión que la entrada 87. Convocados `seguridad-datos-financieros`
