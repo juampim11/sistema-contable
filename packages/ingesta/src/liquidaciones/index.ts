@@ -16,3 +16,4 @@
 export * from './contrato.ts';
 export * from './esquema.ts';
 export * from './registro.ts';
+export * from './verificacion.ts';

@@ -976,28 +976,49 @@ describe('R-O — cero porcentajes y cero decimales en el vocabulario compartido
    * escriba un arancel esperado. Lo que la regla mira son **valores**: un decimal en posición de valor
    * y un signo de porcentaje. Un número de norma entero (`percepcion_iva_rg2408`, `impuesto_25413`) no
    * es una tasa y sigue siendo legítimo.
+   *
+   * ## Alcance acotado a `contrato.ts`/`registro.ts`/`esquema.ts` (y `index.ts` si deja de ser barrel)
+   *
+   * Dictamen de `seguridad-datos-financieros` (esta sesión, 2026-08-19), confirmado por JP: un adapter
+   * de PDF necesita coordenadas geométricas fijas (`const X_FECHA = 38.4;`, mismo patrón que usan los
+   * ocho adapters bancarios de `adaptadores/`, ninguno con una regla equivalente) y esas coordenadas
+   * SON decimales. Aplicar R-O sin acotar pondría en rojo la geometría legítima del primer adapter real
+   * (`liquidaciones/formatos/`) el día que exista.
+   *
+   * El riesgo real que R-O existe para tapar es un **valor de negocio** (arancel, alícuota) filtrado
+   * entre tenants por el vocabulario COMPARTIDO — nunca la geometría fija de un emisor, que es un hecho
+   * público del formato del documento (Visa imprime sus columnas en el mismo lugar para todo comercio),
+   * no un dato de la relación comercial de un cliente. Por eso R-O se acota al vocabulario compartido y
+   * excluye explícitamente `liquidaciones/formatos/`, que tiene su propio guardia — R-O2, más abajo —
+   * acotado al **nombre del identificador**, no a cualquier decimal.
    */
   const PATRON_DECIMAL_EN_VALOR = /[:=]\s*-?\d+[.,]\d+/;
   const PATRON_PORCENTAJE = /\d\s*%/;
 
-  it('ningún archivo de `liquidaciones/` escribe un decimal en posición de valor', () => {
-    const deLiquidaciones = FUENTES.filter((r) =>
-      rel(r).startsWith('packages/ingesta/src/liquidaciones/'),
+  /** El vocabulario compartido: nunca `liquidaciones/formatos/`, que tiene geometría legítima. */
+  function esDelVocabularioCompartido(r: string): boolean {
+    return (
+      r.startsWith('packages/ingesta/src/liquidaciones/') &&
+      !r.startsWith('packages/ingesta/src/liquidaciones/formatos/')
     );
+  }
+
+  it('ningún archivo del vocabulario compartido de liquidaciones escribe un decimal en posición de valor', () => {
+    const deLiquidaciones = FUENTES.filter((r) => esDelVocabularioCompartido(rel(r)));
     const infractores = deLiquidaciones.filter((ruta) =>
       PATRON_DECIMAL_EN_VALOR.test(readFileSync(ruta, 'utf8')),
     );
     expect(
       infractores.map(rel),
       'una tasa cableada en el vocabulario compartido es H-6: la tasa efectiva se calcula de cada ' +
-        'liquidación real, y una esperada —si algún día existe— va en tabla N2 por cliente con vigencia',
+        'liquidación real, y una esperada —si algún día existe— va en tabla N2 por cliente con vigencia. ' +
+        '`liquidaciones/formatos/` queda afuera a propósito: ahí la geometría del PDF es legítima (R-O2 ' +
+        'la vigila por nombre de identificador, no por cualquier decimal)',
     ).toEqual([]);
   });
 
-  it('ningún archivo de `liquidaciones/` escribe un porcentaje', () => {
-    const deLiquidaciones = FUENTES.filter((r) =>
-      rel(r).startsWith('packages/ingesta/src/liquidaciones/'),
-    );
+  it('ningún archivo del vocabulario compartido de liquidaciones escribe un porcentaje', () => {
+    const deLiquidaciones = FUENTES.filter((r) => esDelVocabularioCompartido(rel(r)));
     const infractores = deLiquidaciones.filter((ruta) =>
       PATRON_PORCENTAJE.test(readFileSync(ruta, 'utf8')),
     );
@@ -1021,5 +1042,64 @@ describe('R-O — cero porcentajes y cero decimales en el vocabulario compartido
     expect(PATRON_DECIMAL_EN_VALOR.test('export function formaDeLinea(texto: string, largoMaximo = 60)')).toBe(false);
     expect(PATRON_DECIMAL_EN_VALOR.test('  archivoHash: z.string().length(64),')).toBe(false);
     expect(PATRON_PORCENTAJE.test("  concepto: 'iva_sobre_arancel',")).toBe(false);
+  });
+
+  it('el filtro del vocabulario compartido excluye `formatos/` y sigue viendo el resto', () => {
+    // Guardia de la propia allowlist: si `esDelVocabularioCompartido` se rompiera y volviera a incluir
+    // `formatos/`, o dejara de ver `contrato.ts`, las dos pruebas de arriba pasarían por razones
+    // equivocadas (vacío o de menos) sin que nada avise.
+    expect(esDelVocabularioCompartido('packages/ingesta/src/liquidaciones/contrato.ts')).toBe(true);
+    expect(esDelVocabularioCompartido('packages/ingesta/src/liquidaciones/formatos/visa-debito.ts')).toBe(
+      false,
+    );
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-O2 — ningún adapter de liquidaciones cablea una tasa esperada por su nombre', () => {
+  /**
+   * Cierra el riesgo residual que dejó abierto acotar R-O: nada impide que alguien cablee una tasa
+   * ESPERADA dentro de `liquidaciones/formatos/` (ej. `const ARANCEL_ESPERADO = 1.8;`) como atajo, ahora
+   * que R-O ya no mira ese directorio. Mismo mecanismo que R-O (`infractores`/`FUENTES`), acotado a
+   * `liquidaciones/formatos/` — pero el patrón mira el **nombre del identificador**, no cualquier
+   * decimal: una coordenada geométrica (`const X_FECHA = 38.4;`) es legítima ahí y no puede poner esta
+   * regla en rojo.
+   *
+   * El patrón busca un identificador cuyo nombre contenga una palabra de tasa/importe negociado
+   * (arancel, alícuota, tasa, retención, percepción, comisión) asignado a un valor decimal o con signo
+   * de porcentaje. Es la misma lógica de H-6 que R-O, aplicada donde R-O ya no mira.
+   */
+  const PATRON_TASA_CABLEADA =
+    /\b\w*(?:ARANCEL|ALICUOTA|TASA|RETENCION|PERCEPCION|COMISION)\w*\s*[:=]\s*['"`]?-?\d+(?:[.,]\d+)?\s*%?/i;
+
+  function esDeFormatos(r: string): boolean {
+    return r.startsWith('packages/ingesta/src/liquidaciones/formatos/');
+  }
+
+  it('ningún archivo de `liquidaciones/formatos/` cablea una tasa esperada por su nombre', () => {
+    const deFormatos = FUENTES.filter((r) => esDeFormatos(rel(r)));
+    const infractores = deFormatos.filter((ruta) =>
+      PATRON_TASA_CABLEADA.test(readFileSync(ruta, 'utf8')),
+    );
+    expect(
+      infractores.map(rel),
+      'una tasa o arancel ESPERADO cableado por nombre en un adapter es la misma fuga H-6 que R-O ' +
+        'prohíbe en el vocabulario compartido, ahora por la puerta de atrás que dejó `formatos/`: la ' +
+        'tasa efectiva se calcula de cada liquidación real, nunca se compara contra una constante',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta la infracción plantada y no confunde la geometría legítima', () => {
+    // Infracción plantada: el nombre del identificador ES una tasa.
+    expect(PATRON_TASA_CABLEADA.test('const TASA_ARANCEL = 0.01;')).toBe(true);
+    expect(PATRON_TASA_CABLEADA.test('  alicuotaSirtacEsperada: 3.5,')).toBe(true);
+    expect(PATRON_TASA_CABLEADA.test('const COMISION_ESPERADA = "1,0%";')).toBe(true);
+    // Caso legítimo: coordenadas geométricas del PDF. El nombre no es una tasa, aunque el valor sea
+    // decimal — la regla mira el identificador, no el número.
+    expect(PATRON_TASA_CABLEADA.test('const X_FECHA = 38.4;')).toBe(false);
+    expect(PATRON_TASA_CABLEADA.test('const COLUMNA_VENTAS = { x: 224.4, tolerancia: 1.8 };')).toBe(false);
+    expect(PATRON_TASA_CABLEADA.test('const MARGEN_DE_TRUNCADO = 6;')).toBe(false);
+    // Y un concepto del catálogo (nombre, no tasa) tampoco confunde al patrón.
+    expect(PATRON_TASA_CABLEADA.test("concepto: 'retencion_iibb_sirtac',")).toBe(false);
   });
 });

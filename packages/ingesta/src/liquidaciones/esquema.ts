@@ -317,10 +317,21 @@ export type EjeDeVerificacion = (typeof EJES_DE_VERIFICACION)[number];
  * El repo ya tiene la disciplina de que la cantidad de `no_verificable` no puede crecer sin que crezca
  * la lista de motivos, y la simétrica de que una allowlist no puede tener entradas muertas. Un roster
  * poblado por adelantado con motivos que ningún adapter produce todavía nace en conflicto con las dos.
- * Este es el único motivo **medido**: el tercer proveedor no publica total consolidado. El resto crece
- * con el adapter que lo produzca, nunca antes.
+ * `emisor_no_publica_total` es el motivo original **medido**: el tercer proveedor no publica total
+ * consolidado.
+ *
+ * `concepto_con_efecto_no_determinado` se agrega en el commit 2 (adapter Visa débito), y es la
+ * contracara del eje 1 (`aritmetica_por_liquidacion`, ver `verificacion.ts`): `percepcion_iva_rg2408`
+ * tiene `efectoSobreElNeto: 'no_determinado'` en el catálogo porque su fórmula no está probada contra
+ * ninguna base — así que si un renglón con ese efecto trae un monto ≠ 0, el eje 1 no puede sumarlo ni
+ * restarlo con ningún signo, y `no_verificable` con este motivo es la única respuesta honesta. Genérico
+ * a propósito: cualquier concepto futuro con el mismo `efectoSobreElNeto: 'no_determinado'` reusa este
+ * motivo, no necesita uno propio.
  */
-export const MOTIVOS_NO_VERIFICABLE = ['emisor_no_publica_total'] as const;
+export const MOTIVOS_NO_VERIFICABLE = [
+  'emisor_no_publica_total',
+  'concepto_con_efecto_no_determinado',
+] as const;
 export type MotivoNoVerificable = (typeof MOTIVOS_NO_VERIFICABLE)[number];
 
 /**

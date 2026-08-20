@@ -6,6 +6,119 @@
 
 ---
 
+## 2026-08-19 (79) — Plan 14, commit 2: FRENADO por documento escaneado — R-O acotada + R-O2 + `verificacion.ts` cerrados; adapter de Visa débito no existe. Deriva en plan 15 (research OCR), no implementado.
+
+**Herramienta:** Claude Code. Intento de implementar el commit 2 del plan 14 (primer adapter real,
+Visa débito, dry-run sin persistir). Se frenó por un hallazgo real, no por diseño: el documento del
+cliente es una foto/escaneo (CamScanner), no un PDF con texto nativo. Terminó abriendo una segunda
+sesión de research+diseño (`docs/diseno/15-ocr-liquidaciones-plan.md`), tampoco implementada.
+
+### Lo que sí quedó hecho, verificado y cerrado
+
+Antes del bloqueo apareció un hallazgo de arquitectura real (no del documento): R-O (`packages/data/
+tests/reglas-de-codigo.test.ts`, "cero decimales en `liquidaciones/`") pondría en rojo cualquier
+adapter real, porque un adapter de PDF necesita coordenadas geométricas (`const X_FECHA = 38.4;`) y el
+patrón de R-O no distingue eso de una tasa cableada. Convocado `seguridad-datos-financieros`
+(`Agent()` real) para dictaminar: confirmó acotar R-O al vocabulario compartido
+(`contrato.ts`/`registro.ts`/`esquema.ts`, excluyendo `liquidaciones/formatos/`) y recomendó una regla
+nueva y más angosta, **R-O2**, sobre `formatos/`, que mira el NOMBRE del identificador
+(`ARANCEL|ALICUOTA|TASA|RETENCION|PERCEPCION|COMISION` + decimal/%) en vez de "cualquier decimal". JP
+confirmó implementar las dos. Resultado, verificado por mí de forma independiente (no solo el reporte
+del subagente que lo escribió):
+
+- **R-O acotada** — planté un decimal en `contrato.ts` → rojo → revertí → verde.
+- **R-O2 nueva** — planté `const TASA_ARANCEL_PLANTADA = 0.01;` en un archivo temporal bajo
+  `liquidaciones/formatos/` → rojo → borré el archivo → verde.
+- **`packages/ingesta/src/liquidaciones/verificacion.ts`** (nuevo): `verificarAritmeticaPorLiquidacion`
+  (eje 1, `aritmetica_por_liquidacion`, completo — usa `CATALOGO_DE_CONCEPTOS[concepto]
+  .efectoSobreElNeto` como única fuente del signo, nunca lo duplica) y
+  `verificarChecksumDelEmisorMinimo` (eje 2, con el comentario 🔴 explícito que pedí marcándolo
+  **parcial/mínimo** — el diseño completo del eje 2 se define recién con el adapter de Cabal, que no
+  tiene total declarado). Motivo nuevo `concepto_con_efecto_no_determinado` agregado a
+  `MOTIVOS_NO_VERIFICABLE` (`esquema.ts`) para el caso `percepcion_iva_rg2408`. Test propio,
+  100% sintético (`packages/ingesta/tests/liquidaciones-verificacion.test.ts`), verde.
+- `pnpm verificar`: **69 archivos / 1577 tests (1570 verdes, 7 todo) / 0 fallas.** `pnpm barrido`:
+  limpio, 957→958 archivos según el momento de la corrida, sin fuga.
+
+**Sobre el `it.skipIf` que el plan pedía documentar (punto 2 de la aprobación de JP): no llegó a
+escribirse.** Estaba previsto para el test contra el fixture real de Visa débito, que nunca se
+escribió porque el adapter se frenó antes (ver abajo). Queda pendiente junto con el adapter mismo —
+anotado acá para que no se asuma resuelto.
+
+### El bloqueo: el documento real no tiene texto extraíble
+
+Verificado de forma independiente (no solo el reporte del subagente): `extraerTexto()` de
+`packages/ingesta/src/texto-pdf.ts` —el mismo código que usan los ocho adapters bancarios— da
+`requiereOcr: true` y **0 caracteres extraídos en las 8 páginas** de
+`privado/tarjetas/01-extracto_visa_debito_roka.pdf`. A nivel de bytes: referencias `/Image`, **0
+`/Font`**. Descartado que fuera un bug del extractor corriéndolo contra un extracto real de Galicia
+(30.590 caracteres extraídos sin problema). No se escribió `formatos/visa-debito.ts` ni el test de
+integración contra el fixture real — fabricar coordenadas geométricas sobre un documento sin geometría
+real habría sido inventar exactamente lo que se pidió no inventar.
+
+Precedente encontrado en el propio repo: BBVA (Módulo 1) tuvo el mismo síntoma
+(`docs/diseno/01-modulo-1-ingesta-bancaria.md` §2.1/§10.2/§12) y la decisión fue **no construir OCR**
+— el adapter no existe, el CLI rechaza con `adapter_no_disponible`, "se decide con el dato en mano, no
+antes". Propuse aplicar el mismo patrón acá. **Laura (la contadora) invalidó esa analogía con un dato
+nuevo**: el formato normal en que estos comercios reciben la liquidación es IMPRESO — lo
+escaneado/fotografiado es el patrón recurrente, no la excepción, y no hay versión digital nativa
+esperando del otro lado. Con eso, "esperar un segundo caso" ya no aplica: OCR pasa de opcional a
+requisito real.
+
+### Plan 15: research + diseño de OCR, con tres dictámenes reales
+
+Abrí `docs/diseno/15-ocr-liquidaciones-plan.md`, mismo formato que 12/14. Convoqué con `Agent()` real
+(no narrado) a tres agentes en paralelo:
+
+- **`arquitecto-software`**: recomienda `tesseract.js` v7, 100% local (WASM, sin red en runtime —
+  hay que apagar la descarga por defecto desde CDN configurando `langPath`/`corePath` locales, es la
+  condición de cierre para cumplir CLAUDE.md §1.4). Investigó y descartó explícitamente los servicios
+  en la nube (incluido el caso límite real: Azure con contenedores *disconnected* on-premise, que sí
+  cumpliría la regla de datos pero se descarta por costo/operación desproporcionados). Ubicación:
+  `packages/ingesta/src/ocr.ts` (hermano de `texto-pdf.ts`), con un choke point verificable nuevo
+  (solo ese archivo puede importar `tesseract.js`, regla hermana de R17) en vez de una interfaz
+  agnóstica tipo `AuthProvider` — no hay variabilidad real de proveedor que la justifique. Tipo de
+  salida nuevo (`PalabraOcr`/`PaginaOcr`, píxeles + confianza), no reusar `FilaGeometrica` — el
+  supuesto de columna-en-x-fijo que sostiene el banding de los bancos no es cierto sobre una foto.
+  Costo medido: ~43 MB instalados (solo idioma `spa`).
+- **`motor-conciliacion-contable`**: la invariante aritmética ya construida (`verificarAritmeticaPor
+  Liquidacion`) NO alcanza sola como red de seguridad — cubre con tolerancia cero los campos que suma
+  (`ventasBrutas`, `netoAcreditado`, `monto`), pero no `alicuotaPublicada`, `base`,
+  `numeroDeLiquidacion`, fechas, `jurisdiccion` ni `caveatDeComputoFiscal`, ni el caso de dos errores
+  correlacionados que se compensan. Propone un CUARTO eje de verificación, separado del tri-estado
+  existente (nunca fusionado — mismo error que ya se corrigió una vez colapsando ejes),
+  `confiable/dudoso/no_evaluable`, granular por campo, con consecuencia obligatoria sobre la escalera
+  de matching (un `numeroDeLiquidacion` dudoso degrada a `por_fecha_y_neto`). Señal barata adicional:
+  comparación intra-lote de `alicuotaPublicada` entre las liquidaciones del mismo mes, sin cablear
+  ningún valor (no viola R-O).
+- **`contador-dominio`**: un dato mal leído que la aritmética no atrapa entra directo a una propuesta
+  de asiento. Mayor exposición relativa: `iva_21_sobre_arancel` (crédito fiscal de una DDJJ nacional
+  sujeta a cruce sistemático). La revisión humana necesita ver el ORIGEN de la lectura (nativo/OCR) y
+  la confianza, no solo el valor — si no, un dato de OCR es indistinguible en pantalla de uno de texto
+  nativo. Marca explícito qué de su dictamen necesita `fiscal-nacional-iva-ganancias`/
+  `fiscal-ingresos-brutos-convenio-multilateral` antes de ser criterio de producto — **no tengo esa
+  fuente cargada** para plazos de cómputo y régimen aplicable. Validar con profesional matriculado.
+
+Plan 15 completo con sus 6 secciones (contexto, qué cambia/no cambia, qué se mide, predicción
+falsable, agentes convocados y a convocar, decisiones para JP). **Nada de esto se implementó.**
+
+### Qué falta, explícito
+
+- El commit 2 del plan 14 sigue sin adapter — bloqueado hasta que se implemente al menos la parte de
+  plan 15 que da texto legible del documento real.
+- Plan 15 en sí: cero código. `tesseract.js` no está instalado, `ocr.ts` no existe, el eje 4 de
+  confianza no existe, la regla de choke point no existe.
+- Antes de implementar plan 15: convocar `devops` (costo real de la dependencia en CI),
+  `seguridad-datos-financieros` + `security-engineer` (dependencia nueva, superficie nueva, y
+  confirmar que `ocr.ts` no llama a la red), y los dos agentes fiscales antes de que el ranking de
+  exposición por concepto de `contador-dominio` se use como criterio real.
+- Commits 3 (migración) y 4 (CLI + persistencia) del plan 14 siguen sin arrancar, como ya estaba.
+
+**Antes de continuar: releer `docs/diseno/15-ocr-liquidaciones-plan.md` completo, y recién después
+`docs/diseno/14-liquidaciones-tarjeta-plan.md` para retomar el commit 2.**
+
+---
+
 ## 2026-08-19 (78) — Plan 14, commit 1 (vocabulario + contrato): verificación de cierre COMPLETA. `pnpm verificar` 68/1564/0.
 
 **Herramienta:** Claude Code. Retoma el commit `2e4d89e` ("wip(liquidaciones): commit 1 del plan 14 —
