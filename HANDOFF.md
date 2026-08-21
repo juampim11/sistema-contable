@@ -6,6 +6,22 @@
 
 ---
 
+## 2026-08-20 (91) — Mapa consolidado: los tres adapters de tarjeta, estado real (no repaso de detalle — eso vive en 78-90)
+
+| Formato | Cobertura real medida | Límite conocido principal | Vive en |
+|---|---|---|---|
+| **Visa débito** | 13/19 liquidaciones cierran completas (HANDOFF 85/86) | Cobertura parcial de OCR (`neto_acreditado` y otros campos, mitigada pero no cerrada por el reintento del plan 16) — **más** el bug de `reconoceVisaDebito` de abajo | `a84c76b` (código), medición en `f2e6659` |
+| **Visa crédito** | 6/17 liquidaciones confirmadas cierran **estructuralmente** completas (HANDOFF 88); de esas 6, **2 fusionan renglones de dos liquidaciones distintas** — detectable, no silencioso: eje 1 las marca `no_cuadra` (la suma de dos liquidaciones no reproduce el neto de una sola) | `ES_LINEA_CIERRE` no reconoce el cierre de una liquidación real → fusión con el siguiente bloque — **más** el bug de `reconoceVisaDebito` de abajo | `686ef67` |
+| **Cabal débito** | 4/5 liquidaciones cierran completas; la 5ª cae en `bloque_de_totales_no_interpretado` (confirma HANDOFF 89) | OCR parte el monto real de retención IIBB en dos tokens; el código toma la base como si fuera el monto → eje 1 da `no_cuadra` en las 4, documentado en el código | `99d7dda` (paso A), `25455ed` (paso B) |
+
+**Qué falta, explícito, antes de poder llamar "cerrado" al frente completo de tarjetas:**
+
+1. 🔴 **El bug del `TODO` en `reconoceVisaDebito`** (`visa-debito.ts:111-124`, señalado en HANDOFF 88): la marca genérica compartida con crédito hace que un documento de crédito real se reconozca como débito, vía `.some()`/OR. **No es fuga entre clientes** (el resolver falla cerrado a `ambiguo`), pero es **bloqueante para cualquier wiring de producción** el día que los tres formatos queden registrados juntos en `registro.ts` — hoy ninguno lo está. Corregir a AND, mismo patrón que ya usa `reconoceVisaCredito`.
+2. **Commit 3 del plan 14** — migración (`formato_liquidacion`/`lote_liquidacion`/renglón). Dispara la matriz completa de CLAUDE.md §3.1 (`dba-data` + `security-engineer` + `seguridad-datos-financieros`, los tres obligatorios) y el modo plan de §3.2(a). La clasificación de campos ya está escrita en `esquema.ts:31-53` (dictamen previo de `seguridad-datos-financieros`) — se usa tal cual, no se re-litiga, pero la convocatoria se vuelve a hacer igual.
+3. **Commit 4 del plan 14** — CLI/persistencia. Es el momento en que los tres adapters se registran juntos por primera vez: el punto (1) de esta lista deja de ser teórico y pasa a ser un requisito de esa misma tarea, no un pendiente aparte.
+
+---
+
 ## 2026-08-20 (90) — Adapter Cabal débito construido (`cabal-debito.ts`) — paso A + paso B del plan retomado tras el incidente #9. Resultado real contra el documento: 4 de las 5 liquidaciones cierran completas, la 5ª cae en `bloque_de_totales_no_interpretado` — confirma punta a punta lo que HANDOFF 89 predijo. **Eje 1 (aritmética) da `no_cuadra` en las 4, por una causa medida y documentada en el propio código, no un fallo de matching**: `retencion_iibb_sirtac` trae dos importes (consistente con base + monto, no medido antes de escribir este adapter — la predicción de `publicaBaseYAlicuotaPorRenglon: false` solo cubría arancel/IVA), y en varias liquidaciones el OCR parte la porción decimal del monto real en un token aparte, dejando como único importe válido la base — que el código toma por el monto, sin forma de distinguirlo estructuralmente de "esta fila nunca tuvo un segundo número". **Se documenta como límite conocido (comentario junto a la línea, sin dígitos reales) y se cierra así, mismo criterio que ya usa `visa-debito.ts` para su propia cobertura parcial de OCR** — candidato a un commit futuro análogo al plan 16 (reintento de OCR sobre el recorte de esa fila).
 
 **Dos bugs reales encontrados y corregidos en el camino, con evidencia estructural, sin leer el documento fuera del script temporal + `formaDeLineaDeLiquidacion`:**
