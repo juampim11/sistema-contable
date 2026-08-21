@@ -10,9 +10,23 @@ import { describe, expect, it } from 'vitest';
 import {
   verificarAritmeticaPorLiquidacion,
   verificarChecksumDelEmisorMinimo,
+  verificarEjeChecksumDelEmisor,
   sumaDeNetosAcreditados,
 } from '../src/liquidaciones/verificacion.ts';
-import type { LiquidacionLeida, RenglonDeLiquidacion } from '../src/liquidaciones/esquema.ts';
+import type {
+  CapacidadesDeFormato,
+  LiquidacionLeida,
+  RenglonDeLiquidacion,
+} from '../src/liquidaciones/esquema.ts';
+
+function capacidades(parciales: Partial<CapacidadesDeFormato>): CapacidadesDeFormato {
+  return {
+    traeTotalDelEmisor: true,
+    publicaBaseYAlicuotaPorRenglon: false,
+    traePercepcionIva: false,
+    ...parciales,
+  };
+}
 
 function renglon(parciales: Partial<RenglonDeLiquidacion>): RenglonDeLiquidacion {
   return {
@@ -123,6 +137,38 @@ describe('verificarChecksumDelEmisorMinimo — implementación PARCIAL (ver come
   it('lista vacía de liquidaciones nunca cuadra contra un total declarado no nulo', () => {
     const r = verificarChecksumDelEmisorMinimo([], '1.00');
     expect(r.estado).toBe('no_cuadra');
+  });
+});
+
+describe('verificarEjeChecksumDelEmisor — decide el motivo por capacidad del formato, no del lote', () => {
+  it('traeTotalDelEmisor: false → siempre no_verificable/emisor_no_publica_total, sin importar el lote', () => {
+    const liquidaciones = [liquidacion({ netoAcreditado: '100.00' })];
+    // Si llegara a delegar en verificarChecksumDelEmisorMinimo por error, esto daría 'cuadra' —
+    // por eso el total declarado coincide exacto con la suma: el test detecta el bug si se cuela.
+    const r = verificarEjeChecksumDelEmisor(capacidades({ traeTotalDelEmisor: false }), liquidaciones, '100.00');
+    expect(r).toEqual({ eje: 'checksum_del_emisor', estado: 'no_verificable', motivo: 'emisor_no_publica_total' });
+  });
+
+  it('traeTotalDelEmisor: false → mismo resultado con lista vacía y total arbitrario', () => {
+    const r = verificarEjeChecksumDelEmisor(capacidades({ traeTotalDelEmisor: false }), [], '0.00');
+    expect(r).toEqual({ eje: 'checksum_del_emisor', estado: 'no_verificable', motivo: 'emisor_no_publica_total' });
+  });
+
+  it('traeTotalDelEmisor: true → delega en verificarChecksumDelEmisorMinimo, caso cuadra', () => {
+    const liquidaciones = [
+      liquidacion({ netoAcreditado: '100.00' }),
+      liquidacion({ netoAcreditado: '250.50' }),
+    ];
+    const r = verificarEjeChecksumDelEmisor(capacidades({ traeTotalDelEmisor: true }), liquidaciones, '350.50');
+    expect(r).toEqual(verificarChecksumDelEmisorMinimo(liquidaciones, '350.50'));
+    expect(r).toEqual({ eje: 'checksum_del_emisor', estado: 'cuadra' });
+  });
+
+  it('traeTotalDelEmisor: true → delega en verificarChecksumDelEmisorMinimo, caso no_cuadra', () => {
+    const liquidaciones = [liquidacion({ netoAcreditado: '100.00' })];
+    const r = verificarEjeChecksumDelEmisor(capacidades({ traeTotalDelEmisor: true }), liquidaciones, '999.99');
+    expect(r).toEqual(verificarChecksumDelEmisorMinimo(liquidaciones, '999.99'));
+    expect(r).toEqual({ eje: 'checksum_del_emisor', estado: 'no_cuadra' });
   });
 });
 

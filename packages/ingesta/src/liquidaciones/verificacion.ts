@@ -1,11 +1,14 @@
 /**
  * VERIFICACIÓN DE LIQUIDACIONES — commit 2 de 4 del plan 14.
  *
- * Dos funciones, dos ejes de los tres que declara `esquema.ts` (`EJES_DE_VERIFICACION`):
+ * Tres funciones, dos ejes de los tres que declara `esquema.ts` (`EJES_DE_VERIFICACION`):
  *
  *  - `verificarAritmeticaPorLiquidacion`: eje 1, `aritmetica_por_liquidacion`. Completa en este commit.
  *  - `verificarChecksumDelEmisorMinimo`: eje 2, `checksum_del_emisor`. **Parcial**, ver su propio
- *    comentario — no es el diseño final.
+ *    comentario — no es el diseño final. Pura comparación aritmética, ciega al formato.
+ *  - `verificarEjeChecksumDelEmisor`: envoltorio del eje 2 que decide el motivo según
+ *    `capacidades.traeTotalDelEmisor` — agregado en el plan de `cabal_debito` (paso A), primer formato
+ *    que declara `traeTotalDelEmisor: false`. Ver su propio comentario.
  *
  * El eje 3 (`cruce_contra_extracto`) no vive acá: cruza contra el extracto bancario, que es otro
  * documento y otro commit (plan 14 §5, paso 4 en adelante).
@@ -27,7 +30,12 @@
  */
 
 import { centavosAImporte, importeCanonicoACentavos } from '../parseo-ar.ts';
-import { CATALOGO_DE_CONCEPTOS, type LiquidacionLeida, type ResultadoDeEje } from './esquema.ts';
+import {
+  CATALOGO_DE_CONCEPTOS,
+  type CapacidadesDeFormato,
+  type LiquidacionLeida,
+  type ResultadoDeEje,
+} from './esquema.ts';
 
 /**
  * Eje 1 — ventas brutas menos lo que resta, más lo que suma, tiene que dar el neto acreditado, al
@@ -116,6 +124,40 @@ export function verificarChecksumDelEmisorMinimo(
   }
 
   return { eje, estado: declarado !== null && declarado === suma ? 'cuadra' : 'no_cuadra' };
+}
+
+/**
+ * Eje 2, envoltorio — decide el MOTIVO de `no_verificable` según una propiedad del FORMATO, nunca del
+ * lote. `verificarChecksumDelEmisorMinimo` no conoce `capacidades` (ver su propio comentario, línea
+ * 100-102): esta función es la que decide, y lo hace leyendo un solo booleano estático.
+ *
+ * `capacidades.traeTotalDelEmisor === false` → siempre `no_verificable` con motivo
+ * `emisor_no_publica_total`, sin correr la comparación aritmética (no tiene sentido sumar liquidaciones
+ * contra un total que el formato nunca publica). Es el caso de `cabal_debito`: cada liquidación es un
+ * bloque independiente, sin checksum del emisor (plan 14, HANDOFF 89).
+ *
+ * `capacidades.traeTotalDelEmisor === true` → delega en `verificarChecksumDelEmisorMinimo` tal cual
+ * existe hoy.
+ *
+ * 🔴 **Lo que esta función NO cubre, a propósito.** El caso "formato que sí publica total
+ * (`traeTotalDelEmisor: true`) pero este lote puntual no lo trajo" (`totalConsolidadoDeclarado` en su
+ * forma `no_publicado`) queda sin motivo propio en el roster cerrado — mismo criterio que
+ * `traePercepcionIva`: no se agrega un motivo a `MOTIVOS_NO_VERIFICABLE` sin que un adapter real lo
+ * dispare, y hoy ningún adapter ejercita esa rama. Si en el futuro un formato con `traeTotalDelEmisor:
+ * true` puede traer un lote sin el total, hace falta un motivo nuevo y esta función se actualiza
+ * entonces — no antes.
+ *
+ * Pura: nunca toca texto crudo del documento, nunca hace logging.
+ */
+export function verificarEjeChecksumDelEmisor(
+  capacidades: CapacidadesDeFormato,
+  liquidaciones: readonly LiquidacionLeida[],
+  totalConsolidadoDeclarado: string,
+): ResultadoDeEje {
+  if (!capacidades.traeTotalDelEmisor) {
+    return { eje: 'checksum_del_emisor', estado: 'no_verificable', motivo: 'emisor_no_publica_total' };
+  }
+  return verificarChecksumDelEmisorMinimo(liquidaciones, totalConsolidadoDeclarado);
 }
 
 /** Expuesta solo para que un consumidor pueda mostrar la suma calculada sin recalcularla. */
