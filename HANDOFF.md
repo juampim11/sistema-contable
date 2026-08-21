@@ -6,6 +6,1029 @@
 
 ---
 
+## 2026-08-21 (98) — Dos columnas nuevas para el feedback de Laura: "¿Qué es este movimiento? / ¿Quién es?" + "Comentarios", con el principio de silencio=aprobación en "Alta" explicado en la leyenda. `ux-designer` convocado de verdad.
+
+**Herramienta:** Claude Code, sesión nueva ("contexto de re-entrada"). Pedido de JP: capturar el
+feedback de Laura directamente en el export, con un principio de diseño específico — en las filas de
+`Confianza = "Alta"`, el SILENCIO en la columna principal ES la respuesta (aprobación tácita); Laura
+solo escribe si quiere corregir algo. En "A confirmar"/"Indeterminado" el sistema le pregunta de
+verdad, y ahí conviene que complete si sabe la respuesta.
+
+**Convocado `ux-designer`** (color/posición + redacción de la leyenda — JP marcó explícitamente el
+riesgo de que, mal explicado, Laura termine escribiendo "OK" en las ~900 filas de "Alta", o al revés,
+lea el silencio general como "no hace falta revisar nada"):
+
+- **Color: `FFFFE699`** ("Gold, Accent 4, Lighter 40%" de Office) — una sola variante para las dos
+  columnas nuevas, no dos tonos distintos. Es un tercer eje de tinte (dorado), no una variación de
+  luminosidad del gris o el azul ya existentes, así no compite en la lectura de un vistazo. ~17:1 de
+  contraste contra el texto negro en negrita del encabezado — el más alto de los tres colores del
+  archivo — y se sostiene en daltonismo rojo-verde por estar en el eje amarillo-azul. Verde descartado
+  (en esta paleta ya significa "validado", lo opuesto al mensaje); rojo/naranja descartado (connota
+  error, y esto no es un error). Un solo tono para las dos columnas, no dos: la paleta ya usa "un color
+  = una categoría de origen del dato" en todo el archivo — dos amarillos apenas distintos sugerirían una
+  cuarta categoría inexistente. La jerarquía principal/secundaria la da la posición y el ancho de
+  columna, no un segundo tono.
+- **Posición: confirmada la de JP** — inmediatamente después de "Qué falta", antes de "Cuenta". Las
+  cinco columnas (Tipo de movimiento → Confianza → Qué falta → respuesta de Laura → comentario) forman
+  una sola unidad de lectura; ponerlas al final las asociaría visualmente con las columnas grises de
+  control interno, que es justo lo que no son.
+- **Leyenda**: bullet nuevo insertado después del bullet de "Qué falta" (antes del de "Cuenta contable
+  todavía no existe"), con la regla de silencio=aprobación explicada en las dos direcciones del riesgo,
+  más una línea nueva en el bloque de colores ("Amarillo/dorado: son las dos columnas que llenás VOS").
+
+**Cambio, mínimo, sin migración:** las dos columnas son puramente presentacionales — **vacías en las
+1830 filas del corpus, siempre**, nadie las pre-llena. No se agregó ningún campo a `FilaPlanilla` ni se
+tocó `exportar-planilla.ts`: son dos entradas más en `columnasMovimientos()` y dos `null` explícitos en
+el `registro` de `armarHojaMovimientos` (`packages/ingesta/src/planilla/armar-libro.ts`) — mismo patrón
+que ya usaban "Cuenta contable"/"Observación" antes del ajuste 5. `ARGB_APORTE_DE_LAURA` sumada junto a
+las otras tres constantes de color, con el mismo criterio de comentario/contraste que ya tienen.
+
+**Tests nuevos** (`packages/ingesta/tests/planilla.test.ts`, +3, 42→45): posición exacta (`Comentarios`
+inmediatamente después de la principal, la principal inmediatamente después de "Qué falta"), las dos
+columnas vacías en las tres clases de fila (Alta/A confirmar/Indeterminado — no solo una), y la leyenda
+con las frases clave de las dos direcciones del riesgo ("NO hace falta escribir OK" / "sigue pendiente,
+solo que todavía nadie la miró"). `exportar-planilla.test.ts` + `exportar-planilla-enriquecido.test.ts`
+sin cambios de código, corridos para confirmar que no se rompió nada corriente abajo (21 tests, verde).
+
+**Verificado contra dos exports reales del piloto** (Galicia Cta Cte, 326 filas; Santander, 158 filas):
+posición exacta, color `FFFFE699` en las dos columnas, **100% vacías en las dos** (326/326 y 158/158),
+leyenda con las 5 líneas nuevas presentes en las dos. No implica ningún leak — nada de contenido real
+en la verificación, solo estructura y conteos.
+
+### Gate completo, corrida única, sin paralelismo
+
+`pnpm verificar`: **exit code 0 — 80 archivos / 1657 tests / 0 fallos / 7 todo, 329,39s.** +3 tests
+sobre la corrida anterior (1654), los tres nuevos de `planilla.test.ts`. Estado final antes de la
+aprobación del commit.
+
+### 🔴 Corrección, mismo día: renombre de columna, antes de aprobar el commit
+
+JP señaló, revisando los dos `.xlsx`: "¿Qué es este movimiento? / ¿Quién es?" quedaba indistinguible de
+"Comentarios" — las dos texto libre y vacías, nada en el título decía que UNA se procesa (se vuelca a
+padrón/léxico) y la otra es descartable. Renombrada a **"Corrección / Identidad"** — mantiene las dos
+funciones explícitas en el título (corregir el "Tipo de movimiento" cuando está mal, o identificar de
+quién se trata cuando el sistema pregunta), a diferencia de la alternativa más corta que ofrecía JP
+("Tu corrección", descartada por perder la función de identidad — la más valiosa en los casos
+`distinguir_tercero_de_socio`). La leyenda ya explicaba bien cuándo llenarla — solo se actualizaron las
+dos líneas que nombraban la columna por su título viejo, sin tocar el resto del texto. `key:
+'qEsQuienEs'` (interno, no visible) se dejó sin cambios — renombrar un identificador de programación
+que nadie ve no aporta nada.
+
+🔴 **Aclaración de destinatario, para esta entrega puntual:** JP mencionó "el ajuste de destinatario que
+ya pedí" — sin registro de eso en HANDOFF, se preguntó en vez de asumir. Aclaración de JP: **el
+destinatario real de este export es Laura** — no cambia el parámetro técnico `--destinatario
+estudio_interno` del CLI (es el único valor que habilita el enriquecimiento — Laura trabaja dentro del
+estudio, es "estudio_interno" en el vocabulario del sistema), cambia el marco: a diferencia de los
+exports anteriores de esta sesión (siempre "revisión INTERNA de JP, nunca para Laura" — datos del
+piloto con reservas conocidas), esta entrega puntual con las columnas de feedback SÍ está pensada para
+que Laura la use. Se entregó a JP sin la advertencia habitual de "no para Laura", dejando la decisión
+de cuándo/si enviarla en sus manos.
+
+Regenerados los dos `.xlsx` (Galicia Cta Cte 326 filas, Santander 158 filas) con el nombre nuevo,
+verificado estructuralmente (columna presente, título viejo ausente, color sin cambios). Gate completo
+corrido de nuevo, una sola vez: **exit code 0 — 80 archivos / 1657 tests / 0 fallos / 7 todo,
+379,12s**. Estado final antes de la aprobación del commit.
+
+### Archivos
+
+`packages/ingesta/src/planilla/armar-libro.ts`, `packages/ingesta/tests/planilla.test.ts`. Nada toca
+`exportar-planilla.ts`, `FilaPlanilla`, la capa de datos ni el motor de reconocimiento — presentación
+pura, igual que las entradas 94-96. No se tocó el adapter de Macro (instrucción explícita de JP).
+
+---
+
+## 2026-08-21 (97) — Alta de Galicia Cta Especial (Bracci) + ingesta de julio, y reconciliación PDF↔Excel nativo de los 4 lotes del piloto. Con un incidente de seguridad propio en el medio (ver `docs/seguridad/registro-incidentes.md` #10) y su corrección de método.
+
+**Herramienta:** Claude Code, sesión nueva ("contexto de re-entrada"). Dos partes en orden estricto:
+alta de una cuenta nueva + su ingesta, y una reconciliación de control (nunca de corrección) entre lo
+que capturó el Módulo 1 y el Excel nativo del banco, para separar "falló la extracción" de "falló la
+clasificación" — hoy mezclados en un solo resultado.
+
+🔴 **Los dos documentos que el pedido citaba como fuente
+(`01-modulo1-piloto-y-datos.md`, `05-laura-negocio-y-roadmap.md`) NO existen con esos nombres en el
+repo.** Verificado con `find`/`glob` antes de asumir nada: lo más cercano es
+`docs/diseno/01-modulo-1-ingesta-bancaria.md` (tema distinto) y `docs/analisis/00-cliente-piloto-laura.md`
++ `privado/laura-respuestas-2026-08.md` (contenido de Laura, pero numerado `00`, no `05`). El "residuo
+de interpretación en Santander" que el pedido atribuía a doc `01` en realidad solo está en HANDOFF
+(entrada 93/95), no en ningún doc. Se procedió igual, usando las fuentes reales encontradas —el pedido
+traía además, en su propio texto, el código de cuenta y el alias exactos de Bracci, así que Parte 1 no
+dependía de esos dos documentos— pero queda señalado para que se corrijan las referencias.
+
+### Parte 1 — alta + ingesta, sin observaciones
+
+Backup fresco (`pnpm respaldar:piloto` → `piloto_20260821-210629Z.dump`) antes de escribir. Confirmado
+antes de tocar nada: **cero migraciones necesarias** (`tipo_cuenta`/`cbu_ultimos4` ya existen desde
+`0004`/`0006`, migraciones muy anteriores a esta sesión) y **una sola migración pendiente en el piloto**
+(`0022_cotizacion_bna.sql`, ajena a esta tarea, no aplicada — nunca se corrió `pnpm db:migrate` pelado).
+
+Alta con `apps/cli/src/alta-cuenta.ts` (mismo patrón ya usado para Macro): lee la carátula del PDF,
+nunca imprime el valor real (`CBU: ######`, `Número de cuenta: #######-# ###-#`, solo formas).
+`tipo_cuenta` detectado automáticamente desde el título de la carátula:
+**`cuenta_corriente_especial`** (confirma lo que decía el pedido). Alias real desde el alta:
+`"1.1.2.300 Banco galicia cuenta especial"` — nunca "(sin alias)". `cuenta_bancaria_id =
+4ad30c97-1333-47c4-afe3-88c95a969c4e`.
+
+Ingesta del PDF de julio contra esa cuenta (`pnpm ingesta`): **1081/1081 filas, `estado=procesado`,
+`verificacion_estado=cuadra`, 0 filas con ruptura, 0 líneas no interpretadas** — verificado contra la
+base real (`lote_ingesta`/`lote_ingesta_cuenta`/`movimiento_bancario_crudo`), no solo contra el log de
+consola. Sin observaciones que documentar. `saldo_final_declarado = saldo_final_calculado =
+1.540.742,48`, exacto.
+
+### 🔴 Incidente de seguridad #10 — fuga en un script de diagnóstico, no una lectura directa
+
+Durante la Parte 2, un script temporal que buscaba la fila de encabezado del Excel nativo de Santander
+imprimió filas completas en vez de solo estructura — expuso, en el transcript de esta sesión, un
+número de cuenta real y una fila de movimiento con CUIT e importe reales de un cliente ya conocido del
+proyecto. **Autodetectado por el propio agente, sin que JP tuviera que señalarlo.** Registrado en
+`docs/seguridad/registro-incidentes.md` #10, por categoría, sin repetir ningún valor real. JP evaluó la
+severidad como acotada (cliente conocido, no un tercero ajeno) y **decidió explícitamente no convocar
+`seguridad-datos-financieros`** ni correr el protocolo formal de ADR-0002 §E.4 para este caso —
+entrada liviana en su lugar. Acción fuera del repo, a cargo de JP: revisión/borrado de los logs locales
+de esta sesión.
+
+**Método corregido para el resto de la tarea, y en adelante:** ningún script vuelve a imprimir una fila
+completa de `privado/` — solo tipos de dato, posiciones de columna y agregados numéricos, con una
+clase `ErrorDiagnostico` que es el ÚNICO tipo de error cuyo `.message` puede imprimirse (construido
+solo con strings literales propios, nunca con contenido de una celda); cualquier otro error se reporta
+por `constructor.name` únicamente. Todo script nuevo contra `privado/` se mostró completo en el chat —
+grep literal de cada línea que imprime algo incluido— para revisión de JP antes de correr. Borrado
+garantizado por encadenado de shell (`node script.mjs; rm -f script.mjs`, con `;` no `&&`, para que
+corra pase lo que pase con el código de salida) — no por un `finally` de JS, que no es robusto ante un
+corte duro del proceso. Verificado con `ls` + `git status` después de cada corrida, sin excepción,
+incluida una corrida que salió mal por error mío (ver abajo) y no solo la que salió bien.
+
+🔴 **Un segundo error, operativo (no de seguridad): la primera corrida del script de reconciliación se
+lanzó sin `ENV_FILE=.env.piloto`** — corrió contra la base local (vacía para esos UUID), y los "0% de
+cobertura" que salieron no eran un hallazgo, eran el artefacto de comparar contra la base equivocada.
+Detectado por el propio log (`entorno=local` en vez de `entorno=piloto`), corregido, y no se reportó
+ese resultado como real.
+
+### Parte 2 — reconciliación PDF↔Excel nativo, las tres dimensiones, 4 lotes
+
+Verificado antes de reconciliar (pedido explícito de JP): el período del Excel nativo coincide con el
+período ya ingerido en los 4 casos — Galicia Cta Cte (`2026-05-29..2026-06-30` ↔ `06-2026.xlsx`),
+Galicia Cta Especial (`2026-06-30..2026-07-31` ↔ `07-2026 cta cte especial.xlsx`, el mismo período
+recién ingerido, sin ambigüedad), Santander (`2026-05-30..2026-06-30` ↔ `06-2026.xls`) y Macro
+(`2025-11-01..2025-11-28` ↔ `11-2025.xls`). Ningún caso de período no coincidente que forzar.
+
+**Dimensión 1 — filas coincidentes/con diferencia/cobertura:**
+
+| Lote | Nativo | Crudo | Exactas | Con dif. importe | Cobertura |
+|---|---|---|---|---|---|
+| Galicia Cta Cte | 326 | 326 | 326 | 0 | **100%** |
+| Galicia Cta Especial | 1081 | 1081 | 1081 | 0 | **100%** |
+| Santander ARS | 161 | 158 | 0 | 31 | **19,3%** |
+| Santander USD | — | 0 | — | — | **sin archivo nativo disponible** |
+| Macro cta. corriente | 1335 | 1335 | 112 | 6 | **8,8%** |
+| Macro cta. especial ARS/USD | — | 11/0 | — | — | **sin sección nativa en el archivo** |
+
+Galicia cierra perfecto en los dos lotes — sin señal de pérdida de extracción. **Santander y Macro NO
+cierran, y la causa no se pudo aislar del todo dentro de las restricciones de seguridad de esta
+tarea** (nunca ver un valor real). Descartadas con medición, no supuestas: en Santander, corrimiento de
+fecha ±1 día (no cambia el resultado) y signo de saldo invertido (las 158 filas de crudo tienen
+`saldo_es_acreedor=true` confirmado, probado con `saldoAbsoluto=true` igual sin efecto). En Macro,
+"Importe" siempre positivo (falso: 1162 positivos, 173 negativos reales) y "Causal" como indicador
+corto de débito/crédito (40 valores distintos, ninguno con esa forma). **No es "un residuo de unas
+pocas líneas" como registraba HANDOFF — es una discrepancia estructural grande en dos de los tres
+bancos**, que queda abierta: o es una pérdida real de extracción del PDF, o (más probable, dado que el
+mismo patrón — conteo de filas exacto, cobertura bajísima — aparece en dos bancos independientes) un
+límite del método de comparación de esta tarea que solo se resuelve viendo contenido real, algo que
+esta sesión tiene prohibido.
+
+**Confirmado con certeza, no supuesto:** el Excel nativo de Macro tiene **una sola sección** en toda la
+hoja (0 coincidencias del patrón de título de sección) — solo cubre la cuenta corriente principal. Las
+otras dos cuentas de Macro (especial ARS 11 movimientos, especial USD 0) no tienen ningún export nativo
+disponible.
+
+**Dimensión 2 — columnas exclusivas del nativo (candidatas, para revisión humana):**
+
+| Banco | Columnas |
+|---|---|
+| Galicia (los dos archivos) | Origen, Grupo de Conceptos, Número de Terminal, Observaciones Cliente, Número de Comprobante, Leyendas Adicionales 1–4, Tipo de Movimiento (10) |
+| Santander | Suc. Origen, Desc. Sucursal, Cod. Operativo, Referencia (4) |
+| Macro | Nro. de Referencia, Causal (2) |
+
+**Dimensión 3 — estructura vs. texto libre (CUIT en la glosa):** 0 casos detectados entre las filas
+que sí se lograron emparejar. **No prueba que el fenómeno no exista** — el propio incidente #10 ya
+confirmó al menos una fila real en Santander donde el CUIT vive dentro del "Concepto" en texto libre —
+pero con solo 31 de 158 filas de Santander emparejadas, esa fila específica probablemente cayó del lado
+"sin equivalente" y nunca entró al chequeo. Esta dimensión queda enganchada a que se resuelva la
+Dimensión 1 de Santander primero.
+
+### 🔴 Corrección — tres hipótesis de JP, mismo día: Macro se resuelve, Santander queda abierto
+
+JP pidió probar tres hipótesis antes de escalar a revisión manual, mismo régimen de seguridad (solo
+agregados). Resultado:
+
+1. **Match por (fecha, `|importe|`), ignorando de qué lado (débito/crédito) está** — **Macro salta de
+   8,4% a 99,7% (112/1335 → 1331/1335). Confirma columna invertida: mi lectura del signo de Macro
+   estaba del lado equivocado frente a la convención de `crudo`.** 🔴 **La cifra de Macro en la sección
+   de arriba (8,8% de cobertura) queda SUPERADA por esta corrección — era un artefacto de mi método de
+   comparación, no un hallazgo real del banco.** La cobertura real de Macro es, como Galicia,
+   prácticamente perfecta. Santander: sin cambio (0% → 0%) — no es un problema de columna invertida ahí.
+2. **Normalización de formato numérico (coma vs. punto)** — **refutada en los dos bancos.** Macro:
+   1335/1335 celdas de "Importe" y de "Saldo" ya vienen como `number` nativo (nada de texto con formato
+   argentino sin parsear). Santander: 155/161 `number`, 6 celdas atípicas — no explica la magnitud del
+   mismatch.
+3. **Santander: "Movimientos del Día" ⊆ "Últimos Movimientos"** — parcialmente confirmada. Hay solo 2
+   filas (no 3) en "Movimientos del Día"; de esas 2, **1 es idéntica** (fecha+importe+saldo+concepto) a
+   una de "Últimos Movimientos". Explica 1 de las 3 filas de diferencia entre 161 y 158, no las 3.
+
+**Cierre parcial:** Macro pasa de "discrepancia estructural grande, sin explicar" a **resuelto** (era
+mi propio método). Santander se probaron las tres hipótesis y ninguna dio señal que explique el 0% de
+coincidencia exacta — **JP decidió tomarlo él mismo, a mano, con los dos archivos** — no se sigue
+tocando con scripts. Cierra sin más acción de esta sesión sobre Santander.
+
+### 🔴 Dimensión 3, cierre final — hallazgo real y completo en Macro, confirmado nulo en Galicia
+
+Con el matching de Macro ya corregido (fecha + `|importe|`, 99,7% — 1331/1335 pares), se repitió el
+chequeo de CUIT en el "Concepto" nativo sobre esos pares reales. **Hallazgo fuerte, no ambiguo:**
+
+- **Macro: 511 de 1331 filas emparejadas (38%) traen un patrón de 11 dígitos (forma CUIT) en el**
+  **"Concepto" del Excel nativo — y en NINGUNA de esas 511 aparece ese patrón en la `descripcion`**
+  **que el sistema captura hoy** (`seConservaIgualEnCrudo: 0`, `ausenteEnCrudo: 511`). No es un caso
+  aislado como el de Santander que motivó la pregunta original — es sistemático, más de un tercio de
+  los movimientos de esa cuenta. El Excel nativo de Macro estructura un identificador de contraparte
+  que el pipeline basado en PDF pierde por completo.
+- **Galicia (los dos lotes, ya medido en la corrida original — no hizo falta repetirlo): 0 filas con
+  ese patrón en el Concepto nativo.** El fenómeno es específico de Macro, no general a los tres bancos.
+
+**Conclusión para decidir si vale la pena complementar la ingesta con el Excel nativo (JP, no se decide
+en esta sesión):** en Macro, sí hay una señal concreta y medible a favor — un dato de contraparte que
+hoy no se ve en absoluto y que el nativo trae estructurado en más de 1 de cada 3 filas. En Galicia, la
+reconciliación es perfecta pero no hay este tipo de dato adicional en el Concepto — el valor ahí, si lo
+hay, está en las 10 columnas de la Dimensión 2 (Observaciones Cliente, Número de Comprobante, etc.), no
+en un CUIT escondido. Santander queda sin conclusión — **JP la retoma él mismo, a mano, con los dos
+archivos que ya tiene**; esta sesión no la sigue tocando con scripts.
+
+### 🔴 Último chequeo, cierre definitivo de la Dimensión 3 en Macro: "bug de extracción", no "fuente que falta"
+
+Pregunta final de JP sobre las 511 filas de Macro: ¿el CUIT que el Excel nativo trae en el Concepto
+existe en el **texto crudo del PDF** (antes de cualquier procesamiento), o está genuinamente ausente
+ahí? Distingue "el pipeline lo pierde" de "el PDF nunca lo tuvo".
+
+**El PDF original de ese lote ya no está en el almacenamiento de objetos** (`obtenerObjetoDeCliente`
+dio `objeto_no_encontrado`/`NoSuchKey` — retención/limpieza desde que se ingirió; auditoría de
+`accion:'descarga'` igual quedó registrada, no es un problema de seguridad, es disponibilidad del
+dato). Se usó en su lugar el único PDF de Macro en `privado/extractos/` (el documento multi-sección,
+mismo que ya lee `alta-cuenta.ts`).
+
+**Sobre una muestra determinística de 12 de las 511 filas: 12/12 tienen el patrón de CUIT presente en
+el texto crudo del PDF.** Conclusión, sin ambigüedad: el dato SÍ está en la fuente que el sistema ya
+lee — **no es "falta una fuente", es "el pipeline de captura actual lo descarta en algún punto entre
+el texto crudo y `descripcion`"**. Es un bug de extracción, corregible, no una limitación estructural
+del PDF. JP pidió explícitamente **no implementar nada en esta sesión** — la decisión de arreglarlo
+queda para otra sesión, con calma, ahora con el dato completo para decidir con criterio.
+
+**No se implementó ningún cambio de ingesta ni de parser** — instrucción explícita de JP, el entregable
+de esta tarea es el reporte, no un fix. `xlsx` (SheetJS) se instaló como devDependency temporal para
+leer los `.xls` legacy de Santander/Macro y se desinstaló al terminar — `git diff` sobre
+`package.json`/`pnpm-lock.yaml` confirmado limpio de esa dependencia (el único residuo es un reordenado
+alfabético de pnpm, sin relación).
+
+### Archivos de esta entrada
+
+Ninguno permanente — `apps/cli/src/alta-cuenta.ts`/`apps/cli/src/ingestar.ts` se usaron tal cual
+existían, sin modificarlos. `docs/seguridad/registro-incidentes.md` (incidente #10, fila nueva). Todos
+los scripts de esta tarea fueron temporales, revisados por JP antes de correr, y borrados sin
+excepción — ninguno queda en el repo.
+
+---
+
+## 2026-08-21 (96) — Ajuste 7: "Confianza" pasa a ser columna propia, no un sufijo pegado a "Tipo de movimiento" — el sufijo rompía el filtro de Excel. `contador-dominio` + `ux-designer` reconvocados, con hallazgo real de un caso mixto en el piloto.
+
+**Herramienta:** Claude Code. JP encontró que el calificador `"(sin confirmar)"` de la entrada 95
+(ajuste 6) violaba el mismo principio que el proyecto ya fijó para el eje de confianza del OCR de
+liquidaciones — confianza y contenido son dos ejes distintos, nunca un solo estado fusionado — y dio
+una prueba concreta: con el sufijo, `"Cobranza de cliente"` y `"Cobranza de cliente (sin confirmar)"`
+son dos valores de texto DISTINTOS para el filtro de Excel, así que el tip de la leyenda ("filtrá por
+Tipo de movimiento y asignales la cuenta en bloque") dejaba de cumplirse.
+
+🔴 **Corrección a la cita de JP, verificada antes de escribirla en el código:** el principio no está en
+`docs/diseno/09-lecciones-aprendidas.md` (grepeado, no contiene la palabra "confianza" ni "OCR") — vive
+en `docs/diseno/15-ocr-liquidaciones-plan.md` (eje 4, líneas 136-142: *"el estado de verificación
+aritmética NO reemplaza esa señal — son cosas distintas"*). Se cita el documento correcto en el código;
+no se reescribe `09`.
+
+**Reconvocados `contador-dominio` y `ux-designer`** (los mismos que ya trabajaron el resto de las
+columnas en la entrada 95, extensión de lo mismo):
+
+- **`contador-dominio`** ajustó las etiquetas de JP: **"Alta" / "A confirmar"**, no "Alta confianza" —
+  la palabra "confianza" ya es el nombre de la columna, repetirla adentro es el mismo error de
+  redundancia que motivó sacar el sufijo. "A confirmar" queda tal cual porque es una instrucción de
+  flujo de trabajo ("esto no está firme, miralo"), no un juicio abstracto de probabilidad — y
+  "pendiente" quedó descartado como alternativa porque ya se usa habitualmente para estado de
+  cobro/pago en un extracto, confundiría con otra columna.
+- **`ux-designer`** confirmó posición (inmediatamente después de "Tipo de movimiento", antes de "Qué
+  falta" — reproduce la secuencia de lectura de Laura: *qué es → qué tan firme → qué falta*), ancho
+  16 (contenido fijo y corto, no variable como las otras dos columnas del grupo), y redactó la leyenda
+  nueva.
+
+**Cambio:** `packages/contabilidad/src/nucleo/texto-humano.ts` — `TextoDeReconocimiento` gana el campo
+`confianza: string | null`; `identificacion` NUNCA más lleva sufijo, sin importar `queDecide`. Mapeo
+(sin cambios respecto del reparto A/2·B/6 que fijó `contador-dominio` en la entrada 95):
+`propuesta` → `'Alta'`; `decision_humana` con `queDecide` en `QUE_DECIDE_SIN_IDENTIDAD_CONFIRMADA` (2
+valores) → `'A confirmar'`; los otros 6 → `'Alta'`; `sin_reconocer` → `null` ("Indeterminado" ya es una
+respuesta válida, no una variante de confianza de otro tipo). `packages/ingesta/src/planilla/
+armar-libro.ts` — columna nueva "Confianza" (`width: 16`, mismo azul `FF5B9BD5` que "Tipo de
+movimiento"/"Qué falta"), `FilaPlanilla.confianza`, leyenda reescrita. `packages/ingesta/src/planilla/
+exportar-planilla.ts` — wiring de una línea (`confianza: texto?.confianza ?? null`). Aceptado en
+`version-del-motor.json` sin bump: sigue siendo consumo de solo lectura de `Reconocimiento`.
+
+**Tests:** `texto-humano.test.ts` reescrito (18 tests) — el par de tests que afirmaban el sufijo pasan
+a afirmar `confianza: 'A confirmar'` **e `identificacion` SIN sufijo**; nuevo test explícito con el
+caso real que reportó JP (mismo `tipo`, dos `queDecide` distintos → mismo `identificacion`, distinta
+`confianza`). `planilla.test.ts` (42 tests) — color de la columna nueva, y un test de posición
+(`colConfianza === colTipo + 1`) más contenido (misma `identificacion` en dos filas con `confianza`
+distinta, para probar que el filtro agruparía). `exportar-planilla.test.ts` +
+`exportar-planilla-enriquecido.test.ts` sin cambios de código, corridos para confirmar que el wiring no
+rompió nada corriente abajo.
+
+**Verificado con un caso real, no solo con el test sintético (pedido explícito de JP):** regenerados
+los tres exports reales del piloto (Macro, Galicia, Santander) y barridos programáticamente buscando un
+mismo texto de "Tipo de movimiento" con las dos confianzas. Macro y Galicia no tienen ningún caso mixto
+en este corte (los `tipo` provisorios de `distinguir_tercero_de_socio` —
+`pago_a_proveedor_transferencia`/`cobranza_de_cliente`— no coinciden con ningún `tipo` de Grupo B en
+esos dos lotes). **Santander sí lo tiene:** en la hoja `ARS santander Cta.Cte`, `"Acreditación de
+tarjeta (cobro con tarjeta)"` aparece **56 veces con "Alta" y 1 vez con "A confirmar"** — mismo texto
+exacto en las 57 filas, así que el filtro de Excel por "Tipo de movimiento" las agrupa a todas bajo un
+único valor, exactamente lo que el ajuste debía resolver. Prueba real, no inferida.
+
+**Export real regenerado** (Macro, mismo lote que las entradas anteriores) para revisión interna de JP:
+`salida/movimientos_69479b8f_macro_ae762fda_20260821T193642Z.xlsx`. Verificado estructuralmente: hojas
+sin cambio, "Cuenta contable"/"Observación" siguen ausentes, "Confianza" presente entre "Tipo de
+movimiento" y "Qué falta" con el azul correcto, ningún "Tipo de movimiento" lleva sufijo (110 filas
+"Alta", 1135 "A confirmar", 90 con confianza vacía — coincide con el reparto de la entrada 95, 1135 +
+200 ya no aplica porque ahora 90 de esas 200 son `sin_reconocer` con confianza vacía y 110 son Grupo B
+con "Alta" — el total de filas con motor corrido, 1345 de 1346, es el mismo). También se generaron
+(y quedan en `salida/`, reales, no de test) los exports de Galicia y Santander usados para la
+verificación de arriba.
+
+### Gate completo, corrida única, sin paralelismo (pedido explícito de JP)
+
+`pnpm verificar`: **exit code 0 — 80 archivos / 1654 tests / 0 fallos / 7 todo, 550,12s.** +2 tests
+sobre la corrida anterior (1652): el test del filtro-por-Tipo (`texto-humano.test.ts`) y el de posición
+de "Confianza" (`planilla.test.ts`). Estado final antes de la aprobación del commit.
+
+### Archivos de esta entrada
+
+`packages/contabilidad/src/nucleo/texto-humano.ts`, `packages/contabilidad/tests/texto-humano.test.ts`,
+`packages/contabilidad/version-del-motor.json` (aceptado sin bump), `packages/ingesta/src/planilla/
+{armar-libro,exportar-planilla}.ts`, `packages/ingesta/tests/planilla.test.ts`. Nada toca la capa de
+datos ni el motor de reconocimiento — presentación pura, igual que las entradas 94 y 95.
+
+---
+
+## 2026-08-21 (95) — Segunda vuelta de revisión de JP sobre el export enriquecido (HANDOFF 94): color con contraste real, "Cuenta contable"/"Observación" afuera hasta que exista Capa D, y "Qué falta" separado en dos preguntas — con una corrección de `contador-dominio` que cambia el reparto.
+
+**Herramienta:** Claude Code. JP miró el `.xlsx` de la entrada 94 y pidió, en orden: (1) confirmación
+explícita sobre la migración, (2) limpiar YA los archivos de test viejos en `salida/` (no solo el fix
+hacia adelante), (3) una frase sobre R32, (4) un azul con contraste real (convocando `ux-designer`), (5)
+sacar "Cuenta contable"/"Observación" de esta entrega, (6) separar las dos preguntas que "Qué falta"
+mezclaba (convocando `ux-designer` + `contador-dominio`, "no implementes sin decir qué eligieron y por
+qué"). Nada de esto toca el motor de reconocimiento ni la lógica de clasificación — presentación y
+organización de archivos, igual que la entrada 94.
+
+### 1 — Migración: NO, confirmado con evidencia, no solo declarado
+
+`tipo_cuenta` y `cbu_ultimos4` ya existían en `cuenta_bancaria_identificador` desde
+`0004_ingesta.sql` (commit `ff2d992`, 2026-08-10 — Módulo 1, muy anterior a esta sesión).
+`0006_ajustes_cuenta.sql` (mismo commit/fecha) solo redefinió el `CHECK` de `tipo_cuenta`, no agregó
+columnas. Verificado dos veces: `git log -1 -- packages/data/migrations/0004_ingesta.sql` /
+`...0006_ajustes_cuenta.sql` dan la misma fecha/commit, y `git diff --stat -- packages/data/migrations/`
+da vacío en las dos vueltas de esta tarea. No hubo necesidad de pausar porque nunca se escribió una
+migración.
+
+### 2 — Limpieza de `salida/`, ejecutada (no solo el fix hacia adelante)
+
+El criterio de conteo de la entrada 94 (`grep cliexport`) subcontaba. Con el criterio correcto — los
+tres `clienteId` reales del piloto (`docs/diseno/11-migracion-0021-determinante-y-capa-c.md:1298-1300`:
+`69479b8f…` macro, `f84d9ecc…` galicia, `80741296…` santander) contra todo lo demás — la carpeta tenía
+**304 archivos de test** (de sesiones de test previas al fix de `dirSalida`) y **6 reales**. Borrados
+los 304 (carpeta gitignoreada, ningún riesgo). Confirmado que las dos corridas del gate completo de la
+entrada 94 (post-fix) no agregaron ninguno nuevo — prueba de que el fix de `dirSalida` funciona.
+`salida/` quedó con los 6 reales más los generados en esta entrada (ver cierre).
+
+### 3 — R32, en una frase, con el hallazgo verificado
+
+Es un test de catálogo (`packages/data/tests/reglas-de-codigo.test.ts:390-441`) que hace grep de todo
+el árbol buscando el nombre literal de una tabla sensible y falla si aparece fuera de una lista de
+archivos permitidos — protege el NOMBRE de la tabla donde el choke-point de auditoría
+(`leerConAuditoria`) solo protege a quien pasa por la función correcta. Verificado a pedido de JP, no
+es solo un riesgo hipotético: `cuenta_bancaria_identificador` ya tiene HOY un acceso directo sin
+auditar, previo a esta sesión y fuera de su alcance — `packages/ingesta/src/resolver-cuenta.ts:96-150`
+corre `tx.consultar(...)` crudo contra la tabla para resolver a qué cuenta pertenece un extracto
+durante la ingesta. **Sin impacto en lo que ve Laura:** es una lectura interna, acotada por
+`cliente_id` (RLS), que nunca sale a un export ni a una pantalla — falta trazabilidad de auditoría,
+no aislamiento entre clientes. Deuda técnica real, deferida por recomendación explícita de
+`security-engineer` (~20 puntos de acceso a revisar, trabajo propio, no algo para apurar en un ajuste
+de presentación).
+
+### El gate completo — falló una vez de verdad, se corrigió, volvió a correr verde
+
+🔴 JP pidió el gate completo, una vez, antes de aprobar el commit. **La primera corrida FALLÓ** —
+`pnpm test` cortó con 1 test rojo: `exportar-planilla.test.ts > ... el caso real que reportó JP`
+afirmaba un ORDEN fijo de hojas (`Cta.Cte` antes que `Cta.Esp`), pero la consulta desempata cuentas de
+mismo banco+moneda por `cuenta_bancaria_id`, un uuid al azar por corrida de test — no una colisión del
+gate, confirmado reproduciendo el fallo 4 de 6 veces en aislado. El pedido de ajuste 1 era
+DISTINGUIBLES, nunca un orden — el test se autoimpuso un requisito que el código nunca prometió.
+Corregido el assert a comparar el conjunto ordenado (`.slice().sort()`); verificado 8/8 en corridas
+sueltas. **Segunda corrida de `pnpm verificar`, completa y sola:** exit 0, 80 archivos / 1649 tests /
+0 fallos / 7 todo, 334,68s — la que cerró la aprobación de la entrada 94.
+
+### 4 — Color con contraste real (`ux-designer` convocado de verdad)
+
+El azul original (`FFD9E1F2`) daba ratio de contraste **1,05:1** contra el gris (`FFE7E6E6`) —
+prácticamente el mismo color, confirmado el reporte de JP con la fórmula WCAG (luminancia relativa
+sRGB linealizada), no a ojo. Nuevo color: **`FF5B9BD5`** ("Blue, Accent 1" de Office, no un tono
+inventado) — **2,37:1** contra el gris, **7,1:1** contra el texto negro en negrita del encabezado
+(por encima del mínimo AA, 4,5:1), sostenido en daltonismo rojo-verde y en impresión blanco y negro.
+Verde quedado descartado a propósito: en esta paleta ya significa "lectura del sistema, revisalo" — un
+verde se leería como "ya está validado", lo opuesto. Cambio de una línea
+(`packages/ingesta/src/planilla/armar-libro.ts`, `ARGB_IDENTIFICADO_POR_EL_SISTEMA`).
+
+### 5 — "Cuenta contable"/"Observación" afuera de esta entrega
+
+Ambas columnas eran, en el código, un literal `null` fijo — ninguna función las leía nunca (confirmado
+antes de tocar nada, no asumido). Sacadas de `columnasMovimientos()`, de `COLOR_POR_COLUMNA` y de la
+fila de datos en `armar-libro.ts`; leyenda reescrita para no mencionarlas y explicar que esta primera
+vuelta valida solo si "Tipo de movimiento"/"Qué falta" sirven — Capa D (a qué cuenta imputar) sigue sin
+diseñar. `ARGB_PARA_COMPLETAR` (el amarillo) se borró en vez de dejarlo muerto: se redefine en una
+línea cuando Capa D exista.
+
+### 6 — "Qué falta" separaba dos preguntas: convocados `ux-designer` + `contador-dominio`, con corrección de dominio
+
+Encontré la causa estructural exacta en `texto-humano.ts`: la columna "Qué falta" se llena para 8
+valores de `QueDecide`, y mi hipótesis inicial (repetida a los dos agentes) era 1 valor con identidad
+NO confirmada (`confirmar_hipotesis_del_lexico`) contra 7 con identidad confirmada. **`contador-dominio`
+corrigió esa hipótesis, con evidencia de código y de diseño, no de matiz:**
+
+`distinguir_tercero_de_socio` (77,5% de `decision_humana` en la medición de la entrada 93 — la
+categoría más grande, con mucho) **NO** pertenece al grupo "identidad confirmada". `motor.ts:44-122`
+fija, mientras está pendiente, `tipo: pago_a_proveedor_transferencia`/`cobranza_de_cliente` — un
+default provisorio. `aplicarContrapartida()` (`motor.ts:134-166`, el ÚNICO otro lugar habilitado para
+construir una `propuesta`) **reescribe `tipo`** a `retiro_de_socio`/`aporte_de_socio` cuando el padrón
+confirma que es socio. Proveedores/Deudores por ventas (pasivo/activo comercial) y la cuenta particular
+del socio (patrimonio neto) son cuentas de naturaleza distinta — no es "ya sé que es un pago a
+proveedor, falta la subcuenta", es "no sé si es una operación comercial o un retiro de capital del
+dueño", la misma pregunta que `confirmar_hipotesis_del_lexico`. Ratificado contra
+`docs/diseno/04-imputacion-contable.md:119-120,270` ("el default 'no es socio' solo vale si el padrón
+se consultó... sin padrón consultado, no es una conclusión: es ausencia de control"). Los 6 valores
+restantes sí quedan del lado "identidad firme, falta un dato": ningún código les reescribe `tipo`
+después de `reconocer()`. `contador-dominio` marcó explícitamente: no tiene cargada en `knowledge/`
+la cita puntual de RT de FACPCE sobre exposición de aportes/retiros en cuenta particular — **"no tengo
+esa fuente cargada"**, lo cerraría `balances-normas-tecnicas` cuando esa fuente esté disponible.
+**Validar con profesional matriculado.**
+
+**Grupo A (identidad NO confirmada, 2 valores):** `confirmar_hipotesis_del_lexico`,
+`distinguir_tercero_de_socio`.
+**Grupo B (identidad firme, falta un dato, 6 valores):** `elegir_cuenta_de_pasivo_del_impuesto`,
+`confirmar_cuenta_propia_destino`, `completar_con_liquidacion_del_adquirente`,
+`confirmar_computo_de_credito_fiscal`, `elegir_jurisdiccion_de_la_retencion`,
+`completar_con_liquidacion_de_la_tarjeta`.
+
+Coincide, sin haberlo buscado, con la categorización de la entrada 93: Grupo B es exactamente la
+categoría (a) "identidad resuelta, falta Capa D" de esa medición; Grupo A es la suma de (c)
+"ambigüedad genuina" + (d) "depende del padrón" — dos mediciones independientes convergen en la misma
+línea divisoria.
+
+**Mecanismo elegido (`ux-designer`, el de MENOS código de tres alternativas):** ni columna nueva
+(`"¿Qué necesito de vos?"`, tres archivos: tipo, wiring, columna+color) ni color por fila en "Qué
+falta" (primer caso de color-por-celda en `armar-libro.ts`, hoy solo pinta encabezados) — se califica
+el texto de `identificacion` mismo, reusando el mecanismo que el propio archivo ya tenía para
+`retiro_de_socio`/`aporte_de_socio` (`"(según padrón)"`, "la etiqueta no puede sonar más segura de lo
+que la fuente sostiene"). Los 2 valores del Grupo A agregan `" (sin confirmar)"` al final de
+`textoDeTipo(r.tipo)`; los 6 del Grupo B quedan sin cambios. Un archivo, una función
+(`textoDeReconocimiento` en `packages/contabilidad/src/nucleo/texto-humano.ts`), cero cambios de tipo,
+cero cambios en Excel. Leyenda actualizada para explicar el calificador y qué pregunta señala cada
+caso. Aceptado en `version-del-motor.json` sin bump (`pnpm motor:version:aceptar --sin-bump`): sigue
+siendo consumo de solo lectura de `Reconocimiento`, no participa de `reconocer()`/`resolverContraparte()`.
+
+**Tests nuevos:** `packages/contabilidad/tests/texto-humano.test.ts` — 2 nuevos (uno por valor del
+Grupo A, confirma el calificador) + 1 nuevo (los 6 del Grupo B, confirma la AUSENCIA del calificador).
+Ajustados los tests de color de `planilla.test.ts` (hex nuevo, columnas removidas) y el helper `argbDe`
+(crasheaba con `getCell(7, -1)` en vez de devolver `undefined` para una columna que ya no existe —
+encontrado corriendo el test, no antes).
+
+### Verificación final
+
+`pnpm typecheck` limpio en cada paso. `npx vitest run` de los 4 archivos tocados (`texto-humano`,
+`planilla`, `exportar-planilla`, `version-del-motor`) → **86 tests, verde**. `pnpm motor:version:aceptar
+--sin-bump` aplicado para `texto-humano.ts`. Export real regenerado una vez más contra el mismo lote de
+Macro del piloto (lectura, `estudio_interno`):
+`salida/movimientos_69479b8f_macro_ae762fda_20260821T191237Z.xlsx`. Verificado estructuralmente (script
+temporal read-only, borrado, sin contenido sensible en la salida):
+- Hojas sin cambio respecto de la entrada 94: `Control de saldos`, `ARS macro Cta.Cte`, `ARS macro
+  Cta.Esp`, `USD macro Cta.Esp`.
+- `Cuenta contable`/`Observación`: ausentes (`(no existe)` al buscarlas en el header).
+- `Tipo de movimiento`/`Qué falta`: `FF5B9BD5`, el azul nuevo.
+- **1135 filas con `"(sin confirmar)"` en "Tipo de movimiento"** (Grupo A) contra **200 sin
+  calificador** (Grupo B) — orden de magnitud consistente con que Macro, en la medición de la entrada
+  93, tiene 1162 de 1346 movimientos en `decision_humana`, mayoría `distinguir_tercero_de_socio`.
+  Ejemplo real: `"Cobranza de cliente (sin confirmar)"`.
+- Leyenda: las 4 líneas nuevas (calificador, separación de las dos preguntas, ausencia de "Cuenta
+  contable" explicada, "Azul" en vez de "Celeste") presentes.
+
+**Gate completo, tercera corrida de esta tarea (dos de la entrada 94 + esta), completa y sola, después
+de los cambios de ítems 4/5/6 — la que corresponde al estado final antes de aprobar el commit:**
+**exit code 0 — 80 archivos / 1652 tests / 0 fallos / 7 todo, 443,62s.** +3 tests sobre la corrida
+anterior (1649): los 2 de Grupo A (uno por valor, confirman `"(sin confirmar)"`) + 1 de Grupo B (los 6
+valores, confirma la ausencia del calificador) del ítem 6. Este es el estado final antes de la
+aprobación del commit — sin relanzamientos adicionales.
+
+### Archivos de esta entrada
+
+`packages/contabilidad/src/nucleo/texto-humano.ts` (calificador `"(sin confirmar)"`),
+`packages/contabilidad/tests/texto-humano.test.ts` (+3 tests),
+`packages/contabilidad/version-del-motor.json` (aceptado sin bump),
+`packages/ingesta/src/planilla/armar-libro.ts` (color, columnas removidas, leyenda),
+`packages/ingesta/tests/planilla.test.ts` (tests ajustados). Nada de esto toca `exportar-planilla.ts`
+ni ningún archivo de la capa de datos — los ítems 4/5/6 son puramente de presentación en
+`armar-libro.ts`/`texto-humano.ts`.
+
+---
+## 2026-08-21 (94) — Tres ajustes al export enriquecido (HANDOFF 93), a partir de la revisión a mano de JP: hojas sin alias desambiguadas, encabezados coloreados por origen del dato, y test/real separados en `salida/`.
+
+**Herramienta:** Claude Code. JP revisó a mano el `.xlsx` generado en la entrada 93 y pidió tres
+correcciones puntuales antes de dar por cerrado el enriquecimiento — ninguna toca el motor de
+reconocimiento ni la lógica de clasificación, las tres son de presentación/organización de archivos.
+
+### Ajuste 1 — dos cuentas Macro reales, mismo `(2)` ciego de Excel
+
+Investigado antes de proponer nada (restricción explícita de JP: si esto terminaba necesitando una
+migración, frenar y avisar): el campo `alias` de `cuenta_bancaria` **existe** en el esquema — no es un
+problema de modelo, es que las cuentas reales del cliente piloto nunca lo tuvieron cargado. **Cero
+migración.**
+
+Como discriminador visible sin abrir el archivo, se usa `tipo_cuenta` (N1, de
+`cuenta_bancaria_identificador`) en el nombre de hoja; dentro del contenido de la hoja (nunca en el
+nombre de la pestaña) se agregan los últimos 4 dígitos del CBU (`cbu_ultimos4`, N2 pre-clasificado
+"lo que se muestra en pantalla" — ver `ADR-0002`). Dictamen convergente de `ux-designer` (qué
+discriminador es legible) y `seguridad-datos-financieros` (qué discriminador es seguro en qué
+superficie), gateado por el mismo `DESTINATARIOS_QUE_ENRIQUECEN` de la entrada 93 — solo
+`estudio_interno` lee `cuenta_bancaria_identificador`, vía el choke-point existente
+`leerConAuditoria` + `leerIdentificadoresDeCuenta` (nunca antes llamado en producción; precedente en
+`packages/ingesta/src/reproceso/backfill-contraparte.ts:118-128`). `security-engineer` confirmó que el
+choke-point es el mecanismo correcto y suficiente — no hace falta uno nuevo.
+
+🔴 **Hallazgo, no del alcance de esta tarea pero corregido en el camino:** tanto yo como `ux-designer`
+leímos primero el dominio de `tipo_cuenta` desde `0004_ingesta.sql` (4 valores:
+`caja_ahorro`/`cuenta_corriente`/`cuenta_unica`/`otra`) y los dos nos equivocamos igual — un test de
+integración real contra Postgres lo detectó de inmediato (`error: ... viola la restricción
+"cuenta_ident_tipo_chk"`). La restricción fue **redefinida** por `0006_ajustes_cuenta.sql` (`drop` +
+`add constraint`), con el dominio real de **seis** valores: `cuenta_corriente`,
+`cuenta_corriente_especial`, `caja_ahorro`, `cuenta_inversion`, `tarjeta_corporativa`,
+`no_determinado` — el mismo que `TIPOS_CUENTA` de `packages/ingesta/src/esquema.ts`. Corregido en
+`armar-libro.ts` (`TEXTO_TIPO_CUENTA`/`TEXTO_TIPO_CUENTA_ABREVIADO`) y en los fixtures de ambos tests
+antes de correr nada contra datos reales. Lección: una restricción se busca en TODAS las migraciones
+que la tocan, no solo en la que la crea — guardada en memoria
+(`migracion-original-puede-estar-superada.md`).
+
+**Verificado contra Postgres real** (`exportar-planilla.test.ts`, describe nuevo "identificador de
+cuenta (ajuste 1, base real)"): dos cuentas sin alias, misma moneda, mismo banco → nombres de hoja
+`ARS bancoexport12 Cta.Cte` / `ARS bancoexport12 Cta.Esp` (nunca `(2)`); el número completo de cuenta
+NUNCA aparece en el `.xlsx` (verificado con `cadenasDelXlsx`, el helper que ya infla el ZIP —
+no con una comparación cruda sobre bytes comprimidos, que hubiera dado un falso negativo tranquilizador
+sin decir nada); tres filas nuevas de auditoría `accion=lectura recurso=cuenta_bancaria_identificador`
+(una por cuenta); segundo test confirma que `destinatario=organismo` nunca dispara esa lectura ni esa
+auditoría.
+
+### Ajuste 2 — encabezados coloreados por origen del dato
+
+`ux-designer` definió la paleta y el agrupamiento; aplicado en `armarHojaMovimientos` (fila 7,
+`COLOR_POR_COLUMNA`), con `fill: {type:'pattern', pattern:'solid', fgColor:{argb:...}}` sobre las 17
+columnas de datos:
+
+| Origen | Color (ARGB) | Columnas |
+|---|---|---|
+| Extraído del banco | gris `FFE7E6E6` | Fecha, Fecha valor, Concepto, Cód. de concepto, Débito, Crédito, Saldo, Naturaleza del saldo, Descripción, Cuenta, Moneda, Pág. del PDF |
+| Identificado por el sistema | azul `FFD9E1F2` | Tipo de movimiento, Qué falta |
+| Para que complete Laura | amarillo `FFFFD966` (la más llamativa, a propósito) | Cuenta contable, Observación |
+| Control interno | beige `FFF2F0EC`, separado | N° de fila, Importe con signo (control) |
+
+Leyenda nueva agregada al mismo bloque de "Cómo leer esta planilla" en `armarHojaControl` (no una hoja
+nueva, mismo lugar y tono que la leyenda existente de la entrada 93). Verificado con round-trip real
+(`serializarLibro` → `releer` con `exceljs`) en `planilla.test.ts`, describe "color de encabezado por
+origen del dato (ajuste 2)".
+
+### Ajuste 3 — dónde escriben hoy los exports de test vs. los reales
+
+**Diagnóstico:** `apps/cli/tests/exportar-excel.test.ts` llamaba a `exportarExcel()` sin inyectar
+directorio de salida, y la función usaba `join(raizDelRepo(), 'salida')` fijo adentro — la MISMA
+carpeta que JP revisa a mano. 🔴 **Corrección al número de esta misma entrada, verificada de nuevo a
+pedido de JP antes del commit:** el criterio de conteo original (substring `cliexport`) subcontaba —
+no todos los test-runs usan ese marcador en el nombre. El criterio correcto es el `clienteId` real de
+los tres lotes del piloto (`docs/diseno/11-migracion-0021-determinante-y-capa-c.md:1298-1300`:
+`69479b8f…` macro, `f84d9ecc…` galicia, `80741296…` santander) contra todo lo demás: **304 archivos de
+test acumulados en `salida/`** (con `clienteId` aleatorio de `sembrar()`, de sesiones de test previas a
+este fix — algunos SÍ nombran el banco real como sufijo cosmético del fixture, p. ej.
+`movimientos_9c051a8e_galicia_...`, pero el `clienteId` no matchea a ningún cliente real del piloto), y
+**6 archivos reales** del piloto (4 corridas de Macro de esta sesión, 1 de Galicia y 1 de Santander de
+sesiones anteriores).
+
+**Corregido hacia adelante:** `exportarExcel()` gana un 4° parámetro inyectable, `dirSalida` (default
+`<raíz>/salida`, sin cambio de comportamiento para el CLI real) — mismo patrón ya usado para
+`escritor`/`resolverBanco`. Los 7 call-sites de `exportar-excel.test.ts` ahora pasan el
+`dirTemporal` (`mkdtempSync`) que el archivo ya creaba en `beforeAll` para otros 3 tests pero no
+usaba en el camino completo. Cero archivos de test nuevos van a `salida/` desde ahora.
+
+🔴 **Lo que este fix NO resuelve (JP lo señaló explícitamente):** los 304 archivos de test que ya
+están en `salida/` de sesiones anteriores a este fix siguen ahí — el fix es hacia adelante, no
+retroactivo. `pnpm salida:listar` no los distingue automáticamente de los reales: muestra mtime +
+sello para TODOS por igual, sin ningún flag "test"/"real". La distinción hoy requiere reconocer a
+mano el `lote_id` real (los tres UUID de arriba) dentro del sello o del nombre de archivo — el
+`clienteId`/`lote_id` de un archivo de test es aleatorio y no matchea ninguno de los tres. **Limpiado
+en la entrada 95, a pedido explícito de JP** — ver ahí.
+
+**Los ~310 archivos reales que ya están en `salida/`:** entre (a) symlink/nombre fijo apuntando al
+último export por lote y (b) un listado manual con el sello, se eligió **(b)** —
+`packages/ingesta/scripts/listar-salida.ts` (`pnpm salida:listar`), solo lectura, sin base, sin motor:
+lee cada `.xlsx`, extrae la última línea de "Motor de reconocimiento" de la hoja "Control de saldos",
+ordena por `mtime` descendente. Razón de la elección, explícita: menos código nuevo; cero riesgo sobre
+el camino de escritura ya verificado en la entrada 93 y en el ajuste 1; evita la fragilidad de
+symlinks en Windows (privilegio elevado o modo desarrollador, sin garantía en la máquina de quien lo
+corra); y evita una pregunta sin respuesta obvia — "¿cuál gana si el mismo lote se exportó con dos
+`--destinatario` distintos?" — que un nombre fijo único obligaría a resolver y (b) no. El borrado
+sigue siendo 100% manual (TTL recomendado de 7 días ya declarado en la entrada 93), un acto humano,
+nunca automático. Verificado corriendo el script contra la carpeta real (308 archivos hoy): el export
+de esta misma entrada aparece primero, con su sello completo; exports previos "sin léxico para el
+banco" muestran ese motivo en vez de un sello inventado.
+
+### Verificación
+
+🔴 **JP pidió el gate completo, una vez, antes de aprobar el commit — la primera corrida FALLÓ de
+verdad, y valió la pena tenerla** (los test files sueltos en verde, entrada original de esta sección,
+NO alcanzaban). `pnpm verificar` (`typecheck && barrido && fixtures:verificar && test`), primera
+corrida: **exit code 1**, un test rojo —
+`exportar-planilla.test.ts > ... 🔴 el caso real que reportó JP` — `expect(nombresDeHoja).toEqual([...])`
+afirmaba un ORDEN fijo de hojas (`Cta.Cte` antes que `Cta.Esp`), pero la consulta desempata cuentas de
+mismo banco+moneda por `cuenta_bancaria_id`, un uuid generado al azar por Postgres en cada corrida de
+test — no algo que el gate completo "colisionara" hacia peor, un no-determinismo real de mi propio test.
+**Confirmado empíricamente, no solo teorizado:** corrida aislada del mismo test 6 veces sueltas →
+falló 4/6. El pedido de ajuste 1 era DISTINGUIBLES, nunca un orden específico — para un cliente real el
+`cuenta_bancaria_id` no cambia entre exports, así que el orden es estable mes a mes, solo no tiene un
+criterio "lindo"; no es un bug de producción, es que el test se autoimpuso un requisito que el código
+nunca prometió. **Corregido:** el assert compara el conjunto ordenado (`.slice().sort()`) en vez del
+orden de aparición — los checks que sí importan (nombres correctos, sin `(2)`, CBU parcial solo en
+contenido, número completo N2R nunca en el archivo, auditoría por cuenta) quedan intactos. Verificado
+8/8 en corridas sueltas después del fix.
+
+**Segunda corrida de `pnpm verificar`, completa, sola, sin nada en paralelo — la que cuenta como cierre
+de esta tarea:** `typecheck` limpio, `barrido` limpio (980 archivos, 0 fugas), `fixtures:verificar` OK,
+`test`: **80 archivos / 1649 tests / 0 fallos / 7 todo, 334,68s, exit code 0**. +7 tests sobre la línea
+base de la entrada 93 (1642) — 6 nuevos de ajuste 1/2, el 7° es el mismo test corregido (no agrega
+caso, corrige el existente).
+
+**Export real regenerado después de los tres ajustes**, contra el mismo lote de Macro del piloto
+(lectura, `estudio_interno`), para revisión INTERNA de JP — **no para Laura**, mismo criterio que la
+entrada 93:
+`salida/movimientos_69479b8f_macro_ae762fda_20260821T181729Z.xlsx`. Verificado estructuralmente (script
+temporal read-only, borrado, sin imprimir contenido sensible):
+- Hojas: `Control de saldos`, `ARS macro Cta.Cte`, `ARS macro Cta.Esp`, `USD macro Cta.Esp` — sin
+  `(2)` ciego.
+- Título de hoja: `"Cuenta macro · Cuenta corriente ····7821 · ARS · Período 2025-11-01 a 2025-11-28
+  · Lote de origen"` — CBU parcial en el contenido, nunca en el nombre de pestaña.
+- Los 17 colores de encabezado, exactos contra la paleta de `ux-designer`.
+- Leyenda de colores presente, mismo bloque que la leyenda de la entrada 93.
+- Sello: `"Motor de reconocimiento — versión bb1e11b434bb9c3b · corrida el
+  2026-08-21T18:17:29.970Z sobre el lote ae762fda-8822-459f-a061-31d7ce26c785"`.
+- Auditoría: 3 filas `accion=lectura recurso=cuenta_bancaria_identificador` (una por cuenta) más el
+  `accion=export` ya existente.
+
+### Pendiente, deferido a propósito
+
+**Qué es R32, en una frase:** un test de catálogo (`reglas-de-codigo.test.ts:390-441`) que hace un
+grep estructural de TODO el árbol buscando el nombre literal `movimiento_origen_crudo`, y falla si
+aparece fuera de una lista explícita de archivos permitidos — protege el NOMBRE de la tabla, que el
+choke-point (`leerConAuditoria`) no cubre: ese choke-point obliga a pasar por la auditoría a quien
+llama a `leerFilasOrigenDeLote`, pero no impide que otro módulo escriba su propia consulta cruda contra
+la misma tabla, sin dejar rastro, y compile igual.
+
+`cuenta_bancaria_identificador` sigue **sin** ese mismo test. Marcado por `seguridad-datos-financieros`
+y `security-engineer` en la revisión de esta tarea, y **explícitamente pospuesto por recomendación de
+`security-engineer`**: ~20 puntos de acceso reales a revisar uno por uno (vs. 11 del test existente) es
+trabajo propio, no algo para apurar dentro de un ajuste de presentación.
+
+🔴 **Verificado a pedido de JP, no es solo un riesgo hipotético:** ya existe HOY al menos un acceso
+directo real, anterior a esta sesión y fuera de su alcance —
+`packages/ingesta/src/resolver-cuenta.ts:96-119,150` corre `tx.consultar(...)` crudo contra
+`cuenta_bancaria_identificador` (resuelve a qué cuenta pertenece un extracto durante la ingesta, por
+CBU o por número), **sin pasar por `leerConAuditoria`**. No es un bypass de esta tarea — Ajuste 1 sí
+usa el choke-point correctamente — pero significa que "el choke-point es la única puerta" ya no es
+cierto hoy para esta tabla, y por eso el R32-para-`cuenta_bancaria_identificador` no es deuda
+puramente preventiva.
+
+**Impacto en Laura: ninguno, directo.** `resolver-cuenta.ts` es una resolución interna
+servidor-a-servidor durante la ingesta, acotada por `cliente_id` (RLS), que nunca sale hacia un export
+ni hacia ninguna pantalla — no hay fuga de datos de un cliente a otro ni un dato que Laura vea de más.
+Lo que falta es **trazabilidad** (quién leyó qué identificador de cuenta y cuándo, para el registro de
+auditoría de ADR-0002), no confidencialidad entre clientes. Es deuda técnica real, con un caso
+concreto ya identificado, pero sin impacto funcional inmediato sobre el entregable que Laura o JP ven
+hoy. Queda como tarea futura, chica y revertible sola.
+
+### Archivos
+
+`apps/cli/src/exportar-excel.ts` (`dirSalida` inyectable), `apps/cli/tests/exportar-excel.test.ts` (7
+call-sites corregidos), `packages/ingesta/scripts/listar-salida.ts` (nuevo), `package.json`
+(`salida:listar`), `packages/ingesta/src/planilla/{armar-libro,exportar-planilla}.ts`,
+`packages/ingesta/tests/{planilla,exportar-planilla}.test.ts`. Nada de esto cambia
+`version-del-motor.json` — son cambios de presentación/IO, no de la capa B/C.
+
+---
+
+## 2026-08-21 (93) — Composición real de `decisión_humana` medida contra el corpus, y export a Excel enriquecido con identidad + motivo pendiente (capa B + capa C en memoria, gateado por destinatario). Plan de CLAUDE.md §3.2 completo, con dos dictámenes bloqueantes de seguridad resueltos por diseño.
+
+**Herramienta:** Claude Code. Pedido de JP: la contadora (Laura) confirmó por teléfono que el export a
+Excel actual no le ahorra tiempo — lo que le sirve es que el sistema le diga QUÉ ES cada movimiento, no
+que arme el asiento. Eso cambia la vara: la métrica de tres clases estaba calibrada contra "¿propone
+el asiento?", no contra su pregunta real.
+
+### Hallazgo previo a tocar código
+
+El export a Excel **nunca corrió el motor de reconocimiento**. `armarLibro` ya dejaba "Cuenta
+contable"/"Observación" en blanco con la leyenda *"el sistema todavía no propone nada"* — cierto hasta
+hoy, porque nada calculaba `clase`/`tipo`/`queDecide`.
+
+### Tarea 1 — medición contra el corpus real (script temporal, borrado, nunca commiteado)
+
+Corrido con `ENV_FILE=.env.piloto`, capa B + capa C reales (mismo camino que
+`apps/cli/src/resolver-contrapartida.ts`), `padronDeclaradoCompleto: false` (espeja producción). Los
+tres lotes reales, sin estimaciones:
+
+| | Galicia | Santander | Macro | **Total** |
+|---|---|---|---|---|
+| `propuesta` | 73 | 47 | 94 | **214** |
+| `decision_humana` | 213 | 107 | 1162 | **1482** |
+| `sin_reconocer` | 40 | 4 | 90 | **134** |
+| **corpus real (`COUNT(*)`)** | 326 | 158 | 1346 | **1830** |
+
+**Hipótesis (C) — ¿el motor pierde o duplica un movimiento?** REFUTADA, medida contra la base, no
+contra el agregado de clases (JP corrigió esto en la revisión del plan: el total de las tres clases da
+1830 *por construcción*, nunca puede detectar una pérdida). Por lote: `COUNT(*)` real =
+movimientos leídos = clasificados + descartados, exacto en los tres bancos. Nadie se pierde.
+
+**Comparación clase por clase contra el baseline anterior (209/1486/136, HANDOFF previo a esta
+entrada):** propuesta 209→214 (+5, exacto — coincide con las 5 promociones a `es_socio` del padrón
+cargado en Frente 1). decision_humana 1486→1482 (−4) y sin_reconocer 136→134 (−2): si SOLO el padrón
+hubiera cambiado, se esperaba −5/+0 respectivamente, no −4/−2. Hay un residual de 3 movimientos que el
+padrón por sí solo no explica. **Conclusión honesta (no la que se buscaba confirmar):** no se puede
+afirmar "error de transcripción confirmado" sin haber descartado que el catálogo cambió por otra vía —
+las 6 reglas de negocio de Laura se cargaron después de esa medición original, y no hay forma de
+reconstruir con certeza cuál literal exacto explica el residual sin repetir la medición vieja con el
+catálogo viejo (no conservado). **El baseline 209/1486/136 se da por superado, no por confirmado, por
+la medición de hoy.** El total sí cierra en 1830 exactos (no 1831) — el ±1 de `07-formato-macro.md`
+§12/`corpus-macro.test.ts` deja de ser relevante: esa tabla era una aproximación por transcripción, la
+medición de hoy es directa contra la base.
+
+**Composición de `decision_humana` (1482) por `queDecide`:**
+
+| Motivo | Movimientos | % de decision_humana | Categoría del pedido |
+|---|---|---|---|
+| `distinguir_tercero_de_socio` | **1149** | **77,5%** | (d) — nueva, no estaba en el pedido: depende del padrón de socios |
+| `confirmar_hipotesis_del_lexico` | 106 | 7,2% | (c) ambigüedad genuina |
+| `completar_con_liquidacion_del_adquirente` | 137 | 9,2% | (a) identidad resuelta, falta Capa D |
+| `confirmar_computo_de_credito_fiscal` | 44 | 3,0% | (a) |
+| `confirmar_cuenta_propia_destino` | 25 | 1,7% | (a) |
+| `elegir_jurisdiccion_de_la_retencion` | 14 | 0,9% | (a) |
+| `elegir_cuenta_de_pasivo_del_impuesto` | 7 | 0,5% | (a) |
+
+🔴 **Corrección al pedido original:** la categoría (b) ("depende del Libro IVA Compras") **NO vive en
+`decision_humana`** — el único concepto con esa dependencia estructural (`compra_con_tarjeta_debito_
+generica`, 11 movimientos, "COMPRA DEBITO" de Galicia) resuelve `sin_tipo_asignado` → clase
+`sin_reconocer`/`concepto_sin_tipo_asignado`, no `decision_humana`. La prosa del catálogo decía
+"permanece en decisión_humana"; el código real (`motor.ts:70-77`) manda a `sin_reconocer` — hallazgo de
+`contador-dominio`. `pago_de_honorarios` (Santander) también depende del Libro IVA Compras en su rama
+no-socio, pero eso no es detectable estructuralmente hoy (queda adentro de `distinguir_tercero_de_
+socio`) — límite conocido, documentado en `texto-humano.ts`, no forzado.
+
+Dentro de `distinguir_tercero_de_socio` (1149): `sin_candidatos` 579 (ningún identificador extraído del
+texto — ni completando el padrón se resuelve solo) y `sin_match_padron_incompleto` 570 (hay
+identificador, no matchea contra el padrón incompleto).
+
+`sin_reconocer` (134): `sin_evidencia_de_concepto` 76 (el hueco declarado de Macro, exacto),
+`concepto_sin_tipo_asignado` 53 (incluye los 11 Libro IVA Compras de Galicia + otros conceptos
+`implementacion_diferida` como `rescate_fci`), `reversa_incoherente` 5.
+
+**El número que decide todo (JP): identidad resuelta = `propuesta` + categoría (a) de
+`decision_humana`.** 214 + 227 = **441/1830 = 24,1%**. De cada 100 movimientos, 24 llegan con la
+identidad resuelta hoy — el resto depende, sobre todo (63%), de completar el padrón de socios.
+
+**Duración medida (JP pidió esto, "menor"):** la transacción de lectura completa (capa B + capa C) del
+lote de Macro, 1346 movimientos, tardó **57 ms** en el script de medición. El export real reusa las
+filas ya leídas del paso 6 (nunca una segunda lectura), así que el costo real del enriquecimiento
+dentro del export es igual o menor — sin degradación de escala visible a este volumen.
+
+### Tarea 2 — export enriquecido: dos columnas nuevas, dos dictámenes bloqueantes resueltos
+
+Convocados antes del primer `Edit`: `contador-dominio` (texto de los 8 `queDecide` + 7
+`MOTIVOS_SIN_RECONOCER` + 31 `TipoMovimiento`), `ux-designer` (nombres/posición de columna, leyenda),
+`seguridad-datos-financieros` y `security-engineer` (ambos bloqueantes al principio), `code-reviewer` y
+`tester` sobre el diff final.
+
+🔴 **Bloqueante 1 (`seguridad-datos-financieros` + `security-engineer`):** capa C promueve
+`distinguir_tercero_de_socio` a `retiro_de_socio`/`aporte_de_socio` cuando matchea contra el padrón
+(`motor.ts:143-154`) — eso es relación societaria, fila por fila, en un archivo que puede salir hacia
+`cliente_titular` u `organismo` sin revisión humana. **Resuelto:** el enriquecimiento (capa B + capa C,
+las dos columnas nuevas) corre **solo si `destinatarioCodigo === 'estudio_interno'`**
+(`DESTINATARIOS_QUE_ENRIQUECEN`, `exportar-planilla.ts`). Para `cliente_titular`/`organismo`, columnas
+en blanco — comportamiento idéntico al de hoy. Ampliar esto (capa C aplanada a texto neutro para otros
+destinatarios) es decisión de producto/contable pendiente, fuera de esta tarea.
+
+🔴 **Bloqueante 2 (`security-engineer`):** `leerPadronYCandidatosDeContraparte` lanza `Error` (no un
+`abortado` prolijo) sobre `MAX_MOVIMIENTOS_POR_LECTURA` (5.000) — y `MAX_FILAS` del export es 50.000.
+Un lote entre 5.001 y 50.000, hoy exportable sin enriquecer, pasaría a lanzar DENTRO de la `tx`, y el
+`rollback` se llevaría puesta la fila de auditoría del paso 3. **Resuelto:** `enriquecer()` chequea el
+tope ANTES de llamar a la lectura y degrada con gracia (`estadoEnriquecimiento: 'no_tope_superado'`,
+columnas en blanco) — nunca lanza. `MAX_MOVIMIENTOS_POR_LECTURA` pasó a exportarse desde
+`packages/data/src/contabilidad/lecturas.ts` para que el llamador pueda chequearlo.
+
+**Sello de reproducibilidad** (JP: dos corridas del mismo lote en fechas distintas no pueden diferir
+sin rastro de qué versión del motor las produjo — el destinatario es un cierre de balance). Vive
+SOLO en el `.xlsx` (nunca en la base — `reconocimiento_movimiento` sigue con 0 filas nuevas, 0
+migraciones): `digestDeBanco()` de `packages/contabilidad/src/nucleo/version.ts`, sin fallback a git
+(descartado en la revisión: `security-engineer` señaló que mezclar "banco sin léxico" con "árbol sucio"
+bajo un mismo fallback confunde dos preguntas distintas, y que un sello con hash de commit sobre un
+árbol sucio miente — más simple: si no hay léxico para el banco, el motor no corre y el sello lo dice
+explícito, sin necesidad de git en absoluto).
+
+**Deuda deliberada, declarada:** el cálculo es en memoria, nunca persistido en
+`reconocimiento_movimiento` — la persistencia real (que el determinante de `0021` ya prepara) es la
+etapa siguiente del Módulo 2, fuera de esta tarea por urgencia del pedido de Laura.
+
+**Columnas nuevas** (`ux-designer`): "Tipo de movimiento" y "Qué falta", pegadas antes de "Cuenta
+contable"/"Observación". `pendienteDeLaura` (hipótesis interna del léxico) **nunca** llega a la columna
+"Qué falta" — dictamen de `seguridad-datos-financieros`, verificado con test de mutación real
+(`packages/contabilidad/tests/texto-humano.test.ts`).
+
+**Archivos:** `packages/contabilidad/src/nucleo/texto-humano.ts` (nuevo, puro — aceptado en
+`version-del-motor.json` sin bump: consume `Reconocimiento` de solo lectura, no puede alterar ningún
+resultado del motor). `packages/data/src/contabilidad/lecturas.ts` (`MAX_MOVIMIENTOS_POR_LECTURA`
+exportada). `packages/ingesta/package.json` (nueva dependencia de workspace:
+`@sistema-contable/contabilidad` — legal por R-B, que solo prohíbe la dirección contraria).
+`packages/ingesta/src/planilla/{exportar-planilla,armar-libro}.ts`. Tests nuevos:
+`packages/contabilidad/tests/texto-humano.test.ts`,
+`packages/ingesta/tests/exportar-planilla-enriquecido.test.ts` (contra Postgres real, los tres bancos,
+gateo por destinatario, mutation test).
+
+**Revisión de `code-reviewer` (convocado sobre el diff final):** ningún bug bloqueante en los cinco
+puntos críticos (verificados en código, no solo en comentarios). Cuatro hallazgos reales, los cuatro
+corregidos antes de cerrar:
+1. `packages/ingesta` ahora también importa `@sistema-contable/contabilidad` — el comentario en
+   `lecturas.ts` que decía "`apps/cli` es la única capa que ve los dos paquetes" quedó falso.
+   Corregido, y el adaptador `comoCandidatoDeContraparte`/`comoSocioDelPadron` (antes duplicado byte a
+   byte en `resolver-contrapartida.ts` y `exportar-planilla.ts`) se extrajo a
+   `packages/ingesta/src/contraparte-adaptadores.ts`, importado por las dos capas.
+2. `DatosPlanilla` no impedía en el tipo el estado imposible `{estadoEnriquecimiento:'si',
+   motorDigest:null}` — `textoSelloDelMotor` hubiera impreso `"...— undefined."` en silencio.
+   Agregado un fallback explícito ("inconsistencia interna, avisale a sistemas"), con test que fuerza
+   el estado y verifica que nunca sale `"undefined"`.
+3. Faltaba cobertura pura (sin Postgres) de las 4 ramas de `EstadoEnriquecimiento` en el sello —
+   agregadas a `packages/ingesta/tests/planilla.test.ts`.
+4. El docblock de `exportar-planilla.ts` sobre el riesgo de `rollback` intra-transacción no mencionaba
+   que `leerPadronYCandidatosDeContraparte` (el enriquecimiento nuevo) puede lanzar
+   `MovimientoAjenoAlClienteError` con el mismo riesgo — anotado, mismo alcance declarado que ya
+   cubría cabecera/movimientos.
+
+**Convocado también `tester`** (adversarial sobre el gateo por destinatario, los discriminantes de
+`Reconocimiento` sin cubrir, `conceptoBanco` nulo, y el universo de `MAX_MOVIMIENTOS_POR_LECTURA`).
+Los cuatro intentos de romper el gateo/la degradación con gracia **no rompieron nada** — verificado
+código por código, no solo por inspección. Pero encontró el hallazgo más importante de la revisión:
+
+🔴 **`packages/ingesta/tests/exportar-planilla-enriquecido.test.ts` (primera versión) tenía cobertura
+CERO de la ruta más sensible del feature: capa C real promoviendo a `retiro_de_socio`/`aporte_de_socio`.**
+`conConceptosForzados` (el helper de los fixtures) solo sobreescribe `conceptoBanco` — ningún
+movimiento sintético traía un identificador que matcheara contra el padrón, así que TODO caía en
+`sin_candidatos` y la promoción nunca se ejercitaba. Es exactamente la ruta que el "Bloqueante 1" de
+`seguridad-datos-financieros` + `security-engineer` identificó como el riesgo real — la parte que más
+se cuidó de proteger era la que menos se probó de punta a punta. `tester` lo confirmó armando y
+borrando un test descartable: el código SÍ funciona, el gap estaba solo en la suite entregada.
+
+**Corregido:** nuevo test en el mismo archivo — alta de socio real (`altaDeSocio` de
+`@sistema-contable/data`, mismo camino que `apps/cli/src/alta-socio.ts` pero sin importar `apps/`),
+candidato real en `movimiento_contraparte_identificador` (mismo patrón que
+`apps/cli/tests/resolver-contrapartida.test.ts`), verifica `"Retiro de socio (según padrón)"` en el
+`.xlsx` para `estudio_interno` **y su ausencia total** para `cliente_titular` en el mismo lote. Los dos
+docstrings que decían "nunca lanza" sin matiz (`enriquecer()` y el header del archivo) se corrigieron
+para reflejar el alcance real (`MovimientoAjenoAlClienteError` sigue siendo estructuralmente
+inalcanzable, pero la garantía escrita ahora no es más fuerte que la que el código sostiene).
+
+**Verificado contra el piloto real (lectura, sin escribir nada):** export generado para el cliente de
+Macro (1346 movimientos, 3 cuentas) — `pnpm exportar:excel ... --destinatario estudio_interno`, verde,
+sello con el digest correcto, 100% de las filas con "Tipo de movimiento" no vacío. 🔴 **Es para
+revisión INTERNA de JP, nunca para Laura** — el piloto es corpus de prueba (UUIDs
+post-reconstrucción, residuo de interpretación de Santander sin resolver), no un cliente real
+presentable. El archivo queda en `salida/` (gitignorado), TTL recomendado 7 días.
+
+### El gate se colgó cuatro veces antes de cerrar — diagnóstico completo, a pedido de JP
+
+Después de los fixes de `tester`, cuatro corridas de `pnpm verificar`/`pnpm test` en background o
+foreground terminaron `killed` o (una) interrumpida por JP tras más de 7 minutos. JP pidió no cerrar la
+tarea con un gate que nunca terminó de correr, y cuatro preguntas concretas. Respuestas, en orden:
+
+**1. Qué pasó en las corridas que colisionaron.** Se lanzó una segunda `pnpm verificar` en background
+sin esperar a que la primera (ya verde, 410,23s) terminara de liberar sus conexiones — las dos
+compitieron por la MISMA base de test local (`sistema-contable-postgres`, puerto 5442), donde varios
+`beforeAll`/`sembrar()` hacen `TRUNCATE` de tablas de dominio para dejar un estado conocido. Las dos
+corridas murieron con `exit code 3221225794` (0xC0000005, access violation de Node) — un crash del
+proceso, no un fallo de test legible. **Verificado, no supuesto:** `select count(*) from
+pg_stat_activity where datname='sistema_contable'` da **1** (solo la consulta de diagnóstico misma) y
+`select count(*) from pg_locks where not granted` da **0** — cero conexiones colgadas, cero locks sin
+otorgar. Los procesos `node.exe` SÍ quedaron huérfanos después del crash (7 confirmados con
+`Get-CimInstance Win32_Process`, todos con `CommandLine` de `vitest`/`pnpm.mjs` apuntando a este repo —
+ninguno de otro trabajo del usuario) y una tercera corrida "limpia" volvió a morir hasta matarlos
+(`Stop-Process -Force`, filtrado por `CommandLine`, nunca `node.exe` a ciegas). **Nada quedó a medio
+escribir**: el `pnpm typecheck`/`pnpm barrido`/`pnpm fixtures:verificar` (los tres de solo lectura)
+corrieron bien en cada intento — el choque fue siempre dentro de `pnpm test`, y una transacción de
+Postgres cuya conexión se cae nunca queda a medio commitear (rollback automático).
+
+**2. Tiempo real del escenario que corre el motor dentro de la transacción.** Medido, no estimado:
+`ENV_FILE=.env.piloto node apps/cli/src/exportar-excel.ts ... --lote-id <macro, 1346 movimientos>` —
+**1,788s de pared, total**, incluido el arranque de Node, la conexión a Postgres, la lectura completa,
+capa B + capa C sobre las 1346 filas, `armarLibro`, `serializarLibro` y la escritura a disco. **No es
+el cuello de botella.** El "más de 7 minutos" que JP observó no viene de acá.
+
+**3. Reproducibilidad.** Con el árbol de procesos limpio y SIN nada corriendo en paralelo, `pnpm test`
+completo corrió **una vez más entera**, en foreground, monitoreada línea por línea con `Monitor` (no
+solo esperando el resultado final) para confirmar que no había ningún archivo colgado: progresó sin un
+solo hueco de silencio por más de un puñado de segundos, con dos tests preexistentes y ajenos a esta
+sesión (`liquidaciones-visa-credito.test.ts`/`liquidaciones-visa-debito.test.ts`, OCR sobre páginas
+escaneadas reales) tardando **113,2s y 117,5s cada uno** — juntos, casi 4 minutos de los ~6,5 del total,
+sin relación con el motor de reconocimiento ni con el export. Terminó **verde: 80 archivos / 1642 tests
+/ 0 fallos / 7 todo, 387,72s**. Contra la corrida exitosa anterior de esta misma sesión (410,23s, antes
+de los 6 tests que agregó el fix de `tester`), la duración es del mismo orden — **no hay evidencia de
+que el gate se haya vuelto más lento por los cambios de hoy**: el punto 2 ya lo había descartado para
+el camino específico del motor, y esta corrida completa lo confirma para la suite entera.
+
+**4. Conclusión — cuantificada, no solo dos ejemplos.** Sobre el archivo completo de esa corrida
+(monitoreada, verde, 387,72s totales / 336,37s de `tests`), los TRES tests de OCR real sobre documento
+escaneado (los tres formatos de liquidación de tarjeta) suman:
+
+| Test | ms |
+|---|---|
+| `liquidaciones-visa-debito.test.ts` — procesa las 8 páginas escaneadas | 117.521 |
+| `liquidaciones-visa-credito.test.ts` — procesa las 9 páginas escaneadas | 113.201 |
+| `liquidaciones-cabal-debito.test.ts` — procesa las páginas escaneadas | 17.059 |
+| **Total OCR real** | **247.781 (247,78s)** |
+
+**247,78s de 336,37s de tiempo de tests = 73,7%.** Es, con margen, la explicación dominante del tiempo
+total del gate — no una entre varias causas posibles. Ningún otro test del run completo llega a 15s
+(el siguiente más caro, `exportar-planilla.test.ts` "1400 filas volumen real de Macro", sin lexico
+registrado y sin relación con el enriquecimiento de esta sesión, tardó 14,9s).
+
+**Preexistente, confirmado dos veces, no por re-correr los tests aparte sino por evidencia más fuerte:**
+`git diff --stat` de esta sesión no toca `ocr.ts` ni ningún adaptador de `liquidaciones-*` — cero líneas.
+El último commit que tocó `ocr.ts` es `a84c76b` (2026-08-20, "plan 16 — reintento OCR sobre recorte para
+neto_acreditado"), el día anterior a esta sesión. La independencia es estructural (el código de esta
+sesión no importa esos módulos y viceversa), no una coincidencia de timing entre dos corridas.
+
+**Aparte, un hallazgo de documentación, no de esta sesión:** `docs/diseno/15-ocr-liquidaciones-plan.md`
+§2 ya anticipaba esto como pendiente de medir ("tiempo agregado a CI... convocatoria pendiente a
+`devops`") pero nunca quedó un número escrito. Los de la tabla de arriba son la primera medición real
+— vale que `devops`/quien retome ese plan los use para cerrar ese punto, no de esta tarea.
+
+**El gate completo es lento por el costo real de Tesseract en los tests de OCR (~248s de los ~388s
+totales), un comportamiento conocido y anticipado (no medido hasta hoy) en `docs/diseno/
+15-ocr-liquidaciones-plan.md` §2. No es una regresión de esta sesión — `ocr.ts` y los tres adaptadores
+de liquidación no se tocaron.** Las corridas paralelas de hoy, sobre esos mismos tests pesados,
+agravaron el "cuelgue" percibido: dos procesos compitiendo por CPU en un tramo de ~4 minutos de OCR real
+por corrida explica por qué el síntoma se sintió peor que "un poco más lento".
+
+Con esto confirmado, no se vuelve a correr el gate completo una vez más "para confirmar" —
+`pnpm typecheck`/`pnpm barrido`/`pnpm fixtures:verificar` ya en verde por separado, el escenario real
+del motor contra Macro en 1,8s, y la explicación completa y cuantificada del tiempo total son la
+verificación de cierre de esta tarea.
+
+`pnpm test` (verbose, corrida aislada y limpia): **80 archivos / 1642 tests / 0 fallos / 7 todo,
+387,72s** (línea base antes de esta sesión, HANDOFF 92: 78 / 1616 / 0 — +2 archivos, +26 tests: los 14
+de `texto-humano.test.ts`, 6 de `exportar-planilla-enriquecido.test.ts` y 6 nuevos en
+`planilla.test.ts` para las 4 ramas de `EstadoEnriquecimiento`, puros). `pnpm typecheck` y `pnpm
+barrido` confirmados en verde por separado, mismo día, después de los mismos cambios.
+
+### Tarea adicional (JP) — roster de agentes vs. `06-analisis-agentes-dominio.md`
+
+`06-analisis-agentes-dominio.md` vive en Project Knowledge de claude.ai, no en este repo — esta sesión
+no tiene forma de leerlo directamente. Dos discrepancias confirmadas por JP durante la revisión del
+plan (y verificadas acá contra el filesystem): `seguridad-datos-financieros` y
+`plan-cuentas-multicliente` **existen** en `agents/personas/` + `.claude/agents/` con YAML bien
+formado, pese a que `06` los describe como "nunca se dio de alta"/"propuesta sin adoptar". Aparte,
+`seguridad-datos-financieros` no aparecía en el `<system-reminder>` de arranque de ESTA sesión (a
+diferencia de los otros 22, incluido `plan-cuentas-multicliente`) — probado en runtime igual,
+`Agent({subagent_type: "seguridad-datos-financieros"})` funcionó sin error, así que esa ausencia no
+significa "no registrado". Queda para quien tenga acceso a `06` corregir esas dos líneas — no se
+reescribe acá.
+
+### Lo próximo
+
+1. `plan-cuentas-multicliente` y Capa D (mapeo a cuenta contable real) quedan fuera de esta sesión a
+   propósito (JP) — es la etapa siguiente si se decide automatizar más allá de "qué es el movimiento".
+2. Persistencia real del enriquecimiento en `reconocimiento_movimiento` (deuda declarada arriba) —
+   usa el determinante que `0021` ya dejó listo.
+3. Las 12+3 consultas pendientes de Laura siguen sin tocar — nada de esta tarea dependía de ellas.
+4. `salida/` tiene dos `.xlsx` del lote de Macro del piloto generados en esta sesión (mismo lote,
+   corridas distintas) — gitignorados, TTL recomendado 7 días, para revisión interna de JP.
+
+---
+
 ## 2026-08-21 (92) — Corregido el bug del `TODO` en `reconoceVisaDebito` (punto 1 de HANDOFF 91): AND, no OR, mismo patrón que `reconoceVisaCredito`. Reproducido en rojo antes de corregir, no solo replicado por analogía.
 
 `visa-debito.ts`: `MARCAS.some(...)` (OR entre la marca genérica y `TARJETA DE DEBITO PESOS`) reemplazado

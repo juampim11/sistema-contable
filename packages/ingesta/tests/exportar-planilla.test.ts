@@ -62,6 +62,51 @@ async function registrarCuenta(clienteId: string, bancoCodigo: string, moneda: s
   });
 }
 
+/** Sin `alias` (el caso real que reportó JP, ajuste 1: dos cuentas Macro reales del piloto sin alias
+ *  cargado quedaban indistinguibles en el export). */
+async function registrarCuentaSinAlias(clienteId: string, bancoCodigo: string, moneda: string): Promise<string> {
+  return conUsuario(USUARIOS.socio, async (tx) => {
+    const c = await tx.consultar<{ id: string }>(
+      `insert into cuenta_bancaria (cliente_id, banco_codigo, moneda, alias) values ($1, $2, $3, null)
+       returning id::text as id`,
+      [clienteId, bancoCodigo, moneda],
+    );
+    const id = c[0]?.id;
+    if (!id) throw new Error('no se creó la cuenta de prueba');
+    return id;
+  });
+}
+
+/** Un identificador de cuenta vigente — mismo camino de datos que usaría `alta-cuenta.ts` en
+ *  producción, insertado directo para no arrastrar todo el CLI a este test. */
+async function agregarIdentificador(args: {
+  readonly clienteId: string;
+  readonly cuentaBancariaId: string;
+  readonly tipoCuenta: string;
+  readonly numero: string;
+  readonly cbuUltimos4: string | null;
+  readonly vigenteDesde: string;
+}): Promise<void> {
+  await conUsuario(USUARIOS.socio, (tx) =>
+    tx.consultar(
+      `insert into cuenta_bancaria_identificador
+         (cliente_id, cuenta_bancaria_id, tipo_cuenta, numero, cbu_ultimos4, vigente_desde)
+       values ($1, $2, $3, $4, $5, $6::date)`,
+      [args.clienteId, args.cuentaBancariaId, args.tipoCuenta, args.numero, args.cbuUltimos4, args.vigenteDesde],
+    ),
+  );
+}
+
+async function contarAuditoriaDeRecurso(recurso: string, recursoId: string): Promise<number> {
+  return conUsuario(USUARIOS.socio, async (tx) => {
+    const f = await tx.consultar<{ n: string }>(
+      `select count(*)::text as n from acceso_auditoria where recurso = $1 and recurso_id = $2`,
+      [recurso, recursoId],
+    );
+    return Number(f[0]?.n ?? '0');
+  });
+}
+
 /** Crea un lote enteramente persistido (con `persistirCuenta` real, no SQL a mano) para una o más
  *  cuentas. Refleja el único camino por el que `lote_ingesta_cuenta` puede tener filas: nunca `no_cuadra`
  *  (esa rama de `estadoSegunVerificacion` no persiste nada, por diseño — `persistir.ts`). */
@@ -535,6 +580,136 @@ describe('exportarPlanillaDeLote — aislamiento', () => {
       })
       .sort((a, b) => a - b);
     expect(conteos).toEqual([5, 9]);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Ajuste 1 (2026-08-21) — desambiguar hojas sin alias, contra base real, wiring de leerConAuditoria
+// -----------------------------------------------------------------------------
+
+describe('exportarPlanillaDeLote — identificador de cuenta (ajuste 1, base real)', () => {
+  it('🔴 el caso real que reportó JP: dos cuentas Macro del piloto, misma moneda, SIN alias — ' +
+    'quedan distinguibles en el export, y la lectura N2R queda auditada por cuenta', async () => {
+    await registrarBanco('bancoexport12');
+    const cuentaCC = await registrarCuentaSinAlias(s.clienteA, 'bancoexport12', 'ARS');
+    const cuentaEspecial = await registrarCuentaSinAlias(s.clienteA, 'bancoexport12', 'ARS');
+    await agregarIdentificador({
+      clienteId: s.clienteA,
+      cuentaBancariaId: cuentaCC,
+      tipoCuenta: 'cuenta_corriente',
+      numero: '1112223334',
+      cbuUltimos4: null,
+      vigenteDesde: '2026-01-01',
+    });
+    await agregarIdentificador({
+      clienteId: s.clienteA,
+      cuentaBancariaId: cuentaEspecial,
+      tipoCuenta: 'cuenta_corriente_especial',
+      numero: '5556667778',
+      cbuUltimos4: '4321',
+      vigenteDesde: '2026-01-01',
+    });
+
+    const extractoCC = extractoSintetico({
+      semilla: 1201,
+      cantidadMovimientos: 4,
+      saldoInicialCentavos: 10_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: 'bancoexport12',
+      moneda: 'ARS',
+    });
+    const extractoEspecial = extractoSintetico({
+      semilla: 1202,
+      cantidadMovimientos: 3,
+      saldoInicialCentavos: 20_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: 'bancoexport12',
+      moneda: 'ARS',
+    });
+    const loteId = await crearLotePersistido({
+      clienteId: s.clienteA,
+      bancoCodigo: 'bancoexport12',
+      cuentas: [
+        { cuenta: extractoCC, cuentaBancariaId: cuentaCC },
+        { cuenta: extractoEspecial, cuentaBancariaId: cuentaEspecial },
+      ],
+    });
+
+    const antesCC = await contarAuditoriaDeRecurso('cuenta_bancaria_identificador', cuentaCC);
+    const antesEspecial = await contarAuditoriaDeRecurso('cuenta_bancaria_identificador', cuentaEspecial);
+
+    const r = await conUsuario(USUARIOS.contadorA, (tx) =>
+      exportarPlanillaDeLote(tx, {
+        clienteId: s.clienteA,
+        loteId,
+        motivoCodigo: 'demo_contadora',
+        destinatarioCodigo: 'estudio_interno',
+        generadoEn: '2026-08-21T00:00:00.000Z',
+      }),
+    );
+    expect(r.estado).toBe('armada');
+    if (r.estado !== 'armada') return;
+
+    const releido = new ExcelJS.Workbook();
+    await releido.xlsx.load(Buffer.from(r.libro) as unknown as ExcelJS.Buffer);
+    // El orden entre las dos hojas no es un requisito (ajuste 1 pide DISTINGUIBLES, no un orden
+    // específico) y no puede serlo: el desempate de la consulta es `cuenta_bancaria_id`, un uuid
+    // generado al azar por cuenta de prueba — afirmar un orden fijo acá haría el test dependiente
+    // de qué uuid salió "menor" en esta corrida (confirmado con 6 corridas sueltas: falló en 4/6).
+    const nombresDeHoja = releido.worksheets.map((w) => w.name).filter((n) => n !== 'Control de saldos');
+    expect(nombresDeHoja.slice().sort()).toEqual(['ARS bancoexport12 Cta.Cte', 'ARS bancoexport12 Cta.Esp']);
+    expect(nombresDeHoja.some((n) => n.includes('(2)'))).toBe(false);
+
+    // El CBU sí aparece, pero DENTRO de la hoja — nunca en el nombre de pestaña.
+    const hojaEspecial = releido.getWorksheet('ARS bancoexport12 Cta.Esp');
+    expect(hojaEspecial?.getCell('A1').value).toContain('····4321');
+
+    // El número completo (N2R) NUNCA sale a ningún lado del archivo — inflado, no el zip crudo
+    // (comprimido no contiene el substring aunque el dato esté adentro; sin esto el assert no prueba nada).
+    const texto = cadenasDelXlsx(r.libro);
+    expect(texto).not.toContain('1112223334');
+    expect(texto).not.toContain('5556667778');
+
+    // La lectura N2R quedó auditada — una fila POR CUENTA, no una sola para "todo el lote".
+    expect(await contarAuditoriaDeRecurso('cuenta_bancaria_identificador', cuentaCC)).toBe(antesCC + 1);
+    expect(await contarAuditoriaDeRecurso('cuenta_bancaria_identificador', cuentaEspecial)).toBe(antesEspecial + 1);
+  });
+
+  it('destinatario=organismo: NUNCA lee el identificador de cuenta — ninguna auditoría nueva, sello de siempre', async () => {
+    await registrarBanco('bancoexport13');
+    const cuenta = await registrarCuentaSinAlias(s.clienteA, 'bancoexport13', 'ARS');
+    await agregarIdentificador({
+      clienteId: s.clienteA,
+      cuentaBancariaId: cuenta,
+      tipoCuenta: 'cuenta_corriente',
+      numero: '9998887776',
+      cbuUltimos4: '7777',
+      vigenteDesde: '2026-01-01',
+    });
+    const extracto = extractoSintetico({
+      semilla: 1301,
+      cantidadMovimientos: 3,
+      saldoInicialCentavos: 5_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: 'bancoexport13',
+    });
+    const loteId = await crearLotePersistido({ clienteId: s.clienteA, bancoCodigo: 'bancoexport13', cuentas: [{ cuenta: extracto, cuentaBancariaId: cuenta }] });
+
+    const antes = await contarAuditoriaDeRecurso('cuenta_bancaria_identificador', cuenta);
+    const r = await conUsuario(USUARIOS.contadorA, (tx) =>
+      exportarPlanillaDeLote(tx, {
+        clienteId: s.clienteA,
+        loteId,
+        motivoCodigo: 'demo_contadora',
+        destinatarioCodigo: 'organismo',
+        generadoEn: '2026-08-21T00:00:00.000Z',
+      }),
+    );
+    expect(r.estado).toBe('armada');
+    expect(await contarAuditoriaDeRecurso('cuenta_bancaria_identificador', cuenta)).toBe(antes);
   });
 });
 

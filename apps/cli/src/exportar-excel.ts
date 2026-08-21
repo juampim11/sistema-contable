@@ -249,11 +249,18 @@ function nombreDeArchivo(
 }
 
 /** Corre el export. Separado del CLI para que el test lo ejercite sin `process.exit`, mismo patrón que
- *  `ingestar()`/`completarLote()`. */
+ *  `ingestar()`/`completarLote()`.
+ *
+ * `dirSalida` inyectable (default `<raíz>/salida`, la carpeta real que JP revisa a mano) por el mismo
+ * motivo que `escritor`/`resolverBanco`: sin esto, `apps/cli/tests/exportar-excel.test.ts` escribía
+ * `.xlsx` de prueba (`cliexport_*`) DIRECTO en la carpeta real — 309 archivos acumulados, medido, la
+ * mayoría de test, mezclados con los pocos exports reales del piloto (JP, ajuste 3, 2026-08-21). Los
+ * tests ahora inyectan un directorio temporal; el CLI real sigue usando `salida/` sin cambios. */
 export async function exportarExcel(
   args: Argumentos,
   escritor: EscritorReservado = escritorReal,
   resolverBanco: ResolverBanco = resolverBancoDelLote,
+  dirSalida: string = join(raizDelRepo(), 'salida'),
 ): Promise<ResultadoExportarExcel> {
   const credencial = await verificarCredencialDeRequest();
   if (credencial.salteaRls || credencial.esSuperusuario) {
@@ -292,7 +299,6 @@ export async function exportarExcel(
   );
 
   const nombre = nombreDeArchivo(args.cliente, bancoParaElNombre, loteId, generadoEn);
-  const dirSalida = join(raizDelRepo(), 'salida');
   mkdirSync(dirSalida, { recursive: true, mode: 0o700 });
   const destino = join(dirSalida, nombre);
 

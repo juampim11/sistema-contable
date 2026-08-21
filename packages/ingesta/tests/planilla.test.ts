@@ -94,6 +94,8 @@ function cabeceraDePrueba(over: Partial<CabeceraCuenta> = {}): CabeceraCuenta {
     cuentaBancariaId: 'cta-1',
     bancoCodigo: 'sintetico',
     cuentaAlias: 'Cuenta operativa',
+    tipoCuenta: null,
+    cbuUltimos4: null,
     moneda: 'ARS',
     periodoDesde: '2026-06-01',
     periodoHasta: '2026-06-30',
@@ -128,6 +130,9 @@ function filaDePrueba(over: Partial<FilaPlanilla> = {}): FilaPlanilla {
     moneda: 'ARS',
     referenciaExterna: null,
     paginaPdf: 1,
+    identificacion: null,
+    confianza: null,
+    pendiente: null,
     ...over,
   };
 }
@@ -145,6 +150,8 @@ function datosDePrueba(over: Partial<DatosPlanilla> = {}): DatosPlanilla {
     destinatarioCodigo: 'estudio_interno',
     cabeceras: [cabeceraDePrueba()],
     filas: [filaDePrueba()],
+    estadoEnriquecimiento: 'no_sin_lexico',
+    motorDigest: null,
     ...over,
   };
 }
@@ -271,7 +278,8 @@ describe('armarLibro — camino feliz', () => {
     expect(hoja.autoFilter).toMatchObject({ from: { row: 7, column: 1 } });
   });
 
-  it('las columnas de clasificación (Cuenta contable, Observación) están vacías en cada fila', async () => {
+  it('"Cuenta contable"/"Observación" NO están en esta entrega (JP, ajuste 5: nada las lee hasta ' +
+    'que exista Capa D — pedirle a Laura que las complete hoy es ruido, no señal)', async () => {
     const r = armarLibro(
       datosDePrueba({
         filas: [filaDePrueba({ filaNumero: 1 }), filaDePrueba({ filaNumero: 2, importe: '10.00' })],
@@ -282,12 +290,303 @@ describe('armarLibro — camino feliz', () => {
     const hoja = releido.worksheets[1];
     if (!hoja) throw new Error('falta la hoja');
     const headers = hoja.getRow(7).values as unknown[];
-    const colCuentaContable = headers.findIndex((v) => v === 'Cuenta contable');
-    const colObservacion = headers.findIndex((v) => v === 'Observación');
-    for (const fila of [8, 9]) {
-      expect(hoja.getCell(fila, colCuentaContable).value).toBeFalsy();
-      expect(hoja.getCell(fila, colObservacion).value).toBeFalsy();
+    expect(headers).not.toContain('Cuenta contable');
+    expect(headers).not.toContain('Observación');
+  });
+
+  it('el header trae "Tipo de movimiento"/"Qué falta" y respeta lo que traiga la fila', async () => {
+    const r = armarLibro(
+      datosDePrueba({
+        filas: [
+          filaDePrueba({ filaNumero: 1, identificacion: 'Comisión bancaria', pendiente: null }),
+          filaDePrueba({
+            filaNumero: 2,
+            importe: '10.00',
+            identificacion: 'Indeterminado',
+            pendiente: 'El sistema no reconoce este texto.',
+          }),
+        ],
+      }),
+    );
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.worksheets[1];
+    if (!hoja) throw new Error('falta la hoja');
+    const headers = hoja.getRow(7).values as unknown[];
+    const colTipo = headers.findIndex((v) => v === 'Tipo de movimiento');
+    const colQueFalta = headers.findIndex((v) => v === 'Qué falta');
+    expect(colTipo).toBeGreaterThan(0);
+    expect(colQueFalta).toBeGreaterThan(0);
+    expect(hoja.getCell(8, colTipo).value).toBe('Comisión bancaria');
+    expect(hoja.getCell(8, colQueFalta).value).toBeFalsy();
+    expect(hoja.getCell(9, colTipo).value).toBe('Indeterminado');
+    expect(hoja.getCell(9, colQueFalta).value).toBe('El sistema no reconoce este texto.');
+  });
+
+  it('🔴 ajuste 7 (JP): "Confianza" es una columna propia entre "Tipo de movimiento" y "Qué falta" — ' +
+    'nunca un sufijo pegado al texto del tipo, para no romper el filtro de Excel', async () => {
+    const r = armarLibro(
+      datosDePrueba({
+        filas: [
+          filaDePrueba({ filaNumero: 1, identificacion: 'Cobranza de cliente', confianza: 'Alta', pendiente: null }),
+          filaDePrueba({
+            filaNumero: 2,
+            importe: '10.00',
+            identificacion: 'Cobranza de cliente',
+            confianza: 'A confirmar',
+            pendiente: 'Depende del padrón de socios.',
+          }),
+        ],
+      }),
+    );
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.worksheets[1];
+    if (!hoja) throw new Error('falta la hoja');
+    const headers = hoja.getRow(7).values as unknown[];
+    const colTipo = headers.findIndex((v) => v === 'Tipo de movimiento');
+    const colConfianza = headers.findIndex((v) => v === 'Confianza');
+    const colQueFalta = headers.findIndex((v) => v === 'Qué falta');
+    expect(colConfianza).toBe(colTipo + 1); // inmediatamente después (ux-designer)
+    expect(colConfianza).toBeLessThan(colQueFalta);
+    // "identificacion" NUNCA lleva un sufijo — es el mismo texto sin importar la confianza, así el
+    // filtro de Excel por "Tipo de movimiento" agrupa las dos filas bajo un único valor.
+    expect(hoja.getCell(8, colTipo).value).toBe('Cobranza de cliente');
+    expect(hoja.getCell(9, colTipo).value).toBe('Cobranza de cliente');
+    expect(hoja.getCell(8, colConfianza).value).toBe('Alta');
+    expect(hoja.getCell(9, colConfianza).value).toBe('A confirmar');
+  });
+});
+
+/** Busca, en la hoja "Control de saldos", la primera celda de columna A que empieza con el prefijo
+ *  dado — mismo criterio en todo el archivo de leer la leyenda por contenido, no por fila fija (la
+ *  posición depende de `cabeceras.length`). */
+function celdaDeControl(hoja: ExcelJS.Worksheet, prefijo: string): string | undefined {
+  let encontrada: string | undefined;
+  hoja.eachRow((fila) => {
+    const v = fila.getCell(1).value;
+    if (typeof v === 'string' && v.startsWith(prefijo)) encontrada = v;
+  });
+  return encontrada;
+}
+
+// -----------------------------------------------------------------------------
+// Ajuste 1 (2026-08-21) — dos cuentas sin alias no pueden quedar indistinguibles
+// -----------------------------------------------------------------------------
+
+describe('armarLibro — desambiguación de hojas sin alias (ajuste 1)', () => {
+  it('🔴 caso real que reportó JP: dos cuentas Macro ARS sin alias, distinto tipo_cuenta — ' +
+    'nombres de pestaña y etiquetas DISTINTOS, sin depender del "(2)" ciego de Excel', async () => {
+    const r = armarLibro(
+      datosDePrueba({
+        cabeceras: [
+          cabeceraDePrueba({
+            cuentaBancariaId: 'cta-cc',
+            bancoCodigo: 'macro',
+            cuentaAlias: null,
+            tipoCuenta: 'cuenta_corriente',
+            cbuUltimos4: null,
+          }),
+          cabeceraDePrueba({
+            cuentaBancariaId: 'cta-especial',
+            bancoCodigo: 'macro',
+            cuentaAlias: null,
+            tipoCuenta: 'cuenta_corriente_especial',
+            cbuUltimos4: null,
+          }),
+        ],
+        filas: [
+          filaDePrueba({ filaNumero: 1, cuentaBancariaId: 'cta-cc' }),
+          filaDePrueba({ filaNumero: 1, cuentaBancariaId: 'cta-especial', importe: '10.00' }),
+        ],
+      }),
+    );
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const nombresDeHoja = releido.worksheets.map((w) => w.name);
+    expect(nombresDeHoja).toEqual(['Control de saldos', 'ARS macro Cta.Cte', 'ARS macro Cta.Esp']);
+    // Ninguna pestaña lleva el "(2)" de colisión ciega — la desambiguación real evitó que hiciera falta.
+    expect(nombresDeHoja.some((n) => n.includes('(2)'))).toBe(false);
+
+    const hojaCC = releido.getWorksheet('ARS macro Cta.Cte');
+    const hojaEspecial = releido.getWorksheet('ARS macro Cta.Esp');
+    expect(hojaCC?.getCell('A1').value).toContain('macro · Cuenta corriente · ARS');
+    expect(hojaEspecial?.getCell('A1').value).toContain('macro · Cuenta corriente especial · ARS');
+  });
+
+  it('con CBU cargado, la etiqueta DENTRO de la hoja lo muestra — pero la pestaña NUNCA lo lleva', async () => {
+    const r = armarLibro(
+      datosDePrueba({
+        cabeceras: [cabeceraDePrueba({ cuentaAlias: null, tipoCuenta: 'cuenta_corriente', cbuUltimos4: '1234' })],
+      }),
+    );
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.worksheets[1];
+    expect(hoja?.name).not.toContain('1234');
+    expect(hoja?.getCell('A1').value).toContain('····1234');
+  });
+
+  it('con alias cargado, tipoCuenta/cbuUltimos4 no cambian nada (camino ya probado, sin tocar)', async () => {
+    const r = armarLibro(
+      datosDePrueba({
+        cabeceras: [
+          cabeceraDePrueba({ cuentaAlias: 'Cuenta operativa', tipoCuenta: 'cuenta_corriente', cbuUltimos4: '9999' }),
+        ],
+      }),
+    );
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.worksheets[1];
+    expect(hoja?.getCell('A1').value).toContain('Cuenta operativa');
+    expect(hoja?.getCell('A1').value).not.toContain('9999');
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Ajuste 2 (2026-08-21) — color de encabezado por origen del dato
+// -----------------------------------------------------------------------------
+
+describe('armarLibro — color de encabezado por origen del dato (ajuste 2)', () => {
+  it('gris para lo que publica el banco, azul para lo que identifica el sistema — ' +
+    '"Cuenta contable"/"Observación" no existen en esta entrega (ajuste 4/5)', async () => {
+    const r = armarLibro(datosDePrueba());
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.worksheets[1];
+    if (!hoja) throw new Error('falta la hoja');
+    const headers = hoja.getRow(7).values as unknown[];
+    const argbDe = (header: string): string | undefined => {
+      const col = headers.findIndex((v) => v === header);
+      if (col < 1) return undefined; // columna no existe (ajuste 5): sin celda que consultar
+      const fill = hoja.getCell(7, col).fill;
+      return fill && fill.type === 'pattern' ? (fill.fgColor?.argb as string | undefined) : undefined;
+    };
+    expect(argbDe('Fecha')).toBe('FFE7E6E6');
+    expect(argbDe('Descripción')).toBe('FFE7E6E6');
+    expect(argbDe('Tipo de movimiento')).toBe('FF5B9BD5');
+    expect(argbDe('Confianza')).toBe('FF5B9BD5');
+    expect(argbDe('Qué falta')).toBe('FF5B9BD5');
+    expect(argbDe('Corrección / Identidad')).toBe('FFFFE699');
+    expect(argbDe('Comentarios')).toBe('FFFFE699');
+    expect(argbDe('Cuenta contable')).toBeUndefined();
+    expect(argbDe('Observación')).toBeUndefined();
+    expect(argbDe('N° de fila (sistema)')).toBe('FFF2F0EC');
+    expect(argbDe('Importe con signo (control)')).toBe('FFF2F0EC');
+  });
+
+  it('la leyenda de "Control de saldos" explica los tres colores', async () => {
+    const r = armarLibro(datosDePrueba());
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.getWorksheet('Control de saldos');
+    if (!hoja) throw new Error('falta la hoja de control');
+    expect(celdaDeControl(hoja, '— Los encabezados de la hoja de movimientos están coloreados')).toBeDefined();
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Feedback de Laura (JP): "Corrección / Identidad" + "Comentarios"
+// -----------------------------------------------------------------------------
+
+describe('armarLibro — columnas de feedback de Laura', () => {
+  it('🔴 posición: inmediatamente después de "Qué falta", antes de "Cuenta" (ux-designer)', async () => {
+    const r = armarLibro(datosDePrueba());
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.worksheets[1];
+    if (!hoja) throw new Error('falta la hoja');
+    const headers = (hoja.getRow(7).values as unknown[]).filter((v): v is string => typeof v === 'string');
+    const iQueFalta = headers.indexOf('Qué falta');
+    const iPrincipal = headers.indexOf('Corrección / Identidad');
+    const iComentarios = headers.indexOf('Comentarios');
+    const iCuenta = headers.indexOf('Cuenta');
+    expect(iPrincipal).toBe(iQueFalta + 1);
+    expect(iComentarios).toBe(iPrincipal + 1);
+    expect(iCuenta).toBe(iComentarios + 1);
+  });
+
+  it('🔴 las dos columnas están SIEMPRE vacías al exportar, sin importar la clase/confianza de la fila — nadie las pre-llena', async () => {
+    const r = armarLibro(
+      datosDePrueba({
+        filas: [
+          filaDePrueba({ filaNumero: 1, identificacion: 'Comisión bancaria', confianza: 'Alta', pendiente: null }),
+          filaDePrueba({
+            filaNumero: 2,
+            importe: '10.00',
+            identificacion: 'Pago a proveedor (transferencia)',
+            confianza: 'A confirmar',
+            pendiente: 'Depende del padrón de socios.',
+          }),
+          filaDePrueba({ filaNumero: 3, importe: '20.00', identificacion: 'Indeterminado', confianza: null, pendiente: 'Decinos qué es.' }),
+        ],
+      }),
+    );
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.worksheets[1];
+    if (!hoja) throw new Error('falta la hoja');
+    const headers = hoja.getRow(7).values as unknown[];
+    const colPrincipal = headers.findIndex((v) => v === 'Corrección / Identidad');
+    const colComentarios = headers.findIndex((v) => v === 'Comentarios');
+    for (const fila of [8, 9, 10]) {
+      expect(hoja.getCell(fila, colPrincipal).value).toBeFalsy();
+      expect(hoja.getCell(fila, colComentarios).value).toBeFalsy();
     }
+  });
+
+  it('la leyenda explica el principio de silencio=aprobación, en las dos direcciones del riesgo', async () => {
+    const r = armarLibro(datosDePrueba());
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.getWorksheet('Control de saldos');
+    if (!hoja) throw new Error('falta la hoja de control');
+    expect(celdaDeControl(hoja, '— "Corrección / Identidad" y "Comentarios" son las únicas columnas')).toBeDefined();
+    // Riesgo 1 (JP): que Laura piense que hay que escribir "OK" en las ~900 filas de "Alta".
+    expect(celdaDeControl(hoja, '  Ojo con las dos lecturas erróneas: NO hace falta escribir "OK"')).toBeDefined();
+    // Riesgo 2 (JP): que una fila vacía en "A confirmar" se lea como "ya resuelta".
+    expect(celdaDeControl(hoja, '  pendiente, solo que todavía nadie la miró.')).toBeDefined();
+    expect(celdaDeControl(hoja, '  · Amarillo/dorado: son las dos columnas que llenás VOS')).toBeDefined();
+  });
+});
+
+describe('armarLibro — sello del motor, las 4 ramas de EstadoEnriquecimiento (puro, sin DB)', () => {
+  it('"si": imprime la versión real del motor y el lote', async () => {
+    const r = armarLibro(datosDePrueba({ estadoEnriquecimiento: 'si', motorDigest: 'deadbeefcafebabe' }));
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.getWorksheet('Control de saldos');
+    if (!hoja) throw new Error('falta la hoja de control');
+    expect(celdaDeControl(hoja, 'Motor de reconocimiento')).toBe(
+      'Motor de reconocimiento — versión deadbeefcafebabe · corrida el 2026-08-12T00:00:00.000Z sobre el lote lote-1',
+    );
+  });
+
+  it.each([
+    ['no_destinatario', 'el destinatario de este export no recibe la propuesta del sistema'],
+    ['no_tope_superado', 'el lote supera el tope de movimientos para esta corrida'],
+    ['no_sin_lexico', 'no hay léxico registrado para este banco'],
+  ] as const)('"%s": explica por qué no corrió, nunca un dato falso', async (estado, fragmento) => {
+    const r = armarLibro(datosDePrueba({ estadoEnriquecimiento: estado, motorDigest: null }));
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.getWorksheet('Control de saldos');
+    if (!hoja) throw new Error('falta la hoja de control');
+    expect(celdaDeControl(hoja, 'Motor de reconocimiento')).toBe(`Motor de reconocimiento — no se ejecutó — ${fragmento}.`);
+  });
+
+  it('🔴 estado imposible ("si" con motorDigest null) nunca imprime "undefined" — code-reviewer', async () => {
+    // `DatosPlanilla` no impide esta combinación en tiempo de compilación (code-reviewer lo señaló) —
+    // se fuerza en runtime para verificar que el fallback defensivo de `textoSelloDelMotor` no
+    // imprima basura si algún día alguien la produce por error.
+    const r = armarLibro(datosDePrueba({ estadoEnriquecimiento: 'si', motorDigest: null }));
+    if (r.estado !== 'armado') throw new Error('no armó');
+    const releido = await releer(r.libro);
+    const hoja = releido.getWorksheet('Control de saldos');
+    if (!hoja) throw new Error('falta la hoja de control');
+    const texto = celdaDeControl(hoja, 'Motor de reconocimiento');
+    expect(texto).not.toContain('undefined');
+    expect(texto).toContain('inconsistencia interna');
   });
 });
 

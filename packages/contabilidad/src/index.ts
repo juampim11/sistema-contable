@@ -11,3 +11,4 @@ export * from './nucleo/motor.ts';
 export * from './nucleo/persistible.ts';
 export * from './nucleo/version.ts';
 export * from './nucleo/entrada.ts';
+export * from './nucleo/texto-humano.ts';

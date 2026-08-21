@@ -17,16 +17,51 @@
  * transaccional, fuera de esta `tx`—, ahí sí el rastro sobrevive (`apps/cli/tests/exportar-excel.test.ts`,
  * "la auditoría ya commiteó pero la escritura a disco falla"). Un savepoint propio para blindar también el
  * caso intra-transacción queda fuera de alcance de esta tarea.
+ *
+ * El mismo riesgo intra-transacción aplica al paso 6.bis (`enriquecer()`, plan "export enriquecido",
+ * 2026-08-21): `leerPadronYCandidatosDeContraparte` puede lanzar `MovimientoAjenoAlClienteError` si un
+ * `movimientoId` no pertenece al cliente — en la práctica no debería ocurrir (los ids vienen de la
+ * misma lectura del paso 6, ya filtrada por `cliente_id`), pero si ocurriera, el `rollback` se lleva
+ * puesta la auditoría igual que los otros dos casos de arriba. Mismo alcance declarado, no una garantía
+ * nueva que resolver acá.
+ *
+ * Y también al paso 4.bis (`leerConAuditoria` + `leerIdentificadoresDeCuenta` por cabecera, ajuste 1,
+ * 2026-08-21): `cuenta_bancaria_identificador` es N2R (`numero`) — el repo la protege con su propio
+ * choke point auditado (`packages/data/src/ingesta/lecturas.ts`), no con una `tx.consultar` directa
+ * (`seguridad-datos-financieros`, dictamen bloqueante levantado con esta condición). Se lee UNA VEZ POR
+ * CUENTA (nunca "todo el cliente" — el alcance del rastro tiene que decir algo), solo para
+ * `estudio_interno` (mismo gate que `DESTINATARIOS_QUE_ENRIQUECEN`, hasta que haya una decisión de
+ * producto explícita sobre `organismo`/`cliente_titular`), y solo se copian `tipoCuenta`/`cbuUltimos4`
+ * a `CabeceraCuenta` — nunca `numero` ni `cbu_hmac`, aunque el lector los traiga en el mismo objeto.
  */
 
-import { registrarAcceso, type Tx } from '@sistema-contable/data';
+import {
+  MAX_MOVIMIENTOS_POR_LECTURA,
+  registrarAcceso,
+  leerConAuditoria,
+  leerIdentificadoresDeCuenta,
+  leerPadronYCandidatosDeContraparte,
+  type Tx,
+} from '@sistema-contable/data';
 import { ROLES_QUE_DESCARGAN } from '@sistema-contable/almacenamiento';
+import {
+  aplicarContrapartida,
+  construirIndice,
+  digestDeBanco,
+  lexicoDe,
+  marcarPadronConsultado,
+  reconocer,
+  resolverContraparte,
+  textoDeReconocimiento,
+} from '@sistema-contable/contabilidad';
+import { comoCandidatoDeContraparte, comoSocioDelPadron } from '../contraparte-adaptadores.ts';
 import {
   armarLibro,
   serializarLibro,
   MAX_FILAS,
   MOTIVOS_LIBRO,
   type CabeceraCuenta,
+  type EstadoEnriquecimiento,
   type FilaPlanilla,
 } from './armar-libro.ts';
 
@@ -45,6 +80,19 @@ export type MotivoExport = (typeof MOTIVOS_EXPORT)[number];
  */
 export const DESTINATARIOS_EXPORT = ['estudio_interno', 'cliente_titular', 'organismo'] as const;
 export type DestinatarioExport = (typeof DESTINATARIOS_EXPORT)[number];
+
+/**
+ * Enriquecimiento (capa B + capa C del motor, en memoria, nunca persistido) — SOLO para
+ * `destinatarioCodigo === 'estudio_interno'`. Dictamen bloqueante de `seguridad-datos-financieros` +
+ * `security-engineer` (plan "export enriquecido", 2026-08-21): `retiro_de_socio`/`aporte_de_socio`
+ * (capa C) y el detalle por `EstadoResolucion` de `distinguir_tercero_de_socio` afirman relación
+ * societaria fila por fila — inaceptable en un archivo que puede salir hacia `cliente_titular` u
+ * `organismo` sin revisión humana. Para esos dos destinatarios el export vuelve al comportamiento de
+ * hoy (columnas en blanco), sin correr capa C. Ampliar esto a los otros destinatarios (con el motor
+ * output aplanado a un texto neutro) es una decisión de producto/contable pendiente — no se resuelve
+ * acá, ver HANDOFF.
+ */
+const DESTINATARIOS_QUE_ENRIQUECEN = new Set<DestinatarioExport>(['estudio_interno']);
 
 /** Roles que pueden exportar. Reusa el gate de `descarga.ts`, no una lista propia — un export es
  *  estrictamente más dato que una descarga (consultable/ordenable/agregable, sin TTL), así que nunca
@@ -93,6 +141,96 @@ export type ResultadoExportPlanilla =
       readonly filaNumero?: number;
     };
 
+type FilaCruda = {
+  readonly id: string;
+  readonly concepto_banco: string | null;
+  readonly concepto_codigo: string | null;
+  readonly concepto_completo: boolean | null;
+  readonly concepto_banco_estrategia: string | null;
+  readonly importe: string;
+  readonly fecha: string;
+};
+
+/** Mismo mapeo que `packages/data/src/contabilidad/lecturas.ts` (`leerEvidenciaDeMovimientos`) — no
+ *  se reusa esa función para no leer `movimiento_bancario_crudo` dos veces en la misma transacción
+ *  (ya lo lee el paso 6, con más columnas); se replica el mapeo puntual, no la consulta. */
+function evidenciaDeMotorDesde(f: FilaCruda, bancoCodigo: string) {
+  const estrategiaCruda = f.concepto_banco_estrategia;
+  const sinEstrategia = estrategiaCruda === null || estrategiaCruda === 'no_capturado' || estrategiaCruda === 'no_publicado';
+  return {
+    bancoCodigo,
+    conceptoBanco: f.concepto_banco ?? undefined,
+    conceptoCompleto: f.concepto_completo ?? undefined,
+    conceptoBancoEstrategia: sinEstrategia
+      ? undefined
+      : (estrategiaCruda as 'segmento_de_glosa' | 'prefijo_anclado' | 'columna_propia'),
+    conceptoCodigo: f.concepto_codigo ?? undefined,
+    columnaOrigen: (Number(f.importe) < 0 ? 'debito' : 'credito') as 'debito' | 'credito',
+  };
+}
+
+type ResultadoEnriquecimiento = {
+  readonly textos: ReadonlyMap<string, ReturnType<typeof textoDeReconocimiento>>;
+  readonly estadoEnriquecimiento: EstadoEnriquecimiento;
+  readonly motorDigest: string | null;
+};
+
+/**
+ * Capa B + capa C, en memoria, sobre las filas ya leídas del paso 6 — nunca una lectura N2 nueva.
+ * Devuelve mapa vacío (columnas en blanco, comportamiento de hoy) para todo lo que no califica: un
+ * lote grande o un destinatario externo degradan con gracia, nunca lanzan por esas dos razones.
+ * `leerPadronYCandidatosDeContraparte` SÍ puede lanzar `MovimientoAjenoAlClienteError` (`tester`,
+ * plan "export enriquecido") — estructuralmente inalcanzable hoy (los ids vienen ya filtrados por
+ * `cliente_id` del paso 6, misma `tx`), pero la garantía "nunca lanza" es solo sobre las dos
+ * degradaciones con gracia, no sobre ese caso — ver el header del archivo.
+ */
+async function enriquecer(
+  tx: Tx,
+  pedido: PedidoExportPlanilla,
+  bancoCodigo: string,
+  movFilas: readonly FilaCruda[],
+): Promise<ResultadoEnriquecimiento> {
+  const vacio = { textos: new Map<string, ReturnType<typeof textoDeReconocimiento>>() };
+
+  if (!DESTINATARIOS_QUE_ENRIQUECEN.has(pedido.destinatarioCodigo)) {
+    return { ...vacio, estadoEnriquecimiento: 'no_destinatario', motorDigest: null };
+  }
+  if (movFilas.length > MAX_MOVIMIENTOS_POR_LECTURA) {
+    return { ...vacio, estadoEnriquecimiento: 'no_tope_superado', motorDigest: null };
+  }
+  const lexico = lexicoDe(bancoCodigo);
+  if (!lexico) {
+    return { ...vacio, estadoEnriquecimiento: 'no_sin_lexico', motorDigest: null };
+  }
+
+  const indice = construirIndice(lexico);
+  const motorDigest = digestDeBanco(lexico);
+
+  const { padron, candidatosPorMovimiento } = await leerPadronYCandidatosDeContraparte(tx, {
+    clienteId: pedido.clienteId,
+    movimientoIds: movFilas.map((f) => f.id),
+  });
+  const padronConsultado = marcarPadronConsultado(padron.map(comoSocioDelPadron));
+
+  const textos = new Map<string, ReturnType<typeof textoDeReconocimiento>>();
+  for (const f of movFilas) {
+    const antes = reconocer(evidenciaDeMotorDesde(f, bancoCodigo), indice);
+
+    let despues = antes;
+    if (antes.clase === 'decision_humana' && antes.queDecide === 'distinguir_tercero_de_socio') {
+      const candidatos = (candidatosPorMovimiento.get(f.id) ?? []).map(comoCandidatoDeContraparte);
+      // padronDeclaradoCompleto: false — espeja la realidad de producción (reconocer-lote.ts:288, el
+      // flag hoy está fijo en false), mismo criterio que `apps/cli/src/resolver-contrapartida.ts`.
+      const resolucion = resolverContraparte(candidatos, padronConsultado, f.fecha, false);
+      despues = aplicarContrapartida(antes, resolucion);
+    }
+
+    textos.set(f.id, textoDeReconocimiento(despues));
+  }
+
+  return { textos, estadoEnriquecimiento: 'si', motorDigest };
+}
+
 export async function exportarPlanillaDeLote(
   tx: Tx,
   pedido: PedidoExportPlanilla,
@@ -127,12 +265,24 @@ export async function exportarPlanillaDeLote(
 
   // 3. Auditoría, PRIMERO — antes de leer una sola fila con datos N2. Si algo falla después, el rastro
   // del intento ya quedó.
+  //
+  // `enriquecido:` en el motivo (vocabulario cerrado, sin texto libre) — condición de
+  // `security-engineer` (dictamen del plan "export enriquecido", 2026-08-21): que quede constancia de
+  // si este export PUDO incorporar resolución de contraparte (capa C), para poder responder después
+  // "¿este export expuso alguna vez relación societaria a un `organismo`?" sin abrir el .xlsx. Se basa
+  // en el destinatario (lo único fijo en este punto, antes de conocer el tamaño real del lote) — para
+  // `cliente_titular`/`organismo` la respuesta es SIEMPRE `no` y es exacta; para `estudio_interno` es
+  // `posible` (el tope de `MAX_MOVIMIENTOS_POR_LECTURA` puede seguir suprimiéndolo más abajo, pero esa
+  // supresión nunca es un riesgo de exposición societaria — Laura ve columnas en blanco, no un dato
+  // ajeno de más).
   const correlacion = await registrarAcceso(tx, {
     clienteId: pedido.clienteId,
     accion: 'export',
     recurso: 'movimiento_bancario_crudo',
     recursoId: pedido.loteId,
-    motivo: `${pedido.motivoCodigo}|dest:${pedido.destinatarioCodigo}`,
+    motivo:
+      `${pedido.motivoCodigo}|dest:${pedido.destinatarioCodigo}` +
+      `|enriquecido:${DESTINATARIOS_QUE_ENRIQUECEN.has(pedido.destinatarioCodigo) ? 'posible' : 'no'}`,
   });
 
   // 4. Cabecera(s) — N2. Con `cuenta_bancaria_id` explícito en el WHERE cuando se pasó el filtro.
@@ -182,24 +332,72 @@ export async function exportarPlanillaDeLote(
     return { estado: 'abortado', motivoCodigo: 'sin_cabecera' };
   }
 
-  const cabeceras: readonly CabeceraCuenta[] = cabeceraFilas.map((f) => ({
-    cuentaBancariaId: f.cuenta_bancaria_id,
-    bancoCodigo: f.banco_codigo,
-    cuentaAlias: f.cuenta_alias,
-    moneda: f.moneda,
-    periodoDesde: f.periodo_desde,
-    periodoHasta: f.periodo_hasta,
-    saldoInicialDeclarado: f.saldo_inicial_declarado,
-    saldoFinalDeclarado: f.saldo_final_declarado,
-    totalCreditosDeclarado: f.total_creditos_declarado,
-    totalDebitosDeclarado: f.total_debitos_declarado,
-    saldoFinalCalculado: f.saldo_final_calculado,
-    totalCreditosCalculado: f.total_creditos_calculado,
-    totalDebitosCalculado: f.total_debitos_calculado,
-    filasLeidas: f.filas_leidas,
-    filasAceptadas: f.filas_aceptadas,
-    verificacionEstado: f.verificacion_estado,
-  }));
+  // 4.bis. Identificador de cuenta (tipo_cuenta N1 + cbu_ultimos4 N2 enmascarado), SOLO para
+  // `estudio_interno` (mismo gate que el enriquecimiento de capa B/C — `seguridad-datos-financieros`:
+  // "hasta que haya una decisión de producto explícita" sobre organismo/cliente_titular). Ajuste 1,
+  // 2026-08-21 — desambigua hojas de dos cuentas reales sin `alias` cargado. `cuenta_bancaria_
+  // identificador` es N2R (`numero`): se lee por el choke point auditado (`leerConAuditoria` +
+  // `leerIdentificadoresDeCuenta`), UNA VEZ POR CUENTA, nunca con una `tx.consultar` directa. Loop
+  // secuencial (no `Promise.all`): son pocas cuentas por lote, y secuencial deja las filas de
+  // auditoría en el mismo orden en que se procesan las cuentas.
+  const identificadoresPorCuenta = new Map<string, { readonly tipoCuenta: string; readonly cbuUltimos4: string | null }>();
+  if (DESTINATARIOS_QUE_ENRIQUECEN.has(pedido.destinatarioCodigo)) {
+    for (const f of cabeceraFilas) {
+      const identificadores = await leerConAuditoria(
+        tx,
+        {
+          clienteId: pedido.clienteId,
+          accion: 'lectura',
+          recurso: 'cuenta_bancaria_identificador',
+          recursoId: f.cuenta_bancaria_id,
+          motivo: 'export_planilla:diferenciar_cuenta_sin_alias',
+        },
+        (ctx) =>
+          leerIdentificadoresDeCuenta(tx, ctx, {
+            clienteId: pedido.clienteId,
+            cuentaBancariaId: f.cuenta_bancaria_id,
+            alFecha: f.periodo_hasta,
+          }),
+      );
+      // `leerIdentificadoresDeCuenta` ordena por `vigente_desde desc` — se toma el más reciente
+      // vigente al cierre del período. Nada garantiza que no haya dos filas simultáneamente vigentes
+      // (la unicidad de la tabla es `(cliente_id, cbu_hmac, vigente_desde)`, no exclusión por rango);
+      // si pasara, `[0]` es la decisión explícita, no un accidente. Arreglo vacío (cuenta sin
+      // identificador cargado) degrada a `undefined` — el título cae al comportamiento de hoy, nunca
+      // aborta el export por esto.
+      const vigente = identificadores[0];
+      if (vigente) {
+        identificadoresPorCuenta.set(f.cuenta_bancaria_id, {
+          tipoCuenta: vigente.tipoCuenta,
+          cbuUltimos4: vigente.cbuUltimos4,
+        });
+      }
+    }
+  }
+
+  const cabeceras: readonly CabeceraCuenta[] = cabeceraFilas.map((f) => {
+    const identificador = identificadoresPorCuenta.get(f.cuenta_bancaria_id);
+    return {
+      cuentaBancariaId: f.cuenta_bancaria_id,
+      bancoCodigo: f.banco_codigo,
+      cuentaAlias: f.cuenta_alias,
+      moneda: f.moneda,
+      periodoDesde: f.periodo_desde,
+      periodoHasta: f.periodo_hasta,
+      saldoInicialDeclarado: f.saldo_inicial_declarado,
+      saldoFinalDeclarado: f.saldo_final_declarado,
+      totalCreditosDeclarado: f.total_creditos_declarado,
+      totalDebitosDeclarado: f.total_debitos_declarado,
+      saldoFinalCalculado: f.saldo_final_calculado,
+      totalCreditosCalculado: f.total_creditos_calculado,
+      totalDebitosCalculado: f.total_debitos_calculado,
+      filasLeidas: f.filas_leidas,
+      filasAceptadas: f.filas_aceptadas,
+      verificacionEstado: f.verificacion_estado,
+      tipoCuenta: identificador?.tipoCuenta ?? null,
+      cbuUltimos4: identificador?.cbuUltimos4 ?? null,
+    };
+  });
 
   // 5. Tope de filas — se cuenta ANTES de traer los datos, para no cargar en memoria lo que se va a
   // rechazar igual.
@@ -218,8 +416,11 @@ export async function exportarPlanillaDeLote(
   }
 
   // 6. Movimientos — N2. `::text` en `date`: sin el cast el driver devuelve un `Date` y la zona horaria
-  // del host corre el día (mismo criterio que `lecturas.ts`).
+  // del host corre el día (mismo criterio que `lecturas.ts`). `m.id` se agrega SOLO para el
+  // enriquecimiento de abajo (capa C necesita `movimientoId`) — no viaja a `FilaPlanilla`, mismo
+  // criterio que ya aplica este archivo de no exponer más de lo que la fila necesita.
   const movFilas = await tx.consultar<{
+    id: string;
     fila_numero: number;
     cuenta_bancaria_id: string;
     fecha: string;
@@ -236,7 +437,8 @@ export async function exportarPlanillaDeLote(
     referencia_externa: string | null;
     pagina_pdf: number | null;
   }>(
-    `select m.fila_numero::int         as fila_numero,
+    `select m.id::text                 as id,
+            m.fila_numero::int         as fila_numero,
             m.cuenta_bancaria_id::text as cuenta_bancaria_id,
             m.fecha::text              as fecha,
             m.fecha_valor::text        as fecha_valor,
@@ -259,23 +461,38 @@ export async function exportarPlanillaDeLote(
     [pedido.clienteId, pedido.loteId, pedido.cuentaBancariaId ?? null],
   );
 
-  const filas: readonly FilaPlanilla[] = movFilas.map((f) => ({
-    filaNumero: f.fila_numero,
-    cuentaBancariaId: f.cuenta_bancaria_id,
-    fecha: f.fecha,
-    fechaValor: f.fecha_valor,
-    descripcion: f.descripcion,
-    conceptoBanco: f.concepto_banco,
-    conceptoCodigo: f.concepto_codigo,
-    conceptoCompleto: f.concepto_completo,
-    conceptoBancoEstrategia: f.concepto_banco_estrategia,
-    importe: f.importe,
-    saldo: f.saldo,
-    saldoEsAcreedor: f.saldo_es_acreedor,
-    moneda: f.moneda,
-    referenciaExterna: f.referencia_externa,
-    paginaPdf: f.pagina_pdf,
-  }));
+  // 6.bis. Enriquecimiento — capa B (reconocer) + capa C (resolverContraparte/aplicarContrapartida),
+  // EN MEMORIA, nunca persistido (coherente con que este export ya es read-only por diseño). Gateado
+  // por destinatario (ver `DESTINATARIOS_QUE_ENRIQUECEN` arriba) y por `MAX_MOVIMIENTOS_POR_LECTURA`
+  // (`security-engineer`: sin este chequeo, un lote de 5.001 a 50.000 movimientos —hoy exportable sin
+  // enriquecer— pasaría a LANZAR dentro de esta `tx`, y el `rollback` se llevaría puesta la fila de
+  // auditoría del paso 3, ya commiteada lógicamente en la transacción). Corre DESPUÉS de
+  // `registrarAcceso` (paso 3) — nunca antes ("primero el rastro, después el dato").
+  const { textos, estadoEnriquecimiento, motorDigest } = await enriquecer(tx, pedido, lote.banco_codigo, movFilas);
+
+  const filas: readonly FilaPlanilla[] = movFilas.map((f) => {
+    const texto = textos.get(f.id);
+    return {
+      filaNumero: f.fila_numero,
+      cuentaBancariaId: f.cuenta_bancaria_id,
+      fecha: f.fecha,
+      fechaValor: f.fecha_valor,
+      descripcion: f.descripcion,
+      conceptoBanco: f.concepto_banco,
+      conceptoCodigo: f.concepto_codigo,
+      conceptoCompleto: f.concepto_completo,
+      conceptoBancoEstrategia: f.concepto_banco_estrategia,
+      importe: f.importe,
+      saldo: f.saldo,
+      saldoEsAcreedor: f.saldo_es_acreedor,
+      moneda: f.moneda,
+      referenciaExterna: f.referencia_externa,
+      paginaPdf: f.pagina_pdf,
+      identificacion: texto?.identificacion ?? null,
+      confianza: texto?.confianza ?? null,
+      pendiente: texto?.pendiente ?? null,
+    };
+  });
 
   const resultadoLibro = armarLibro({
     clienteId: pedido.clienteId,
@@ -289,6 +506,8 @@ export async function exportarPlanillaDeLote(
     destinatarioCodigo: pedido.destinatarioCodigo,
     cabeceras,
     filas,
+    estadoEnriquecimiento,
+    motorDigest,
   });
   if (resultadoLibro.estado === 'abortado') {
     return resultadoLibro.filaNumero === undefined

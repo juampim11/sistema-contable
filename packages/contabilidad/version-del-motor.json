@@ -70,6 +70,63 @@
         "reconocimiento.ts": "614150d86ac9fd0a",
         "tipos.ts": "7a091c2672ab69c8"
       }
+    },
+    {
+      "version": 2,
+      "aceptada_en": "2026-08-21",
+      "bump": false,
+      "motivo": "texto-humano.ts: modulo de presentacion puro, consume Reconocimiento como entrada de solo lectura para producir texto humano; no participa de reconocer()/resolverContraparte() ni puede alterar ningun resultado del motor",
+      "archivos": {
+        "contrapartida.ts": "9225c9191a65d5cf",
+        "entrada.ts": "2ad45a0406a1a49b",
+        "indice.ts": "c93529e3a0044adb",
+        "lexico.ts": "e3ebbde02837b6c7",
+        "matcher.ts": "0a15006f1992cf32",
+        "motor.ts": "84013b228ebec162",
+        "normalizacion.ts": "17d7ecc738aad461",
+        "persistible.ts": "5f4c60577c86fdc1",
+        "reconocimiento.ts": "614150d86ac9fd0a",
+        "texto-humano.ts": "f2858deea204fc81",
+        "tipos.ts": "7a091c2672ab69c8"
+      }
+    },
+    {
+      "version": 2,
+      "aceptada_en": "2026-08-21",
+      "bump": false,
+      "motivo": "ajuste 6 (JP + ux-designer + contador-dominio): textoDeReconocimiento agrega el calificador (sin confirmar) a identificacion para los 2 QueDecide sin identidad firme (confirmar_hipotesis_del_lexico, distinguir_tercero_de_socio) — presentacion pura, no altera reconocer()/resolverContraparte(), consume Reconocimiento de solo lectura",
+      "archivos": {
+        "contrapartida.ts": "9225c9191a65d5cf",
+        "entrada.ts": "2ad45a0406a1a49b",
+        "indice.ts": "c93529e3a0044adb",
+        "lexico.ts": "e3ebbde02837b6c7",
+        "matcher.ts": "0a15006f1992cf32",
+        "motor.ts": "84013b228ebec162",
+        "normalizacion.ts": "17d7ecc738aad461",
+        "persistible.ts": "5f4c60577c86fdc1",
+        "reconocimiento.ts": "614150d86ac9fd0a",
+        "texto-humano.ts": "e745245d10720c99",
+        "tipos.ts": "7a091c2672ab69c8"
+      }
+    },
+    {
+      "version": 2,
+      "aceptada_en": "2026-08-21",
+      "bump": false,
+      "motivo": "ajuste 7 (JP + ux-designer + contador-dominio): textoDeReconocimiento agrega el campo confianza ('Alta'/'A confirmar'/null) y saca el calificador (sin confirmar) de identificacion, que rompia el filtro de Excel por Tipo de movimiento — presentacion pura, no altera reconocer()/resolverContraparte(), consume Reconocimiento de solo lectura",
+      "archivos": {
+        "contrapartida.ts": "9225c9191a65d5cf",
+        "entrada.ts": "2ad45a0406a1a49b",
+        "indice.ts": "c93529e3a0044adb",
+        "lexico.ts": "e3ebbde02837b6c7",
+        "matcher.ts": "0a15006f1992cf32",
+        "motor.ts": "84013b228ebec162",
+        "normalizacion.ts": "17d7ecc738aad461",
+        "persistible.ts": "5f4c60577c86fdc1",
+        "reconocimiento.ts": "614150d86ac9fd0a",
+        "texto-humano.ts": "4daf62486068cc5f",
+        "tipos.ts": "7a091c2672ab69c8"
+      }
     }
   ]
 }

@@ -8,6 +8,7 @@ export * from './seed/extracto-sintetico.ts';
 export * from './resolver-cuenta.ts';
 export * from './glosa.ts';
 export * from './contraparte.ts';
+export * from './contraparte-adaptadores.ts';
 export * from './seed/texto-extracto-sintetico.ts';
 export * from './adaptadores/contrato.ts';
 export * from './adaptadores/registro.ts';

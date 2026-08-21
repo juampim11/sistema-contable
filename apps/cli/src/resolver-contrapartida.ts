@@ -32,9 +32,7 @@ import {
   leerEvidenciaDeMovimientos,
   leerPadronYCandidatosDeContraparte,
   verificarCredencialDeRequest,
-  type Candidato,
   type EvidenciaDeMovimientoLeida,
-  type SocioDelPadron as SocioDelPadronLeido,
 } from '@sistema-contable/data';
 import {
   aplicarContrapartida,
@@ -43,11 +41,10 @@ import {
   marcarPadronConsultado,
   reconocer,
   resolverContraparte,
-  type CandidatoDeContraparte,
   type IndiceDeLexico,
   type Reconocimiento,
-  type SocioDelPadron,
 } from '@sistema-contable/contabilidad';
+import { comoCandidatoDeContraparte, comoSocioDelPadron } from '@sistema-contable/ingesta';
 import { loggerAcotado } from '@sistema-contable/shared/observabilidad';
 import { cargarEnv } from '../../../tools/cargar-env.ts';
 
@@ -188,25 +185,6 @@ export function agregarMatriz(
     porEstadoDeResolucion,
     sociosInvolucrados: socios.size,
     sinLexico,
-  };
-}
-
-// -----------------------------------------------------------------------------
-// Adaptadores entre los tipos duplicados de `data` y `contabilidad` (R-B: no se pueden importar
-// entre sí — `apps/cli` es la única capa que ve los dos a la vez).
-// -----------------------------------------------------------------------------
-
-function comoCandidatoDeContraparte(c: Candidato): CandidatoDeContraparte {
-  return { clase: c.clase, hmac: c.identificadorHmac, pepperId: c.pepperId };
-}
-
-function comoSocioDelPadron(s: SocioDelPadronLeido): SocioDelPadron {
-  return {
-    socioId: s.id,
-    documentoHmac: s.documentoHmac,
-    pepperId: s.pepperId,
-    vigenteDesde: s.vigenteDesde,
-    vigenteHasta: s.vigenteHasta,
   };
 }
 

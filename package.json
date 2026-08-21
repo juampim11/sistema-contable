@@ -32,6 +32,7 @@
     "alta:cuenta": "node apps/cli/src/alta-cuenta.ts",
     "alta:cliente": "node apps/cli/src/alta-cliente.ts",
     "exportar:excel": "node apps/cli/src/exportar-excel.ts",
+    "salida:listar": "node packages/ingesta/scripts/listar-salida.ts",
     "recapturar:conceptos": "node apps/cli/src/recapturar-conceptos.ts",
     "backfill:contraparte": "node apps/cli/src/backfill-contraparte.ts",
     "alta:socio": "node apps/cli/src/alta-socio.ts",
@@ -45,9 +46,9 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "pg": "^8.16.3",
-    "zod": "^4.1.13",
+    "@sistema-contable/ingesta": "workspace:*",
     "@sistema-contable/shared": "workspace:*",
-    "@sistema-contable/ingesta": "workspace:*"
+    "pg": "^8.16.3",
+    "zod": "^4.1.13"
   }
 }

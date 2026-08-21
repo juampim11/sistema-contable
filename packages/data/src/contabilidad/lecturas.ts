@@ -9,9 +9,11 @@
  *      ADR-0002 H-8 existe para evitar. Devuelven tipos PROPIOS de este paquete — nunca los de
  *      `packages/contabilidad` (prohibición bidireccional, `reglas-de-codigo.test.ts:236-251`): la
  *      marca `PadronConsultado` ("el padrón se leyó de verdad") vive del lado de `contabilidad`
- *      (`nucleo/contrapartida.ts`, `marcarPadronConsultado`), y es `apps/cli` —la única capa que
- *      importa los dos paquetes— quien envuelve el resultado de `leerPadronDeSocios` con ella,
- *      inmediatamente después de leer.
+ *      (`nucleo/contrapartida.ts`, `marcarPadronConsultado`), y son las capas que importan los dos
+ *      paquetes —hoy `apps/cli` y `packages/ingesta`, mismo motivo cada una: correr capa C fuera
+ *      del motor puro— quienes envuelven el resultado de `leerPadronDeSocios` con ella,
+ *      inmediatamente después de leer. Los adaptadores compartidos viven en
+ *      `packages/ingesta/src/contraparte-adaptadores.ts`.
  *   3. `leerPadronYCandidatosDeContraparte` — orquestadora. Cierra H-6/INV-9: el `WHERE
  *      cliente_id=$1` + RLS forzada ya hacen estructuralmente imposible que las dos lecturas de
  *      arriba devuelvan una fila de otro cliente, así que el riesgo real es el LLAMADOR pasando un
@@ -130,8 +132,16 @@ export type Candidato = {
 };
 
 /** Cota defensiva contra un `any($2::uuid[])` armado con un array sin límite por un bug aguas
- *  arriba. El volumen real medido en el piloto es ~1830 movimientos por lote. */
-const MAX_MOVIMIENTOS_POR_LECTURA = 5_000;
+ *  arriba. El volumen real medido en el piloto es ~1830 movimientos por lote.
+ *
+ *  Exportada (no solo interna): un llamador que puede recibir lotes más grandes que este tope —hoy
+ *  el export enriquecido de `packages/ingesta/src/planilla/exportar-planilla.ts`, cuyo propio tope
+ *  de filas (`MAX_FILAS = 50_000`) es mayor que este— tiene que poder chequear ANTES de llamar y
+ *  degradar con gracia, en vez de dejar que la función tire y arrastre con ella una fila de
+ *  auditoría ya commiteada en la misma transacción (`security-engineer`, dictamen del plan "export
+ *  enriquecido", 2026-08-21: un lote de 5.001 a 50.000 movimientos hoy es exportable sin enriquecer,
+ *  y con el enriquecido sin este chequeo pasaría a lanzar dentro de la `tx` del export). */
+export const MAX_MOVIMIENTOS_POR_LECTURA = 5_000;
 
 function validarCantidadDeMovimientos(movimientoIds: readonly string[]): void {
   if (movimientoIds.length > MAX_MOVIMIENTOS_POR_LECTURA) {

@@ -214,6 +214,8 @@ describe('exportarExcel — destino', () => {
         listar: false,
       },
       escritor,
+      undefined,
+      dirTemporal,
     );
 
     expect(r).toEqual({ estado: 'abortado', motivoCodigo: 'destino_existe' });
@@ -238,6 +240,8 @@ describe('exportarExcel — destino', () => {
         listar: false,
       },
       escritor,
+      undefined,
+      dirTemporal,
     );
 
     expect(r).toEqual({ estado: 'abortado', motivoCodigo: 'escritura_fallida' });
@@ -258,6 +262,8 @@ describe('exportarExcel — destino', () => {
         listar: false,
       },
       escritorDePrueba(destinos),
+      undefined,
+      dirTemporal,
     );
 
     expect(r.estado).toBe('exportado');
@@ -301,6 +307,7 @@ describe('exportarExcel — destino', () => {
         llamado = true;
         return null;
       },
+      dirTemporal,
     );
 
     expect(r.estado).toBe('listado');
@@ -322,6 +329,7 @@ describe('exportarExcel — destino', () => {
       },
       escritorDePrueba(destinos),
       async () => null,
+      dirTemporal,
     );
 
     expect(r.estado).toBe('exportado');
@@ -343,6 +351,7 @@ describe('exportarExcel — destino', () => {
       },
       escritorDePrueba(destinos),
       async () => null,
+      dirTemporal,
     );
 
     expect(r).toEqual({ estado: 'abortado', motivoCodigo: 'lote_no_encontrado' });
@@ -376,6 +385,7 @@ describe('exportarExcel — destino', () => {
       },
       escritor,
       async () => 'un_banco_que_no_es',
+      dirTemporal,
     );
 
     expect(r).toEqual({ estado: 'abortado', motivoCodigo: 'banco_incoherente' });

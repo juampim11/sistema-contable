@@ -14,6 +14,7 @@
     "zod": "^4.1.13",
     "@sistema-contable/data": "workspace:*",
     "@sistema-contable/almacenamiento": "workspace:*",
+    "@sistema-contable/contabilidad": "workspace:*",
     "tesseract.js": "7.0.0",
     "tesseract.js-core": "7.0.0",
     "@tesseract.js-data/spa": "1.0.0"
