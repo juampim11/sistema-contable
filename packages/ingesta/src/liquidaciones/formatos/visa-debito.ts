@@ -106,24 +106,33 @@ export const CAPACIDADES_VISA_DEBITO: CapacidadesDeFormato = {
 
 /**
  * Marcas del formato (vocabulario impreso por Visa, igual para todo comercio — nunca un dato del
- * cliente).
+ * cliente). AND, no OR: mismo patrón que ya usa `reconoceVisaCredito` en `visa-credito.ts:164-167,257-262`
+ * — dos constantes separadas, `&&` explícito.
  *
- * 🔴 **TODO — bug funcional, no de aislamiento, confirmado con evidencia (HANDOFF, entrada del
- * diagnóstico de Visa crédito, 2026-08-20): la primera marca ("RESUMEN MENSUAL DE LIQUIDACIONES A
- * COMERCIOS") también aparece en el documento real de Visa crédito** — verificado contra
- * `privado/tarjetas/02-extracto_visa_credito_roka.pdf`. `reconoceVisaDebito` usa `.some(...)` (OR)
- * más abajo, así que esa sola frase alcanza para que este adapter reconozca un documento de crédito
- * como propio. Confirmado por `security-engineer`: no es una fuga entre clientes (el resolver
- * compartido, `registro.ts`, falla cerrado a `ambiguo` cuando dos adapters compiten y no expone dato
- * de cliente en ese caso) pero SÍ es bloqueante para el día que ambos adapters queden registrados
- * juntos — con `reconoceVisaCredito` ya exigiendo AND (marca genérica + marca específica de
- * crédito), el 100 % de los documentos de crédito reales resolverían `ambiguo` contra el resolver
- * real, no un caso borde. **Corregir antes de esa integración**: cambiar esta detección a AND (marca
- * genérica + `TARJETA DE DEBITO PESOS`), mismo criterio que ya usa `reconoceVisaCredito`. No
- * corregido acá a propósito — fuera del alcance de la tarea que lo encontró (construir el adapter de
- * crédito), requiere su propia confirmación antes de tocar un adapter ya commiteado y revisado.
+ * 🔴 **Corregido 2026-08-21 (HANDOFF 91/92) — bug funcional confirmado con evidencia, no de
+ * aislamiento.** La marca genérica ("RESUMEN MENSUAL DE LIQUIDACIONES A COMERCIOS") también aparece
+ * en el documento real de Visa crédito — verificado contra
+ * `privado/tarjetas/02-extracto_visa_credito_roka.pdf`. Con `.some(...)` (OR), esa sola frase
+ * alcanzaba para que este adapter reconociera un documento de crédito como propio. No era una fuga
+ * entre clientes (el resolver compartido, `registro.ts`, falla cerrado a `ambiguo` cuando dos
+ * adapters compiten) pero sí bloqueaba cualquier wiring de producción que registrara los tres
+ * formatos juntos. Reproducido con un caso de test sintético antes de este fix (confirmado en rojo) y
+ * con el mismo test en verde después — ver
+ * `liquidaciones-visa-debito-reconocimiento.test.ts`.
+ *
+ * `MARCA_DEBITO` verificado contra el documento real de crédito (no solo asumido por simetría con
+ * `MARCA_CREDITO`): la frase `TARJETA DE DEBITO PESOS` **no** aparece en
+ * `privado/tarjetas/02-extracto_visa_credito_roka.pdf`.
+ *
+ * R-M no rige entre estos dos archivos (`reglas-de-codigo.test.ts:868-933`, la propia regla excluye
+ * explícitamente "los hermanos de la familia" de la infracción — solo protege la frontera entre
+ * `adaptadores/` y `liquidaciones/`), pero se mantiene el mismo patrón de duplicación local que ya
+ * tenía este archivo y que usa `visa-credito.ts` para su propio par de marcas: cada adapter define su
+ * copia, ninguno importa la constante del otro.
  */
-const MARCAS = [/RESUMEN MENSUAL DE LIQUIDACIONES A COMERCIOS/, /TARJETA DE DEBITO PESOS/];
+const MARCA_GENERICA = /RESUMEN MENSUAL DE LIQUIDACIONES A COMERCIOS/;
+/** Verificado: NO aparece en el documento real de crédito. Ver el comentario de arriba. */
+const MARCA_DEBITO = /TARJETA DE DEBITO PESOS/;
 
 /** Ver el comentario de cabecera: medido contra la página 1 del documento real. */
 const TOLERANCIA_FILA_OCR = 20;
@@ -266,7 +275,7 @@ export function reconoceVisaDebito(entrada: EntradaDeLiquidacion): boolean {
   const primera = entrada.paginas[0];
   if (primera === undefined) return false;
   const texto = textoDePaginaParaDeteccion(primera);
-  return MARCAS.some((m) => m.test(texto));
+  return MARCA_GENERICA.test(texto) && MARCA_DEBITO.test(texto);
 }
 
 // -----------------------------------------------------------------------------

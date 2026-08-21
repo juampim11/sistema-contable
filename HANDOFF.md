@@ -6,6 +6,46 @@
 
 ---
 
+## 2026-08-21 (92) — Corregido el bug del `TODO` en `reconoceVisaDebito` (punto 1 de HANDOFF 91): AND, no OR, mismo patrón que `reconoceVisaCredito`. Reproducido en rojo antes de corregir, no solo replicado por analogía.
+
+`visa-debito.ts`: `MARCAS.some(...)` (OR entre la marca genérica y `TARJETA DE DEBITO PESOS`) reemplazado
+por `MARCA_GENERICA.test(texto) && MARCA_DEBITO.test(texto)` — dos constantes separadas, mismo patrón
+que `visa-credito.ts:164-167,257-262`.
+
+**Verificado antes de tocar código, no asumido:** R-M (`reglas-de-codigo.test.ts:868-933`) protege
+solo la frontera entre `adaptadores/` (familia bancaria) y `liquidaciones/` (familia de tarjetas) — el
+propio texto de la regla excluye explícitamente "los hermanos de la familia" de la infracción. Importar
+`MARCA_GENERICA` desde `visa-credito.ts` **no** habría violado R-M. Se mantuvo igual la duplicación
+local (cada archivo con su propia constante, sin cruce) porque es el patrón ya establecido en los tres
+adapters, no porque R-M lo exigiera entre estos dos archivos.
+
+**`MARCA_DEBITO` verificado contra el documento real de crédito** (script temporal read-only, borrado
+al terminar), no solo asumido por simetría con el comentario de `MARCA_CREDITO`: `TARJETA DE DEBITO
+PESOS` no aparece en `privado/tarjetas/02-extracto_visa_credito_roka.pdf`. Los cuatro booleanos
+cruzados (marca genérica y cada marca específica, contra los dos documentos) confirman simetría limpia
+en los dos sentidos.
+
+**El bug se reprodujo en rojo antes de corregir — no se replicó el patrón de crédito "a ojo".**
+`liquidaciones-visa-debito-reconocimiento.test.ts` (nuevo, 100% sintético — el vocabulario es del
+FORMATO Visa, nunca un dato de cliente): 4 casos. Con el código ya corregido en el árbol, se aplicó a
+mano la mutación (volver a `MARCAS.some(...)`) y se confirmaron **3 de los 4 en rojo**, incluido el
+caso que reproduce el bug real medido (un texto que simula un documento de crédito —marca genérica +
+`TARJETA DE CREDITO PESOS`— pasaba a reconocerse como débito); se revirtió antes de cerrar.
+
+**Sin regresión, confirmado contra el documento real de débito** (no solo el sintético):
+`liquidaciones-visa-debito.test.ts` corrido en aislamiento — sigue reconociendo y procesando las 8
+páginas reales, `reconoceVisaDebito(entrada)` sigue dando `true` (aserción ya existente en ese test, no
+agregada para esta tarea).
+
+`pnpm verificar`: **78 archivos / 1616 tests / 0 fallos** (77/1612 → +1 archivo, +4 tests — exactamente
+los cuatro casos nuevos de `liquidaciones-visa-debito-reconocimiento.test.ts`).
+
+**Alcance respetado tal como pidió JP:** no se tocó `registro.ts`, el piloto, ni el material de Laura
+sobre plan de cuentas. Ningún adapter queda registrado en producción con este fix — sigue pendiente el
+commit 4 del plan 14 (punto 3 de HANDOFF 91), que ahora ya no tiene este bug esperándolo.
+
+---
+
 ## 2026-08-20 (91) — Mapa consolidado: los tres adapters de tarjeta, estado real (no repaso de detalle — eso vive en 78-90)
 
 | Formato | Cobertura real medida | Límite conocido principal | Vive en |
