@@ -6,6 +6,75 @@
 
 ---
 
+## 2026-08-22 (108) — CIERRE de la sesión de FCI: núcleo PEPS + eje 1 + `consumirRescate` contra datos reales, los tres commiteados. Bloqueado esperando la ronda 3 de preguntas a Laura (enviada hoy, fuera del repo). Detalle completo y autocontenido: `docs/diseno/17-fci-peps-plan.md`.
+
+**Herramienta:** Claude Code. Entrada de cierre de sesión, pedida explícitamente para que alguien
+retome sin tener que leer las entradas (103)-(107) una por una. El detalle completo —incluidos los 4
+dictámenes originales con su contenido real, no solo su mención— vive en
+`docs/diseno/17-fci-peps-plan.md`, que quedó consolidado como fuente única y autocontenida. Acá solo
+el resumen ejecutivo.
+
+### Qué se construyó y se commiteó, en 3 pasos
+
+1. **Núcleo PEPS puro** (`packages/fci`) — `consumirRescate`, aritmética de punto fijo propia (sin
+   librería externa), guards de dominio (orden PEPS, sin negativos). Convocados antes de escribir
+   código: `arquitecto-software`, `plan-cuentas-multicliente`, `contador-dominio`, `dba-data` — sus 4
+   dictámenes completos están en el plan 17 §2. Bug real corregido: capas fuera de orden o con
+   cantidades negativas producían un costo PEPS invertido o inflado **sin ningún error**.
+2. **Verificación del eje 1** (invariante de cantidades) contra los 3 extractos reales de posición de
+   FCI de **Elite-IT SAS** (cliente fuera del piloto, autorizado bajo E-2,
+   `docs/seguridad/registro-excepciones.md`). **Julio y agosto cierran exacto en los 3 fondos**; junio
+   no verificable (estructural, falta el extracto de mayo). Bug real corregido, distinto del anterior:
+   un rescate con el signo invertido hacía que el verificador **"cerrara" sobre un documento roto**.
+   La atribución por fondo tuvo 3 intentos — dos descartados (documentados en el plan 17 §4, no
+   borrados sin rastro) — hasta que el titular dio el patrón literal exacto (`FONDO - <nombre> CLASE
+   <letra>`) que resolvió los 3 fondos.
+3. **`consumirRescate` contra la secuencia real**, encadenando los 3 cortes: cero errores, el fondo
+   más activo partió un rescate entre **6 capas** (reproduce el caso real que motivó todo el
+   subsistema), chequeo de coherencia final exacto en los 3 fondos.
+
+En los tres pasos: **ningún valor real salió nunca al contexto de ningún agente ni a ningún
+documento** — solo booleanos, conteos y comparaciones de igualdad (método reforzado de E-2).
+
+### Qué está bloqueado, y por qué (no es lo mismo para los 3)
+
+- **Capa D** (plan de cuentas por cliente): no existe el modelo, ninguna migración — no es "falta
+  Laura", es una pieza de arquitectura sin construir.
+- **Eje 3** (valuación al cierre): depende directo de las preguntas 1, 2 y 9 a Laura.
+- **Adapter oficial de ingesta**: depende de Capa D + de resolver la atribución por fondo de forma
+  reusable (el extractor de esta ronda es preliminar, medido contra solo 3 archivos).
+
+Detalle completo de cada dependencia: `docs/diseno/17-fci-peps-plan.md`, sección "Bloqueado,
+explícitamente".
+
+### Las 9 preguntas para Laura: ENVIADAS hoy, no pendientes de enviar
+
+Ronda 3, documento `.docx`, fuera del repo — **2026-08-22**. Hasta que conteste, no hay más trabajo de
+diseño posible en FCI. El texto completo de las 9 preguntas (incluida la 9, agregada por
+`contador-dominio` durante esta sesión) está en el plan 17.
+
+### Hallazgos de infraestructura de esta sesión (no son de FCI — separados a propósito)
+
+1. **Un subagente lanzado mientras la sesión principal sigue en modo plan hereda la restricción y no
+   tiene herramienta para salir de ella** — afecta a cualquier subagente, no es específico de
+   `backend-dev` (que fue donde se lo vio primero). Ya documentado en la entrada **(104)**.
+2. **Los 23 subagentes del roster son reales y distintos**, confirmado con invocación directa de los
+   2 que no aparecían en el `<system-reminder>` de arranque de sesión (`security-engineer`,
+   `seguridad-datos-financieros`) — cada uno devolvió su propio mandato, distinto entre sí. Registrado
+   donde el repo lleva este registro: `agents/README.md`, sección "Registro runtime vs. disco"
+   (confirmación 2026-08-22), no solo mencionado en el plan de FCI.
+
+### Verificación final de esta entrada, antes de cerrar
+
+- `git status` limpio, todos los commits de esta sesión en `origin/main` (ver el log: desde
+  `d8100e1` hasta el commit de esta misma entrada).
+- El plan 17 releído completo como si no supiera nada de esta sesión: alcanza para retomar sin
+  preguntarle nada a nadie — 4 dictámenes completos, los 2 bugs reales con su corrección, los 3
+  intentos de atribución con el que funcionó, qué está bloqueado y por qué, y las 9 preguntas con su
+  fecha de envío.
+
+---
+
 ## 2026-08-22 (107) — `consumirRescate` corrió contra la secuencia real de movimientos de los 3 fondos, encadenando junio→julio→agosto: cero errores, rescate partido en hasta 6 capas reproducido, chequeo de coherencia exacto. Cierra el objetivo final de la ronda de FCI. Continúa `docs/diseno/17-fci-peps-plan.md` §7.
 
 **Herramienta:** Claude Code, continúa la (105)/(106) en la misma sesión. Objetivo final de esta

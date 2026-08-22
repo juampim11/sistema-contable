@@ -95,6 +95,19 @@ fallback de persona salvo que se agregue una persona nueva con el mismo error de
 **Si en el futuro un wrapper nuevo no registra:** revisar primero que su `description:` no tenga
 `": "` sin comillar (punto 1) antes de asumir otra causa.
 
+**Confirmación adicional (2026-08-22, sesión de FCI):** el `<system-reminder>` de arranque de sesión
+que lista los agentes disponibles **puede estar incompleto** sin que eso signifique que el
+`subagent_type` sea inválido — `security-engineer` y `seguridad-datos-financieros` no aparecieron en
+esa lista en dos sesiones distintas (2026-08-21 y 2026-08-22), pero invocados directamente
+(`Agent(subagent_type: "security-engineer")` y `Agent(subagent_type: "seguridad-datos-financieros")`)
+**funcionaron los dos**, cada uno citando su propio archivo de persona y devolviendo un mandato
+distinto entre sí — comportamiento que una sola instancia narrando una persona no reproduce. Se
+verificó además, en la misma sesión, que los tres directorios de registro (`agents/personas/`,
+`agents/wrappers-claude/`, `.claude/agents/`) tienen los **23** archivos completos, sin faltantes.
+**Conclusión, cerrada:** los 23 son subagentes reales y distintos — la lista de arranque de sesión
+**no es una fuente confiable** para decidir si un `subagent_type` existe; el método correcto es
+invocar directamente y verificar la respuesta, nunca inferir de la ausencia en esa lista.
+
 **El fallback de persona sigue documentado** (CLAUDE.md §3.1 regla 4) para el caso en que un wrapper
 nuevo tenga el mismo problema antes de corregirse:
 `Agent(subagent_type: "general-purpose", ...)` con un prompt que instruya leer
