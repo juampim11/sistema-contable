@@ -6,6 +6,46 @@
 
 ---
 
+## 2026-08-22 (106) — Corrección de la (105): atribución por fondo del eje 1 de FCI, RESUELTA. Julio y agosto cierran exacto en los 3 fondos con el patrón literal `FONDO - <nombre> CLASE <letra>` dado por el titular. Continúa `docs/diseno/17-fci-peps-plan.md` §6.
+
+**Herramienta:** Claude Code, continúa la (105) en la misma sesión. La (105) había cerrado con
+agosto en consolidado únicamente y la atribución por fondo declarada como limitación conocida, no
+resuelta — el titular dio, después, el patrón exacto que faltaba.
+
+**El titular especificó**: cada bloque de movimientos empieza con la línea literal
+`FONDO - <nombre del fondo> CLASE <letra>` — texto de plantilla del banco (confirmado: no es dato de
+cliente), y el orden de los bloques coincide con el de la tabla de posición.
+
+**Tres intentos, el tercero cerró:**
+1. Eliminación (sin segmentación): funcionaba para julio (1 solo fondo activo), no para agosto (3
+   fondos activos a la vez) — quedó como limitación documentada en la (105).
+2. Segmentación heurística sin patrón literal: regresión real (julio dejó de cerrar), descartada.
+3. **Patrón literal del titular: confirmado, con dos correcciones sobre la marcha.** El orden de los
+   bloques NO alcanza solo — un fondo sin movimientos en el corte no imprime su bloque (julio tiene 1
+   encabezado real, no 3). La unión final es por el NOMBRE capturado en el encabezado, pero por
+   "contiene" y no por igualdad exacta — es una versión abreviada del nombre completo de la tabla de
+   posición (medido: ~12 caracteres contra ~20-25).
+
+**Resultado:** con `packages/ingesta/src/fci-galicia/extraer-posiciones.ts` actualizado, **julio y
+agosto cierran exacto en los 3 fondos** (antes: agosto solo en consolidado). Junio sigue sin
+verificar — estructural, falta el extracto de mayo, sin cambios respecto de la (105).
+
+`code-reviewer` encontró y se corrigieron dos riesgos antes de cerrar: bloque repetido por salto de
+página (se fusiona por clave exacta, no crea un grupo nuevo) y coincidencia "contiene" ambigua entre
+dos fondos (lanza `AtribucionFondoAmbiguaError` en vez de quedarse con el primero en silencio).
+Ninguno de los dos ocurre en los 3 PDF reales, quedan cubiertos igual.
+
+**Estado final:** todo commiteado y pusheado a `origin/main`. El extractor sigue siendo PRELIMINAR
+(no el adapter oficial de ingesta) — eso no cambió.
+
+### Siguiente paso, ya en curso (no cerrado en esta entrada)
+
+Correr `consumirRescate` (`packages/fci/src/nucleo`) contra la secuencia real de movimientos de cada
+fondo (los tres cortes ya extraídos) para reproducir el resultado de costeo PEPS que la contadora ya
+hizo a mano — objetivo final de esta ronda, pedido explícito del titular.
+
+---
+
 ## 2026-08-22 (105) — Verificación del eje 1 de FCI contra los 3 extractos reales de Galicia (Elite-IT): julio exacto en los 3 fondos, agosto exacto en consolidado con la apertura por fondo como limitación conocida, junio no verificable (estructural). Continúa `docs/diseno/17-fci-peps-plan.md` §6, no genera un doc nuevo.
 
 **Herramienta:** Claude Code, continúa la (103)/(104). Siguiente paso del plan de FCI: verificar el

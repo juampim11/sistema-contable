@@ -3,10 +3,11 @@
 > 🟢 **Paso 1 (núcleo puro) commiteado.** `packages/fci/` en `main` (`a1189e2`, `9de816c`), sin
 > migración, sin persistencia, sin Capa D, sin adapter de PDF.
 >
-> 🟢 **Paso 2 (verificación del eje 1 contra los 3 extractos reales) cerrado — ver sección 6.** Julio
-> cierra exacto en los 3 fondos y en el consolidado. Agosto cierra exacto en el consolidado; la
-> apertura por fondo queda como limitación conocida, no resuelta (no forzada, no oculta). Junio no es
-> verificable con este lote de 3 archivos (estructural, no bug). Detalle completo en la sección 6.
+> 🟢 **Paso 2 (verificación del eje 1 contra los 3 extractos reales) cerrado — ver sección 6.**
+> **Julio y agosto cierran EXACTO en los 3 fondos**, con atribución de movimientos por fondo real
+> (patrón literal `FONDO - <nombre> CLASE <letra>`, confirmado por el titular). Junio no es
+> verificable con este lote de 3 archivos (estructural, falta el extracto de mayo, no un bug).
+> Detalle completo en la sección 6.
 
 ## Contexto
 
@@ -198,31 +199,36 @@ siguientes" arriba):
 |---|---|---|
 | 2025-06-30 | No verificable con este lote (falta el corte de mayo) — estructural, no bug | No verificable |
 | 2025-07-31 | **Cierra exacto** | **Cierra exacto en los 3 fondos** |
-| 2025-08-29 | **Cierra exacto** | **No resuelto** (ver abajo) |
+| 2025-08-29 | **Cierra exacto** | **Cierra exacto en los 3 fondos** |
 
-**Por qué julio cierra por fondo y agosto no:** en julio, exactamente 1 de los 3 fondos cambió de
-tenencia respecto de junio — el extractor atribuye, por eliminación, todos los movimientos del corte a
-ese único fondo activo (los otros 2 quedan con 0 movimientos, consistentes con su tenencia sin
-cambios). En agosto, los 3 fondos cambiaron de tenencia a la vez: la eliminación no alcanza para saber
-qué movimiento pertenece a qué fondo. Que el **consolidado** cierre exacto en agosto confirma que la
-extracción en sí (fechas, columna de tenencia, columna de cantidad de cada movimiento) es correcta —
-lo que falta es solo la atribución por fondo, no el dato.
+### La atribución por fondo — dos intentos fallidos, resuelta al tercero con el patrón exacto del titular
 
-**Segmentación por encabezado de sección — intentada y descartada.** El titular indicó que el
-documento viene segmentado por fondo con una fila de encabezado de sección delimitando cada bloque de
-movimientos. Se implementó un reconocedor de ese patrón (una fila de 1 a 3 fragmentos con la marca de
-producto `FIMA`/`FCI`/`FONDO`/`CUOTAPARTE`) — pero produjo una **regresión real**: julio, que cerraba
-exacto en los 3 fondos con el método de eliminación, dejó de cerrar en 2 de los 3 al segmentar por
-encabezado, y agosto solo capturó 4 de ~21 movimientos reales. Evidencia de que la indicación, sin ver
-el documento, no alcanzó para reconstruir el patrón exacto (probable desalineamiento de orden entre la
-tabla de posición y los bloques de detalle, o encabezados no reconocidos en algún tramo). **Descartado
-a pedido explícito del titular** — no se siguió afinando a ciegas, es scope creep sobre esta tarea.
+**Intento 1 — heurística de eliminación** (sin segmentación): comparar la tenencia de cada fondo
+contra el corte anterior; si exactamente 1 cambió, atribuirle todos los movimientos del corte.
+Funcionó para julio (1 solo fondo activo ese mes) pero no servía para agosto (los 3 cambiaron a la
+vez) — quedaba, a propósito, como limitación documentada, no forzada.
 
-**Pendiente futuro, fuera de esta tarea:** si el adapter oficial (paso 2 de "los pasos siguientes")
-necesita atribución por fondo confiable en meses con más de un fondo activo, hace falta información de
-estructura más precisa que la que se pudo dar a ciegas por chat — amerita revisar el documento real con
-quien sí puede verlo (el titular, en una sesión con el PDF a la vista) antes de intentarlo de nuevo, en
-vez de que quien implementa seguya adivinando el patrón sin texto.
+**Intento 2 — segmentación heurística, sin patrón literal**: reconocer el encabezado de sección por
+forma genérica (fragmentos sin fecha/número/palabra clave). Produjo una **regresión real**: julio
+dejó de cerrar en 2 de los 3 fondos, agosto solo capturó 4 de ~21 movimientos reales. Descartado a
+pedido del titular — la indicación, sin ver el documento, no alcanzaba para reconstruir el patrón.
+
+**Intento 3 — patrón literal exacto, dado por el titular: confirmado.** El titular especificó el
+patrón real de plantilla del banco (no dato de cliente): `FONDO - <nombre> CLASE <letra>` delimita
+cada bloque, y el orden de los bloques coincide con el orden de la tabla de posición — salvo que un
+fondo sin ningún movimiento en el corte directamente NO imprime su bloque (confirmado por conteo:
+julio tiene 1 solo encabezado real, junio y agosto tienen 3), lo que rompe la unión por orden. La
+unión final es por el **nombre** capturado en el encabezado — pero tampoco por igualdad exacta: ese
+nombre es una versión ABREVIADA del nombre completo de la tabla de posición (medido: ~12 caracteres
+contra ~20-25), así que se unen por "uno contiene al otro" sobre las claves normalizadas (nunca
+expuestas). Con este método: **julio y agosto cierran exacto en los 3 fondos.**
+
+Revisión de `code-reviewer` sobre la versión final encontró y corrigió dos riesgos reales antes de
+cerrar: (1) un bloque repetido por salto de página (mismo fondo, cabecera reimpresa) creaba un
+segundo grupo y perdía los movimientos de la continuación — se fusiona por clave exacta antes de
+crear un grupo nuevo; (2) una coincidencia "contiene" ambigua (dos fondos con prefijo de familia en
+común) se resolvía en silencio con el primer candidato — ahora lanza `AtribucionFondoAmbiguaError` en
+vez de adivinar. Ninguno de los dos casos ocurre en los 3 PDF reales medidos, pero quedan cubiertos.
 
 ## Pendiente — 9 preguntas abiertas para Laura
 
