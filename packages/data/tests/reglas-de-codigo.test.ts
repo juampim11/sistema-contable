@@ -170,6 +170,9 @@ describe('cobertura del barrido', () => {
     // `packages/contabilidad` (Módulo 2, léxico + catálogo canónico): si el paquete se renombrara o
     // quedara fuera del glob, TODAS las reglas R-A..R-I de más abajo pasarían por vacío sin avisar.
     expect(FUENTES.map(rel)).toContain('packages/contabilidad/src/index.ts');
+    // `packages/fci` (costeo PEPS de fondos comunes de inversión): mismo motivo — si quedara fuera del
+    // glob, las reglas espejo de R-B/R-G/R-J para este paquete pasarían por vacío sin avisar.
+    expect(FUENTES.map(rel)).toContain('packages/fci/src/index.ts');
   });
 });
 // -----------------------------------------------------------------------------
@@ -303,6 +306,29 @@ describe('las dependencias entre paquetes no pueden hacer ciclo', () => {
     });
 
     expect(infractores.map(rel)).toEqual([]);
+  });
+
+  /**
+   * R-B (espejo para `packages/fci`) — el núcleo de costeo PEPS de fondos comunes de inversión tampoco
+   * puede importar `data`, `ingesta` ni `almacenamiento`. Mismo argumento que para `contabilidad`: si
+   * `consumirRescate` necesita un dato de la base (por ejemplo, las capas de costo ya persistidas), lo
+   * recibe como ARGUMENTO de una función pura; no lo va a buscar.
+   */
+  it('`packages/fci` no importa `data`, `ingesta` ni `almacenamiento`', () => {
+    const deFci = FUENTES.filter((r) => rel(r).startsWith('packages/fci/src/'));
+    expect(deFci.length, 'no se está barriendo packages/fci').toBeGreaterThan(0);
+
+    const infractores = deFci.filter((ruta) => {
+      if (rel(ruta).includes('/tests/')) return false;
+      return /@sistema-contable\/(?:data|ingesta|almacenamiento)/.test(readFileSync(ruta, 'utf8'));
+    });
+
+    expect(
+      infractores.map(rel),
+      'un núcleo que puede leer la base es un núcleo que puede aprender solo (mismo argumento que R-B ' +
+        'para packages/contabilidad). Si tu código necesita un dato de la base, recibilo como ' +
+        'argumento de una función pura.',
+    ).toEqual([]);
   });
 });
 // -----------------------------------------------------------------------------
@@ -627,6 +653,22 @@ describe('R-G — packages/contabilidad es código puro, sin SQL', () => {
 });
 
 // -----------------------------------------------------------------------------
+describe('R-G (espejo para packages/fci) — código puro, sin SQL', () => {
+  /** Mismo argumento que R-G para `contabilidad`: R-B ya prohíbe importar `data`, pero no impide un
+   *  `tx.consultar('select ...')` con un objeto ajeno colado en el núcleo; esta regla cierra esa
+   *  puerta directamente sobre el TEXTO de la consulta. */
+  it('ningún archivo de packages/fci/src contiene una sentencia SQL', () => {
+    const infractoresFci = FUENTES.filter((ruta) => {
+      const r = rel(ruta);
+      if (!r.startsWith('packages/fci/')) return false;
+      if (r.startsWith('packages/fci/tests/')) return false; // pueden citar SQL en un comentario o mensaje de error
+      return /\b(select|insert into|update|delete from)\s/i.test(readFileSync(ruta, 'utf8'));
+    });
+    expect(infractoresFci.map(rel)).toEqual([]);
+  });
+});
+
+// -----------------------------------------------------------------------------
 describe('R-H — EvidenciaDeMovimiento espeja movimientoBancarioCrudoSchema (árbitro mientras no exista 0014)', () => {
   /**
    * `nucleo/reconocimiento.ts` no puede importar `packages/ingesta/src/esquema.ts` (ciclo, R-B) así
@@ -719,6 +761,22 @@ describe('R-J — packages/contabilidad/src/nucleo es SÍNCRONO, sin excepción 
     expect(PATRON_ASINCRONO.test('const x = await leerAlgo();')).toBe(true);
     expect(PATRON_ASINCRONO.test('function f(p: Promise<string>) {}')).toBe(true);
     expect(PATRON_ASINCRONO.test('export function resolverContraparte() { return synchronousValue; }')).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-J (espejo para packages/fci/src/nucleo) — SÍNCRONO, sin excepción', () => {
+  /** Mismo argumento que R-J para `contabilidad`: `nucleo/` es código puro por diseño; si necesita un
+   *  dato de la base, lo recibe como argumento ya resuelto. Una función async ahí es la primera
+   *  grieta por la que se cuela I/O. */
+  const PATRON_ASINCRONO_FCI = /\basync\b|\bawait\b|\bPromise\s*[<(]/;
+
+  it('ningún archivo de packages/fci/src/nucleo usa async/await/Promise', () => {
+    const archivos = FUENTES.filter((ruta) => rel(ruta).startsWith('packages/fci/src/nucleo/'));
+    expect(archivos.length, 'no se está barriendo packages/fci/src/nucleo').toBeGreaterThan(0);
+
+    const infractoresFci = archivos.filter((ruta) => PATRON_ASINCRONO_FCI.test(readFileSync(ruta, 'utf8')));
+    expect(infractoresFci.map(rel)).toEqual([]);
   });
 });
 
