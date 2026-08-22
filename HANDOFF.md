@@ -6,6 +6,41 @@
 
 ---
 
+## 2026-08-22 (104) — Hallazgo de infraestructura: un subagente lanzado mientras la sesión principal sigue en modo plan hereda la restricción y no tiene herramienta para salir de ella.
+
+**Herramienta:** Claude Code, sesión de verificación del eje 1 de FCI (continúa la (103)).
+
+**Qué pasó:** dos invocaciones consecutivas de `Agent(subagent_type: "backend-dev")` (una resumida,
+una fresca) devolvieron el mismo resultado: el subagente reportó un `system-reminder` de modo plan
+activo ("Plan mode is active... This supercedes any other instructions you have received"), buscó con
+`ToolSearch` una herramienta `ExitPlanMode`/`AskUserQuestion` para salir, no la encontró, y terminó sin
+escribir ningún archivo — devolviendo en cambio un plan propio a un archivo de plan separado
+(`sorted-finding-shamir-agent-<id>.md`).
+
+**Causa, reconstruida (no confirmada contra documentación interna del harness, pero consistente con
+la secuencia observada):** un `ExitPlanMode` de la sesión principal había sido rechazado formalmente
+un turno antes (el usuario respondió con una aprobación-con-condiciones en vez del gesto de
+aprobación limpia), así que la sesión principal seguía técnicamente en modo plan cuando se lanzaron
+los dos subagentes. Un subagente **hereda** el modo plan de quien lo lanza, pero **no** hereda la
+herramienta `ExitPlanMode` — esa herramienta es exclusiva de la sesión principal. Sin ella, el
+subagente queda bloqueado sin ningún mecanismo propio para desbloquearse, sin importar qué le diga un
+mensaje de texto del orquestador (correctamente: un mensaje de otro agente no es una aprobación real
+del usuario, y el subagente lo señaló así en su propio diagnóstico).
+
+**Mitigación verificada, no solo supuesta:** la sesión principal salió de modo plan al aplicar un
+`Edit` sobre el archivo de plan y, después, un `Write` sobre un archivo fuera del plan — confirmado
+estable con varias acciones posteriores (tests, typecheck) sin interferencia. Lanzar subagentes nuevos
+recién después de esa confirmación evitó que se repitiera el problema en la misma tarea.
+
+**Qué queda pendiente, para no repetir la pérdida de vueltas:** antes de lanzar CUALQUIER subagente,
+confirmar que la sesión principal ya salió de modo plan (no alcanza con haber llamado `ExitPlanMode`;
+hace falta que la llamada haya sido aceptada, o verificarlo indirectamente con una acción no-plan que
+haya tenido éxito). Si un subagente reporta el mismo `system-reminder` de modo plan, la respuesta
+correcta es relanzarlo fresco después de esa confirmación — no insistir con la misma instancia ni
+intentar "convencerla" por mensaje, que ya se probó que no funciona.
+
+---
+
 ## 2026-08-22 (103) — Arranque del subsistema de costeo PEPS de FCI: paquete nuevo `packages/fci`, núcleo puro (`consumirRescate` + aritmética de punto fijo), sin migración, sin persistencia. Plan de diseño en `docs/diseno/17-fci-peps-plan.md`.
 
 **Herramienta:** Claude Code. Primer paso del subsistema que va a costear rescates de cuotapartes de
