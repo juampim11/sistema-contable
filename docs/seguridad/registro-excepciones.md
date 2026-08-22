@@ -12,6 +12,7 @@
 | # | Fecha | Bug | Qué se extrajo (campos, no valores) | Anonimizado en origen | Autorizado por | Dónde quedó | Se destruye | Destruido |
 |---|---|---|---|---|---|---|---|---|
 | **E-1** | 2026-08-10 | No es un bug: es la **construcción del piloto** (Módulo 1, primer adaptador), en encuadre de **PoC de viabilidad** — parseo, extracción y generación del asiento | Extractos bancarios completos de **varios clientes del estudio (cantidad indeterminada)**, 8 bancos, **períodos heterogéneos** (verificado al menos 11-2025 y 06-2026): carátula (CUIT, número de cuenta, CBU, titular, condición IVA) y cuerpo (fecha, concepto, importe, saldo, contrapartes con sus CUIT). Más el transcript de la entrevista | **No** — se trabaja con el material tal como lo entregó el estudio | **Juan Pablo Marchini** (titular del proyecto), **acordado con la contadora del estudio**. **Ampliación a varios titulares confirmada explícitamente el 2026-08-10** — ver §E-1 | `privado/extractos/` y `privado/laura-transcript.txt`, gitignoreados y anclados; base local Docker; MinIO local | **Sin fecha, con criterio: al pasar a producción.** Prod arranca **vacía** y procesa desde cero; nada de la demo se promueve (`docs/devops/01-entornos.md` §0.bis) | — |
+| **E-2** | 2026-08-22 | No es un bug: es descubrimiento de formato para construir/calibrar el futuro parser de posición FCI — mismo encuadre de "construcción y calibración" que E-1, alcance menor (un cliente, un tipo de documento, sin carga a base ni generación de asiento) | 3 archivos PDF: extracto de **POSICIÓN** de FCI (tenencias + movimientos por fondo) de Banco Galicia, cortes 30/06, 31/07 y 29/08 de 2025, de **Elite-IT SAS** (identificado por su CUIT en la carátula del documento, no transcripto acá — mismo criterio que el resto de este registro) — cliente **fuera del piloto, sin tenant en la base hoy** | **No** — se trabaja con el material tal cual, bajo **método reforzado**: cero fragmentos de texto (ni enmascarados) llegan al contexto de ningún agente; solo metadatos estructurales en el descubrimiento, y booleano `cierra/no-cierra` por fondo+corte en la verificación (delta solo como categoría acotada) | **"No asumo que E-1 cubre esto, registrá primero. Dos motivos, no uno: (1) el documento es distinto — extracto de posición de FCI (tenencias + movimientos por fondo), no extracto de cuenta corriente, que es lo que procesa Módulo 1; (2) el cliente es distinto — estos 3 PDF son de Elite-IT, que no es cliente del piloto y no tiene tenant en la base hoy. E-1 está scoped a Módulo 1 y al piloto, no a cualquier extracto real de cualquier cliente. Dejá constancia explícita [...] de que se amplía el alcance para: extractos de FCI (tipo de documento nuevo) de Elite-IT (cliente fuera del piloto, sin tenant), bajo el mismo método reforzado [...]. Una vez registrado, seguí con el descubrimiento de formato." — Juan Pablo Marchini, 2026-08-22** | `privado/extractos/Sistematizacion Conciliacion Bancaria/FCI/` (ya existente, gitignoreado). Ningún derivado persiste: no se carga a `packages/data` ni a ninguna base — Elite-IT no tiene tenant y esta tarea no lo crea. Script efímero en el scratchpad de la sesión, fuera del repo, borrado tras usarlo | El PDF original no genera un derivado con TTL propio (sin fixture, sin export). Pendiente y fuera del repo: revisar/borrar el output del script y este pedido en el transcript local de la sesión (mismo criterio que el incidente #9), a cargo de JP al cerrar la sesión | — |
 
 ### E-1 — el detalle, porque esta excepción no es como las otras
 
@@ -135,6 +136,39 @@ misma contraparte puede aparecer en los extractos de dos clientes distintos, y e
 una relación comercial que el sistema no debería poder revelar. Qué corresponde con sus datos es el hueco de
 mayor volumen del producto y **no hay fuente cargada en `knowledge/`** para responderlo (ADR-0002 §G, G-1 a
 G-4).
+
+### E-2 — el detalle: extracto de posición FCI de un cliente fuera del piloto, sin carga a la base
+
+**Por qué es una excepción nueva, no una ampliación de E-1** (los dos motivos que fijó JP): el
+documento es distinto — extracto de POSICIÓN de FCI (tenencias + movimientos por fondo), no el
+extracto de cuenta corriente que procesa Módulo 1 — y el cliente es distinto: Elite-IT SAS no es
+cliente del piloto y no tiene tenant hoy. E-1 está scoped a Módulo 1 y al piloto, no a cualquier
+extracto real de cualquier cliente.
+
+**Encuadre:** descubrimiento de formato de un tipo de documento nuevo, para construir/calibrar el
+futuro parser de posición FCI — mismo espíritu de "construcción y calibración" que E-1, alcance mucho
+más chico.
+
+**Método reforzado, ya dictaminado por `seguridad-datos-financieros`, sin reinventar:**
+1. Descubrimiento: cero fragmentos de texto real en el contexto de ningún agente, ni enmascarados —
+   solo metadatos (conteo de páginas/líneas, longitud de línea, offsets de columna, matches de patrón
+   como booleano/conteo).
+2. Verificación: `cierra: true/false` por fondo y corte; si no cierra, el delta se reporta como
+   categoría acotada, nunca el valor exacto.
+3. Script efímero en el scratchpad de la sesión, fuera del repo; se muestra completo en el chat para
+   aprobación de JP **antes** de correr (regla fijada tras el incidente #10); se borra después.
+
+**Sin carga a la base: controles 6-8 de E-1 son no-aplica declarado, no hueco silencioso.** El plan
+aprobado no toca `packages/data`; Elite-IT no tiene tenant y esta tarea no lo crea. Sin `INSERT`, no
+hay fila que aislar: tenant por titular (6), identificador opaco (7) e INV-6 con cruce (8) no aplican
+**hoy**. Si una tarea futura carga este material, los tres rigen igual que en E-1, sin excepción, con
+alta de tenant aparte y su propia convocatoria a `dba-data` + `security-engineer` +
+`seguridad-datos-financieros`.
+
+**Retención residual, mismo patrón que el incidente #9.** El PDF no genera derivado con TTL propio. Lo
+que sí puede quedar es el output del script (booleano/categoría, no dato en claro) y este mismo pedido
+en el transcript local de la sesión. Pendiente, fuera del repo, a cargo de JP: revisar y borrar los
+archivos locales de esta sesión al cerrarla.
 
 ## Antes de pedir una excepción
 
