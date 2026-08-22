@@ -56,7 +56,7 @@
  */
 
 import { aFilas, textoDeFila } from '../texto-pdf.ts';
-import { normalizarTokenNumerico } from '../parseo-ar.ts';
+import { normalizarTokenNumerico, parsearFecha, type Periodo } from '../parseo-ar.ts';
 
 const RE_FECHA = /^\d{1,2}[/\-]\d{1,2}(?:[/\-]\d{2,4})?$/;
 const RE_NUMERO_AR = /^-?\d{1,3}(?:\.\d{3})*,(\d{1,6})$/;
@@ -133,7 +133,15 @@ async function filasClasificadas(bytes: Uint8Array): Promise<FilaClasificada[]> 
 
 /** `nombreInterno`: SOLO para unir con el bloque de movimientos (por "contiene", no igualdad) — nunca sale. */
 type FilaPosicion = { readonly nombreInterno: string; readonly tenenciaTexto: string };
-type FilaMovimiento = { readonly tipo: 'suscripcion' | 'rescate'; readonly cantidadTexto: string };
+type FilaMovimiento = {
+  readonly tipo: 'suscripcion' | 'rescate';
+  readonly cantidadTexto: string;
+  /** Cotización de la cuotaparte en esa operación — necesaria para armar capas de costo PEPS. */
+  readonly precioTexto: string;
+  /** Fecha de concertación, tal como viene en el documento (dd/mm u dd/mm/aaaa) — sin resolver a
+   *  ISO todavía: eso necesita el período del corte, que esta fila no conoce por sí sola. */
+  readonly fechaCrudaTexto: string;
+};
 
 /**
  * `[nombre] [tenencia, ~2dec] [cotización, ~6dec, ignorada] [valorizado $, ignorado]`.
@@ -169,21 +177,67 @@ function comoFilaPosicion(fragmentos: readonly FragmentoClasificado[]): FilaPosi
  */
 function comoFilaMovimiento(fragmentos: readonly FragmentoClasificado[]): FilaMovimiento | null {
   if (fragmentos.length !== 6) return null;
-  const [fecha1, tipo, cantidad, , , fecha2] = fragmentos;
+  const [fecha1, tipo, cantidad, precio, , fecha2] = fragmentos;
   if (!fecha1?.esFecha || !fecha2?.esFecha) return null;
   if (!tipo?.esTipoMovimiento) return null;
   if (!cantidad || cantidad.decimales === null) return null;
   if (cantidad.x < 285 || cantidad.x > 310) return null;
-  return { tipo: tipo.esTipoMovimiento, cantidadTexto: aTextoCanonico(cantidad.texto) };
+  // 🔴 Rango de `x` para el precio (hallazgo de `code-reviewer`: faltaba, a diferencia de `cantidad`)
+  // — medido igual que el resto: ~375 en los 3 PDF reales.
+  if (!precio || precio.decimales === null) return null;
+  if (precio.x < 365 || precio.x > 390) return null;
+  return {
+    tipo: tipo.esTipoMovimiento,
+    cantidadTexto: aTextoCanonico(cantidad.texto),
+    precioTexto: aTextoCanonico(precio.texto),
+    fechaCrudaTexto: fecha1.texto,
+  };
 }
+
+/** Un movimiento ya resuelto: cantidad y precio canónicos, fecha en ISO, EN ORDEN de documento. */
+export type MovimientoFci = {
+  readonly tipo: 'suscripcion' | 'rescate';
+  readonly cantidad: string;
+  readonly precio: string;
+  readonly fecha: string;
+};
 
 export type FondoExtraido = {
   /** Rótulo opaco, `fondo_N` en el orden de la tabla de posición — nunca el nombre real. */
   readonly fondo: string;
   readonly tenenciaDeclarada: string;
+  /**
+   * En ORDEN de documento, validado monótono no decreciente por `fecha` (ver `movimientosConfiables`
+   * si no lo es). Necesario para armar capas de costo PEPS
+   * (`packages/fci/src/nucleo/consumirRescate.ts`), que a su vez EXIGE ese orden y rechaza si no lo
+   * está — un orden equivocado acá produciría un costo PEPS invertido en silencio antes de llegar
+   * siquiera a ese guard, porque este campo alimenta la simulación completa, no una sola llamada.
+   */
+  readonly movimientos: readonly MovimientoFci[];
+  /**
+   * 🔴 `false` si alguna fecha de este fondo no se pudo resolver contra el `periodo`, o si el orden
+   * resultante no es monótono — en cualquiera de los dos casos, `movimientos` queda VACÍO (nunca un
+   * orden parcial o dudoso) y esta bandera es la única señal de que pasó. Aislado por fondo a
+   * propósito (hallazgo de `code-reviewer`): un problema de fecha en UN fondo no debe tumbar el
+   * cálculo de `suscripciones`/`rescates` — el eje 1 — de los otros fondos, ni el propio, que no
+   * depende de fecha en absoluto.
+   */
+  readonly movimientosConfiables: boolean;
+  /** Agregados de cantidad — para el eje 1 (`verificar-posicion.ts`). Se calculan DIRECTO de las
+   *  filas crudas, nunca a través de `movimientos`: no dependen de que la fecha resuelva bien. */
   readonly suscripciones: readonly string[];
   readonly rescates: readonly string[];
 };
+
+/** El orden de `movimientos`, resuelto por fecha, no resultó monótono no decreciente — nunca se
+ *  reordena en silencio (eso sería inventar una secuencia); se descarta el campo entero para ese
+ *  fondo y se marca `movimientosConfiables: false`. */
+export class OrdenMovimientoInvalidoError extends Error {
+  constructor() {
+    super('El orden de los movimientos, resuelto por fecha, no es monótono no decreciente.');
+    this.name = 'OrdenMovimientoInvalidoError';
+  }
+}
 
 export type ExtraccionPosicionFci = {
   readonly fondos: readonly FondoExtraido[];
@@ -201,12 +255,32 @@ export class AtribucionFondoAmbiguaError extends Error {
   }
 }
 
+/**
+ * La fecha de un movimiento no se pudo resolver contra el `periodo` del corte — nunca se adivina
+ * (mismo criterio que `parsearFecha` en `parseo-ar.ts`: una fecha fuera de período es una fila mal
+ * capturada, no algo para forzar).
+ */
+export class FechaMovimientoInvalidaError extends Error {
+  constructor() {
+    super('La fecha de un movimiento no se pudo resolver contra el período del corte.');
+    this.name = 'FechaMovimientoInvalidaError';
+  }
+}
+
 /** Normaliza una clave interna de unión (espacios, mayúsculas) — nunca se expone el resultado. */
 function normalizarClave(texto: string): string {
   return texto.trim().replace(/\s+/g, ' ').toUpperCase();
 }
 
-export async function extraerPosicionesFci(bytes: Uint8Array): Promise<ExtraccionPosicionFci> {
+/**
+ * `periodo`: rango del corte (p. ej. `{ desde: '2025-07-01', hasta: '2025-07-31' }`), para resolver
+ * la fecha cruda de cada movimiento (que puede venir sin año) a ISO — mismo mecanismo que
+ * `parsearFecha` de `parseo-ar.ts` ya usan los adapters bancarios oficiales.
+ */
+export async function extraerPosicionesFci(
+  bytes: Uint8Array,
+  periodo: Periodo,
+): Promise<ExtraccionPosicionFci> {
   const filas = await filasClasificadas(bytes);
 
   const posiciones: FilaPosicion[] = [];
@@ -267,12 +341,44 @@ export async function extraerPosicionesFci(bytes: Uint8Array): Promise<Extraccio
   }
 
   const fondos: FondoExtraido[] = posiciones.map((posicion, indice) => {
-    const movimientos = movimientosDe(posicion.nombreInterno);
+    const crudos = movimientosDe(posicion.nombreInterno);
+
+    // Agregados de cantidad — el eje 1 — directo de las filas crudas, SIN pasar por la resolución
+    // de fecha: un problema de fecha en este fondo (o en otro) nunca debe tumbar este cálculo, que
+    // ya está confirmado exacto contra los 3 PDF reales (docs/diseno/17-fci-peps-plan.md §6).
+    const suscripciones = crudos.filter((m) => m.tipo === 'suscripcion').map((m) => m.cantidadTexto);
+    const rescates = crudos.filter((m) => m.tipo === 'rescate').map((m) => m.cantidadTexto);
+
+    // `movimientos` (para la simulación PEPS) SÍ depende de la fecha, y se aísla por fondo: si la
+    // resolución falla o el orden resultante no es monótono, este fondo queda con `movimientos: []`
+    // y `movimientosConfiables: false` — nunca un orden parcial o dudoso, y nunca afecta a los otros
+    // fondos ni a los agregados de este mismo fondo (ver arriba).
+    let movimientos: MovimientoFci[] = [];
+    let movimientosConfiables = true;
+    try {
+      movimientos = crudos.map((m) => {
+        const fecha = parsearFecha(m.fechaCrudaTexto, periodo);
+        if (fecha === null) throw new FechaMovimientoInvalidaError();
+        return { tipo: m.tipo, cantidad: m.cantidadTexto, precio: m.precioTexto, fecha };
+      });
+      for (let i = 1; i < movimientos.length; i += 1) {
+        if (movimientos[i]!.fecha < movimientos[i - 1]!.fecha) throw new OrdenMovimientoInvalidoError();
+      }
+    } catch (error) {
+      if (!(error instanceof FechaMovimientoInvalidaError) && !(error instanceof OrdenMovimientoInvalidoError)) {
+        throw error;
+      }
+      movimientos = [];
+      movimientosConfiables = false;
+    }
+
     return {
       fondo: `fondo_${indice + 1}`,
       tenenciaDeclarada: posicion.tenenciaTexto,
-      suscripciones: movimientos.filter((m) => m.tipo === 'suscripcion').map((m) => m.cantidadTexto),
-      rescates: movimientos.filter((m) => m.tipo === 'rescate').map((m) => m.cantidadTexto),
+      movimientos,
+      movimientosConfiables,
+      suscripciones,
+      rescates,
     };
   });
 
