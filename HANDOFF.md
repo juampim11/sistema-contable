@@ -6,6 +6,91 @@
 
 ---
 
+## 2026-08-21 (100) — Segundo bug de CI en la misma cadena: `tools/barrido-fuga.ts` fallaba en el paso siguiente a R37 — allowlist desactualizada desde 2026-08-10 + `.env` con huella imposible de estabilizar. `devops` + `seguridad-datos-financieros` + `security-engineer` convocados de verdad, los tres.
+
+**Herramienta:** Claude Code, continúa la entrada 99. Después de que el fix de R37 (commit `2ace4c4`)
+pasó ese paso, la corrida de CI `32541965635` falló en el paso SIGUIENTE, distinto: `Barrido de fuga
+sobre el repo (condición de salida nº 4)`, con 114 candidatos "sin verificar".
+
+**Diagnóstico, contra el log real (`gh run view --log`), no supuesto:**
+
+- 11 de los 114 vienen de `.env` — el archivo que el propio `ci.yml` genera EN CADA CORRIDA con
+  `openssl rand -hex 24`. `tools/barrido-fuga.ts` hashea el valor crudo normalizado (`huellaDe()`), no
+  una estructura: la huella de ese archivo cambia siempre, así que ningún allowlist estático puede
+  cubrirla jamás. No era un olvido — era estructuralmente irresoluble con el mecanismo tal como estaba.
+- Los otros 103 sí eran de archivos trackeados por git (tests, HANDOFF.md, líneas de plantilla de
+  `ci.yml`, docs, migraciones), y sí se resolvían regenerando `tools/barrido-aceptados.json` — pero no
+  se regeneraba desde el commit `2552644` (2026-08-10, confirmado con `git log`), pese a que toda esta
+  sesión se commiteó después. Esto también explica en parte el hallazgo de `devops` en la entrada 99
+  (ninguna corrida de CI llegó nunca a verde): este paso nunca se había alcanzado, porque R37 fallaba
+  antes.
+
+**JP pidió tres verificaciones antes de autorizar la ejecución** (no aprobó a ciegas la primera versión
+del plan):
+
+1. De los tres casos, esta sesión, donde mi propia redacción citó un patrón `CLAVE=valor` (documentados
+   en la entrada 99): revisado con `git log -p --all`, ninguno de los dos casos sobre las claves de S3
+   llegó a un commit en esa forma — quedaron corregidos antes. El tercero (la clave de versión del
+   pepper, cuyo valor es la cadena "v1") sí llegó al commit pusheado, dentro de un comentario de
+   `tools/barrido-credenciales.test.ts` — pero no es incidente: "v1" no es el secreto (el pepper en sí
+   se genera aparte y al azar), ya estaba explícitamente permitido, y ese mismo literal ya era público
+   desde el commit `72a8c41` (2026-08-15, sesión anterior) en `ci.yml`. Nada nuevo expuesto.
+2. `git status` limpio y `HEAD` exactamente igual al commit `2ace4c4` que evaluó la corrida
+   `32541965635` — confirmado antes de comparar cualquier número.
+3. Correcto pedir esto — importaba de verdad: `recorrer()` en `tools/barrido-fuga.ts` no usa
+   `git ls-files`, camina el filesystem completo, e incluye `.env`/`.env.*` a propósito (para poder
+   cruzarlos contra `privado/` en modo estricto). Regenerar el allowlist sin filtrar hubiera escrito
+   huellas de archivos que CI nunca ve.
+
+**Convocados los tres agentes que exige la matriz de CLAUDE.md §3.1 para este tipo de cambio**, con
+`Agent()` real, no narrado. Los tres: **aprobado con ajuste**:
+
+- `devops`: mecanismo correcto (la exención solo aplica en modo CI; en modo estricto `.env` se sigue
+  escaneando igual). Confirmó que CI solo genera `.env` (nunca `.env.piloto`/`.env.local`), así que no
+  hace falta anticipar exenciones para nombres que CI no genera. Ajuste: el código de la exención y el
+  allowlist regenerado tienen que ir en el mismo commit — si entra solo uno, CI sigue rojo.
+- `seguridad-datos-financieros`: el diseño (huellas no-valores, aborta si hay alguna fuga real,
+  filtrado a archivos trackeados) es correcto. Ajuste exigido: la exención de `.env` es una regla
+  verificable (ADR-0002 §B) y necesita su propia prueba de mutación, no alcanza con la lógica leída.
+- `security-engineer`: el mecanismo de huellas es sólido. Ajuste: el motivo de la excepción en
+  `PERMITIDOS` tiene que citar la invariante externa de la que depende (R37 ya garantiza que ningún
+  `.env*` queda trackeado) para que, si alguien copia el patrón a futuro, tenga que justificar la misma
+  garantía y no alcance con "es un archivo de config".
+
+**Fix, dos partes, un solo commit:**
+
+1. `tools/barrido-fuga.ts`: se extrajo la guarda de omisión — antes una expresión inline en `barrer()`
+   — a una función propia, exportada y pura: decide si un archivo de `PERMITIDOS` se omite, y solo lo
+   hace en modo CI, nunca en modo estricto. Se agregó una entrada nueva a `PERMITIDOS` para `.env`, con
+   el motivo pedido por `security-engineer` (cita la garantía de R37, no solo el contenido del
+   archivo). **Prueba de mutación real, no solo declarada** (ADR-0002 §B.0): se aplicó la mutación a
+   mano (sacar la condición de modo, dejando la omisión sin importar si es estricto o CI), se corrió el
+   test nuevo y dio rojo (`expected true to be false`), se revirtió, y se confirmó verde de nuevo —
+   `tools/barrido-fuga.test.ts` pasó de 22 a 25 tests.
+2. `tools/barrido-aceptados.json` regenerado con un script desechable (mostrado completo antes de
+   correr, con el grep literal de cada línea de salida, borrado al terminar — mismo protocolo que el
+   resto de la sesión para todo lo que toca `privado/` indirectamente): corre `barrer()`, **aborta si
+   el modo no es estricto o si hay alguna fuga real** (no pasó ninguna de las dos), filtra los
+   candidatos contra `git ls-files` antes de escribir. Resultado: 1562 candidatos totales en esta
+   máquina, 522 de archivos trackeados (1040 descartados — 1031 de restos de `.claude/worktrees/`
+   viejos sin limpiar, housekeeping aparte que no bloquea nada; 9 de `.env`/`.env.example`/`.env.piloto`
+   locales, exactamente lo esperado), **113 huellas escritas, 0 fugas** contra el material real de
+   `privado/`.
+
+**Verificado antes de commitear:** una simulación de modo CI (`BARRIDO_FORZAR_CI=1`) filtrada al mismo
+universo que un checkout de CI puede tener (archivos trackeados + el `.env` que CI genera) dio **0
+candidatos sin verificar** — el número que hoy en CI real es 114 pasa a 0 con este fix.
+
+**Pendiente real, el mismo criterio que la entrada 99 — no se cierra hasta confirmarlo:** mirar la
+corrida de CI que dispare ESTE push (no la `32541965635`, que ya es diagnóstico viejo) hasta el final
+real del job `verificar`. Sigue siendo cierto lo que señaló `devops`: sería la primera corrida
+genuinamente verde de este repo.
+
+**Aparte, sin urgencia:** `.claude/worktrees/` tiene restos de worktrees viejos (1031 candidatos del
+barrido salen de ahí) — vale la pena limpiarlos en algún momento, no bloquea nada de esto.
+
+---
+
 ## 2026-08-21 (99) — 🔴 CI roto por el push de la entrada 98 — no por el contenido del commit, sino porque `ci.yml` se autodenuncia a sí mismo (R37/incidente #3), tercera vez con el mismo patrón. `devops` convocado para revisar el fix.
 
 **Herramienta:** Claude Code. JP reportó, con captura de GitHub Actions, que el push del commit

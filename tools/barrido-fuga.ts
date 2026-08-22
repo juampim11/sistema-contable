@@ -144,6 +144,19 @@ const PERMITIDOS: readonly { readonly ruta: string; readonly motivo: string }[] 
     ruta: 'tools/barrido-fuga.test.ts',
     motivo: 'Verifica al verificador: planta fugas SINTÉTICAS y exige que el barrido las marque.',
   },
+  {
+    ruta: '.env',
+    motivo:
+      'Su huella nunca puede estabilizarse: en CI, `.env` se genera EN CADA CORRIDA con `openssl rand ' +
+      "-hex 24` (ci.yml, paso 'Infraestructura local'), así que su valor —y su huella— cambia siempre. " +
+      'Exención segura porque depende de una invariante que otro control ya garantiza, no de una ' +
+      'suposición propia: R37 (`No hay secretos en el repo`, `ci.yml`) falla el build si CUALQUIER ' +
+      '`.env*` queda trackeado, así que este archivo nunca llega al historial por otra vía. Vale SOLO ' +
+      'en modo CI — `barrer()` sigue barriendo `.env` en modo estricto exactamente igual que cualquier ' +
+      'otro archivo, cruzándolo contra `privado/` real. Antes de copiar este patrón para otro archivo: ' +
+      'la misma garantía (nunca trackeado por otro control + valor no reproducible entre corridas) tiene ' +
+      'que valer para ESE archivo, no alcanza con que "sea de config".',
+  },
 ];
 
 export type Hallazgo = {
@@ -482,6 +495,19 @@ function leerAllowlist(): Set<string> {
 
 // -----------------------------------------------------------------------------
 
+/**
+ * Si un archivo de `PERMITIDOS` debe omitirse del barrido — **solo en modo CI**. En modo estricto la
+ * exención nunca aplica: es la única corrida que cruza contra `privado/` real, y ningún archivo se le
+ * exime de esa comparación, ni siquiera los de esta lista (ver el comentario de `PERMITIDOS`).
+ */
+export function debeOmitirse(
+  modo: 'estricto' | 'ci',
+  ruta: string,
+  permitidos: ReadonlySet<string>,
+): boolean {
+  return modo === 'ci' && permitidos.has(ruta);
+}
+
 export function barrer(): ResultadoBarrido {
   const permitidos = new Set(PERMITIDOS.map((p) => p.ruta));
   /**
@@ -506,7 +532,7 @@ export function barrer(): ResultadoBarrido {
   for (const ruta of archivos) {
     const r = rel(ruta);
     // La exención vale solo para el modo CI: el cruce estricto no exime a nadie, ni a los tests.
-    if (modo === 'ci' && permitidos.has(r)) continue;
+    if (debeOmitirse(modo, r, permitidos)) continue;
     if (r === 'tools/barrido-aceptados.json') continue; // huellas, no valores
 
     for (const c of candidatosEnTexto(readFileSync(ruta, 'utf8'))) {

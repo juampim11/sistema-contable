@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { candidatosEnTexto, esFuga, huellaDe, prepararMaterial } from './barrido-fuga.ts';
+import { candidatosEnTexto, debeOmitirse, esFuga, huellaDe, prepararMaterial } from './barrido-fuga.ts';
 
 /**
  * Simula un archivo de `privado/`: el texto extraído de un extracto. Valores sintéticos, con verificador
@@ -122,6 +122,32 @@ describe('la normalización es la que evita el FALSO NEGATIVO', () => {
 
   it('el precio declarado: un importe sin su coma decimal no cruza', () => {
     expect(esFuga('76543210', MATERIAL_SIMULADO)).toBe(false);
+  });
+});
+
+describe('la exención de .env aplica SOLO en modo CI — nunca en modo estricto', () => {
+  /**
+   * `.env` está en `PERMITIDOS` porque CI lo genera con valores aleatorios en cada corrida y su huella
+   * nunca puede estabilizarse. Pero la exención es del CANDIDATO en modo CI, nunca del cruce contra
+   * `privado/` real: si algún día alguien la reescribiera para ignorar el modo (`permitidos.has(ruta)`,
+   * sin el `modo === 'ci' &&`), un valor real pegado en `.env` local dejaría de detectarse en modo
+   * estricto — exactamente el escenario que motivó que `.env` se barra a propósito (comentario de
+   * `barrer()`). Este test es la prueba de mutación: se aplicó la mutación a mano (sacar la condición de
+   * modo) y se confirmó rojo antes de escribir esta versión — ver HANDOFF.
+   */
+  const permitidos = new Set(['.env']);
+
+  it('caso legítimo: en modo CI, un archivo de PERMITIDOS se omite', () => {
+    expect(debeOmitirse('ci', '.env', permitidos)).toBe(true);
+  });
+
+  it('caso que refuta la mutación: en modo estricto, NUNCA se omite — ni siquiera un archivo de PERMITIDOS', () => {
+    expect(debeOmitirse('estricto', '.env', permitidos)).toBe(false);
+  });
+
+  it('un archivo que no está en PERMITIDOS no se omite en ningún modo', () => {
+    expect(debeOmitirse('ci', 'otro/archivo.ts', permitidos)).toBe(false);
+    expect(debeOmitirse('estricto', 'otro/archivo.ts', permitidos)).toBe(false);
   });
 });
 
