@@ -82,9 +82,16 @@ universo que un checkout de CI puede tener (archivos trackeados + el `.env` que 
 candidatos sin verificar** — el número que hoy en CI real es 114 pasa a 0 con este fix.
 
 **Pendiente real, el mismo criterio que la entrada 99 — no se cierra hasta confirmarlo:** mirar la
-corrida de CI que dispare ESTE push (no la `32541965635`, que ya es diagnóstico viejo) hasta el final
-real del job `verificar`. Sigue siendo cierto lo que señaló `devops`: sería la primera corrida
-genuinamente verde de este repo.
+corrida de CI que dispare ESTE push hasta el final real del job `verificar`. Sigue siendo cierto lo
+que señaló `devops`: sería la primera corrida genuinamente verde de este repo.
+
+**Corrección sobre esta misma entrada:** el primer push con este fix (commit `f41ac12`) volvió a
+fallar en el mismo paso — pero con apenas 3 candidatos, no 114, así que el mecanismo funcionaba: el
+allowlist se había regenerado ANTES de terminar de redactar este párrafo, y el número identificador
+de la corrida de diagnóstico vieja, citado varias veces acá arriba, quedó sin aceptar (tiene la forma
+de un número largo, aunque es público — el id de una corrida de GitHub Actions, no un dato de
+cliente). Se regeneró el allowlist una vez más, ya con esta versión final del texto, antes de
+commitear de nuevo.
 
 **Aparte, sin urgencia:** `.claude/worktrees/` tiene restos de worktrees viejos (1031 candidatos del
 barrido salen de ahí) — vale la pena limpiarlos en algún momento, no bloquea nada de esto.
