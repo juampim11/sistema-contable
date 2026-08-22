@@ -6,6 +6,44 @@
 
 ---
 
+## 2026-08-22 (107) — `consumirRescate` corrió contra la secuencia real de movimientos de los 3 fondos, encadenando junio→julio→agosto: cero errores, rescate partido en hasta 6 capas reproducido, chequeo de coherencia exacto. Cierra el objetivo final de la ronda de FCI. Continúa `docs/diseno/17-fci-peps-plan.md` §7.
+
+**Herramienta:** Claude Code, continúa la (105)/(106) en la misma sesión. Objetivo final de esta
+ronda (pedido explícito del titular): correr el núcleo PEPS ya construido (paso 1 del plan) contra
+los movimientos reales extraídos (paso 2), para ver la mecánica completa funcionar de punta a punta.
+
+**Extensión necesaria**: el extractor ahora captura precio y fecha (resuelta a ISO) por movimiento,
+en orden de documento — `consumirRescate` exige capas ordenadas cronológicamente y lo valida él
+mismo. Capa de apertura para junio (sin corte previo en el lote): cantidad calculada por aritmética
+(tenencia de junio menos sus propias suscripciones más sus rescates), precio `0` explícito y
+`costoConocido: false` — nunca una estimación disfrazada.
+
+**Resultado, en los 3 fondos, encadenando los 3 cortes:**
+- Cero `ConsumoInvalidoError`.
+- El fondo con más actividad partió varios rescates entre múltiples capas — hasta 6 en un solo
+  rescate — reproduciendo el mecanismo real que motivó todo el subsistema (el caso de Laura,
+  `C9 = -20352.01 - C6` de su Excel).
+- Chequeo de coherencia final (suma de remanentes == tenencia declarada en agosto): exacto en los 3
+  fondos.
+
+`code-reviewer` corrigió 3 puntos sobre la extensión antes de cerrar: los agregados de cantidad (eje
+1) se calculan directo de las filas crudas, nunca a través de `movimientos`, para que un problema de
+fecha en un fondo no tumbe ese cálculo ya validado ni el de otro fondo; `movimientos` se valida
+monótono por fecha, aislado por fondo (`movimientosConfiables: false` si no, nunca un orden dudoso
+expuesto en silencio); y se agregó el rango de `x` medido para el precio, que faltaba.
+
+**Estado final:** todo commiteado y pusheado a `origin/main`. Nunca un valor real (cantidad, precio,
+resultado de PEPS) salió al contexto de ningún agente ni a ningún documento — solo booleanos,
+conteos y comparaciones de igualdad, método reforzado de E-2
+(`docs/seguridad/registro-excepciones.md`).
+
+**Con esto cierra la ronda completa de FCI de esta sesión**: núcleo PEPS (paso 1, entrada 103),
+verificación del eje 1 (paso 2, entradas 105-106), y `consumirRescate` contra datos reales (paso 3,
+esta entrada). Pendiente, sin cambios: el adapter oficial de ingesta, Capa D, los roles de valuación
+al cierre, y las 9 preguntas para Laura — todo en `docs/diseno/17-fci-peps-plan.md`.
+
+---
+
 ## 2026-08-22 (106) — Corrección de la (105): atribución por fondo del eje 1 de FCI, RESUELTA. Julio y agosto cierran exacto en los 3 fondos con el patrón literal `FONDO - <nombre> CLASE <letra>` dado por el titular. Continúa `docs/diseno/17-fci-peps-plan.md` §6.
 
 **Herramienta:** Claude Code, continúa la (105) en la misma sesión. La (105) había cerrado con

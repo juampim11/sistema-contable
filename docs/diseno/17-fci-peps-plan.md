@@ -7,7 +7,11 @@
 > **Julio y agosto cierran EXACTO en los 3 fondos**, con atribución de movimientos por fondo real
 > (patrón literal `FONDO - <nombre> CLASE <letra>`, confirmado por el titular). Junio no es
 > verificable con este lote de 3 archivos (estructural, falta el extracto de mayo, no un bug).
-> Detalle completo en la sección 6.
+>
+> 🟢 **Paso 3 (`consumirRescate` contra la secuencia real) cerrado — ver sección 7.** Cero errores en
+> los 3 fondos × 3 cortes encadenados; el fondo más activo reprodujo el mecanismo de rescate partido
+> entre múltiples capas (el caso real que motivó el subsistema); chequeo de coherencia final exacto
+> en los 3 fondos.
 
 ## Contexto
 
@@ -229,6 +233,46 @@ segundo grupo y perdía los movimientos de la continuación — se fusiona por c
 crear un grupo nuevo; (2) una coincidencia "contiene" ambigua (dos fondos con prefijo de familia en
 común) se resolvía en silencio con el primer candidato — ahora lanza `AtribucionFondoAmbiguaError` en
 vez de adivinar. Ninguno de los dos casos ocurre en los 3 PDF reales medidos, pero quedan cubiertos.
+
+## 7. `consumirRescate` contra la secuencia real de movimientos — cerrado
+
+Objetivo final de esta ronda (pedido explícito del titular): correr el núcleo PEPS
+(`packages/fci/src/nucleo/consumirRescate.ts`) contra los movimientos reales de cada fondo,
+encadenando los 3 cortes, para ver la mecánica completa funcionar de punta a punta contra datos
+reales — no para comparar contra el número exacto de Laura (ese número no está disponible en esta
+sesión, ni podría estarlo: es un dato real de un cliente, y el método de esta tarea nunca expone
+valores, solo booleanos y conteos).
+
+**Extensión necesaria del extractor** (`packages/ingesta/src/fci-galicia/extraer-posiciones.ts`):
+cada movimiento ahora trae, además de la cantidad, su **precio** (cotización de esa operación) y su
+**fecha** (resuelta a ISO), en un campo nuevo `movimientos` que preserva el ORDEN de documento —
+`consumirRescate` exige capas en orden cronológico y lo verifica él mismo.
+
+**Capa de apertura**: para junio (el primer corte del lote, sin corte previo — ver sección 6), la
+cantidad que había ANTES de sus propios movimientos capturados se calcula por aritmética
+(`tenencia declarada en junio − suscripciones de junio + rescates de junio`) y se modela como una
+capa con **precio `0` explícito y `costoConocido: false`** — nunca una estimación disfrazada de
+precio real, mismo criterio que ya fijó `contador-dominio` en el paso 1 de este plan.
+
+**Resultado, simulando junio→julio→agosto para los 3 fondos:**
+- **Cero errores** (`ConsumoInvalidoError`) en ningún rescate de ningún fondo.
+- El fondo con más actividad reprodujo el mecanismo que motivó todo el subsistema: **varios rescates
+  partidos entre múltiples capas** (hasta 6 capas tocadas en un solo rescate) — el mismo patrón del
+  caso real de Laura (`C9 = -20352.01 - C6` en su Excel, sección 2 del pedido original).
+- **Chequeo de coherencia final, en los 3 fondos**: la suma de remanentes de capas al final de la
+  simulación coincide EXACTO con la tenencia declarada en el extracto de agosto — confirma que la
+  mecánica completa (capas, consumo PEPS, capa de apertura) es consistente con el eje 1 ya validado.
+
+Revisión de `code-reviewer` sobre la extensión del extractor corrigió tres puntos antes de cerrar:
+los agregados de cantidad (el eje 1) se calculan directo de las filas crudas, nunca a través de
+`movimientos` — un problema de fecha en un fondo no debe tumbar ese cálculo, ni el de otro fondo;
+`movimientos` se valida monótono por fecha antes de exponerse, aislado por fondo
+(`movimientosConfiables: false` si no, nunca un orden dudoso en silencio); y se agregó el rango de
+`x` medido para el fragmento de precio, que faltaba.
+
+**Sigue sin cambiar**: ningún valor real (cantidad, precio, resultado de PEPS) salió nunca al
+contexto de ningún agente ni a ningún documento — todo lo de arriba son booleanos, conteos y
+comparaciones de igualdad, tal como exige el método reforzado de E-2.
 
 ## Pendiente — 9 preguntas abiertas para Laura
 
