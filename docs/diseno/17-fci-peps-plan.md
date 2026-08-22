@@ -1,9 +1,12 @@
 # 17 — Costeo PEPS de Fondos Comunes de Inversión: núcleo puro (paso 1 de N)
 
-> 🟢 **PASO IMPLEMENTADO Y VERIFICADO — sin commitear todavía.** `packages/fci/` existe en el
-> filesystem (núcleo puro: `consumirRescate` + aritmética de punto fijo + sus tests), sin migración,
-> sin persistencia, sin Capa D, sin adapter de PDF. Es el "paso revertible más chico" de un plan más
-> grande que sigue abierto — ver la sección 5 y "Qué queda pendiente" al final.
+> 🟢 **Paso 1 (núcleo puro) commiteado.** `packages/fci/` en `main` (`a1189e2`, `9de816c`), sin
+> migración, sin persistencia, sin Capa D, sin adapter de PDF.
+>
+> 🟢 **Paso 2 (verificación del eje 1 contra los 3 extractos reales) cerrado — ver sección 6.** Julio
+> cierra exacto en los 3 fondos y en el consolidado. Agosto cierra exacto en el consolidado; la
+> apertura por fondo queda como limitación conocida, no resuelta (no forzada, no oculta). Junio no es
+> verificable con este lote de 3 archivos (estructural, no bug). Detalle completo en la sección 6.
 
 ## Contexto
 
@@ -154,11 +157,72 @@ sin tocar ninguna base ni ningún entorno real: no hay migración que deshacer.
 
 Los pasos siguientes, cada uno con su propio commit y su propia convocatoria, en orden:
 
-1. Verificar el eje 1 (invariante de cantidades) contra los 3 extractos reales de Galicia, vía script
-   enmascarado.
-2. El adapter de lectura del extracto FCI de Galicia.
+1. ✅ Verificar el eje 1 (invariante de cantidades) contra los 3 extractos reales de Galicia, vía
+   script enmascarado — **cerrado, ver sección 6**.
+2. El adapter OFICIAL de lectura del extracto FCI de Galicia (con `contrato.ts`/`esquema.ts`/
+   `persistir.ts`, como Galicia/Santander/Macro) — el extractor de la sección 6 es preliminar, no
+   este adapter.
 3. Capa D (plan de cuentas por cliente) y el contrato `ResolverCuentaPorRol`.
 4. Los roles de valuación al cierre, una vez que Laura confirme el mecanismo de devengamiento.
+
+## 6. Verificación del eje 1 contra los 3 extractos reales (Elite-IT) — cerrado
+
+**Autorización:** `docs/seguridad/registro-excepciones.md` E-2 — documento de posición de FCI de
+Elite-IT SAS (cliente fuera del piloto, sin tenant), método reforzado (cero fragmentos de texto real
+en el contexto de ningún agente durante el descubrimiento; solo booleano/categoría acotada de delta en
+la verificación; scripts efímeros, mostrados en el chat antes de correr, borrados después).
+
+**Descubrimiento de formato** (4 pasadas de scripts efímeros, metadatos únicamente — conteos,
+longitudes, coordenadas geométricas, histogramas de cantidad de decimales, nunca un fragmento de
+texto): confirmó que Galicia usa 6 decimales para cantidades de cuotapartes y 2 para importes en
+pesos (valida la escala ya elegida en `packages/fci/src/nucleo/aritmetica.ts`), y una tabla de
+posición compacta con 4 campos por fondo en columnas geométricas estables entre los 3 archivos.
+
+**Dos correcciones del titular sobre la semántica**, ninguna adivinable por metadatos:
+
+1. La tabla de posición trae, por fondo, **una sola tenencia** (cantidad de cuotapartes a ese corte) —
+   no "anterior" y "actual" en la misma fila. El tercer campo numérico de la fila (7-8 dígitos
+   enteros) no es una cantidad: es el saldo **valorizado en pesos** (tenencia × cotización), y no
+   participa del eje 1. La hipótesis inicial del extractor comparaba una cantidad de cuotapartes
+   contra un importe en pesos — de ahí que el consolidado no cerrara en el primer intento.
+2. **El invariante se verifica ENTRE documentos, no dentro de uno solo.** El `saldoInicial` de un
+   corte es la tenencia declarada del mismo fondo en el corte inmediato anterior — hay que traerla del
+   PDF previo, no de este documento. Por eso junio (el primer corte del lote) no tiene con qué
+   verificarse: necesitaría el extracto de mayo, que no forma parte de este lote de 3 archivos.
+
+**Resultado, con `packages/ingesta/src/fci-galicia/{aritmetica-posicion.ts,verificar-posicion.ts,
+extraer-posiciones.ts}`** (extractor PRELIMINAR, no el adapter oficial — ver punto 2 de "los pasos
+siguientes" arriba):
+
+| Corte | Consolidado | Por fondo |
+|---|---|---|
+| 2025-06-30 | No verificable con este lote (falta el corte de mayo) — estructural, no bug | No verificable |
+| 2025-07-31 | **Cierra exacto** | **Cierra exacto en los 3 fondos** |
+| 2025-08-29 | **Cierra exacto** | **No resuelto** (ver abajo) |
+
+**Por qué julio cierra por fondo y agosto no:** en julio, exactamente 1 de los 3 fondos cambió de
+tenencia respecto de junio — el extractor atribuye, por eliminación, todos los movimientos del corte a
+ese único fondo activo (los otros 2 quedan con 0 movimientos, consistentes con su tenencia sin
+cambios). En agosto, los 3 fondos cambiaron de tenencia a la vez: la eliminación no alcanza para saber
+qué movimiento pertenece a qué fondo. Que el **consolidado** cierre exacto en agosto confirma que la
+extracción en sí (fechas, columna de tenencia, columna de cantidad de cada movimiento) es correcta —
+lo que falta es solo la atribución por fondo, no el dato.
+
+**Segmentación por encabezado de sección — intentada y descartada.** El titular indicó que el
+documento viene segmentado por fondo con una fila de encabezado de sección delimitando cada bloque de
+movimientos. Se implementó un reconocedor de ese patrón (una fila de 1 a 3 fragmentos con la marca de
+producto `FIMA`/`FCI`/`FONDO`/`CUOTAPARTE`) — pero produjo una **regresión real**: julio, que cerraba
+exacto en los 3 fondos con el método de eliminación, dejó de cerrar en 2 de los 3 al segmentar por
+encabezado, y agosto solo capturó 4 de ~21 movimientos reales. Evidencia de que la indicación, sin ver
+el documento, no alcanzó para reconstruir el patrón exacto (probable desalineamiento de orden entre la
+tabla de posición y los bloques de detalle, o encabezados no reconocidos en algún tramo). **Descartado
+a pedido explícito del titular** — no se siguió afinando a ciegas, es scope creep sobre esta tarea.
+
+**Pendiente futuro, fuera de esta tarea:** si el adapter oficial (paso 2 de "los pasos siguientes")
+necesita atribución por fondo confiable en meses con más de un fondo activo, hace falta información de
+estructura más precisa que la que se pudo dar a ciegas por chat — amerita revisar el documento real con
+quien sí puede verlo (el titular, en una sesión con el PDF a la vista) antes de intentarlo de nuevo, en
+vez de que quien implementa seguya adivinando el patrón sin texto.
 
 ## Pendiente — 9 preguntas abiertas para Laura
 

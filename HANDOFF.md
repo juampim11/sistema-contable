@@ -6,6 +6,82 @@
 
 ---
 
+## 2026-08-22 (105) — Verificación del eje 1 de FCI contra los 3 extractos reales de Galicia (Elite-IT): julio exacto en los 3 fondos, agosto exacto en consolidado con la apertura por fondo como limitación conocida, junio no verificable (estructural). Continúa `docs/diseno/17-fci-peps-plan.md` §6, no genera un doc nuevo.
+
+**Herramienta:** Claude Code, continúa la (103)/(104). Siguiente paso del plan de FCI: verificar el
+invariante de cantidades (eje 1) contra los 3 PDF reales de posición de FCI de Galicia (cortes
+2025-06-30/07-31/08-29), de **Elite-IT SAS** (cliente fuera del piloto, sin tenant).
+
+### Registro de seguridad previo (mismo día, antes de tocar los PDF)
+
+Registrada **E-2** en `docs/seguridad/registro-excepciones.md` (commit `69e27b8`): E-1 cubre extractos
+BANCARIOS de Módulo 1, de clientes del piloto — este documento (posición de FCI) y este cliente
+(Elite-IT, fuera del piloto) no estaban cubiertos. El usuario lo señaló explícitamente ("no asumo que
+E-1 cubre esto, registrá primero") antes de autorizar seguir. Método reforzado dictaminado por
+`seguridad-datos-financieros`: cero fragmentos de texto real en el contexto de ningún agente durante
+el descubrimiento (solo metadatos: conteos, longitudes, coordenadas geométricas, histogramas), y solo
+booleano/categoría acotada de delta en la verificación — nunca un valor ni un delta exacto. Scripts
+efímeros, fuera del repo (scratchpad de la sesión), mostrados en el chat para aprobación ANTES de
+correr, borrados después de usarlos.
+
+### Descubrimiento (4 pasadas de scripts efímeros)
+
+Confirmó: Galicia usa 6 decimales para cantidades de cuotapartes y 2 para importes en pesos (valida
+la escala de `packages/fci/src/nucleo/aritmetica.ts`); una tabla de posición compacta de 4 campos por
+fondo, en columnas geométricas estables en los 3 archivos.
+
+### Dos correcciones del titular, ninguna adivinable por metadatos
+
+1. La tabla de posición trae **una sola tenencia** por fondo (no "anterior"/"actual" en la misma
+   fila); el tercer campo numérico (7-8 dígitos) es el saldo **valorizado en pesos**
+   (tenencia × cotización), no una cantidad — no participa del eje 1. La primera versión del
+   extractor comparaba una cantidad contra un importe, por eso el consolidado no cerraba.
+2. **El invariante se verifica ENTRE documentos**: el saldo inicial de un corte es la tenencia
+   declarada del mismo fondo en el corte anterior, hay que traerla del PDF previo. Junio (primer
+   corte del lote) no tiene con qué verificarse — necesitaría mayo, fuera del lote.
+
+### Resultado
+
+Con `packages/ingesta/src/fci-galicia/{aritmetica-posicion.ts,verificar-posicion.ts,
+extraer-posiciones.ts}` (extractor PRELIMINAR, no el adapter oficial):
+
+- **Julio**: cierra exacto en los 3 fondos y en el consolidado.
+- **Agosto**: cierra exacto en el consolidado (confirma que fechas/columna de tenencia/columna de
+  cantidad están bien extraídas). La apertura **por fondo** no se resolvió: los 3 fondos cambiaron de
+  tenencia el mismo mes (julio tenía solo 1 activo, lo que permitió atribuir por eliminación) y no hay
+  forma, sin texto, de saber qué movimiento es de qué fondo cuando los 3 están activos a la vez.
+- **Junio**: no verificable con este lote de 3 archivos — estructural (falta mayo), no un bug.
+
+**Segmentación por encabezado de sección: intentada y descartada.** El usuario indicó que el
+documento viene segmentado por fondo con una fila de encabezado delimitando cada bloque. Implementado
+un reconocedor (marca de producto FIMA/FCI/FONDO/CUOTAPARTE en 1-3 fragmentos) — produjo una
+**regresión real**: julio dejó de cerrar en 2 de los 3 fondos, y agosto solo capturó 4 de ~21
+movimientos reales. El usuario lo cortó explícitamente ("mi indicación sobre esa estructura no era lo
+bastante precisa para implementarse a ciegas... no seguir afinándola ahora, es scope creep") y pidió
+volver al método de eliminación, que ya daba julio exacto.
+
+**Estado final:** todo commiteado y pusheado a `origin/main` (ver commits de esta entrada, más abajo
+en el log). Nada forzado, nada oculto: agosto queda con su limitación documentada en
+`docs/diseno/17-fci-peps-plan.md` §6.
+
+### Hallazgo de infraestructura, aparte
+
+Ver entrada **(104)**, escrita el mismo día: un subagente lanzado mientras la sesión principal seguía
+técnicamente en modo plan hereda la restricción sin tener la herramienta para salir de ella —
+resuelto relanzando fresco después de confirmar que la sesión principal ya había salido.
+
+### Pendiente, para otra sesión (no de esta tarea)
+
+- **Atribución por fondo confiable** para meses con más de un fondo activo (como agosto): necesita
+  información de estructura más precisa que la que se pudo dar a ciegas por chat — revisar el
+  documento real con el titular presente, antes de intentarlo de nuevo.
+- El **adapter oficial** de ingesta de FCI (`contrato.ts`/`esquema.ts`/`persistir.ts`, como
+  Galicia/Santander/Macro) — el extractor de esta tarea es preliminar, no ese adapter.
+- Capa D, los roles de valuación al cierre, y las 9 preguntas abiertas para Laura — sin cambios,
+  siguen donde estaban (`docs/diseno/17-fci-peps-plan.md`).
+
+---
+
 ## 2026-08-22 (104) — Hallazgo de infraestructura: un subagente lanzado mientras la sesión principal sigue en modo plan hereda la restricción y no tiene herramienta para salir de ella.
 
 **Herramienta:** Claude Code, sesión de verificación del eje 1 de FCI (continúa la (103)).
