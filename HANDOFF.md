@@ -6,6 +6,90 @@
 
 ---
 
+## 2026-08-22 (103) — Arranque del subsistema de costeo PEPS de FCI: paquete nuevo `packages/fci`, núcleo puro (`consumirRescate` + aritmética de punto fijo), sin migración, sin persistencia. Plan de diseño en `docs/diseno/17-fci-peps-plan.md`.
+
+**Herramienta:** Claude Code. Primer paso del subsistema que va a costear rescates de cuotapartes de
+Fondos Comunes de Inversión para Laura, bajo el criterio PEPS. Deliberadamente acotado al núcleo puro
+— sin tabla, sin adapter, sin Capa D — porque es la parte que se puede fijar con certeza hoy; todo lo
+demás depende de decisiones de negocio todavía abiertas (ver más abajo).
+
+**1 — Plan aprobado por el usuario (modo plan, CLAUDE.md §3.2).** Con los 5 puntos exigidos: qué
+cambia (paquete `packages/fci`, sin migración, sin Capa D, sin adapter de PDF; rol funcional emitido
+como dato, unión cerrada de 2 valores) y qué no; qué se mide (`pnpm verificar` en verde acotado a los
+archivos nuevos, el caso real de rescate partido verificado a mano, `pnpm typecheck` limpio); una
+predicción falsable sobre el invariante de cantidades y el caso partido; los agentes convocados para
+armar el plan (`arquitecto-software`, `plan-cuentas-multicliente`, `contador-dominio`, `dba-data`); el
+paso revertible más chico (`consumirRescate.ts` + su test, nada más).
+
+El usuario pidió 4 ajustes antes de aprobar: recortar los roles funcionales a 2 (no 4); verificar de
+forma **concreta** —no narrada— que los subagentes de dominio convocados son reales y distintos (se
+verificó leyendo los 3 directorios de registro completos — `agents/personas/`, `agents/wrappers-claude/`,
+`.claude/agents/`, los 23 completos — e invocando en vivo a `security-engineer` y
+`seguridad-datos-financieros`, ausentes de la lista de arranque de sesión pero funcionales); aclarar
+el orden de la decisión de aritmética decimal (no se convoca a nadie hasta que aparezca un caso real
+de pérdida de precisión, nunca antes); confirmar por listado directo que `docs/diseno/17-*` estaba
+libre.
+
+**2 — Implementación (`backend-dev`, dos rondas).**
+
+Ronda 1: `packages/fci/package.json`, `src/index.ts`, `src/nucleo/{tipos.ts,aritmetica.ts,
+consumirRescate.ts}`, `tests/consumirRescate.test.ts` (6 casos), más las filas espejo de R-B/R-G/R-J
+para `fci` en `packages/data/tests/reglas-de-codigo.test.ts` (y la línea de cobertura del barrido).
+Aritmética: utilidad de punto fijo propia (`bigint`, escala 6 decimales) en vez de una librería
+externa — el repo no tenía ninguna utilidad de este tipo (CLAUDE.md §2 prohíbe `number` de JS para
+importes) y agregar una dependencia no es decisión de quien escribe el código.
+
+Revisión paralela de 4 agentes sobre esa primera ronda:
+- `contador-dominio`: `CapaFCI` necesitaba un campo de identidad estable (`id`), para que la futura
+  glosa de Capa D pueda distinguir una capa de otra — el `costoEstimado: boolean` en sí estaba bien.
+- `qa-automation`: faltaba un caso de rescate a pérdida (resultado negativo) — dio el caso con números
+  exactos; sugirió un helper de fábrica para el fixture `CapaFCI` en el test.
+- `code-reviewer`: hallazgo **bloqueante** — `multiplicar` (aritmética de punto fijo) trunca hacia
+  cero en un empate exacto, sin documentarlo ni testearlo; hallazgo should-fix — sin guard de entradas
+  negativas, un dato negativo produce un resultado silenciosamente incorrecto en vez de un error.
+- `tester`: confirmó con casos ejecutados que capas sin ordenar producen un costo PEPS invertido en
+  silencio, y que cantidades negativas producen `cantidadSinCubrir` mayor que lo pedido — ambos sin
+  ningún error, "basura silenciosa" en un motor fiscal.
+
+Ronda 2 (fixup, `backend-dev` de nuevo): agregó `id`/`fecha` a `CapaFCI`; guard de orden PEPS por
+`fecha` (lanza `ConsumoInvalidoError` con motivo `orden_no_peps`); guards de negativos (5 motivos más
+del mismo error, nunca con el dato recibido en el mensaje); amplió el comentario de `multiplicar`
+documentando el truncamiento hacia cero; creó `packages/fci/tests/aritmetica.test.ts` (nuevo, 21
+tests) con el caso de empate exacto en ambos signos; agregó el caso de rescate a pérdida; agregó el
+helper `capa(overrides)` al test existente.
+
+**3 — Verificación final, corrida de forma independiente** (no solo el reporte del agente):
+`pnpm vitest run packages/fci packages/data/tests/reglas-de-codigo.test.ts` → **3 archivos, 92 tests,
+todos verdes**. `pnpm typecheck` limpio. Lectura manual del código final de `consumirRescate.ts`,
+`tipos.ts`, `aritmetica.ts` y `aritmetica.test.ts`, confirmando que el truncamiento
+(`1.000003 * -1.5 = -1.500004`) es matemáticamente correcto para `bigint` con truncamiento hacia cero.
+
+**4 — Estado del repo:** todo sin commitear (`packages/fci/` sin trackear, `packages/data/tests/
+reglas-de-codigo.test.ts` modificado, `pnpm-lock.yaml` modificado por el alta automática del workspace
+nuevo). No se pidió commit — queda así.
+
+**5 — Pendiente explícito, para la próxima tarea** (documentado, no ejecutado):
+- Verificar el eje 1 (invariante de cantidades) contra los 3 extractos reales de Galicia, vía script
+  enmascarado.
+- El adapter de lectura del extracto FCI de Galicia.
+- Capa D (plan de cuentas por cliente) y el contrato `ResolverCuentaPorRol` — bloqueado a propósito.
+- Los roles de valuación al cierre (`diferencia_fci_a_devengar`, `resultado_tenencia_fci`) —
+  bloqueados hasta que Laura confirme el mecanismo de devengamiento.
+- **9 preguntas abiertas para Laura** (texto completo en `docs/diseno/17-fci-peps-plan.md`): mecanismo
+  de devengamiento de la diferencia de cotización; convención para resultado por tenencia negativo;
+  origen del saldo inicial sin capas de costo; FCI en dólares; retenciones/comisiones en otros bancos
+  (Galicia: confirmado que no hay); traspasos entre fondos o reinversión automática en otros
+  clientes/bancos; granularidad del asiento de reimputación (por rescate vs. mensual consolidado);
+  Elite-IT (alta de tenant vs. auditoría puntual); si `Intereses ganados FCI` es un cuarto componente
+  o entra en alguno de los tres ejes ya identificados.
+- Sugerencia no bloqueante de `code-reviewer`: deduplicar las reglas espejo de
+  `reglas-de-codigo.test.ts` (R-B/R-G/R-J) en un generador — vale la pena con un tercer paquete del
+  mismo patrón, no ahora.
+
+**Doc de diseño:** `docs/diseno/17-fci-peps-plan.md` (nuevo).
+
+---
+
 ## 2026-08-21 (102) — Cierre de sesión, resumen consolidado de punta a punta: export enriquecido para Laura, reconciliación PDF↔Excel nativo de los 4 lotes del piloto, incidente de seguridad #10, y tres capas de bugs de CI corregidas — dos corridas consecutivas en verde real, primera vez en este repo.
 
 **Herramienta:** Claude Code. Entrada de cierre pedida por JP para que la sesión se lea completa sin
