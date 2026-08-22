@@ -43,10 +43,13 @@ tercer archivo de test NO excluido (agregado al índice de git, nunca commiteado
 lo encontró — confirma que la exclusión es puntual, no un agujero. Archivo temporal borrado y
 sacado del índice antes de seguir.
 
-**Pendiente real, mismo criterio que las entradas 99 y 100:** mirar la corrida de CI que dispare
-este push hasta el final. Si aparece una CUARTA capa distinta, la instrucción de JP es frenar del
-todo y dejarlo como pendiente explícito — tres capas resueltas en caliente en la misma sesión es
-razonable, una cuarta ya amerita parar a mirarlo con más calma en vez de seguir cavando.
+**Cierre — el pendiente de esta entrada y de las 99 y 100:** la corrida `32546781915` (commit
+`af7cdcc`) terminó **verde de punta a punta, los 19 pasos, incluido `Complete job`** — no apareció
+una cuarta capa. Es la primera corrida de CI genuinamente verde de este repo, confirmando lo que
+señaló `devops` en la entrada 99. Tres capas preexistentes encontradas y corregidas en la misma
+sesión, cada una convocando a los agentes que exige CLAUDE.md §3.1, ninguna banda-aid: R37
+autodenunciándose (99), allowlist de `barrido-fuga` desactualizada + `.env` con huella imposible
+(100), y el grep de claves privadas sin excluir los tests del redactor (101, esta entrada).
 
 ---
 
