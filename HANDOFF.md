@@ -6,6 +6,50 @@
 
 ---
 
+## 2026-08-21 (101) — Tercera capa de CI en la misma sesión: el propio grep de R37 en `ci.yml` excluía `*.md` pero no los dos archivos de test que prueban al redactor con una clave privada sintética. `devops` convocado por tercera vez.
+
+**Herramienta:** Claude Code, continúa la entrada 100. Con el bug de `tools/barrido-fuga.ts`
+resuelto, la corrida siguiente (commit `37d3142`) pasó ese paso por primera vez — y falló en el
+SIGUIENTE, distinto de nuevo: `No hay secretos en el repo (R37)`, el chequeo bash de `ci.yml`
+(líneas 176-189), no el test de vitest homónimo (ese ya pasaba).
+
+**Diagnóstico, log real:** el `git grep` de ese paso busca el patrón de encabezado de una clave
+privada y excluye `*.md`, pero no excluye ningún `.test.ts`. Dos archivos lo contienen a propósito,
+sintético y truncado (no es una clave funcional): `packages/shared/tests/forma.test.ts:29` y
+`packages/shared/tests/redactor.test.ts:109`, casos que prueban que el redactor
+(`contieneDatoSensible`) detecta ese patrón. Nunca antes una corrida de CI había llegado hasta este
+paso — las dos capas anteriores (entradas 99 y 100) lo tapaban.
+
+**Inventario completo antes de decidir el alcance** (pedido explícito de JP, no se asumió): mismo
+grep de `ci.yml` corrido sobre todo el repo trackeado — exactamente esos 2 archivos, ninguno más.
+Con un número tan chico y estable, la exclusión va por RUTA EXACTA (mismo criterio que `PERMITIDOS`
+en los otros dos barridos de esta sesión), nunca por `*.test.ts` genérico — un secreto real en
+cualquier OTRO archivo de test tiene que seguir cortando el build.
+
+**Convocado `devops` por tercera vez esta sesión.** Dictamen: aprobado, con un agregado — el
+comentario en `ci.yml` tiene que decir explícitamente que un tercer archivo con este literal
+sintético se suma por ruta exacta, y que nunca se generalice el patrón a wildcard (mismo riesgo que
+motivó que R37 reemplazara a R33). Incorporado. También recomendó revisar el resto de `ci.yml` por
+cualquier `continue-on-error`/`if: always()` que pudiera enmascarar una cuarta capa antes de asumir
+que esta corrida cierra en verde — revisado, no hay ninguno (el único paso posterior es el de logs
+de diagnóstico, con `if: failure()`, que no enmascara nada).
+
+**Fix:** dos pathspecs de exclusión (`:!packages/shared/tests/forma.test.ts`,
+`:!packages/shared/tests/redactor.test.ts`) agregados al `git grep` de `ci.yml`, con el comentario
+que pidió `devops`. **Prueba de mutación manual** (no es código TypeScript testeable con vitest, es
+un paso de shell dentro del workflow): se corrió el `git grep` corregido tal cual va a correr en
+CI — con los dos archivos permitidos, no encuentra nada; se plantó el mismo literal sintético en un
+tercer archivo de test NO excluido (agregado al índice de git, nunca commiteado) y el mismo grep sí
+lo encontró — confirma que la exclusión es puntual, no un agujero. Archivo temporal borrado y
+sacado del índice antes de seguir.
+
+**Pendiente real, mismo criterio que las entradas 99 y 100:** mirar la corrida de CI que dispare
+este push hasta el final. Si aparece una CUARTA capa distinta, la instrucción de JP es frenar del
+todo y dejarlo como pendiente explícito — tres capas resueltas en caliente en la misma sesión es
+razonable, una cuarta ya amerita parar a mirarlo con más calma en vez de seguir cavando.
+
+---
+
 ## 2026-08-21 (100) — Segundo bug de CI en la misma cadena: `tools/barrido-fuga.ts` fallaba en el paso siguiente a R37 — allowlist desactualizada desde 2026-08-10 + `.env` con huella imposible de estabilizar. `devops` + `seguridad-datos-financieros` + `security-engineer` convocados de verdad, los tres.
 
 **Herramienta:** Claude Code, continúa la entrada 99. Después de que el fix de R37 (commit `2ace4c4`)

@@ -182,7 +182,15 @@ jobs:
             echo "ERROR: hay un archivo con forma de .env trackeado. Ninguno va al repo."
             exit 1
           fi
-          if git grep -nE -- '-----BEGIN [A-Z ]*PRIVATE KEY' -- . ':!*.md'; then
+          # Excepción por RUTA EXACTA, nunca por patrón: exactamente dos archivos tienen a propósito
+          # un literal de clave privada TRUNCADO y no funcional ("MIIE", no una clave real), para
+          # probar que el redactor (`contieneDatoSensible`) lo detecta. Si agregás un tercer archivo
+          # con este mismo literal sintético, sumalo acá por ruta exacta — NUNCA cambies esto a
+          # `*.test.ts` ni a `:!**/*.test.ts`: es exactamente la puerta que R33 dejó abierta y que
+          # R37 existe para cerrar. Un secreto real en cualquier OTRO archivo `.test.ts` tiene que
+          # seguir cortando el build.
+          if git grep -nE -- '-----BEGIN [A-Z ]*PRIVATE KEY' -- . ':!*.md' \
+              ':!packages/shared/tests/forma.test.ts' ':!packages/shared/tests/redactor.test.ts'; then
             echo "ERROR: hay material de clave privada en el repo."
             exit 1
           fi
