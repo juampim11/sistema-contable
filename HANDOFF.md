@@ -6,6 +6,116 @@
 
 ---
 
+## 2026-08-21 (102) — Cierre de sesión, resumen consolidado de punta a punta: export enriquecido para Laura, reconciliación PDF↔Excel nativo de los 4 lotes del piloto, incidente de seguridad #10, y tres capas de bugs de CI corregidas — dos corridas consecutivas en verde real, primera vez en este repo.
+
+**Herramienta:** Claude Code. Entrada de cierre pedida por JP para que la sesión se lea completa sin
+tener que sumar las entradas 93-101. El detalle línea por línea de cada parte vive en esas entradas;
+acá va el resultado y las decisiones que importan para retomar. El backlog completo pendiente sigue
+viviendo en el Proyecto de Claude.ai — no se repite entero acá, solo lo que queda abierto de hoy.
+
+### 1 — Export enriquecido para Laura (entradas 93-98)
+
+Laura confirmó por teléfono que el export a Excel crudo no le servía — necesita que el sistema le
+diga QUÉ ES cada movimiento, no que arme el asiento. Se construyó, en memoria y sin persistir nada
+nuevo (cero migración, `reconocimiento_movimiento` sigue sin escribirse desde el export — deuda
+deliberada, documentada):
+
+- **Columnas de identidad**: "Tipo de movimiento", "Confianza" (Alta / A confirmar) y "Qué falta",
+  calculadas corriendo el motor de reconocimiento (capa B + capa C) al vuelo sobre cada movimiento,
+  gateado por `--destinatario estudio_interno`.
+- **Iteración de presentación** (entradas 94-96, todas a partir de revisión a mano de JP sobre
+  `.xlsx` reales): hojas de mismo banco+moneda desambiguadas por nombre real de cuenta, encabezados
+  coloreados por origen del dato (gris = extraído del banco, azul = identificado por el sistema,
+  beige = control interno), "Cuenta contable"/"Observación" sacadas del entregable hasta que exista
+  Capa D (mapeo a cuenta contable real — no construida esta sesión), y "Confianza" separada en
+  columna propia (un sufijo pegado a "Tipo de movimiento" rompía el filtro de Excel).
+- **Columnas de feedback de Laura** (entrada 98): "Corrección / Identidad" + "Comentarios", siempre
+  vacías en el export (nadie las pre-llena), color dorado propio (`FFFFE699`), con el principio de
+  diseño **silencio = aprobación** en filas de Confianza "Alta" — Laura solo escribe si corrige algo;
+  en "A confirmar" el sistema le pregunta de verdad. Leyenda redactada con `ux-designer` explicando
+  las dos direcciones del riesgo (que no escriba "OK" 900 veces, que no lea el silencio como "nada
+  para revisar").
+- **Medición real de composición** (corpus completo, 1830 movimientos, 3 lotes): 214 con identidad
+  resuelta automáticamente (`propuesta`), 1482 en `decision_humana` (77,5% de esos por
+  `distinguir_tercero_de_socio` — depende del padrón de socios, no del motor), 134 sin reconocer.
+- **Entregado:** los exports de Galicia y Santander ya se enviaron a Laura — es la primera entrega de
+  esta sesión pensada para ella, no para revisión interna. Macro no se tocó como entregable (el
+  adapter tiene el bug de la sección 2 abajo, deliberadamente sin corregir esta sesión).
+
+### 2 — Reconciliación PDF↔Excel nativo de los 4 lotes del piloto (entrada 97)
+
+Control de auditoría (nunca de corrección) entre lo que capturó el Módulo 1 desde el PDF y el Excel
+nativo del banco, para separar "falló la extracción" de "falló la clasificación":
+
+| Lote | Cobertura de filas | Estado |
+|---|---|---|
+| Galicia Cta Cte (326 filas) | **100%** | Perfecto |
+| Galicia Cta Especial (1081 filas, alta nueva de Bracci esta sesión) | **100%** | Perfecto |
+| Santander ARS (161 nativo / 158 crudo) | **19,3%**, sin explicar | Abierto — JP lo retoma él mismo, a mano, con los dos archivos |
+| Macro cta. corriente (1335 filas) | **99,7%** tras corregir un bug propio de comparación (columna débito/crédito invertida en mi script, no en el sistema) | Resuelto — no era un hallazgo del banco |
+
+**Hallazgo real y confirmado en Macro, con causa raíz aislada:** 511 de 1331 filas emparejadas (38%)
+traen un CUIT en el "Concepto" del Excel nativo que NO aparece en la `descripcion` que captura el
+sistema hoy. Se confirmó con una muestra de 12 filas contra el texto crudo del PDF original: **12/12
+tienen el CUIT presente en el texto crudo** — no es que el PDF no lo tenga, es que el pipeline de
+extracción de Macro lo descarta en algún punto entre el texto crudo y `descripcion`. Es un bug de
+extracción, corregible. **JP pidió explícitamente no implementarlo esta sesión** — queda pendiente
+para otra sesión, con el diagnóstico ya completo (no hace falta re-investigar, solo corregir).
+Galicia: 0 casos de este patrón en los dos lotes — el fenómeno es específico de Macro.
+
+### 3 — Incidente de seguridad #10 (entrada 97)
+
+Un script temporal de diagnóstico (buscando la fila de encabezado del Excel nativo de Santander)
+imprimió filas completas en vez de solo estructura, exponiendo en el transcript un número de cuenta
+y una fila con CUIT/importe reales de un cliente ya conocido del proyecto. **Autodetectado por el
+propio agente**, sin que JP tuviera que señalarlo. Registrado en `docs/seguridad/registro-incidentes.md`
+#10 por categoría, sin repetir ningún valor real. JP evaluó la severidad como acotada (cliente
+conocido, no un tercero ajeno) y decidió explícitamente no convocar a `seguridad-datos-financieros`
+para este caso — entrada liviana en su lugar. **Cerrado.** Método corregido para el resto de la
+sesión (y en adelante, ver `agents/personas/` o preguntar si hace falta el detalle): ningún script
+vuelve a imprimir una fila completa de `privado/`, solo tipos/posiciones/agregados, con revisión de
+JP del código completo antes de correr cualquier script nuevo contra `privado/`.
+
+### 4 — Tres capas de bugs de CI, la misma sesión (entradas 99-101)
+
+Un reporte de JP con una captura de GitHub Actions destapó, en cadena, tres bugs preexistentes y
+distintos en el job `verificar` — cada uno tapando al siguiente, así que arreglar uno solo revelaba
+el próximo. Ninguno relacionado con el contenido de las entradas 93-98:
+
+1. **R37 autodenunciándose** (`tools/barrido-credenciales.ts`): `ci.yml` generaba su propio `.env`
+   de CI con casi todo aleatorio, pero dos claves de S3 quedaban como literales fijos — al matchear
+   el patrón de nombre de secreto, el propio archivo se detectaba a sí mismo como fuga cada vez.
+   Tercera vez con el mismo patrón histórico. Fix: generar también esas dos claves, con su propio
+   test de mutación nuevo.
+2. **Allowlist de `tools/barrido-fuga.ts` desactualizada + `.env` con huella imposible**: el
+   allowlist commiteado no se regeneraba desde el 2026-08-10 (toda la sesión se commiteó después), y
+   además 11 de los candidatos venían del propio `.env` de CI, cuyo contenido cambia en cada corrida
+   — un candidato que ningún allowlist estático puede cubrir jamás. Fix de dos partes: `.env` exento
+   por diseño (solo en modo CI, con prueba de mutación real), y el allowlist regenerado filtrando a
+   solo archivos trackeados por git.
+3. **El propio grep de claves privadas de R37 en `ci.yml`** excluía `*.md` pero no dos archivos de
+   test que a propósito contienen un literal de clave privada sintético y truncado (prueban al
+   redactor). Fix: exclusión por ruta exacta de esos dos archivos, nunca por wildcard.
+
+Las tres, con convocatoria real de agentes (`devops` las tres veces; `seguridad-datos-financieros` +
+`security-engineer` en la segunda), prueba de mutación en cada una, y sin ningún band-aid. **Resultado:
+dos corridas de CI consecutivas, verdes de punta a punta (`32546781915` y la siguiente) — las
+primeras corridas genuinamente verdes de este repo.**
+
+### Estado final
+
+- Todo commiteado y pusheado a `origin/main`, `git status` limpio, sin scripts temporales ni
+  procesos huérfanos.
+- Funcionando: el export enriquecido (Galicia + Santander ya en manos de Laura), la reconciliación
+  documentada, CI en verde.
+- **Pendiente explícito, para otra sesión:** el bug de extracción de Macro (sección 2, causa raíz ya
+  aislada — corregir cuando JP lo priorice) y la reconciliación de Santander (JP la retoma él mismo
+  a mano). Todo lo demás del backlog — Capa D, persistencia real de `reconocimiento_movimiento`, las
+  12+3 consultas pendientes de Laura, la limpieza de `.claude/worktrees/` — sigue donde ya estaba
+  registrado, sin novedad de hoy.
+
+---
+
 ## 2026-08-21 (101) — Tercera capa de CI en la misma sesión: el propio grep de R37 en `ci.yml` excluía `*.md` pero no los dos archivos de test que prueban al redactor con una clave privada sintética. `devops` convocado por tercera vez.
 
 **Herramienta:** Claude Code, continúa la entrada 100. Con el bug de `tools/barrido-fuga.ts`
