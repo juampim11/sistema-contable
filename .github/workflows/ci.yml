@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           gen() { openssl rand -hex 24; }
           PG_PASS="$(gen)"; APP_PASS="$(gen)"; JOB_PASS="$(gen)"; MINIO_PASS="$(gen)"
-          LEC_SECRET="$(gen)"; ESC_SECRET="$(gen)"
+          LEC_KEY="$(gen)"; LEC_SECRET="$(gen)"; ESC_KEY="$(gen)"; ESC_SECRET="$(gen)"
           {
             echo "APP_ENTORNO=local"
             echo "APP_TIMEZONE=America/Argentina/Cordoba"
@@ -68,12 +68,18 @@ jobs:
             echo "S3_REGION=us-east-1"
             echo "S3_ENDPOINT=http://localhost:9000"
             echo "S3_FORCE_PATH_STYLE=true"
-            # Identificadores propios de CI: NO se reusan los de ningún entorno real. R37 marcó
-            # esta línea cuando decían `app_lectura_dev` — porque eran, cadena por cadena, los
-            # valores vivos del `.env`. El cruce con los `.env*` hizo exactamente su trabajo.
-            echo "S3_LECTURA_ACCESS_KEY_ID=ci_lectura"
+            # 🔴 Identificadores propios de CI, GENERADOS — no un literal fijo, dos veces ya (ver
+            # HANDOFF): primero fue `app_lectura_dev`, después `ci_lectura`/`ci_escritura`, y las dos
+            # veces el problema fue el mismo — cualquier literal fijo en un KEY con nombre secreto
+            # (`ACCESS_KEY` matchea `NOMBRE_SECRETO`) hace que ESTE MISMO archivo se autodenuncie: el
+            # `.env` que este paso genera queda con esa cadena, y `barrer()` la encuentra otra vez en
+            # `ci.yml` como "valor vivo" — el checkeo no distingue "coincide con un entorno real" de
+            # "coincide con lo que el propio archivo acaba de escribir". Cambiar el string de vuelta no
+            # arregla nada: solo generado (como el resto de los secretos de este bloque) el valor deja
+            # de ser un literal trackeado, así que no hay nada que `barrer()` pueda encontrar.
+            echo "S3_LECTURA_ACCESS_KEY_ID=${LEC_KEY}"
             echo "S3_LECTURA_SECRET_ACCESS_KEY=${LEC_SECRET}"
-            echo "S3_ESCRITURA_ACCESS_KEY_ID=ci_escritura"
+            echo "S3_ESCRITURA_ACCESS_KEY_ID=${ESC_KEY}"
             echo "S3_ESCRITURA_SECRET_ACCESS_KEY=${ESC_SECRET}"
             echo "AUTH_PROVIDER=dev-identidad-fija"
             echo "DEV_USER_ID="

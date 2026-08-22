@@ -6,6 +6,100 @@
 
 ---
 
+## 2026-08-21 (99) — 🔴 CI roto por el push de la entrada 98 — no por el contenido del commit, sino porque `ci.yml` se autodenuncia a sí mismo (R37/incidente #3), tercera vez con el mismo patrón. `devops` convocado para revisar el fix.
+
+**Herramienta:** Claude Code. JP reportó, con captura de GitHub Actions, que el push del commit
+`1b2b2a8` (entrada 98) rompió el job `verificar` de CI. Pidió corregirlo para los próximos push.
+
+**Diagnóstico, contra el log real de CI (`gh run view --log`), no supuesto:**
+
+```
+FAIL tools/barrido-credenciales.test.ts > R37 — el repo, hoy > ningún archivo trackeado contiene una credencial
+AssertionError: ... Incidente #3: expected [ …(2) ] to deeply equal []
++ "valor-vivo .github/workflows/ci.yml S3_LECTURA_ACCESS_KEY_ID (len=10 sha=77ac6c6c)"
++ "valor-vivo .github/workflows/ci.yml S3_ESCRITURA_ACCESS_KEY_ID (len=12 sha=88dacdcf)"
+```
+
+**No es nada de mi commit.** `.github/workflows/ci.yml` genera su propio `.env` de CI con
+`openssl rand -hex 24` para la mayoría de los secretos, pero `S3_LECTURA_ACCESS_KEY_ID`/
+`S3_ESCRITURA_ACCESS_KEY_ID` quedaban como **literales fijos** (`ci_lectura`/`ci_escritura`). Como la
+clave contiene "ACCESS_KEY" (matchea `NOMBRE_SECRETO` en `tools/barrido-credenciales.ts`), y el propio
+paso de CI escribe ese literal al `.env` real de esa corrida, `barrer()` — que compara cada archivo
+trackeado contra los valores vivos de `.env` — encuentra ese mismo literal DENTRO del propio `ci.yml`:
+**el archivo se autodenuncia, siempre, sin relación con ningún leak real.** 🔴 **Tercera vez con el
+mismo patrón**, no la primera: el propio comentario del archivo ya documentaba que antes decía
+`app_lectura_dev` y se cambió por `ci_lectura`/`ci_escritura` — un cambio de STRING, no de mecanismo,
+así que el bug volvía a dispararse con el nuevo literal. Confirmado con el historial real de runs
+(`gh run list`): dos corridas de CI rotas anteriores, mismo patrón (2026-08-18, entrada 72; 2026-08-15).
+
+**Fix:** `LEC_KEY="$(gen)"` / `ESC_KEY="$(gen)"` junto a las otras variables generadas en `ci.yml`, y
+el `echo` de `S3_LECTURA_ACCESS_KEY_ID` pasa de imprimir el literal viejo (diez caracteres, "ci" seguido
+de "lectura") a imprimir `${LEC_KEY}` — mismo patrón que `S3_LECTURA_SECRET_ACCESS_KEY=${LEC_SECRET}`,
+que YA funcionaba así. Idem para
+ESC_KEY/ESCRITURA. **No es cambiar el string de vuelta — es lo que ya falló dos veces.** Generado, el
+valor nunca es un literal trackeado: `${LEC_KEY}`/`${ESC_KEY}` en el texto de `ci.yml` no puede
+coincidir con el hex aleatorio de 48 caracteres que produce en tiempo de ejecución, por construcción,
+no por casualidad. Borradas las dos entradas de `PERMITIDOS` en `tools/barrido-credenciales.ts` que
+documentaban los valores literales viejos — quedaron muertas: `esMarcador()` ya reconoce `${VAR}` como
+marcador (empieza con `$`), así que ni siquiera llega a evaluarse contra `PERMITIDOS`.
+
+**Convocado `devops` de verdad** (CI/gate/secretos es su dominio, CLAUDE.md §3.1 lo exige). Dictamen:
+**mecanismo correcto** — verificó a mano `esMarcador('${LEC_KEY}')` y el diagnóstico de auto-denuncia;
+revisó los tres consumidores reales (`docker-compose.yml`/`minio-init`, `object-storage.ts` con Zod
+`z.string().min(1)` sin tope de formato/longitud) y confirmó, por grep, que ningún otro lugar del repo
+depende del literal viejo. 🔴 **Hallazgo real que mi verificación local no podía cubrir:** corrió
+`gh run list --workflow=ci.yml --limit 30` — **las 5 corridas de CI que existen en la historia del repo
+terminaron en `failure`, ninguna llegó nunca a verde.** O sea que "el mismo patrón que
+`S3_LECTURA_SECRET_ACCESS_KEY=${LEC_SECRET}`, que YA funciona así" era un supuesto razonable, no un
+hecho probado por una corrida exitosa — nunca hubo una que probara un secreto de 48 hex contra `mc
+admin user add`. Y el paso de `minio-init` tiene `|| echo "AVISO: ..."` (silencioso, no falla el job)
+si MinIO rechazara alguna vez ese largo — el primer síntoma visible sería un fallo de auth en
+`packages/almacenamiento/tests/lectura.test.ts`/`descarga.test.ts`, no en el paso de infraestructura.
+**No es un motivo para no pushear** — es la razón por la que el cierre real de esta tarea es mirar la
+próxima corrida de CI hasta el paso `Tests`, no solo hasta donde fallaba hoy.
+
+`devops` propuso además convertir la lección en un test propio, angosto, en vez de dejarla en un
+comentario que ya se demostró que no alcanza (iba por la tercera vez con el mismo patrón). Implementado:
+nuevo `describe` en `tools/barrido-credenciales.test.ts` que parsea el bloque `{ ... } > .env` de
+`ci.yml` y afirma que TODA clave con forma `NOMBRE_SECRETO` (ahora exportada) tiene un valor marcador
+(`${...}`), nunca un literal — con su propia prueba por mutación (planta el literal viejo, confirma
+rojo; confirma verde con el generado). Encontró, al escribirlo, dos hallazgos reales más, los dos
+corregidos antes de cerrar: (1) el test no consultaba `PERMITIDOS`, y por eso denunciaba en falso la
+clave `IDENTIFICADOR_PEPPER_ID` (vale "v1" — ya permitido, con motivo escrito, para la clase
+'asignacion' — corregido para que el nuevo test respete la misma allowlist que `barrer()` usa para esa
+clase); (2) **esta misma
+entrada de HANDOFF, escrita antes de este fix, citaba el código viejo en formato `CLAVE=valor` — y
+`barrer()` la encontró como una asignación real contra el repo.** Reescrita para describir el literal
+sin la forma `CLAVE=valor` exacta (mismo problema, un nivel más arriba: hasta documentar el bug en
+prosa puede disparar el detector que el bug rompía). Agregada también una nota en la docstring de
+`PERMITIDOS` (`tools/barrido-credenciales.ts`) preguntando, antes de la próxima excepción sobre
+`ci.yml`: *"¿por qué este valor no se genera?"* — el reflejo exacto que produjo el incidente dos veces.
+
+**Verificado localmente:** `pnpm typecheck` limpio, `npx vitest run tools/barrido-credenciales.test.ts
+tools/barrido-fuga.test.ts` → **41 tests verde** (+2 sobre la corrida anterior de esta misma entrada:
+el caso real del generador de `.env` + su mutación), `barrer()` llamado directo contra el repo real:
+**0 hallazgos totales**. 🔴 **La primera corrida del gate completo con este fix FALLÓ igual** — mismo
+patrón meta, un nivel más arriba: la propia redacción de esta entrada (el párrafo de arriba) citaba,
+en formato literal `CLAVE=valor`, la clave `IDENTIFICADOR_PEPPER_ID` con su valor de ejemplo, y
+`barrer()` la encontró como asignación real contra `HANDOFF.md`. Corregido (se describe la clave y el
+valor por separado, nunca unidos por `=`) y confirmado con `barrer()` directo antes de relanzar.
+**Segunda corrida del gate completo: exit code 0 — 80 archivos / 1659 tests / 0 fallos / 7 todo,
+729,01s.** 🔴 **Y volvió a pasar, una tercera vez dentro de esta misma entrada:** el párrafo que
+documentaba ese segundo incidente (el que estás leyendo ahora, reescrito) citó otra vez el mismo patrón
+literal al explicarlo — el pre-commit hook lo agarró al intentar comitear, después de que la segunda
+corrida ya había cerrado en verde genuino. La lección, para el resto de este documento de acá en más:
+describir un hallazgo de `CLAVE=valor` en prosa NUNCA reproduce esa forma exacta — se nombra la clave y
+el valor por separado, siempre, sin excepción, ni para explicar por qué falló. **Tercera corrida del
+gate completo, la que efectivamente cierra esta entrada: exit code 0 — 80 archivos / 1659 tests / 0
+fallos / 7 todo, 328,81s.**
+
+**Pendiente real, explícito — no se cierra esta entrada hasta confirmarlo:** mirar la próxima corrida
+de CI en GitHub Actions hasta el final del job `verificar` (no solo hasta el paso que fallaba hoy),
+específicamente el paso de `minio-init` y la suite de `packages/almacenamiento`, para descartar el
+punto ciego que señaló `devops` — la primera corrida verde real de este repo.
+
+---
+
 ## 2026-08-21 (98) — Dos columnas nuevas para el feedback de Laura: "¿Qué es este movimiento? / ¿Quién es?" + "Comentarios", con el principio de silencio=aprobación en "Alta" explicado en la leyenda. `ux-designer` convocado de verdad.
 
 **Herramienta:** Claude Code, sesión nueva ("contexto de re-entrada"). Pedido de JP: capturar el

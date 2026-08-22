@@ -21,15 +21,17 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { raizDelRepo } from './cargar-env.ts';
 import {
   archivosTrackeados,
   barrer,
   esMarcador,
   negacionesDeEnv,
+  NOMBRE_SECRETO,
   PERMITIDOS,
   valoresVivos,
   type Hallazgo,
@@ -179,6 +181,61 @@ describe('R37 — la allowlist no acumula entradas muertas', () => {
     const trackeados = new Set(archivosTrackeados());
     const muertos = PERMITIDOS.filter((p) => !trackeados.has(p.archivo)).map((p) => p.archivo);
     expect(muertos, 'permitidos sobre archivos que ya no están trackeados').toEqual([]);
+  });
+});
+
+describe('R37 — el generador de `.env` de CI nunca escribe un literal para una clave con forma de secreto', () => {
+  /**
+   * Extrae los `echo "CLAVE=valor"` del bloque `{ ... } > .env` de `ci.yml` — el paso que genera el
+   * `.env` real de esa corrida. No exige el bloque exacto de hoy: cualquier `echo "CLAVE=algo"` futuro
+   * dentro de ese bloque entra a la revisión, sin tener que acordarse de agregarlo a mano.
+   */
+  function asignacionesDelGeneradorDeEnv(textoCiYml: string): ReadonlyArray<{ readonly clave: string; readonly valor: string }> {
+    const finDelBloque = textoCiYml.indexOf('} > .env');
+    const bloque = finDelBloque === -1 ? textoCiYml : textoCiYml.slice(0, finDelBloque);
+    const asignaciones: { clave: string; valor: string }[] = [];
+    for (const m of bloque.matchAll(/echo "([A-Z0-9_]+)=([^"]*)"/g)) {
+      asignaciones.push({ clave: m[1] ?? '', valor: m[2] ?? '' });
+    }
+    return asignaciones;
+  }
+
+  /**
+   * El chequeo real, factorizado para reusarlo en el caso real y en el de mutación de abajo. Respeta
+   * `PERMITIDOS` (mismo criterio que `barrer()` para su clase 'asignacion' — acá NO es 'valor-vivo',
+   * así que sí corresponde consultar la allowlist; `IDENTIFICADOR_PEPPER_ID=v1` es el caso real que ya
+   * está permitido, y sin este chequeo el test lo denuncia igual, un falso positivo).
+   */
+  function clavesSecretasConLiteral(archivo: string, asignaciones: ReadonlyArray<{ readonly clave: string; readonly valor: string }>): readonly string[] {
+    const reSecreto = new RegExp(`^${NOMBRE_SECRETO}$`);
+    return asignaciones
+      .filter((a) => reSecreto.test(a.clave) && !esMarcador(a.valor))
+      .filter((a) => !PERMITIDOS.some((p) => p.archivo === archivo && p.clave === a.clave))
+      .map((a) => a.clave);
+  }
+
+  it('🔴 caso real (HANDOFF entrada 99): dos veces ya un literal fijo en una clave de forma secreta ' +
+    'hizo que `ci.yml` se autodenunciara contra su propio `.env` generado — nunca más', () => {
+    const texto = readFileSync(join(raizDelRepo(), '.github/workflows/ci.yml'), 'utf8');
+    const asignaciones = asignacionesDelGeneradorDeEnv(texto);
+    expect(
+      asignaciones.length,
+      'no encontré ninguna asignación en el bloque de .env de CI — el parseo se rompió (¿cambió el ' +
+        'formato del paso?), revisar a mano antes de confiar en este test',
+    ).toBeGreaterThan(5);
+    expect(
+      clavesSecretasConLiteral('.github/workflows/ci.yml', asignaciones),
+      'una clave con forma de secreto en el generador de .env de CI tiene un valor LITERAL — ' +
+        'generalo con gen() (openssl rand -hex 24), como el resto del bloque; nunca lo escribas fijo',
+    ).toEqual([]);
+  });
+
+  it('si alguien reintroduce un literal, el chequeo lo agarra (prueba por mutación, no solo en verde)', () => {
+    const conBug = '{\n  echo "S3_LECTURA_ACCESS_KEY_ID=ci_lectura"\n  echo "S3_LECTURA_SECRET_ACCESS_KEY=${LEC_SECRET}"\n} > .env';
+    expect(clavesSecretasConLiteral('.github/workflows/ci.yml', asignacionesDelGeneradorDeEnv(conBug))).toEqual(['S3_LECTURA_ACCESS_KEY_ID']);
+
+    const sinBug = '{\n  echo "S3_LECTURA_ACCESS_KEY_ID=${LEC_KEY}"\n  echo "S3_LECTURA_SECRET_ACCESS_KEY=${LEC_SECRET}"\n} > .env';
+    expect(clavesSecretasConLiteral('.github/workflows/ci.yml', asignacionesDelGeneradorDeEnv(sinBug))).toEqual([]);
   });
 });
 

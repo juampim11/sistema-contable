@@ -57,6 +57,14 @@ export type Hallazgo = {
  * El motivo es parte del dato a propósito: un permitido sin razón escrita es una excepción que nadie
  * puede revisar después, y este archivo existe justamente porque una excepción sin revisar
  * (`!.env.example` en `.gitignore`) sobrevivió a toda la vida del repo.
+ *
+ * 🔴 Antes de agregar acá una excepción sobre `.github/workflows/ci.yml`: ¿por qué este valor no se
+ * GENERA (`openssl rand -hex 24`, como el resto del bloque de `.env` de CI)? Ya pasó DOS veces
+ * (`app_lectura_dev`, después `ci_lectura`/`ci_escritura`, HANDOFF entrada 99) que la respuesta
+ * correcta era generar el valor, no documentar la excepción — un literal fijo en una clave con forma
+ * `NOMBRE_SECRETO` hace que `ci.yml` se autodenuncie contra su propio `.env` generado, y ningún
+ * permitido salva eso (`valor-vivo` pasa por encima de esta lista, a propósito). El test "el generador
+ * de `.env` de CI nunca escribe un literal..." (`barrido-credenciales.test.ts`) fija esto — devops.
  */
 export const PERMITIDOS: readonly { readonly archivo: string; readonly clave: string; readonly motivo: string }[] = [
   {
@@ -66,21 +74,6 @@ export const PERMITIDOS: readonly { readonly archivo: string; readonly clave: st
       'Contenedor de servicio EFIMERO del runner: nace y muere con el job, solo en loopback, y no ' +
       'lo comparte ningun entorno. Queda permitido SOLO mientras el valor no coincida con ninguno ' +
       'de un .env real — esa parte no la exime este permitido, la verifica `valoresVivos`.',
-  },
-  {
-    archivo: '.github/workflows/ci.yml',
-    clave: 'S3_LECTURA_ACCESS_KEY_ID',
-    motivo:
-      'Es un NOMBRE DE USUARIO de MinIO, no un secreto — el par secreto es S3_LECTURA_SECRET_ACCESS_KEY, ' +
-      'que en CI se genera aleatorio por corrida. Y es exclusivo de CI (`ci_lectura`): no se reusa el ' +
-      'identificador de ningun entorno real, asi que el cruce con `valoresVivos` no lo puede alcanzar.',
-  },
-  {
-    archivo: '.github/workflows/ci.yml',
-    clave: 'S3_ESCRITURA_ACCESS_KEY_ID',
-    motivo:
-      'Idem: nombre de usuario de MinIO exclusivo de CI (`ci_escritura`). El secreto del par se genera ' +
-      'aleatorio en cada corrida y no queda escrito en ningun archivo trackeado.',
   },
   {
     archivo: '.github/workflows/ci.yml',
@@ -127,7 +120,10 @@ const URL_CON_CRED = /\b[a-z][a-z0-9+.-]{1,15}:\/\/[A-Za-z0-9._~%-]+:[^\s@/'"`<>
  * barrido devuelve 73 hallazgos de los cuales 66 son nombres de variables — y un barrido con 90 % de
  * ruido es un barrido que alguien apaga.
  */
-const NOMBRE_SECRETO =
+/** Exportada para `tools/barrido-credenciales.test.ts` — el caso que fija que el generador de `.env`
+ *  de CI nunca escribe un literal para una clave con esta forma (ver el caso "el generador de .env de
+ *  CI nunca escribe un literal..."). */
+export const NOMBRE_SECRETO =
   '[A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|ACCESS_KEY|PRIVATE_KEY|API_KEY|PEPPER|CREDENTIAL)[A-Z0-9_]*';
 
 const ASIGNACION = new RegExp(
