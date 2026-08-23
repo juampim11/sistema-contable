@@ -164,6 +164,14 @@ type Opciones = {
   readonly pegadoPorPagina?: readonly (string | null)[];
   /** Ídem para el renglón `Sr(es):`, que es de donde sale la razón social. `null` omite la fila. */
   readonly razonSocialPorPagina?: readonly (string | null)[];
+  /**
+   * Movimientos que se agregan al final de la sección `CUENTA CORRIENTE BANCARIA`, antes de su
+   * `SALDO FINAL`. Vacío/omitido reproduce EXACTAMENTE el documento de siempre — no mueve ni un índice
+   * de `movimientos` ni el conteo total que usan los demás tests. Existe para poder aislar un caso
+   * puntual (p.ej. el CUIT que llega por `REFERENCIA`) sin tocar el fixture ni los índices que ya
+   * consumen el resto de los tests.
+   */
+  readonly movimientosExtraBancaria?: readonly Movimiento[];
 };
 
 /**
@@ -463,6 +471,10 @@ function documento(opciones: Opciones = {}): readonly FilaGeometrica[] {
     debito: '100,00',
     saldo: '1.500,00',
   });
+  // Ver `Opciones.movimientosExtraBancaria`: por defecto no agrega nada y el fixture es idéntico al de
+  // siempre. `SALDO FINAL` queda con el literal fijo de arriba a propósito — estos tests aislados no
+  // ejercitan `verificarAritmetica`, solo los campos del movimiento agregado.
+  for (const extra of opciones.movimientosExtraBancaria ?? []) movimiento(extra);
   if (opciones.sinSaldoFinalDeLaBancaria !== true) saldoFinal('1.500,00');
   // 🔴 La SEGUNDA grafía del mismo literal (§9, trampa 1): con igualdad exacta se capturan 2 de 3.
   anexo(TOTAL_COBRADO.pegado, '34,00');
@@ -649,6 +661,130 @@ describe('§7 — la glosa: 1 a 4 fragmentos, sin truncar, sin comerse la refere
     ).toBe(true);
   });
 
+});
+
+// -----------------------------------------------------------------------------
+/**
+ * Regresión: ~38 % medido (511/1331) de los movimientos pierde el CUIT de la contraparte porque el banco
+ * lo imprime en `REFERENCIA` (once dígitos) en vez de en la glosa, y `RE_REFERENCIA` (1 a 10 dígitos) lo
+ * descartaba entero — sin llegar ni a `descripcion` ni a `referencias`. El destino es la glosa (no
+ * `referencias`, que es para el número de operación del banco): así lo recoge `depurarGlosa` por forma, el
+ * mismo camino que ya resuelve el 62 % donde el CUIT viene naturalmente en el texto.
+ *
+ * Usa `documento({ movimientosExtraBancaria: [...] })` — una llamada **aparte**, no el `leido` compartido
+ * del resto del archivo — así que no mueve un solo índice ni conteo de los tests de arriba.
+ */
+describe('regresión — el CUIT que llega por REFERENCIA entra a la glosa, no a `referencias`', () => {
+  // Prefijo AFIP válido (`20`), CUIT íntegramente inventado.
+  const CUIT_SINTETICO_EN_REFERENCIA = '20111111112';
+  // Once dígitos, pero SIN prefijo AFIP válido: no tiene forma de CUIT.
+  const ONCE_DIGITOS_SIN_FORMA_DE_CUIT = '99999999999';
+
+  const leidoConCuit = leerMacro(
+    documento({
+      movimientosExtraBancaria: [
+        {
+          fecha: '03/11/25',
+          glosa: [{ texto: 'PAGO SINTETICO A TERCERO', x: X.glosa }],
+          referencia: CUIT_SINTETICO_EN_REFERENCIA,
+          credito: '111,11',
+          saldo: '1.611,11',
+        },
+        {
+          fecha: '03/11/25',
+          glosa: [{ texto: 'PAGO SINTETICO SIN CUIT VALIDO', x: X.glosa }],
+          referencia: ONCE_DIGITOS_SIN_FORMA_DE_CUIT,
+          debito: '111,11',
+          saldo: '1.500,00',
+        },
+      ],
+    }),
+  );
+  const [, , ctaBancariaConExtra] = leidoConCuit.cuentas;
+  const conCuit = () => ctaBancariaConExtra?.movimientos[6];
+  const sinFormaDeCuit = () => ctaBancariaConExtra?.movimientos[7];
+
+  it('un CUIT con prefijo AFIP válido en REFERENCIA se agrega a la descripción', () => {
+    expect(conCuit()?.descripcion).toBe(`PAGO SINTETICO A TERCERO ${CUIT_SINTETICO_EN_REFERENCIA}`);
+    expect(conCuit()?.descripcionLineas).toEqual([
+      `PAGO SINTETICO A TERCERO ${CUIT_SINTETICO_EN_REFERENCIA}`,
+    ]);
+    // No es una referencia de operación: sigue sin serlo. `referencias`/`referenciaExterna` no cambian.
+    expect(conCuit()?.referencias).toEqual([]);
+    expect(conCuit()?.referenciaExterna).toBeUndefined();
+  });
+
+  /**
+   * Guarda negativa: once dígitos sin prefijo AFIP válido no tienen forma de CUIT y se descartan
+   * exactamente como hoy — prueba que el detector es el de forma-CUIT real, no "cualquier corrida de
+   * once dígitos".
+   */
+  it('once dígitos SIN forma de CUIT en REFERENCIA se descartan igual que hoy', () => {
+    expect(sinFormaDeCuit()?.descripcion).toBe('PAGO SINTETICO SIN CUIT VALIDO');
+    expect(sinFormaDeCuit()?.descripcionLineas).toEqual(['PAGO SINTETICO SIN CUIT VALIDO']);
+    expect(sinFormaDeCuit()?.referencias).toEqual([]);
+    expect(sinFormaDeCuit()?.referenciaExterna).toBeUndefined();
+  });
+
+  /**
+   * 🔴 Regresión encontrada por `tester` sobre el fix de arriba: cuando el CUIT YA viene naturalmente en
+   * la glosa (el 62 % que ya funcionaba) Y ADEMÁS aparece en `REFERENCIA`, concatenar sin chequear
+   * contención deja `"...20111111112 20111111112"` — dos CUIT de 11 dígitos con un separador en el medio
+   * son, por forma, un CBU de 22 dígitos. `depurarGlosa` evalúa `RE_CBU` antes que `RE_CUIT`, así que
+   * reclasifica la línea entera como CBU y el CUIT real se pierde (`identificadores.cuit: []`).
+   */
+  it('el CUIT que YA está en la glosa no se duplica aunque REFERENCIA lo repita', () => {
+    const leido = leerMacro(
+      documento({
+        movimientosExtraBancaria: [
+          {
+            fecha: '04/11/25',
+            glosa: [{ texto: `PAGO A PROVEEDOR CUIT ${CUIT_SINTETICO_EN_REFERENCIA}`, x: X.glosa }],
+            referencia: CUIT_SINTETICO_EN_REFERENCIA,
+            debito: '50,00',
+            saldo: '1.450,00',
+          },
+        ],
+      }),
+    );
+    const [, , cuenta] = leido.cuentas;
+    const mov = cuenta?.movimientos.at(-1);
+    expect(mov?.descripcion).toBe(`PAGO A PROVEEDOR CUIT ${CUIT_SINTETICO_EN_REFERENCIA}`);
+    // Una sola aparición: nunca la forma `\d{11}\D\d{11}` que dispara el falso-CBU en `depurarGlosa`.
+    expect(mov?.descripcion.match(new RegExp(CUIT_SINTETICO_EN_REFERENCIA, 'g'))).toHaveLength(1);
+  });
+
+  /**
+   * 🔴 El otro origen de la misma duplicación: el solape geométrico de 0.5 pt entre `COLUMNAS.glosa.hasta`
+   * (264.0, exclusivo) y la tolerancia de `COLUMNAS.referencia` (264.0 ± 0.5). Un fragmento en
+   * `x = 263.7` cae en las dos ventanas a la vez: `fragmentosEnBanda` lo toma para la glosa y
+   * `fragmentoEnX` lo toma TAMBIÉN como `refTexto` — es el mismo fragmento leído dos veces, no una
+   * columna `REFERENCIA` real. No se toca ninguna ventana de columna: el chequeo de contención alcanza.
+   */
+  it('un fragmento de glosa en la zona de solape con REFERENCIA no se duplica', () => {
+    const leido = leerMacro(
+      documento({
+        movimientosExtraBancaria: [
+          {
+            fecha: '05/11/25',
+            glosa: [
+              { texto: 'PAGO CON CUIT AL BORDE', x: X.glosa },
+              // En la franja de solape (263.5–264.5): `fragmentosEnBanda` [70.3,264.0) lo toma para la
+              // glosa y `fragmentoEnX(264.0, 0.5)` lo toma también como referencia. Sin `m.referencia`
+              // separado: es EL MISMO fragmento, no una columna distinta.
+              { texto: CUIT_SINTETICO_EN_REFERENCIA, x: 263.7 },
+            ],
+            debito: '25,00',
+            saldo: '1.425,00',
+          },
+        ],
+      }),
+    );
+    const [, , cuenta] = leido.cuentas;
+    const mov = cuenta?.movimientos.at(-1);
+    expect(mov?.descripcion).toBe(`PAGO CON CUIT AL BORDE ${CUIT_SINTETICO_EN_REFERENCIA}`);
+    expect(mov?.descripcion.match(new RegExp(CUIT_SINTETICO_EN_REFERENCIA, 'g'))).toHaveLength(1);
+  });
 });
 
 // -----------------------------------------------------------------------------

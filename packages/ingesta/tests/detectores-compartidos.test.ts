@@ -22,9 +22,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { contieneDatoSensible, DETECTORES } from '@sistema-contable/shared/seguridad';
+import { contieneDatoSensible, DETECTORES, redactarTexto } from '@sistema-contable/shared/seguridad';
 import { RE_CBU, RE_CORRIDA_LARGA, RE_CUIT, RE_DNI } from '@sistema-contable/shared/seguridad';
-import { contieneIdentificador, PATRONES } from '../src/glosa.ts';
+import { contieneIdentificador, depurarGlosa, PATRONES } from '../src/glosa.ts';
 
 describe('paridad estructural: redactar.ts y glosa.ts importan el MISMO catálogo', () => {
   /**
@@ -143,4 +143,94 @@ describe('separadores comunes en el CBU: mismo resultado en los dos consumidores
     expect(contieneDatoSensible(texto)).toBe(false);
     expect(contieneIdentificador(texto)).toBe(false);
   });
+});
+
+describe('CUIT pegado a una letra: el caso real que \\b no cubría (569/1346 movimientos medidos en Macro)', () => {
+  // Prefijo AFIP válido (20) + 8 dígitos de orden + dígito verificador, todo inventado — sin relación con
+  // ningún CUIT real.
+  const CUIT_SINTETICO = '20111111112';
+
+  it('CUIT sintético pegado a una palabra a la IZQUIERDA (DOC + CUIT): ahora se detecta en los dos consumidores', () => {
+    const texto = `DOC${CUIT_SINTETICO}`;
+    expect(contieneDatoSensible(texto)).toBe(true);
+    expect(contieneIdentificador(texto)).toBe(true);
+
+    const { detectores } = redactarTexto(texto);
+    expect(detectores).toContain('cuit');
+
+    const { identificadores } = depurarGlosa(texto);
+    expect(identificadores.cuit).toEqual([CUIT_SINTETICO]);
+  });
+
+  it('CUIT sintético pegado a una palabra a la DERECHA (CUIT + VARIOS): ahora se detecta en los dos consumidores', () => {
+    const texto = `${CUIT_SINTETICO}VARIOS`;
+    expect(contieneDatoSensible(texto)).toBe(true);
+    expect(contieneIdentificador(texto)).toBe(true);
+
+    const { detectores } = redactarTexto(texto);
+    expect(detectores).toContain('cuit');
+
+    const { identificadores } = depurarGlosa(texto);
+    expect(identificadores.cuit).toEqual([CUIT_SINTETICO]);
+  });
+
+  it('un CUIT con un dígito de más pegado directamente después sigue SIN detectarse como cuit (cae en corrida_larga/catch-all)', () => {
+    // Mismo caso que redactor.test.ts:162-167, confirmado acá también del lado de la glosa: el residuo no
+    // cambió con el fix de arriba, porque el lookaround sigue excluyendo dígito adyacente (solo se dejó de
+    // excluir letra adyacente).
+    const texto = 'cliente 209999999955 ok';
+    const { detectores } = redactarTexto(texto);
+    expect(detectores).toContain('corrida_larga');
+    expect(detectores).not.toContain('cuit');
+
+    const { identificadores } = depurarGlosa(texto);
+    expect(identificadores.cuit).toEqual([]);
+    expect(identificadores.documento).toEqual(['209999999955']);
+  });
+});
+
+describe('hallazgos de prueba de mutación (2026-08-22): dos mutaciones sobrevivieron a la suite antes de este test', () => {
+  /**
+   * 🔴 MUTACIÓN SOBREVIVIENTE #1: quitar el lookbehind IZQUIERDO de `RE_CUIT` (`(?<!\d)`) no rompía
+   * ningún test existente. El comentario de `detectores-forma.ts` (líneas 117-124) ya explicaba el motivo
+   * de este lookbehind — "defensa en profundidad" para no recortar una corrida más larga a un CUIT
+   * plausible pero falso si por lo que sea el CBU no se aplicó antes — pero ningún fixture lo ejercitaba
+   * de forma AISLADA (un dígito pegado a la izquierda de una forma de CUIT, SIN letra y sin llegar a
+   * formar un CBU de 22). Sin el lookbehind, `'920111111112'.match(RE_CUIT)` extrae `'20111111112'`
+   * como si fuera un CUIT válido — un dígito de la propia corrida termina "prestándole" el prefijo AFIP
+   * a un identificador que no es ese.
+   */
+  it('un dígito pegado a la IZQUIERDA de una forma de CUIT (sin letra) NO se detecta como cuit: cae en corrida_larga/documento', () => {
+    const texto = '920111111112';
+    const { detectores } = redactarTexto(texto);
+    expect(detectores).toContain('corrida_larga');
+    expect(detectores).not.toContain('cuit');
+
+    const { identificadores } = depurarGlosa(texto);
+    expect(identificadores.cuit).toEqual([]);
+    expect(identificadores.documento).toEqual([texto]);
+  });
+
+  /**
+   * 🔴 MUTACIÓN SOBREVIVIENTE #2: cambiar el `-?` opcional de `RE_CUIT` por `[-,.]?` (aceptar coma o
+   * punto además del guión) tampoco rompía ningún test existente. El comentario de `RE_CUIT` es explícito:
+   * la forma publicada es `##-########-#`, únicamente con guión — "no estaba pedido y no está medido
+   * contra ningún archivo real con otra convención" — pero no había ningún test que confirmara el
+   * RECHAZO de coma o punto como separador. Sin esta guarda, un texto con una coma o un punto en la
+   * posición del guión (que en una glosa real sería, con más probabilidad, un importe con decimales, no
+   * un CUIT) se detectaría igual como si tuviera guión.
+   */
+  it.each(['20,11111111,2', '20.11111111.2'])(
+    'un CUIT con coma o punto en vez de guión (%s) NO se detecta: la forma publicada es solo con guión',
+    (texto) => {
+      expect(contieneDatoSensible(texto)).toBe(false);
+      expect(contieneIdentificador(texto)).toBe(false);
+
+      const { detectores } = redactarTexto(texto);
+      expect(detectores).toHaveLength(0);
+
+      const { identificadores } = depurarGlosa(texto);
+      expect(identificadores.cuit).toEqual([]);
+    },
+  );
 });

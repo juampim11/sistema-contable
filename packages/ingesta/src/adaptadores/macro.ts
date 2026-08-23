@@ -34,6 +34,7 @@
  */
 
 import { formaParaLog } from '@sistema-contable/shared/observabilidad';
+import { RE_CUIT as RE_CUIT_COMPARTIDO } from '@sistema-contable/shared/seguridad';
 import {
   centavosAImporte,
   importeACentavos,
@@ -1375,6 +1376,42 @@ function leerMovimiento(
   const refTexto = refFrag?.texto.trim() ?? '';
   const referencia = RE_REFERENCIA.test(refTexto) ? refTexto : null;
 
+  /**
+   * ~38% medido (511/1331): el banco imprime el CUIT de la contraparte en la columna `REFERENCIA` en vez
+   * de en la glosa. `RE_REFERENCIA` (1 a 10 dígitos) lo rechaza por tener 11 y `referencia` queda `null`
+   * — pero seguía **descartándose entero**, sin llegar ni a `descripcion` ni a `referencias`.
+   *
+   * El destino es la glosa, no `referencias`: `referencias` es para el número de operación del banco, no
+   * para un documento de identidad, y `depurarGlosa` (`glosa.ts`, downstream en `persistir.ts`) ya extrae
+   * CUIT de `descripcion` por forma y lo enruta a `identificadores.cuit` — el mismo camino que hoy resuelve
+   * el 62% de los casos donde el CUIT viene naturalmente en el texto. Agregarlo acá reusa ese mecanismo sin
+   * tocarlo.
+   *
+   * `new RegExp(...)` porque `RE_CUIT_COMPARTIDO` trae flag `/g` y es *stateful* entre llamadas (mismo
+   * patrón que `glosa.ts`): usar `.test()` directo sobre el regex importado devolvería `false` en llamadas
+   * alternadas.
+   */
+  const refEsCuit =
+    referencia === null && new RegExp(RE_CUIT_COMPARTIDO.source, RE_CUIT_COMPARTIDO.flags).test(refTexto);
+
+  /**
+   * 🔴 **No agregar lo que ya está.** Dos formas distintas del mismo hecho —la duplicación real del
+   * banco (el CUIT viene en la glosa Y en `REFERENCIA`) y el solape geométrico de 0.5 pt entre
+   * `COLUMNAS.glosa.hasta` y `COLUMNAS.referencia.tolerancia` (un fragmento en `x≈263.7-264.0` puede
+   * caer tanto en `fragmentosEnBanda` como en `fragmentoEnX`)— hacen que `refTexto` ya sea substring de
+   * `glosa` antes de concatenar nada.
+   *
+   * Concatenar sin este chequeo deja `"...20111111112 20111111112"`: dos CUIT de 11 dígitos con un
+   * único separador en el medio son, por forma, un CBU de 22 dígitos. `depurarGlosa` (`glosa.ts`)
+   * evalúa `RE_CBU` antes que `RE_CUIT` en `PATRONES`, así que reclasifica la línea entera como CBU y
+   * el CUIT real desaparece (`identificadores.cuit: []`), persistiendo un CBU que no existe.
+   *
+   * La contención por substring cubre los dos casos sin tocar las ventanas de columna, que es
+   * territorio de mayor riesgo para el 62% que ya funciona sin pasar por acá.
+   */
+  const refYaEstaEnGlosa = refTexto !== '' && glosa.includes(refTexto);
+  const glosaConReferencia = refEsCuit && !refYaEstaEnGlosa ? `${glosa} ${refTexto}` : glosa;
+
   const magnitud = par.importe.startsWith('-') ? par.importe.slice(1) : par.importe;
   // Canónico: `par.saldo` salió de `centavosAImporte`. `importeACentavos` —que parsea el formato
   // argentino— devolvería `null` acá y el saldo quedaría en cero, con lo que `saldoEsAcreedor` nunca daría
@@ -1402,8 +1439,8 @@ function leerMovimiento(
     tipoFila: 'movimiento',
     fecha,
     // §7: **cero líneas de continuación**, verificado por tres vías. Un movimiento es exactamente una fila.
-    descripcionLineas: [glosa],
-    descripcion: glosa,
+    descripcionLineas: [glosaConReferencia],
+    descripcion: glosaConReferencia,
     ...concepto,
     ...(par.columna === 'credito' ? { credito: magnitud } : { debito: magnitud }),
     columnaOrigen: par.columna,

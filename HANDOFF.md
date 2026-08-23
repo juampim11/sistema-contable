@@ -6,6 +6,205 @@
 
 ---
 
+## 2026-08-23 (113) — CIERRE de sesión: fix de `macro.ts`/`RE_CUIT` commiteado, separado de R42. Pendiente de producto documentado: re-clasificación retroactiva de los 569 movimientos.
+
+**Herramienta:** Claude Code. Cierre final de todo el arco de esta sesión (109)-(112).
+
+**Commiteado en este cierre** (separado a propósito del commit `fbf163e`, que solo lleva el mecanismo
+`auditoria_seguridad_readonly`/R42): el fix de la columna `REFERENCIA` en `macro.ts`, el fix real de
+`RE_CUIT` (letra pegada, con su prueba de mutación), sus tests, la fila #11 de
+`docs/seguridad/registro-incidentes.md`, y `docs/diseno/18-cuit-pegado-sin-separador.md` como fuente
+consolidada de todo el hallazgo.
+
+**🔴 Pendiente — decisión de PRODUCTO, no técnica, explícitamente fuera de esta tarea:** decidir si
+conviene re-clasificar retroactivamente los 569 movimientos del piloto que quedaron con su
+identificador en `identificadores.documento` en vez de `identificadores.cuit` (`docs/diseno/18-cuit-pegado-sin-separador.md`
+§5) — mover el candidato de contraparte de una clase a otra en datos ya persistidos, para que
+`distinguir_tercero_de_socio` los reconozca sin esperar una re-ingesta. No es una decisión de
+seguridad (confirmado: sin fuga, los datos ya estaban redactados) — es de impacto en datos que la
+contadora (Laura) ya pudo haber visto y trabajado con la clasificación actual. **Lo revisa el titular
+por separado, en otro momento.** Sin dueño técnico asignado todavía.
+
+Con esto: la tarea completa que arrancó como "arreglá la pérdida de CUIT en Macro" queda **cerrada**.
+
+---
+
+## 2026-08-23 (112) — CIERRE del incidente #11: medido contra el piloto real, CERO fuga de confidencialidad en el histórico ya ingerido. El fix de `RE_CUIT` sigue siendo necesario, pero por clasificación de contraparte, no por secreto fiscal expuesto.
+
+**Herramienta:** Claude Code. Cierre de la (109)-(111). `security-engineer` encontró, en la revisión
+final del script, un bug real que habría invertido el resultado: el filtro SQL usaba `!~` en vez de
+`~` para "no redactado", así que habría contado filas BIEN redactadas como expuestas — el peor error
+posible en una medición de seguridad (falsa tranquilidad, no falsa alarma). Corregido antes de correr,
+junto con 2 errores de TypeScript estricto (TS18048, acceso a fila posiblemente `undefined`) que el
+mismo agente encontró corriendo `tsc --noEmit`.
+
+**Resultado real, contra los 3 clientes del piloto (2911 movimientos):** 569 con el patrón "letra
+pegada a CUIT" en `glosaOriginal` (satélite N2R), **0 sin redactar en `descripcion`**. El resultado de
+0 era inesperado (el código desplegado al momento de la ingesta tenía el mismo bug de `\b`) y se
+investigó antes de aceptarlo, con dos diagnósticos de seguimiento (solo agregados: longitud, presencia
+de marcador — nunca texto real): los 569 CUIT SÍ se redactaban, pero mal clasificados —capturados por
+el catch-all genérico `documento` (`[DOC]`), no por `cuit` (`[CUIT]`), porque `RE_CORRIDA_LARGA` nunca
+tuvo el bug de `\b`. Confirmado exacto: diferencia de longitud de 6 caracteres en las 569 filas sin
+una sola excepción, y 569/569 con el literal `[DOC]` en `descripcion`.
+
+**Conclusión:** el fix de `RE_CUIT` (ya cerrado, con prueba de mutación) sigue siendo correcto y
+necesario — corrige la clasificación de contraparte, que es por qué `distinguir_tercero_de_socio`
+fallaba para estos 569 movimientos — pero **no hacía falta ninguna herramienta de backfill por
+confidencialidad**: el dato nunca estuvo expuesto sin redactar. Detalle completo:
+`docs/diseno/18-cuit-pegado-sin-separador.md` §5.
+
+**Todo lo que tocó el piloto, con su propia autorización explícita y separada (CLAUDE.md §1.9):**
+`0022` (ajena, pendiente desde 2026-08-19) y `0023` (`auditoria_seguridad_readonly`, R42), cada una
+verificada con `--estado` antes y después. El script de diagnóstico (efímero) y sus 3 scripts de
+seguimiento se corrieron y se borraron — `git status` confirma que no quedó ninguno en el repo.
+
+Con esto: **la tarea completa que arrancó como "arreglá la pérdida de CUIT en Macro" queda cerrada**
+— fix de `macro.ts` (columna `REFERENCIA`, válido para su propio caso), fix de `RE_CUIT` (la causa
+real), mecanismo `auditoria_seguridad_readonly` (R42), y la medición real contra el piloto que la
+cierra. Pendiente, fuera de esta tarea: decidir si vale la pena re-clasificar retroactivamente los 569
+movimientos ya persistidos (mover `documento`→`cuit`), y commitear el fix de `macro.ts`/`RE_CUIT`
+(sigue sin commitear — separado a propósito del commit `fbf163e`, que solo lleva el mecanismo R42).
+
+---
+
+## 2026-08-23 (111) — `0022` y `0023` aplicadas a piloto, verificadas con `--estado` (nada más pendiente). Script de diagnóstico del incidente #11 escrito y en revisión final antes de correr contra datos reales.
+
+**Herramienta:** Claude Code. Continuación de la (110), sesión nueva ("cabeza fresca"). Antes de tocar
+el piloto, `--estado` (solo lectura) mostró **dos** migraciones pendientes, no una: `0022_cotizacion_bna.sql`
+(ajena a esta tarea, catálogo N0 sin RLS, aplicada a LOCAL desde el 19 mostrar — nunca había llegado a
+piloto, despliegue escalonado por diseño, confirmado contra `docs/diseno/12-cotizacion-bna-plan.md:91-92`
+y HANDOFF (76), no un olvido) y `0023_auditoria_seguridad_readonly.sql`. Por CLAUDE.md §1.9 se frenó,
+se listó, se confirmó con el usuario — autorización explícita y separada para cada una.
+
+**Antes de tocar piloto:** el usuario pidió commitear `0023` primero (sin versionar todavía, riesgo de
+pérdida como el PDF de Macro ya perdido esta misma investigación). Commit `fbf163e` — 9 archivos, el
+mecanismo completo de R42 (migración + `conJob` + `registrarUsoSoloLectura` + tests + fila del ADR). El
+pre-commit hook (barrido de fuga en modo estricto) bloqueó el primer intento: un CUIT real (dígito
+verificador válido) había quedado como ejemplo en la fila #11 de `registro-incidentes.md`, escrito por
+`security-engineer` la sesión anterior — mismo tipo de fuga que ya se había corregido una vez en
+`detectores-forma.ts`. Corregido (valor sintético), barrido re-corrido en verde, commit aplicado.
+
+**Aplicado a piloto, en dos pasos separados, cada uno con su propia autorización:**
+1. `0022` sola — `0023` se movió temporalmente fuera de `packages/data/migrations/` para que
+   `pnpm db:migrate` (con `DATABASE_URL` de `.env.piloto`) solo viera `0022` pendiente. Aplicada,
+   verificada con `--estado`, `0023` devuelta a su lugar (confirmado con `ls` real, no supuesto).
+2. `0023` — mostrada completa en el chat, autorización explícita del usuario, aplicada con
+   `pnpm db:migrate` normal (única pendiente en ese momento).
+
+`--estado` final contra piloto: las 23 migraciones, todas `= aplicada`, nada pendiente.
+
+**Script de diagnóstico** (`packages/data/scripts/_diagnostico-efimero-incidente-11.ts`, efímero, se
+borra después de correr): mide, con TODO el pattern-matching de CUIT-pegado-sin-separador corriendo
+dentro de la consulta SQL (nunca trae `descripcion`/`fila_origen` a Node), la proporción real del
+incidente #11 sobre el histórico ya ingerido del piloto. En revisión final por `security-engineer` +
+`seguridad-datos-financieros` antes de correr — todavía no corrió contra datos reales.
+
+---
+
+## 2026-08-23 (110) — `MotivoJob` nuevo, angosto, para auditoría de solo lectura (R42, ADR-0002): mecanismo construido y verificado en LOCAL, aplicación a piloto y script de diagnóstico real TODAVÍA NO corridos — quedan como paso siguiente, con su propia convocatoria.
+
+**Herramienta:** Claude Code. Continuación directa de la (109): para medir el tercer número acordado
+(cuántas filas del piloto tienen un CUIT sin redactar por el bug de `RE_CUIT`), hacía falta un
+mecanismo de lectura de solo lectura, cross-tenant, contra la base real — y no existía ningún
+`MotivoJob` que encajara. Se construyó uno nuevo, con dos rondas completas de convocatoria (5 agentes
+cada una) y una tercera revisión liviana.
+
+### Qué se construyó, verificado en LOCAL (no aplicado a piloto)
+
+1. **`MotivoJob` nuevo `auditoria_seguridad_readonly`** (`packages/data/src/db/conexion.ts`) — cuando
+   se usa, `conJob` ejecuta `set transaction read only` antes de cualquier otra query: Postgres
+   rechaza cualquier DML con su error nativo `25006`, sin depender de qué grants tenga el rol.
+2. **Migración `0023_auditoria_seguridad_readonly.sql`** — grant `select` acotado por columna (nunca
+   tabla entera), solo sobre `movimiento_origen_crudo(cliente_id, movimiento_id, fila_origen)` y
+   `movimiento_bancario_crudo(cliente_id, id, descripcion)`. Aplicada a LOCAL; **NO a piloto**.
+3. **`registrarUsoSoloLectura`** (`packages/data/src/db/auditoria-solo-lectura.ts`) — resuelve la
+   tensión de que `leerConAuditoria` no puede usarse desde `conJob` (`tx.usuarioId` siempre `null`):
+   log estructurado reusable (`loggerAcotado`) con `motivo_job`, `entorno`, `cliente_ids` (lista de
+   uuid, N1/exportable — no un conteo, para poder detectar si tocó un cliente fuera de alcance),
+   `filas_leidas`, `detalle` (máx. 100 caracteres, nunca un valor de dato), `ocurrido_en`.
+4. **Regla nueva R42** en `ADR-0002-seguridad.md` §B.2 (no R40: ese número ya estaba reservado, sin
+   escribir todavía, para la regla de índices únicos de `docs/diseno/11-*`; tampoco R41, tomado de
+   verdad por `grants-conjunto-cerrado.test.ts`). Estado: **⚠️**, correctamente — el mecanismo está
+   probado, pero nadie lo invocó todavía desde un script real.
+
+### Hallazgos reales de las 2 rondas de convocatoria (10 llamadas a agentes en total)
+
+Ninguno bloqueante para el mecanismo en sí; todos corregidos: colisión de número de regla (2 fuentes
+independientes); una afirmación sobreestimada en el comentario de `conJob` (`tester` encontró que
+`SET TRANSACTION READ WRITE` como primer statement de `fn` sí puede reactivar escritura — el grant
+angosto, no la transacción, es la capa que no tiene excepción conocida); el grant de `fila_origen`
+exponía más claves JSON de las que el docblock reconocía; el "caso legítimo" del test no ejercitaba
+las columnas otorgadas; y, en la revisión liviana, faltaba timestamp propio y tope de longitud en
+`detalle`. Todo corregido y verificado — 340 tests en `packages/data`, todos en verde; typecheck
+limpio.
+
+### Qué falta, explícitamente, y por qué no se hizo hoy
+
+- **Aplicar `0023` al piloto** — requiere listar/confirmar/frenar puntual (CLAUDE.md §1.9), no se
+  asume incluido en este cierre.
+- **Escribir y correr el script de diagnóstico real** contra el piloto — ambos `security-engineer` y
+  `seguridad-datos-financieros`, en la revisión liviana, coincidieron en que es una pieza nueva y
+  sensible (toca datos de clientes cross-tenant de verdad) que dispara su propio modo plan y su propia
+  convocatoria, no una continuación mecánica de esta tarea.
+- Con ese script corrido: el número final (conteo de filas afectadas + total de la tabla, para juzgar
+  proporción — pedido explícito del usuario) se documenta en
+  `docs/diseno/18-cuit-pegado-sin-separador.md` §5, y ahí se decide si hace falta backfill.
+
+---
+
+## 2026-08-22 (109) — Fix del adapter de Macro (columna `REFERENCIA`) commiteable, PERO la causa real del 38% original era otra: `RE_CUIT` no detectaba un CUIT pegado sin separador a una palabra — bug compartido con el redactor de logs. Corregido, con prueba de mutación y residuo medido. Bloqueante real sin resolver: el histórico ya ingerido del piloto puede tener CUIT de terceros sin redactar. Detalle completo: `docs/diseno/18-cuit-pegado-sin-separador.md` + fila #11 de `docs/seguridad/registro-incidentes.md`.
+
+**Herramienta:** Claude Code. Arrancó como un pedido puntual ("arreglá la pérdida de CUIT en Macro") y
+terminó en un hallazgo de seguridad compartido entre los 3 bancos y el redactor de logs. Detalle
+completo, autocontenido, en `docs/diseno/18-cuit-pegado-sin-separador.md` — acá solo el resumen y el
+estado de lo que sigue abierto.
+
+### Qué se corrigió y se convocó, en 2 tandas
+
+1. **`packages/ingesta/src/adaptadores/macro.ts`** (columna `REFERENCIA`): un CUIT en esa columna se
+   descartaba entero por `RE_REFERENCIA` (1-10 dígitos). Corregido — se agrega a la glosa, no a
+   `referencias` — con su ronda de 4 agentes (`backend-dev`, `seguridad-datos-financieros`,
+   `code-reviewer`, `tester`). `tester` encontró y se corrigió un bug real de duplicación (CUIT
+   repetido → falso CBU, CUIT real perdido). **Válido y commiteado, pero al medir el agregado contra
+   el único PDF real disponible, los números no se movieron** — ese documento nunca usa esa columna
+   para un CUIT (ya medido en `07-formato-macro.md:390`).
+2. **`packages/shared/src/seguridad/detectores-forma.ts`** (`RE_CUIT`): la causa real. `\b` no separa
+   una letra de un dígito contiguos, así que un CUIT pegado a una palabra (`DOC...`) nunca se detectaba
+   — ni en la glosa, ni en el redactor de logs. Medido: 569/1346 (42%) en el mismo PDF real de Macro,
+   0% se detectaba antes. Es una regresión del propio commit de centralización de detectores
+   (`065fe10`, 2026-08-10) — el `glosa.ts` original no tenía este bug. Corregido (`\b` → lookaround que
+   excluye solo dígito adyacente), con su ronda de 5 agentes (`backend-dev`, `security-engineer`,
+   `seguridad-datos-financieros`, `code-reviewer`, `tester`) más una segunda convocatoria a
+   `qa-automation` para la prueba de mutación exigida por ADR-0002 §B.0 (R26). Resultado final,
+   verificado: 569/569 (100%) ahora extraen el CUIT; residuo de sobre-captura medido en 0/1080 (0% de
+   falso positivo en la muestra real). `code-reviewer` encontró y se corrigió, antes de cualquier
+   commit, un CUIT real filtrado como ejemplo en 3 comentarios de código (`barrido-fuga.ts --strict` en
+   verde después).
+
+### 🔴 Lo que queda abierto, y no es un detalle
+
+**El histórico ya ingerido del piloto puede tener, hoy, un CUIT real de un tercero sin redactar en
+`movimiento_bancario_crudo.descripcion`** — columna que se lee sin pasar por el lector auditado
+(INV-13). Ni `backfill-contraparte.ts` ni `recapturar-conceptos.ts` lo cubren (el segundo lo excluye a
+propósito). Antes de decidir si hace falta una herramienta de reproceso, se acordó medir cuántas filas
+del piloto están afectadas — **no se hizo todavía**: no hay un `MotivoJob` que encaje para un barrido
+de auditoría cross-tenant de solo lectura, y agregar uno nuevo requiere lo mismo que cualquier motivo
+(sin ADR, no se agrega). Este es el bloqueo real para continuar, no "pendiente de revisión" en general.
+Detalle completo: `docs/diseno/18-cuit-pegado-sin-separador.md` §5.
+
+Galicia (2 extractos reales) y Santander (1) dieron 0 casos del patrón — documentado explícitamente
+como "sin evidencia en esta muestra", nunca como "descartado".
+
+### Verificación antes de cerrar esta entrada
+
+- `pnpm exec vitest run` sobre los 5 archivos de test relevantes: 186/186 en verde, corrido de forma
+  independiente (no solo reportado por los agentes).
+- `tools/barrido-fuga.ts --strict`: limpio.
+- `docs/seguridad/registro-incidentes.md`: fila #11 nueva, con su anotación fechada de cierre (regla 7
+  de esa misma bitácora — no se reescribe el veredicto original, se anota al lado).
+
+---
+
 ## 2026-08-22 (108) — CIERRE de la sesión de FCI: núcleo PEPS + eje 1 + `consumirRescate` contra datos reales, los tres commiteados. Bloqueado esperando la ronda 3 de preguntas a Laura (enviada hoy, fuera del repo). Detalle completo y autocontenido: `docs/diseno/17-fci-peps-plan.md`.
 
 **Herramienta:** Claude Code. Entrada de cierre de sesión, pedida explícitamente para que alguien

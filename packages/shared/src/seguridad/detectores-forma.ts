@@ -15,9 +15,9 @@
  *     patrones de `glosa.ts` (los cuatro excluyen dígito-y-guión en el lookaround, y en una corrida
  *     precedida por un guión no hay ninguna posición desde la que el motor pueda empezar), mientras que
  *     `\b\d{22}\b` sí lo atrapa. El estilo lookaround-sin-guion es el que tiene el agujero, no al revés —
- *     por eso acá se unifica hacia `\b` para los detectores de **longitud fija** (CBU, CUIT, documento) y
- *     el lookaround-que-excluye-separadores se reserva para el catch-all de longitud **variable**, donde
- *     hace falta para no comerse un importe (`1.234,56`) ni la cola de un UUID interno;
+ *     por eso acá se unifica hacia `\b` para CBU, el único de los tres que sigue con `\b` (no tiene medido
+ *     un caso que lo rompa) — CUIT y documento (DNI) usan lookaround, cada uno por un motivo propio y
+ *     medido: ver los comentarios de `RE_CUIT` y `RE_DNI` más abajo;
  *   - el CUIT no era ni siquiera el mismo patrón: `redactar.ts` exige un prefijo AFIP válido
  *     (`20|23|24|25|26|27|30|33|34`), `glosa.ts` aceptaba cualquier corrida de 11 dígitos con o sin guiones.
  *     Acá se centraliza la versión **estricta** (con prefijo) para los dos: el redactor puede permitirse
@@ -37,6 +37,18 @@
  * histórica), pero nunca se había propagado al redactor de logs. Es la misma clase de fuga que motivó la
  * corrección del redactor (un dato N2R de un tercero llegando entero a un log), así que acá se cierra para
  * los dos consumidores, no solo para uno.
+ *
+ * ## El CUIT pegado a una letra (`DOC20111111112`, forma sintética) es el segundo hueco, medido después del DNI
+ *
+ * `RE_CUIT` usó `\b` en los dos extremos hasta esta corrección — el mismo defecto que ya se había
+ * corregido en `RE_DNI` (ver el comentario de `RE_DNI` más abajo), sin propagar. `\b` marca una
+ * transición entre `\w` y no-`\w`; una letra y un dígito son los dos `\w`, así que no hay frontera entre
+ * `C` y `2` en `DOC20111111112`, y el motor de regex nunca encuentra dónde empezar a matchear el CUIT.
+ * Medido contra un extracto real de Macro: 569 de 1346 movimientos (42%) tienen un CUIT pegado a una
+ * palabra, y en el 100% de esos casos `depurarGlosa` no extraía nada — el identificador de la contraparte
+ * se perdía completo, y tampoco se hubiera tapado si aparecía en un log. Ahora usa el mismo tipo de
+ * lookaround que `RE_DNI`, ver el comentario de `RE_CUIT` más abajo para el motivo de por qué sigue
+ * excluyendo un dígito adyacente (a diferencia de la letra, que ahora sí se permite).
  *
  * ## El orden en que cada consumidor aplica estos detectores importa, y es responsabilidad del consumidor
  *
@@ -100,8 +112,18 @@ export const RE_CBU = new RegExp(`\\b${digitosConSeparador(22)}\\b`, 'g');
  * CUIT/CUIL: prefijo válido de persona física o jurídica (`20|23|24|25|26|27|30|33|34`), 8 dígitos de
  * documento/orden, 1 dígito verificador — con guión opcional en los dos huecos, la forma que el banco
  * publica (`##-########-#`). Es la versión estricta: no acepta cualquier corrida de 11 dígitos.
+ *
+ * Los lookarounds excluyen SOLO dígito a los dos lados —no `\b`— por un motivo medido: en una glosa
+ * bancaria real el CUIT aparece con frecuencia pegado directo a una palabra (forma sintética:
+ * `DOC20111111112`), y `\b` no
+ * matchea ahí porque letra y dígito son los dos `\w` (no hay frontera de palabra entre ellos). El
+ * lookaround permite la letra adyacente a propósito (es el caso real) pero sigue excluyendo el dígito
+ * adyacente: así una corrida más larga —un CBU de 22 dígitos, que el orden de aplicación (CBU primero) ya
+ * debería haber consumido antes de llegar acá— no se recorta a un CUIT plausible pero falso. Es defensa en
+ * profundidad: si por lo que sea el CBU no se aplicó antes, seguir excluyendo dígito evita comerse un
+ * pedazo de una corrida más larga en silencio.
  */
-export const RE_CUIT = /\b(20|23|24|25|26|27|30|33|34)-?\d{8}-?\d\b/g;
+export const RE_CUIT = /(?<!\d)(20|23|24|25|26|27|30|33|34)-?\d{8}-?\d(?!\d)/g;
 
 /**
  * Documento (DNI): 7 u 8 dígitos PEGADOS, sin separadores internos — ver el comentario de arriba sobre por
