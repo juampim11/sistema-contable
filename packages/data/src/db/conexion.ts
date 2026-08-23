@@ -53,7 +53,8 @@ export type MotivoJob =
   | 'mantenimiento'
   | 'export_cliente_archivado'
   | 'siembra_sintetica'
-  | 'cargar_cotizaciones';
+  | 'cargar_cotizaciones'
+  | 'auditoria_seguridad_readonly';
 
 /**
  * Forma de un uuid, sin exigir versión ni variante RFC.
@@ -274,6 +275,24 @@ export async function conJob<T>(motivo: MotivoJob, fn: (tx: Tx) => Promise<T>): 
   const cliente = await obtenerPoolJob().connect();
   try {
     await cliente.query('begin');
+
+    // R42 (ADR-0002 §B): `auditoria_seguridad_readonly` es el único motivo que puede leer dominio de
+    // cliente cross-tenant con esta credencial. Dos capas INDEPENDIENTES, no de la misma fuerza:
+    // - El grant angosto de `app_job` (`0023`, cero privilegios de escritura hoy) es el que de verdad
+    //   no tiene excepción conocida: no importa qué corra `fn`, no hay ningún insert/update/delete que
+    //   otorgar sobre esas columnas.
+    // - `set transaction read only`, acá abajo, es una capa ADICIONAL: Postgres rechaza con su error
+    //   nativo `25006` cualquier DML que llegue mientras la transacción siga en ese modo — pero si `fn`
+    //   ejecutara `set transaction read write` como PRIMER statement (antes de cualquier otra query), la
+    //   transacción vuelve a modo lectura-escritura y esta capa deja de contener desde ese punto. No es
+    //   explotable por un atacante externo (`fn` es código de confianza de este motivo, nunca input de
+    //   usuario), pero no hay que prometerle a esta línea más de lo que garantiza: en ese caso límite,
+    //   quien contiene es el grant, no la transacción. Va ANTES de cualquier otra query propia de
+    //   `conJob`, para que no haya ventana sin esta capa tampoco.
+    if (motivo === 'auditoria_seguridad_readonly') {
+      await cliente.query('set transaction read only');
+    }
+
     // `motivo_job` y no `motivo`: `motivo` es una columna clasificada N2 (texto libre que puede
     // mencionar al cliente) y el tipo del logger la rechaza. Acá es un código de una unión cerrada.
     // El error de compilación lo encontró el propio tipo — quedó anotado porque el nombre era ambiguo.

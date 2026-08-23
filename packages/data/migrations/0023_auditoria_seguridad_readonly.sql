@@ -1,0 +1,61 @@
+-- =============================================================================
+-- 0023_auditoria_seguridad_readonly.sql — grant angosto para el diagnóstico de seguridad cross-tenant
+--
+-- Regla verificable: ADR-0002-seguridad.md R42.
+--
+-- ## Para qué sirve
+--
+-- Correr un diagnóstico de seguridad de solo lectura, cross-tenant, contra la base real (piloto), sin
+-- abrir una puerta general de acceso. Hoy `app_job` (BYPASSRLS) no tiene `select` sobre ninguna tabla de
+-- dominio de cliente, y eso es correcto: ningún motivo de `MotivoJob` necesita leer cruzando clientes. El
+-- diagnóstico de seguridad es la primera excepción, y por eso es un motivo nuevo y angosto
+-- (`auditoria_seguridad_readonly`, `packages/data/src/db/conexion.ts`), no una ampliación de uno existente.
+--
+-- ## Quién lo usa
+--
+-- El comando de diagnóstico que corre `security-engineer`/`seguridad-datos-financieros` puntualmente
+-- contra el piloto, con `conJob('auditoria_seguridad_readonly', fn)`. Ningún camino de la aplicación en
+-- nombre de un cliente pasa por acá: es exclusivamente un motivo de job, con su propia entrada en la
+-- unión cerrada de `MotivoJob` (R19).
+--
+-- ## Por qué acotado por COLUMNA, y no por tabla entera
+--
+-- Mismo precedente que `0022` (R19, `ADR-0002-seguridad.md` §B.2): un `grant` de tabla entera es el
+-- error que ya costó incidentes con `membership`/`acceso_auditoria`. Acá el diagnóstico necesita
+-- confirmar aislamiento e integridad referencial — a qué cliente pertenece una fila, a qué movimiento
+-- cuelga una fila cruda, y (para `movimiento_bancario_crudo`) el texto de la glosa para detectar un
+-- patrón de fuga en la descripción. No necesita el resto de las columnas de ninguna de las dos tablas:
+--   - `movimiento_origen_crudo`: `cliente_id`, `movimiento_id`, `fila_origen`. Justo lo que hace falta
+--     para verificar que la satélite N2R no cruza de cliente y que su FK compuesta sostiene lo que dice
+--     sostener — no `id` ni `created_at`, que el diagnóstico no necesita.
+--   - `movimiento_bancario_crudo`: `cliente_id`, `id`, `descripcion`. La glosa es el campo N2 con más
+--     probabilidad de traer un dato de un tercero pegado por error del adapter — es lo que un barrido de
+--     fuga tiene que poder leer. El resto (importe, saldo, fechas) no aporta al diagnóstico de seguridad
+--     y por eso queda afuera.
+--
+-- `fila_origen` es una columna JSON, y Postgres no tiene grant por clave de JSON — el grant por columna
+-- entera otorga las seis claves que trae hoy: `lineas`, `glosaOriginal`, `identificadores` (CUIT/CBU/
+-- documento YA estructurados, más explotables que el texto libre de `glosaOriginal`), `columnaOrigen`,
+-- `candidatosIdentificacion` y `referencias`. El diagnóstico solo necesita la fila entera para el join
+-- por `movimiento_id`/`cliente_id`, no cada clave por separado — las otras cinco se toleran como costo
+-- del grant por columna, el mismo tipo de costo ya aceptado en otros grants de este repo. No se puede
+-- acotar más sin un grant por clave de JSON, y Postgres no lo ofrece.
+--
+-- ## Por qué SOLO `select`, sin `insert`/`update`/`delete`
+--
+-- El diagnóstico nunca escribe, y son dos capas INDEPENDIENTES las que lo sostienen — no de la misma
+-- fuerza. El grant de esta migración (cero privilegios de escritura sobre estas columnas) es el que de
+-- verdad no tiene excepción conocida: no importa qué corra del lado de `fn`, no hay `insert`/`update`
+-- que otorgar porque no está otorgado. `conJob` agrega además `set transaction read only` ANTES de
+-- correr `fn` cuando el motivo es `auditoria_seguridad_readonly` (Postgres rechaza cualquier DML con
+-- su error nativo `25006`) — pero esa es la capa ADICIONAL, no la que contiene de verdad: si `fn`
+-- ejecutara `set transaction read write` como PRIMER statement, antes de cualquier otra query, la
+-- transacción pasa a modo lectura-escritura y esa capa queda desactivada desde adentro. No es
+-- explotable por un atacante externo (`fn` es código de confianza de este motivo, nunca input de
+-- usuario), pero no hay que prometer más de lo que el mecanismo garantiza.
+--
+-- SE APLICA CON EL DUEÑO DEL ESQUEMA. NUNCA EDITAR UNA VEZ APLICADA.
+-- =============================================================================
+
+grant select (cliente_id, movimiento_id, fila_origen) on movimiento_origen_crudo to app_job;
+grant select (cliente_id, id, descripcion) on movimiento_bancario_crudo to app_job;

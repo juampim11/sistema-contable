@@ -204,11 +204,18 @@ const GRANTS_POR_COLUMNA: readonly {
   // tabla se aplica a toda columna presente, incluidas las que todavía no existían. Hoy no es
   // explotable —Postgres rechaza escribir una columna generada por MECANISMO, no por privilegio—,
   // pero es la demostración literal de por qué esta lista mira la capacidad efectiva y no el `.sql`.
+  // `auditoria_seguridad_readonly` (0023, R40): diagnóstico de seguridad cross-tenant, de solo lectura.
+  // Sólo las tres columnas que hacen falta para verificar aislamiento e integridad, nunca importe ni
+  // saldo. La contención de escritura NO es el grant —`app_job` sigue siendo BYPASSRLS— sino
+  // `set transaction read only` en `conJob` para ese motivo, que rechaza cualquier DML con `25006`.
+  { tabla: 'movimiento_bancario_crudo', rol: 'app_job', privilegio: 'SELECT', columnas: ['cliente_id', 'descripcion', 'id'] },
   { tabla: 'movimiento_bancario_crudo', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'concepto_banco', 'concepto_banco_estrategia', 'concepto_codigo', 'concepto_completo', 'contraparte_captura', 'created_at', 'cuenta_bancaria_id', 'descripcion', 'entrada_digest', 'fecha', 'fecha_valor', 'fila_hash', 'fila_numero', 'id', 'importe', 'lote_ingesta_id', 'moneda', 'pagina_pdf', 'referencia_externa', 'saldo', 'saldo_es_acreedor'] },
   { tabla: 'movimiento_bancario_crudo', rol: 'app_request', privilegio: 'SELECT', columnas: ['cliente_id', 'concepto_banco', 'concepto_banco_estrategia', 'concepto_codigo', 'concepto_completo', 'contraparte_captura', 'created_at', 'cuenta_bancaria_id', 'descripcion', 'entrada_digest', 'fecha', 'fecha_valor', 'fila_hash', 'fila_numero', 'id', 'importe', 'lote_ingesta_id', 'moneda', 'pagina_pdf', 'referencia_externa', 'saldo', 'saldo_es_acreedor'] },
   { tabla: 'movimiento_bancario_crudo', rol: 'app_request', privilegio: 'UPDATE', columnas: ['cliente_id', 'concepto_banco', 'concepto_banco_estrategia', 'concepto_codigo', 'concepto_completo', 'contraparte_captura', 'created_at', 'cuenta_bancaria_id', 'descripcion', 'entrada_digest', 'fecha', 'fecha_valor', 'fila_hash', 'fila_numero', 'id', 'importe', 'lote_ingesta_id', 'moneda', 'pagina_pdf', 'referencia_externa', 'saldo', 'saldo_es_acreedor'] },
   { tabla: 'movimiento_contraparte_identificador', rol: 'app_request', privilegio: 'INSERT', columnas: ['clase', 'cliente_id', 'created_at', 'id', 'identificador_hmac', 'movimiento_id', 'pepper_id'] },
   { tabla: 'movimiento_contraparte_identificador', rol: 'app_request', privilegio: 'SELECT', columnas: ['clase', 'cliente_id', 'created_at', 'id', 'identificador_hmac', 'movimiento_id', 'pepper_id'] },
+  // `auditoria_seguridad_readonly` (0023, R40): mismo motivo que arriba, misma mecánica de contención.
+  { tabla: 'movimiento_origen_crudo', rol: 'app_job', privilegio: 'SELECT', columnas: ['cliente_id', 'fila_origen', 'movimiento_id'] },
   { tabla: 'movimiento_origen_crudo', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'created_at', 'fila_origen', 'id', 'movimiento_id'] },
   { tabla: 'movimiento_origen_crudo', rol: 'app_request', privilegio: 'SELECT', columnas: ['cliente_id', 'created_at', 'fila_origen', 'id', 'movimiento_id'] },
   // 🔴 LA PREMISA DE `0021`. Tres columnas de INSERT y nada más: sin `id` (lo pone el DEFAULT), sin

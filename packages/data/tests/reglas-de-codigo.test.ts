@@ -439,6 +439,10 @@ describe('R32 — el lector auditado es el ÚNICO camino a `movimiento_origen_cr
     'packages/data/scripts/sembrar.ts',                       // truncate del seed, corre como dueño del esquema
     'packages/ingesta/src/glosa.ts',                          // solo la nombra en un comentario
     'packages/data/src/contabilidad/lecturas.ts',             // solo la nombra en un comentario (por qué NO se usa)
+    // solo la nombra en un comentario: explica por qué `registrarUsoSoloLectura` (R42) hace falta —
+    // ningún motivo de `conJob` puede invocar `leerConAuditoria` para leer esta tabla, `usuarioId` es
+    // siempre null — no lee ni escribe la tabla.
+    'packages/data/src/db/auditoria-solo-lectura.ts',
     // Llaman a `leerFilasOrigenDeLote` a través de `leerConAuditoria`, nunca con una consulta
     // propia — y el `recurso: 'movimiento_origen_crudo'` que le pasan al choke point es el nombre
     // de la tabla auditada, no un bypass (migración 0013).

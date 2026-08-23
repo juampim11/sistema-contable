@@ -1,6 +1,7 @@
 export * from './db/entorno.ts';
 export * from './db/conexion.ts';
 export * from './db/auditoria.ts';
+export * from './db/auditoria-solo-lectura.ts';
 export * from './db/errores-pg.ts';
 export * from './seed/sintetico.ts';
 export * from './db/lectores-auditados.ts';
