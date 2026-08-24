@@ -36,8 +36,12 @@
     "recapturar:conceptos": "node apps/cli/src/recapturar-conceptos.ts",
     "backfill:contraparte": "node apps/cli/src/backfill-contraparte.ts",
     "alta:socio": "node apps/cli/src/alta-socio.ts",
+    "alta:socio:placeholder-demo": "node apps/cli/src/alta-socio-placeholder-demo.ts",
     "resolver:contrapartida": "node apps/cli/src/resolver-contrapartida.ts",
-    "reconocer:lote": "node apps/cli/src/reconocer-lote.ts"
+    "reconocer:lote": "node apps/cli/src/reconocer-lote.ts",
+    "calibrar:lexico": "node apps/cli/src/calibrar-lexico-metadatos.ts",
+    "listar:conceptobanco": "node apps/cli/src/listar-conceptobanco-sin-reconocer.ts",
+    "medir:identidad": "node apps/cli/src/medir-identidad-resuelta.ts"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

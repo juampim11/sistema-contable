@@ -226,6 +226,157 @@ nombre real. Con esta confirmación: el nombre real de fondo es dato de producto
 FIMA de Galicia), no dato de Elite-IT, y puede exponerse como nombre de hoja — decisión registrada
 acá, no solo en la conversación.
 
+### E-3 — placeholder de demo insertado en El Prat (Santander): no es un caso de §F.3
+
+**Por qué esta sección no encaja en la tabla de arriba.** Todo lo que precede es sobre **sacar** un dato
+real de producción — extraerlo para reproducir un bug, con autorización previa y destrucción posterior.
+Esto es lo inverso: **insertar** un dato **sintético, explícitamente marcado como falso**, en el padrón
+de un cliente real del piloto. El riesgo no es secreto fiscal filtrado (no sale nada real) — es que en
+el futuro alguien confunda la fila con un dato verdadero. Por eso va como subsección propia, mismo
+estilo que el detalle de E-1/E-2, y no como fila de la tabla.
+
+**Qué es:** Laura (la contadora del estudio) marcó 2-3 filas de El Prat en el export enriquecido como
+"es socia", sin dar nombre ni CUIT — no hay base para saber si es una persona o más de una. Se carga
+**una sola fila** placeholder en `padron_socio` ("Socia 1 (El Prat) — placeholder demo, sin CUIT real,
+pendiente confirmar con Laura"), para que el sistema pueda imputar esos movimientos mientras se espera
+la confirmación real — sin inventar una segunda fila sin evidencia (`docs/diseno/00-cliente-piloto-laura.md`,
+mismo criterio de minimizar que §F.1 de este documento).
+
+**El identificador, y por qué es imposible que colisione con una persona real** (Ronda 1 de convocatoria
+— `dba-data` + `security-engineer` + `seguridad-datos-financieros`, tres correcciones sucesivas antes de
+cerrar el diseño):
+
+1. **Forma válida** — 11 dígitos, prefijo AFIP real (`27`, persona física) — pasa el mismo constraint de
+   forma que cualquier alta real (`padron_socio_doc_forma_chk`, migración `0013`).
+2. **Cuerpo fuera de cualquier rango real de asignación, Y verificado contra el material real con
+   `pnpm barrido`, no solo razonado.** Confirmado contra fuente pública (RENAPER, Disposición
+   4678/2019, vía búsqueda web en esta sesión): el DNI argentino es monotónico y en 2026 va de números
+   bajos históricos hasta ~70-71 millones (los recién nacidos desde 2023 arrancan en 70.000.000; el
+   tramo 60.000.000-69.999.999 está reservado pero **sí** se usa para CUIT/CUIL real de extranjeros, así
+   que no sirve como "vacío"). El cuerpo elegido, `98.765.432`, está muy por encima de cualquier
+   asignación real o previsible durante la vida útil de este piloto.
+   - **Primera propuesta, descartada:** reusar el cuerpo del CUIT `CANARIO` de
+     `packages/data/src/seed/sintetico.ts` (`'30-99999999-0'`). `seguridad-datos-financieros` lo objetó
+     en Ronda 1: ese valor está reservado en exclusiva para los tests anti-fuga INV-5/INV-8 (el propio
+     archivo lo dice: "no se usan para nada más") — reusarlo acá no es una fuga, pero rompe la propiedad
+     que el canario necesita (que sea inconfundible con cualquier otro dato, incluido este placeholder).
+   - **Segunda propuesta, también descartada — y por qué importa cómo se descartó:** un cuerpo con un
+     solo dígito repetido ocho veces "sonaba" fuera de rango por el mismo razonamiento del punto 2, pero
+     **`code-reviewer` corrió `pnpm barrido` (modo estricto, `privado/` presente) y encontró que ese
+     cuerpo SÍ aparece como coincidencia dentro del material real** — una repetición de dígito tiene
+     probabilidad no despreciable de aparecer como substring de un número más largo, con el volumen de
+     datos reales que hay en `privado/`. El valor descartado no se deja escrito acá, ni siquiera como
+     ejemplo — es exactamente el tipo de candidato que el barrido existe para atrapar, y este mismo
+     registro no es una excepción a esa regla. La lección, para cualquier valor sintético futuro en este
+     repo: **razonar "está fuera de rango" no alcanza — hay que correr `pnpm barrido` contra el valor
+     elegido y confirmarlo en verde antes de fijarlo**, nunca asumirlo.
+3. **Dígito verificador deliberadamente inválido.** Para la base `2798765432` el verificador real da `0`
+   (algoritmo de `packages/shared/src/seguridad/validador-documento.ts`); el valor final usa `1`. Ni
+   corrigiendo el dígito a mano el resultado se vuelve una identidad real: el cuerpo mismo ya está fuera
+   de rango.
+
+**Valor final: `27-98765432-1`** (normalizado: `27987654321`) — verificado en verde con `pnpm barrido`
+en modo estricto contra el material real de `privado/`.
+
+**Cómo se carga — el script es de un solo uso, no un `alta-socio.ts` con el checksum salteado.**
+`apps/cli/src/alta-socio-placeholder-demo.ts`. Diseño corregido dos veces en Ronda 1 antes de escribir
+código:
+- **No "salta la validación de checksum" en general** — acepta **únicamente** el valor exacto de arriba
+  (comparación `===`), no cualquier CUIT con forma válida y verificador inválido. `security-engineer` y
+  `seguridad-datos-financieros` coincidieron: un bypass genérico reabriría la única defensa que existe
+  contra un CUIT real mal tipeado.
+- **El `--cliente` está hardcodeado** (El Prat, `80741296-8cbf-4a4f-bcf1-8e8cb1c57584`), no es argumento
+  de la CLI — `dba-data`: un script que aceptara cualquier tenant podría, por error de tipeo, insertar
+  este placeholder en el padrón de OTRO cliente real, fila que después no se puede borrar
+  (`padron_socio_documento` no tiene `grant delete`/`update` para nadie).
+- Todo lo demás del camino estándar se preserva sin cambios: hasheo HMAC+pepper (`altaDeSocio`, sin
+  ninguna rama especial), prompt oculto de doble tipeo (`pedirValorConfirmado`), RLS y rol
+  `socio`/`contador` sobre el tenant vía `conUsuario`/`escribirConAuditoria`. El motivo de auditoría dice
+  explícito "PLACEHOLDER DEMO", para que un auditor futuro distinga esto de un alta real sin tener que
+  adivinar por el número.
+- Test de guard (mismo patrón que `packages/data/scripts/sembrar.ts:113-124`):
+  `verificadorCuitEsValido(DOCUMENTO_PLACEHOLDER) === false`, falla ruidoso si algún día no lo es.
+
+**Consecuencia a tener presente, no un bug:** como `documento_hmac` se deriva por cliente, reusar este
+mismo valor una segunda vez en El Prat mientras la primera fila siga con vigencia abierta va a fallar
+por el índice único parcial `uq_padron_socio_vigente` (fail-closed, correcto). Si algún día hace falta
+un segundo placeholder ahí, necesita su propio valor — este script es de un solo uso, no una herramienta
+general.
+
+**Autorizado por:** Juan Pablo Marchini, sesión del 2026-08-24, sobre el diseño ya corregido por los tres
+agentes de Ronda 1 ("Aprobado, con las correcciones que salieron de los cuatro dictámenes... [1] Cuerpo
+sintético corregido... El script acepta ÚNICAMENTE ese valor exacto"). El cuerpo que JP aprobó en esa
+misma sesión (dígito repetido ocho veces, no reproducido en este documento — ver punto 2 de arriba) fue
+el que `code-reviewer` descartó después con evidencia de `pnpm barrido` — la autorización de JP cubre el
+diseño (valor único, `--cliente` hardcodeado, verificador inválido), no el dígito exacto, que se
+corrigió una vez más tras su aprobación.
+
+**No aplica ninguna fecha de destrucción:** no es un dato extraído con TTL — es una fila marcada,
+destinada a permanecer hasta que Laura confirme la identidad real y se dé de baja (`bajaDeSocio`) a favor
+de un alta real.
+
+**Corrida real, 2026-08-24:** ejecutada por Juan Pablo Marchini, `ENV_FILE=.env.piloto`, con
+`pnpm alta:socio:placeholder-demo --usuario 11111111-1111-1111-1111-111111111111 --vigencia-desde
+2025-10-20`. Resultado: `socio_id = 4fe4c6f9-9880-4a33-a84f-4fe580081cc9`, entorno confirmado `piloto`.
+Documento tipeado: el valor placeholder exacto de arriba, dos veces, formato sin guiones
+(`27987654321`) para evitar el mismo desfasaje de formato entre las dos tipeadas que ya había fallado
+una vez en la Parte 1.
+
+---
+
+### E-4 — lectura de `descripcion` real del piloto para calibrar 4 reglas de léxico provisorias
+
+**Por qué hace falta esta excepción y no alcanza con la clasificación N2 de la columna.** Para escribir
+el regex de 4 reglas de léxico provisorias (Galicia: suscripción FCI, formato de cobro de tarjeta, Plan
+de Pagos AFIP; ver `HANDOFF.md` para el detalle completo) hacía falta ver la glosa bancaria original de
+un puñado de filas `Indeterminado` del piloto. `descripcion` de `movimiento_bancario_crudo` está
+clasificada **N2**, no N2-R (`packages/shared/src/seguridad/clasificacion-campos.ts`) — pero N2 en la
+base **no autoriza automáticamente** que ese texto entre al contexto de un agente (LLM externo): ADR-0002
+§A.2 regla 5 dice explícito que eso es decisión registrada del titular, no algo que un agente se
+autoconceda. Y la premisa "ya está redactada de identificadores" es además **falsa contra la evidencia
+real de este mismo repo**: el incidente #11 (`docs/diseno/18-cuit-pegado-sin-separador.md`) midió que
+569/1346 filas (42%) de un lote tenían un CUIT de tercero pegado sin separador en `descripcion`, en
+Galicia y Santander — los mismos dos bancos que esta calibración necesitaba leer.
+
+**Método reforzado, mismo criterio que E-2 — cero texto al contexto de un agente:**
+1. **JP corre el script él mismo** (`apps/cli/src/calibrar-lexico-metadatos.ts`), en su propia terminal,
+   contra el tenant y lote que corresponda.
+2. El script computa, para cada movimiento en clase `sin_reconocer`/tipo `indeterminado` del lote, si su
+   `conceptoBanco` matchea contra una lista de patrones candidatos (escritos por quien conduce la sesión,
+   a partir del criterio de dominio ya validado por `contador-dominio`) — y devuelve **solo el conteo
+   agregado por patrón**, nunca el texto de ningún movimiento individual.
+3. Si con esos conteos alcanza para decidir el regex final, no hace falta ningún paso más — el texto real
+   nunca cruza a la conversación.
+4. Si hiciera falta un ejemplo literal para terminar de calibrar un patrón, lo redacta y tokeniza **JP
+   mismo**, sustituyendo cualquier dato de un tercero por un token sintético, antes de pasarlo — mismo
+   patrón que el Addendum E-2 del 24/08 (verificación visual hecha por el titular, nunca transcripta a un
+   agente).
+
+**Addendum (2026-08-24) — paso 4 activado: `apps/cli/src/listar-conceptobanco-sin-reconocer.ts`.**
+Con `calibrar-lexico-metadatos.ts` corregido (ancla de más en `candidato_cobro_de_tarjeta`, hallazgo de
+JP) y las tres categorías candidatas nuevas (tarjeta, Plan de Pagos AFIP, "contiene AFIP") en **cero en
+los dos lotes de Galicia, sobre 156 filas `sin_reconocer` combinadas**, quedó claro que el vocabulario
+de Laura (su propia interpretación en la columna "Corrección/Identidad") no es el literal que imprime
+el banco. Hace falta ver ejemplos reales para saber qué literal buscar — mismo método reforzado, un
+script más: lista `conceptoBanco` real (texto crudo, N2) de las filas `sin_reconocer` de un lote,
+**en la terminal de JP, nunca en el contexto de un agente**. JP lo corre, lo mira, y pasa de vuelta
+solo los literales que hagan falta, ya redactados/tokenizados si corresponde.
+
+**Autorizado por:** Juan Pablo Marchini, sesión del 2026-08-24 — "AUTORIZO la excepción E-4: JP corre el
+script de lectura él mismo, solo booleanos/conteos de patrón llegan a tu contexto, nunca el texto de
+descripcion. Mismo método reforzado que E-2. Registrala antes de correr nada, como corresponde."
+
+**Alcance, explícito:** solo Galicia y Santander, solo los conceptos FCI/tarjeta/Plan de Pagos AFIP de
+esta calibración puntual. El ítem de "Impuestos y Tasas" (que requeriría un tipo canónico nuevo en el
+catálogo cerrado de 31 tipos, cambio de esquema real) queda **fuera** de esta excepción — tiene su propia
+convocatoria y su propio modo plan, documentado como hallazgo separado en `HANDOFF.md`.
+
+**Retención residual, mismo patrón que E-2 y el incidente #9:** el script no genera ningún derivado con
+dato real — solo conteos, que quedan en la salida de la terminal de JP y, agregados, en `HANDOFF.md`.
+Pendiente, a cargo de JP: revisar y borrar el output local de la corrida al cerrar la sesión.
+
+---
+
 ## Antes de pedir una excepción
 
 Estos tres pasos cierran la mayoría de los casos sin tocar un dato real:

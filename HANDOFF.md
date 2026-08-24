@@ -6,6 +6,171 @@
 
 ---
 
+## 2026-08-24 (117) — Parte 4 CERRADA: % de identidad resuelta remedido contra los 3 bancos — **24,1% exacto, sin residual**. Hallazgo estructural: un placeholder sintético nunca puede mover este número.
+
+**Herramienta:** Claude Code. Cierra la tarea de 4 partes completa (entradas 116 y esta). Script nuevo
+`apps/cli/src/medir-identidad-resuelta.ts` (con test de guard sobre la categoría (a) de `queDecide`),
+reproduce exacto la definición de HANDOFF 93 (`propuesta` + categoría (a) de `decision_humana`).
+
+**Re-exportados los 3 bancos** (`pnpm exportar:excel`, `destinatario=estudio_interno`,
+`motivo=revision_mensual`, corridos por JP) contra los mismos 3 lotes del baseline original —
+326+158+1346 = 1830, coincide exacto con el corpus. Verificación de saldos "cuadra" salvo las 2 cuentas
+USD (`no_verificable`, esperado — sin cotización BNA integrada todavía).
+
+**Medición, banco por banco, contra el baseline de HANDOFF 93 — los tres desgloses de clase
+(`propuesta`/`decision_humana`/`sin_reconocer`) salieron IDÉNTICOS, dígito a dígito, no solo el total:**
+
+| Banco | propuesta | decisión_humana | sin_reconocer | categoría (a) | identidad resuelta |
+|---|---|---|---|---|---|
+| Galicia (326) | 73 | 213 | 40 | 119 | 192 |
+| Santander (158) | 47 | 107 | 4 | 81 | 128 |
+| Macro (1346) | 94 | 1162 | 90 | 27 | 121 |
+| **Total** | **214** | **1482** | **134** | **227** | **441 / 1830 = 24,1%** |
+
+**Sin residual sin explicar — las tres causas de "no se movió" están verificadas, no asumidas:**
+- **Galicia**: Parte 3 no generó ningún commit de léxico (los 4 hallazgos de Laura resultaron sin
+  código nuevo, ver entrada 116) — cero movimiento es exactamente lo esperado.
+- **Macro**: Parte 1 ya había medido 0 nuevo aporte de `es_socio` para los 3 socios nuevos de ROKA en
+  este lote (entrada 116) — consistente.
+- **Santander — hallazgo que no era obvio hasta medirlo, documentado explícito a pedido de JP:** el
+  placeholder de El Prat (`docs/seguridad/registro-excepciones.md` §E-3) es un identificador
+  **sintético**, `27-98765432-1` — no deriva de ningún texto real del banco. La resolución automática
+  de `es_socio` en Capa C compara por **HMAC** el candidato extraído de la glosa contra el padrón: un
+  valor sintético **nunca** puede coincidir con el HMAC de un CUIT real extraído de un movimiento,
+  porque no hay ningún movimiento real cuyo texto hashee a ese valor — es estructuralmente imposible,
+  no una casualidad de este período. **La política de placeholder no mueve — y no puede mover — el % de
+  identidad resuelta.** Su función es distinta: dejar una fila válida del padrón contra la cual, en el
+  futuro, alguien pueda imputar MANUALMENTE las filas "es socia" que Laura señaló — prepara el terreno
+  para Capa D, no resuelve nada solo. Cualquier placeholder futuro en este repo va a tener la misma
+  propiedad, por el mismo motivo — vale la pena tenerlo presente antes de esperar que un placeholder
+  "resuelva" algo automáticamente.
+
+### Cierre de las 4 partes — entregable final
+
+1. `padron_socio`: 4 altas reales (Bracci Repuestos + ROKA) + 1 placeholder de demo (El Prat) — entrada
+   116.
+2. Léxico: cero reglas nuevas — los 4 hallazgos de Laura, con su causa real documentada — entrada 116.
+3. 3 `.xlsx` nuevos en `salida/` (gitignoreado, N2-R) — para revisión de JP, no entregados a Laura
+   todavía. Registro de exports N2-R: **pendiente completar con `correlacion`/`destruir_antes_de`** de
+   los 3 logs `exportar.completado` — JP los tiene, quedan por registrar en
+   `docs/seguridad/registro-excepciones.md` §"Exports N2-R declarados".
+4. % de identidad resuelta: **24,1%, sin cambio, sin residual** — tabla arriba.
+
+## 2026-08-24 (116) — Partes 1-3 CERRADAS: padrón real (Bracci/ROKA), placeholder de demo (El Prat), y calibración de léxico que terminó en CERO código nuevo — los 4 hallazgos de Laura resultaron ser 2 conceptos ya bloqueados a propósito, 1 sin evidencia, 1 fuera de alcance.
+
+**Herramienta:** Claude Code. Plan de 4 partes aprobado en modo plan (CLAUDE.md §3.2), con convocatoria
+real de `security-engineer` + `seguridad-datos-financieros` + `dba-data` + `contador-dominio` antes de
+tocar código o datos. Parte 4 (re-export de los 3 bancos) queda para la entrada siguiente.
+
+### Nota de sesión — reexposición de Tanda 1, ya resuelta con JP
+
+Durante la lectura de la Tanda 1 (`privado/laura-respuestas-2026-08.md`), tres CUIT ya cargados en
+`padron_socio` desde hace semanas se reexpusieron brevemente en el razonamiento de esta sesión (nunca
+en disco — verificado con `git status`/`git diff --stat`, limpio). Severidad baja, acordada con JP:
+mismos identificadores ya conocidos, entorno de desarrollo propio. Sin fila en
+`registro-incidentes.md`. Reforzado desde ahí el criterio de describir por posición/contexto y nunca
+transcribir un identificador real, ni en el chat ni en el razonamiento.
+
+### Parte 1 — 4 altas reales en `padron_socio`, corridas por JP (nunca por el agente)
+
+Material real: `privado/02-Consultas-Laura-2026-08-21.md` §1.5 (no `laura-respuestas-2026-08.md` como
+se supuso al principio — corregido en el momento). Correspondencia nombre→CUIT confirmada inequívoca
+antes de cargar nada. Cargados: **Carlos Sebastián Bracci** (Galicia, `f84d9ecc-...`) y, en ROKA/Macro
+(`69479b8f-...`), **Martin María Laura**, **Martin Natalia** y **Martin Carlos Alfredo** — este último
+explícitamente marcado en la denominación como *"(cuenta particular, no socio)"*, porque `padron_socio`
+no tiene columna de rol/tipo (discrepancia de modelado ya señalada en `02-formato-galicia.md`: la tabla
+en la práctica también guarda personas con cuenta particular que no son socias — no se resuelve con una
+migración en esta tarea).
+
+**Bug real encontrado y corregido en el camino:** los comandos que se le dieron a JP usaban sintaxis
+Bash (`ENV_FILE=.env.piloto pnpm ...`), inválida en PowerShell — causó dos fallos reales
+(`error_interno`/`Error` genérico) antes de identificar la causa. Confirmado con diagnóstico real contra
+el piloto (guard, `conUsuario`, `escribirConAuditoria`, `altaDeSocio` — los cuatro probados end-to-end
+con un documento sintético y rollback forzado, cero rastro permanente) que el código estaba sano; el
+fallo real fue de sintaxis de entorno (falta `$env:ENV_FILE = ".env.piloto"` como línea propia en
+PowerShell) y, en el intento posterior, un desfasaje entre las dos tipeadas del prompt oculto — ninguno
+de los dos es un bug del sistema. **Van a hacer falta runbooks futuros más explícitos sobre PowerShell
+vs. Bash** — es la tercera vez que este tipo de confusión de entorno pasa en este repo (HANDOFF 40-43,
+línea ~1150).
+
+**Medido contra el piloto real, con `resolver:contrapartida` en los 3 lotes:** `es_socio` no se movió —
+0 nuevo aporte en los tres. **Pero no con la misma confianza en los dos bancos**: Galicia (dos lotes,
+`63050700` y `23d91533`) está confirmado limpio de CUIT-pegado-sin-separador (`docs/diseno/18-*.md`,
+tabla de §0: 0 en los dos), así que "0 nuevo aporte" ahí es un hallazgo genuino. **Macro (`ae762fda`,
+1346 movimientos) es el MISMO lote que ya midió 569/1346 (42%) con el bug de RE_CUIT sin backfill
+retroactivo (HANDOFF 109-113, decisión de producto todavía pendiente, sin dueño)** — así que el "0" para
+María Laura/Natalia/Carlos Alfredo en Macro es "0 medible hoy", no "confirmado que no hay movimientos".
+Queda igual de pendiente que antes de esta sesión (no es nuevo, pero corresponde dejarlo explícito acá).
+
+### Parte 2 — placeholder de demo para El Prat, CERRADA
+
+`apps/cli/src/alta-socio-placeholder-demo.ts` (nuevo, con tests) + subsección propia en
+`docs/seguridad/registro-excepciones.md` (E-3 — no es fila de la tabla, esa es para *sacar* datos
+reales, esto es *insertar* un sintético marcado). Valor final `27-98765432-1`
+(`27987654321`), corregido DOS veces en revisión antes de fijarlo:
+1. Primer candidato reusaba el cuerpo del CUIT `CANARIO` de `sintetico.ts` — objetado por
+   `seguridad-datos-financieros` (reservado en exclusiva para INV-5/INV-8).
+2. Segundo candidato (dígito repetido ocho veces) — `code-reviewer` corrió `pnpm barrido` y encontró
+   coincidencia real contra `privado/`. **Lección para cualquier valor sintético futuro: correr el
+   barrido contra el valor elegido, nunca alcanza con razonar "está fuera de rango".**
+
+Corrida real: `socio_id = 4fe4c6f9-9880-4a33-a84f-4fe580081cc9`, ejecutada por JP,
+`ENV_FILE=.env.piloto`, entorno confirmado `piloto`. Registro completo (motivo, valor, fecha, quién la
+corrió) en la subsección E-3.
+
+### Parte 3 — calibración de léxico (E-4), CERRADA con CERO código nuevo — hallazgo real, no "nada que hacer"
+
+Los 4 ítems del feedback de Laura sobre Galicia, verificados contra el texto real del banco (método
+reforzado E-4: `apps/cli/src/calibrar-lexico-metadatos.ts` — solo conteos por patrón al agente — y
+`apps/cli/src/listar-conceptobanco-sin-reconocer.ts` — texto crudo solo en la terminal de JP):
+
+1. **FCI (`suscripcion_fci`, literal `SUSCRIPCION FIMA`)** y **2. tarjeta corporativa
+   (`pago_tarjeta_corporativa_visa`, literal `PAGO VISA EMPRESA`) — los dos YA ESTÁN en el léxico, los
+   dos con `resuelve: 'sin_tipo_asignado'` / `categoriaDelHueco: 'implementacion_diferida'`: el motor
+   reconoce el literal pero el concepto queda bloqueado a propósito porque depende de una decisión de
+   ingesta de Módulo 1 todavía pendiente (el resumen de tarjeta/FCI es un documento separado del
+   extracto bancario). **No falta regla — el "hueco" que veía Laura es exactamente ese bloqueo ya
+   declarado en el catálogo, no un agujero de regex.**
+
+   **Cuantificado, a pedido de JP:** de las **156 filas `sin_reconocer` combinadas en los dos lotes de
+   Galicia** (40 + 116), **20 (12,8%) caen bajo esta única causa** — 18 de FCI (`ya_reconocido_
+   suscripcion_fima`: 4 en el lote `63050700`, 14 en `23d91533`) + 2 de tarjeta corporativa (`PAGO VISA
+   EMPRESA`, las dos en `63050700`). Esto no es "nada para hacer": es evidencia concreta, con número
+   real, de que la decisión de ingesta pendiente (Libro IVA Compras / FCI / tarjetas corporativas — ya
+   señalada en el backlog como "misma decisión, resolver juntas") tiene más impacto real del que se
+   pensaba: **más de 1 de cada 8 filas indeterminadas de Galicia** se resuelve solo con esa decisión,
+   sin escribir una sola regla nueva de léxico.
+3. **Plan de Pagos AFIP** — sin ningún candidato en el texto real (`--contiene "AFIP"` da cero en los
+   dos lotes). No se inventó regla. Puede corresponder a un período fuera de estos dos lotes, o a algo
+   que Laura infirió de otro dato (importe, fecha) no capturado como texto por Módulo 1. Documentado
+   como pregunta abierta, sin acción — no hay base para escribir un patrón.
+4. **Impuestos y Tasas** — fuera de esta tarea desde el dictamen de `contador-dominio`: el catálogo
+   cerrado de 31 tipos no tiene ningún tipo para esto (ni siquiera "Impuesto de sellos", ya reconocido
+   en Santander, tiene adónde resolver). Agregar un tipo nuevo es cambio de esquema real (`CHECK` en la
+   base) — necesita su propia convocatoria (`dba-data` + `tech-lead`) y su propio modo plan completo.
+   Documentado como hallazgo separado, sin dueño asignado todavía.
+
+**Bug propio encontrado y corregido en el camino:** `candidato_cobro_de_tarjeta` en
+`calibrar-lexico-metadatos.ts` estaba anclado (`^COBRO DE TARJETA`) por error — copiado del patrón de
+al lado que sí ancla a propósito (`ya_reconocido_acreditamiento`). JP lo detectó comparando contra
+`candidato_plan_pagos_afip` (sin ancla, también en cero) antes de aceptar el resultado. Corregido, con
+test de regresión y comentario explicando quién ancla y por qué.
+
+Con esto: **cero commits de léxico nuevo** en esta tarea — las 4 categorías "provisorias" que el pedido
+original suponía no se materializaron en código, y el motivo de cada una queda documentado arriba, no
+asumido.
+
+### Estado de salida — antes de Parte 4
+
+`git status`: `docs/seguridad/registro-excepciones.md` y `package.json` modificados;
+`apps/cli/src/alta-socio-placeholder-demo.ts` + test, `apps/cli/src/calibrar-lexico-metadatos.ts` +
+test, `apps/cli/src/listar-conceptobanco-sin-reconocer.ts` (sin test propio, es de un solo uso para
+JP) nuevos, sin commitear todavía. `pnpm typecheck` y `pnpm barrido` en verde, corridos varias veces a
+lo largo de la sesión. Ningún script efímero de diagnóstico quedó en el repo (todos borrados después de
+usarlos).
+
+---
+
 ## 2026-08-24 (115) — CIERRE de sesión, dos frentes sin relación: (A) CUIT pegado sin separador (Macro/RE_CUIT/R42) y (B) export PEPS de FCI. Documentador auditó y completó las dos fuentes.
 
 **Herramienta:** Claude Code. Cierra toda la sesión que produjo (103)-(114). Esta entrada es el punto de

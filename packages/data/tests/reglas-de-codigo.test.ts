@@ -605,6 +605,10 @@ describe('R-F — `clase: \'propuesta\'` solo se construye en nucleo/motor.ts', 
     // degradación de `pendienteDeLaura` en código de producción— no existe en un test que apunta
     // justamente a que la base rechace las filas mal formadas.
     'packages/data/tests/aislamiento-modulo-2.test.ts',
+    // Calibración de léxico (E-4, `calibrar-lexico-metadatos.ts`): construye Reconocimiento sintéticos
+    // para probar `contarPatrones()` sin base — mismo motivo exacto que `resolver-contrapartida.test.ts`
+    // arriba.
+    'apps/cli/tests/calibrar-lexico-metadatos.test.ts',
   ];
   const PATRON_PROPUESTA = /clase:\s*'propuesta'/;
 
