@@ -202,6 +202,30 @@ El usuario decidió: **solo se entrega el path local** (el archivo ya está en e
 la sesión, sesión CLI local) y que esta evaluación quede registrada como decisión tomada con su motivo
 real, para que no se repita la pregunta en la próxima sesión que necesite entregar un N2-R.
 
+### Addendum E-2 (2026-08-24) — nombre real de fondo expuesto como nombre de hoja: decisión propia, no heredada
+
+En la ronda 2 del export (mismo `.xlsx`, `packages/ingesta/src/fci-galicia/extraer-posiciones.ts`),
+`FondoExtraido.fondo` pasó a exponer el nombre real del fondo (columna "nombre" de la tabla de posición
+del extracto, ~20-25 caracteres) como nombre de hoja del `.xlsx` — antes era un rótulo opaco `fondo_N`.
+
+🔴 **Esta es una decisión de exposición NUEVA, con su propio motivo — no una extensión de la
+autorización de segmentación** (esa cubre específicamente el patrón `FONDO - <nombre ABREVIADO> CLASE
+<letra>`, ~12 caracteres, usado para delimitar bloques de movimientos; es un dato distinto del nombre
+completo de la tabla de posición, aunque ambos identifiquen el mismo fondo). `seguridad-datos-financieros`,
+convocado específicamente para esta decisión (sin citar la autorización anterior como si ya la
+cubriera), razonó por estructura y dominio que es altamente probable que sea seguro, pero no llegó a
+confirmarlo con certeza — no tiene acceso a `privado/` para verificarlo empíricamente contra los 3 PDF
+reales. Pidió una verificación visual puntual del titular.
+
+**Verificación**: booleana, hecha por el titular (Juan Pablo Marchini) mirando directamente los 3 PDF
+reales de Elite-IT (no una inferencia ni una cifra transcripta a ningún agente ni a este documento) —
+"la columna 'Fondo' de la tabla de posición trae únicamente 'FIMA `<nombre>` CLASE `<letra>`' en los
+tres cortes (junio, julio, agosto), sin ningún dato de cuenta, comitente o apodo ligado a Elite-IT".
+Confirmada en el chat de diseño de la sesión del 2026-08-24, antes de regenerar el `.xlsx` con el
+nombre real. Con esta confirmación: el nombre real de fondo es dato de producto del banco (familia
+FIMA de Galicia), no dato de Elite-IT, y puede exponerse como nombre de hoja — decisión registrada
+acá, no solo en la conversación.
+
 ## Antes de pedir una excepción
 
 Estos tres pasos cierran la mayoría de los casos sin tocar un dato real:
