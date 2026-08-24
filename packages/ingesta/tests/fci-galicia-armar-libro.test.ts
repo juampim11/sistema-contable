@@ -6,7 +6,8 @@
  * Ronda 2 del export (ajustes de Laura): nombre de hoja con nombre real de fondo (ya no `fondo_N`),
  * fila de título con período por hoja de fondo, formato por tipo de columna ($ + 2 decimales para
  * montos; 2 decimales sin $ para cantidad de cuotas; 6 decimales sin $ para precio/cotización), y las
- * 3 columnas Total del Resumen.
+ * 2 columnas Total del Resumen (Valor histórico / Valuación al cierre — sin "Cantidad total": sumar
+ * cuotapartes de fondos distintos no es una magnitud homogénea).
  *
  * Todas las cifras y nombres de este archivo son SINTÉTICOS (mismo criterio que
  * `packages/ingesta/src/parseo-ar.ts`, hallazgo H-A): ningún valor sale de un extracto real de ningún
@@ -111,7 +112,6 @@ describe('armarLibroFci', () => {
         // El rescate de fondo_1 en este corte fue `estimado: true` (capa de apertura) → el corte
         // completo queda marcado.
         hayEstimadosEnElCorte: true,
-        cantidadTotal: '85.00',
         valorHistoricoTotal: '1050.00',
         valuacionAlCierreTotal: '1280.00',
       },
@@ -124,7 +124,6 @@ describe('armarLibroFci', () => {
         rendimientoPorRescatesConsolidado: '0.00',
         // Sin rescates en este corte → nada que estimar.
         hayEstimadosEnElCorte: false,
-        cantidadTotal: '85.00',
         valorHistoricoTotal: '1050.00',
         valuacionAlCierreTotal: '1310.00',
       },
@@ -206,11 +205,11 @@ describe('armarLibroFci', () => {
     if (!hojaResumen) throw new Error('esperaba la hoja "Resumen"');
     expect(hojaResumen.rowCount).toBe(3); // header + 2 cortes (sin fila de título: eso es solo fondos)
     // Columnas: 1 Corte, 2-4 fondo1 (cantidad/valorHistorico/valuación), 5-7 fondo2,
-    // 8 rendimiento del mes, 9 "Incluye estimados", 10-12 las 3 columnas Total nuevas.
+    // 8 rendimiento del mes, 9 "Incluye estimados", 10-11 las 2 columnas Total (sin "Cantidad total":
+    // sumar cuotapartes de fondos distintos no es una magnitud homogénea — decisión del titular).
     expect(hojaResumen.getRow(1).getCell(8).value).toBe('Rendimiento por rescates del mes');
-    expect(hojaResumen.getRow(1).getCell(10).value).toBe('Cantidad total');
-    expect(hojaResumen.getRow(1).getCell(11).value).toBe('Valor histórico total');
-    expect(hojaResumen.getRow(1).getCell(12).value).toBe('Valuación al cierre total');
+    expect(hojaResumen.getRow(1).getCell(10).value).toBe('Valor histórico total');
+    expect(hojaResumen.getRow(1).getCell(11).value).toBe('Valuación al cierre total');
 
     expect(hojaResumen.getRow(2).getCell(2).value).toBe(60);
     expect(hojaResumen.getRow(2).getCell(3).value).toBe(650);
@@ -222,19 +221,16 @@ describe('armarLibroFci', () => {
     expect(hojaResumen.getRow(3).getCell(8).value).toBe(0);
     expect(hojaResumen.getRow(3).getCell(9).value).toBe('No'); // corte sin rescates estimados
 
-    // Las 3 columnas Total nuevas — valor y tratamiento visual (negrita + relleno) distinto.
-    expect(hojaResumen.getRow(2).getCell(10).value).toBe(85);
-    expect(hojaResumen.getRow(2).getCell(11).value).toBe(1050);
-    expect(hojaResumen.getRow(2).getCell(12).value).toBe(1280);
-    expect(hojaResumen.getRow(3).getCell(12).value).toBe(1310);
+    // Las 2 columnas Total — valor y tratamiento visual (negrita + relleno) distinto.
+    expect(hojaResumen.getRow(2).getCell(10).value).toBe(1050);
+    expect(hojaResumen.getRow(2).getCell(11).value).toBe(1280);
+    expect(hojaResumen.getRow(3).getCell(11).value).toBe(1310);
     expect(hojaResumen.getRow(2).getCell(10).font?.bold).toBe(true);
     expect(hojaResumen.getRow(2).getCell(10).fill).toMatchObject({ type: 'pattern', pattern: 'solid' });
-    // Formato de las columnas Total: "Cantidad total" es una cantidad de cuotapartes (sin `$`, mismo
-    // criterio que "Cantidad de cuotas"/"Stock al cierre"); las otras dos sí son montos en pesos
-    // (mismo criterio que "Valor histórico"/"Valuación al cierre" del Resumen).
-    expect(hojaResumen.getColumn(10).numFmt).toBe(FMT_CANTIDAD);
+    // Formato de las columnas Total: las dos son montos en pesos (mismo criterio que "Valor
+    // histórico"/"Valuación al cierre" del Resumen) — con `$`.
+    expect(hojaResumen.getColumn(10).numFmt).toBe(FMT_IMPORTE);
     expect(hojaResumen.getColumn(11).numFmt).toBe(FMT_IMPORTE);
-    expect(hojaResumen.getColumn(12).numFmt).toBe(FMT_IMPORTE);
     // Header de la hoja Resumen también en negrita con relleno (fila 1, sin fila de título).
     expect(hojaResumen.getRow(1).font?.bold).toBe(true);
     expect(hojaResumen.getRow(1).getCell(1).fill).toMatchObject({ type: 'pattern', pattern: 'solid' });
@@ -251,7 +247,6 @@ describe('armarLibroFci', () => {
         ],
         rendimientoPorRescatesConsolidado: '0.00',
         hayEstimadosEnElCorte: false,
-        cantidadTotal: '10.00',
         valorHistoricoTotal: '100.00',
         valuacionAlCierreTotal: '110.00',
       },
@@ -263,7 +258,6 @@ describe('armarLibroFci', () => {
         ],
         rendimientoPorRescatesConsolidado: '0.00',
         hayEstimadosEnElCorte: false,
-        cantidadTotal: '15.00',
         valorHistoricoTotal: '150.00',
         valuacionAlCierreTotal: '170.00',
       },
@@ -277,9 +271,10 @@ describe('armarLibroFci', () => {
     expect(hojaResumen.getRow(2).getCell(5).value).toBeNull();
     expect(hojaResumen.getRow(3).getCell(5).value).toBe(5);
     // Los totales, en cambio, SÍ están presentes en las dos filas (ya vienen calculados por el
-    // llamador con los fondos que efectivamente aparecen en cada corte).
-    expect(hojaResumen.getRow(2).getCell(10).value).toBe(10);
-    expect(hojaResumen.getRow(3).getCell(10).value).toBe(15);
+    // llamador con los fondos que efectivamente aparecen en cada corte). Columna 10 = Valor histórico
+    // total (sin "Cantidad total": ver el comentario de `FilaHojaResumen`).
+    expect(hojaResumen.getRow(2).getCell(10).value).toBe(100);
+    expect(hojaResumen.getRow(3).getCell(10).value).toBe(150);
   });
 
   it('"Estimado" e "Incluye estimados" muestran texto legible (Sí/No/vacío), nunca el booleano crudo', () => {
@@ -340,7 +335,6 @@ describe('armarLibroFci', () => {
         porFondo: [{ fondo: FONDO_1, cantidad: '2.000000', valorHistorico: '2.00', valuacionAlCierre: '2.40' }],
         rendimientoPorRescatesConsolidado: '3.10',
         hayEstimadosEnElCorte: true,
-        cantidadTotal: '2.00',
         valorHistoricoTotal: '2.00',
         valuacionAlCierreTotal: '2.40',
       },
@@ -349,7 +343,6 @@ describe('armarLibroFci', () => {
         porFondo: [{ fondo: FONDO_1, cantidad: '2.000000', valorHistorico: '2.00', valuacionAlCierre: '2.50' }],
         rendimientoPorRescatesConsolidado: '0.00',
         hayEstimadosEnElCorte: false,
-        cantidadTotal: '2.00',
         valorHistoricoTotal: '2.00',
         valuacionAlCierreTotal: '2.50',
       },
@@ -370,7 +363,7 @@ describe('armarLibroFci', () => {
     expect(hoja.getRow(6).getCell(7).value).toBeFalsy(); // cierre → vacío
 
     // Con un solo fondo: 1 Corte, 2-4 fondo1, 5 rendimiento del mes, 6 "Incluye estimados",
-    // 7-9 las 3 columnas Total.
+    // 7-8 las 2 columnas Total (Valor histórico / Valuación al cierre).
     const hojaResumen = libro.getWorksheet('Resumen');
     if (!hojaResumen) throw new Error('esperaba la hoja "Resumen"');
     expect(hojaResumen.getRow(2).getCell(6).value).toBe('Sí');

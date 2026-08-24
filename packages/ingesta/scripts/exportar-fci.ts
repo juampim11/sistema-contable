@@ -343,8 +343,8 @@ const resumen: FilaHojaResumen[] = config.cortes.map((c, idx) => {
     porFondo,
     rendimientoPorRescatesConsolidado: formatear(rendimientoConsolidado),
     hayEstimadosEnElCorte,
-    // Los 3 fondos de ESTA fila (este corte) — no acumulado entre cortes.
-    cantidadTotal: totalDePorFondo(porFondo, 'cantidad'),
+    // Los 3 fondos de ESTA fila (este corte) — no acumulado entre cortes. Sin "cantidad total": sumar
+    // cuotapartes de fondos distintos no es una magnitud homogénea (decisión del titular, ronda 2).
     valorHistoricoTotal: totalDePorFondo(porFondo, 'valorHistorico'),
     valuacionAlCierreTotal: totalDePorFondo(porFondo, 'valuacionAlCierre'),
   };

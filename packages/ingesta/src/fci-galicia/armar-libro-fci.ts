@@ -9,8 +9,10 @@
  *
  * Ronda 2 del export (ajustes de Laura, HANDOFF): nombre real de fondo (ya no `fondo_N`, ver
  * `extraer-posiciones.ts`), fila de título con período por hoja de fondo, formato de número por TIPO
- * de columna (monto en pesos vs. cantidad de cuotaparte vs. precio de 6 decimales), y 3 columnas de
- * total nuevas en el Resumen.
+ * de columna (monto en pesos vs. cantidad de cuotaparte vs. precio de 6 decimales), y 2 columnas de
+ * total en el Resumen (Valor histórico / Valuación al cierre — sin "Cantidad total": sumar cuotapartes
+ * de fondos distintos no es una magnitud homogénea, decisión del titular tras hallazgo de
+ * `code-reviewer`).
  */
 
 import ExcelJS from 'exceljs';
@@ -64,9 +66,12 @@ export type FilaHojaResumen = {
   /** `true` si CUALQUIER rescate de CUALQUIER fondo en este corte fue parcialmente estimado — YA
    *  CALCULADO por quien llama (mismo criterio que `valorHistorico`), este módulo solo lo escribe. */
   readonly hayEstimadosEnElCorte: boolean;
-  /** Suma de `porFondo[].cantidad` de ESTA MISMA fila (los 3 fondos de este corte) — YA CALCULADO por
-   *  quien llama con `PuntoFijo`, este módulo solo lo escribe con el tratamiento de columna Total. */
-  readonly cantidadTotal: string;
+  /**
+   * 🔴 NO hay "Cantidad total" (deliberado, decisión del titular tras hallazgo de `code-reviewer` en
+   * ronda 2): sumar cuotapartes de fondos DISTINTOS no es una magnitud homogénea — cada cuotaparte vale
+   * algo distinto según el fondo, a diferencia de "Valor histórico"/"Valuación al cierre", que sí están
+   * en la misma unidad (pesos) y sí se pueden sumar entre fondos. Solo estas dos llevan columna Total.
+   */
   /** Suma de `porFondo[].valorHistorico` de esta misma fila. */
   readonly valorHistoricoTotal: string;
   /** Suma de `porFondo[].valuacionAlCierre` de esta misma fila. */
@@ -278,9 +283,6 @@ function armarHojaResumen(libro: ExcelJS.Workbook, resumen: readonly FilaHojaRes
       style: { numFmt: FMT_IMPORTE },
     },
     { header: 'Incluye estimados', key: 'hayEstimados', width: 16 },
-    // Cantidad de cuotapartes, no un monto en pesos — FMT_CANTIDAD (sin `$`), no FMT_IMPORTE, mismo
-    // criterio que "Cantidad de cuotas"/"Stock al cierre" de la hoja por fondo.
-    { header: 'Cantidad total', key: 'cantidadTotal', width: 18, style: { numFmt: FMT_CANTIDAD } },
     {
       header: 'Valor histórico total',
       key: 'valorHistoricoTotal',
@@ -302,10 +304,10 @@ function armarHojaResumen(libro: ExcelJS.Workbook, resumen: readonly FilaHojaRes
   filaHeader.alignment = { vertical: 'middle', wrapText: true };
   aplicarFillFila(filaHeader, cantColumnas, ARGB_ENCABEZADO);
 
-  // Las 3 columnas de Total (posición 1-based, resuelta UNA vez) llevan el tratamiento visual distinto
+  // Las 2 columnas de Total (posición 1-based, resuelta UNA vez) llevan el tratamiento visual distinto
   // que pide el punto 4 del pedido — negrita + relleno dorado, tanto en el header (pisando el celeste
   // de arriba) como en cada celda de dato.
-  const clavesTotal = ['cantidadTotal', 'valorHistoricoTotal', 'valuacionAlCierreTotal'] as const;
+  const clavesTotal = ['valorHistoricoTotal', 'valuacionAlCierreTotal'] as const;
   const indicesTotal = clavesTotal.map((clave) => columnas.findIndex((c) => c.key === clave) + 1);
   for (const indice of indicesTotal) {
     hoja.getCell(1, indice).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ARGB_TOTAL } };
@@ -316,7 +318,6 @@ function armarHojaResumen(libro: ExcelJS.Workbook, resumen: readonly FilaHojaRes
       corte: fechaIsoASerialExcel(fila.corte) ?? fila.corte,
       rendimientoConsolidado: Number(fila.rendimientoPorRescatesConsolidado),
       hayEstimados: textoSiNo(fila.hayEstimadosEnElCorte),
-      cantidadTotal: Number(fila.cantidadTotal),
       valorHistoricoTotal: Number(fila.valorHistoricoTotal),
       valuacionAlCierreTotal: Number(fila.valuacionAlCierreTotal),
     };
