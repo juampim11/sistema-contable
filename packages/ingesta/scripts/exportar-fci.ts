@@ -168,6 +168,20 @@ for (let i = 0; i < cantidadDeFondos; i += 1) {
   resultadosPorFondo.push({ fondo: extraccionesPorCorte[0]!.fondos[i]!.fondo, simulacion });
 }
 
+// 🔴 Hallazgo de `code-reviewer` (ronda 2): antes de exponer el nombre real del fondo (ronda 1 usaba
+// `fondo_N`, único por construcción — el índice del array), dos fondos con el mismo nombre en la tabla
+// de posición de un mismo corte harían que `armarHojaResumen` (`armar-libro-fci.ts`) agrupe por
+// STRING y el segundo quede absorbido en silencio bajo la columna del primero — la misma clase de
+// pérdida silenciosa que `AtribucionFondoAmbiguaError` ya evita en la segmentación por fondo. Se
+// verifica ACÁ, antes de armar ninguna fila.
+const nombresDeFondo = resultadosPorFondo.map((r) => r.fondo);
+const nombresDeFondoUnicos = new Set(nombresDeFondo).size === nombresDeFondo.length;
+p(`nombres de fondo únicos: ${nombresDeFondoUnicos}`);
+if (!nombresDeFondoUnicos) {
+  p('ABORTADO: dos o más fondos tienen el mismo nombre — la hoja Resumen los mezclaría en silencio.');
+  process.exit(1);
+}
+
 // -----------------------------------------------------------------------------
 // 3. Predicción falsable — se frena ANTES de armar el libro si algo no cierra. Solo booleanos y
 //    conteos, nunca una cifra real.
@@ -297,6 +311,15 @@ function valorHistoricoDe(snapshot: SnapshotDeCorte | undefined): string {
   return formatear(total);
 }
 
+/** Suma de un campo de `porFondo` para UNA fila del Resumen — aritmética `PuntoFijo`, nunca `Number()`
+ *  (esto es capa de script, no el borde de salida hacia la celda de Excel). */
+function totalDePorFondo(
+  porFondo: readonly { readonly cantidad: string; readonly valorHistorico: string; readonly valuacionAlCierre: string }[],
+  campo: 'cantidad' | 'valorHistorico' | 'valuacionAlCierre',
+): string {
+  return formatear(porFondo.reduce((acc, p) => sumar(acc, aPuntoFijo(p[campo])), CERO));
+}
+
 const resumen: FilaHojaResumen[] = config.cortes.map((c, idx) => {
   const porFondo = resultadosPorFondo.map((r, i) => ({
     fondo: r.fondo,
@@ -320,6 +343,10 @@ const resumen: FilaHojaResumen[] = config.cortes.map((c, idx) => {
     porFondo,
     rendimientoPorRescatesConsolidado: formatear(rendimientoConsolidado),
     hayEstimadosEnElCorte,
+    // Los 3 fondos de ESTA fila (este corte) — no acumulado entre cortes.
+    cantidadTotal: totalDePorFondo(porFondo, 'cantidad'),
+    valorHistoricoTotal: totalDePorFondo(porFondo, 'valorHistorico'),
+    valuacionAlCierreTotal: totalDePorFondo(porFondo, 'valuacionAlCierre'),
   };
 });
 
@@ -335,10 +362,44 @@ if (!conteoOk) {
 }
 
 // -----------------------------------------------------------------------------
+// 6.5 Período cubierto — para la fila de título de cada hoja de fondo. Se arma ACÁ (no en
+// `armar-libro-fci.ts`, que declara explícitamente que no calcula fechas) a partir del primer y el
+// último `corte` de `config.cortes` — ya validados ordenados cronológicamente ascendente en el
+// bloque 0, así que el primero y el último alcanzan sin ordenar de nuevo.
+// -----------------------------------------------------------------------------
+const MESES_ES = [
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'septiembre',
+  'octubre',
+  'noviembre',
+  'diciembre',
+] as const;
+
+function mesYAnioDe(corteIso: string): { readonly mes: string; readonly anio: string } {
+  const [anio, mesNumero] = corteIso.split('-');
+  const nombreMes = MESES_ES[Number(mesNumero) - 1] ?? (mesNumero as string);
+  return { mes: nombreMes.charAt(0).toUpperCase() + nombreMes.slice(1), anio: anio as string };
+}
+
+const primerCorte = mesYAnioDe(config.cortes[0]!.corte);
+const ultimoCorte = mesYAnioDe(config.cortes[config.cortes.length - 1]!.corte);
+const periodoLabel =
+  primerCorte.mes === ultimoCorte.mes && primerCorte.anio === ultimoCorte.anio
+    ? `${primerCorte.mes} ${primerCorte.anio}`
+    : `${primerCorte.mes}–${ultimoCorte.mes} ${ultimoCorte.anio}`;
+
+// -----------------------------------------------------------------------------
 // 7. Armado del libro y escritura — SOLO en `config.dirSalida` (responsabilidad de quien arma el
 //    config: que sea una ruta dentro de `privado/` o equivalente gitignorado).
 // -----------------------------------------------------------------------------
-const libro = armarLibroFci({ hojasPorFondo, resumen });
+const libro = armarLibroFci({ hojasPorFondo, resumen, periodoLabel });
 const buffer = await serializarLibroFci(libro);
 
 mkdirSync(DIR_SALIDA, { recursive: true });

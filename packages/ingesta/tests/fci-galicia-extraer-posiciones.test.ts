@@ -1,14 +1,20 @@
 /**
  * `comoFilaPosicion` — reconocimiento de la fila de posición de un fondo (tenencia, cotización,
- * valorizado), ejercitado DIRECTO con fragmentos sintéticos, sin pasar por ningún PDF.
+ * valorizado), ejercitado DIRECTO con fragmentos sintéticos, sin pasar por ningún PDF. `nombreFondoExpuesto`
+ * — la transformación de `nombreInterno` al `fondo` real que ahora expone `FondoExtraido` (ronda 2 del
+ * export FCI).
  *
- * Todas las cifras de este archivo son SINTÉTICAS (mismo criterio que ya documenta
+ * Todas las cifras y nombres de este archivo son SINTÉTICOS (mismo criterio que ya documenta
  * `packages/ingesta/src/parseo-ar.ts`, hallazgo H-A): ningún valor sale de un extracto real de
  * ningún cliente.
  */
 
 import { describe, expect, it } from 'vitest';
-import { comoFilaPosicion, type FragmentoClasificado } from '../src/fci-galicia/extraer-posiciones.ts';
+import {
+  comoFilaPosicion,
+  nombreFondoExpuesto,
+  type FragmentoClasificado,
+} from '../src/fci-galicia/extraer-posiciones.ts';
 
 function fragmento(parciales: Partial<FragmentoClasificado>): FragmentoClasificado {
   return {
@@ -83,5 +89,28 @@ describe('comoFilaPosicion', () => {
   it('una cantidad de fragmentos distinta de 4 devuelve null', () => {
     const [nombre, tenencia, cotizacion] = fragmentosDeFilaValida();
     expect(comoFilaPosicion([nombre!, tenencia!, cotizacion!])).toBeNull();
+  });
+});
+
+/**
+ * `nombreFondoExpuesto` — la transformación de `nombreInterno` (tabla de posición) al `fondo` que
+ * ahora sale en `FondoExtraido` y como nombre de hoja del `.xlsx` (ronda 2 del export). Nombres
+ * inventados por este test, ninguno real.
+ */
+describe('nombreFondoExpuesto', () => {
+  it('deja intacto un nombre ya bien formado', () => {
+    expect(nombreFondoExpuesto('Fima Ahorro Pesos')).toBe('Fima Ahorro Pesos');
+  });
+
+  it('recorta espacios de punta', () => {
+    expect(nombreFondoExpuesto('  Fima Premium Renta Fija  ')).toBe('Fima Premium Renta Fija');
+  });
+
+  it('colapsa espacios internos repetidos (común en texto extraído de PDF)', () => {
+    expect(nombreFondoExpuesto('Fima  Ahorro   Pesos')).toBe('Fima Ahorro Pesos');
+  });
+
+  it('preserva mayúsculas y minúsculas tal como vienen — no es la clave de unión normalizada', () => {
+    expect(nombreFondoExpuesto('fima Renta mixta')).toBe('fima Renta mixta');
   });
 });

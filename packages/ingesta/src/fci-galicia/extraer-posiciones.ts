@@ -36,7 +36,11 @@
  * posición — confirmado por metadatos: en los 3 PDF reales, el nombre del encabezado mide ~12
  * caracteres contra ~20-25 del nombre de la tabla. Se unen por "uno contiene al otro" (en cualquier
  * dirección) sobre las claves normalizadas — nunca por igualdad estricta, que falla siempre. El
- * nombre se usa SOLO como clave interna de unión, nunca se expone fuera de este módulo.
+ * nombre ABREVIADO del encabezado de bloque se usa SOLO como clave interna de unión, nunca se expone
+ * fuera de este módulo. El nombre de la tabla de posición (`nombreInterno`) SÍ se expone —
+ * `FondoExtraido.fondo` (ver ese tipo) — porque es un nombre de producto del banco (familia FIMA), no
+ * un dato confidencial del cliente; decisión de la ronda 2 del export, no heredada de la autorización
+ * de segmentación (esa cubre el patrón `FONDO - ... CLASE ...`, un dato distinto).
  *
  * ## El invariante se verifica ENTRE documentos, no dentro de uno solo
  *
@@ -131,10 +135,12 @@ async function filasClasificadas(bytes: Uint8Array): Promise<FilaClasificada[]> 
   }));
 }
 
-/** `nombreInterno`: SOLO para unir con el bloque de movimientos (por "contiene", no igualdad) — nunca sale.
- *  `cotizacionTexto`/`valorizadoTexto`: antes se descartaban (ver el comentario de `comoFilaPosicion`);
- *  ahora se propagan porque `armar-libro-fci.ts` necesita el valor de cierre declarado, no solo la
- *  tenencia. */
+/** `nombreInterno`: se usa como clave interna de unión con el bloque de movimientos (por "contiene",
+ *  no igualdad) — y, además, es la fuente de `FondoExtraido.fondo` (con espacios colapsados): un
+ *  nombre de producto del banco, no un dato confidencial del cliente (decisión de la ronda 2 del
+ *  export). `cotizacionTexto`/`valorizadoTexto`: antes se descartaban (ver el comentario de
+ *  `comoFilaPosicion`); ahora se propagan porque `armar-libro-fci.ts` necesita el valor de cierre
+ *  declarado, no solo la tenencia. */
 type FilaPosicion = {
   readonly nombreInterno: string;
   readonly tenenciaTexto: string;
@@ -216,7 +222,12 @@ export type MovimientoFci = {
 };
 
 export type FondoExtraido = {
-  /** Rótulo opaco, `fondo_N` en el orden de la tabla de posición — nunca el nombre real. */
+  /**
+   * Nombre real del fondo, tal como aparece en la tabla de posición (`nombreInterno`, con espacios
+   * colapsados) — se expone acá porque es un nombre de producto del banco (familia FIMA), no un dato
+   * confidencial del cliente — decisión tomada en la ronda 2 del export, no heredada de la
+   * autorización de segmentación (esa cubre el patrón `FONDO - ... CLASE ...`, un dato distinto).
+   */
   readonly fondo: string;
   readonly tenenciaDeclarada: string;
   /** Cotización (valor de la cuotaparte) declarada al cierre de este corte — decimal canónico. */
@@ -291,6 +302,16 @@ function normalizarClave(texto: string): string {
 }
 
 /**
+ * `nombreInterno` (tabla de posición) → `FondoExtraido.fondo`: solo colapsa espacios repetidos y
+ * recorta los de punta — nunca toca mayúsculas/minúsculas, para que se vea igual que en el PDF.
+ * Distinto de `normalizarClave`: esa es para comparar (mayúsculas, uso interno, nunca expuesta); esta
+ * es para mostrar (case preservado, expuesta en `FondoExtraido.fondo`).
+ */
+export function nombreFondoExpuesto(nombreInterno: string): string {
+  return nombreInterno.trim().replace(/\s+/g, ' ');
+}
+
+/**
  * `periodo`: rango del corte (p. ej. `{ desde: '2025-07-01', hasta: '2025-07-31' }`), para resolver
  * la fecha cruda de cada movimiento (que puede venir sin año) a ISO — mismo mecanismo que
  * `parsearFecha` de `parseo-ar.ts` ya usan los adapters bancarios oficiales.
@@ -358,7 +379,7 @@ export async function extraerPosicionesFci(
     return candidatos[0]?.movimientos ?? [];
   }
 
-  const fondos: FondoExtraido[] = posiciones.map((posicion, indice) => {
+  const fondos: FondoExtraido[] = posiciones.map((posicion) => {
     const crudos = movimientosDe(posicion.nombreInterno);
 
     // Agregados de cantidad — el eje 1 — directo de las filas crudas, SIN pasar por la resolución
@@ -391,7 +412,7 @@ export async function extraerPosicionesFci(
     }
 
     return {
-      fondo: `fondo_${indice + 1}`,
+      fondo: nombreFondoExpuesto(posicion.nombreInterno),
       tenenciaDeclarada: posicion.tenenciaTexto,
       cotizacionDeclarada: posicion.cotizacionTexto,
       valorizadoDeclarada: posicion.valorizadoTexto,
