@@ -170,6 +170,38 @@ que sí puede quedar es el output del script (booleano/categoría, no dato en cl
 en el transcript local de la sesión. Pendiente, fuera del repo, a cargo de JP: revisar y borrar los
 archivos locales de esta sesión al cerrarla.
 
+### Addendum E-2 (2026-08-23) — export `.xlsx` real generado, y `SendUserFile` evaluado y descartado
+
+**(a) Hubo un Paso 2 con un `.xlsx` real.** A diferencia del descubrimiento de formato original (solo
+metadatos/booleanos, sin derivado persistido), esta sesión generó un archivo real:
+`privado/extractos/Sistematizacion Conciliacion Bancaria/FCI/export/fci_elite-it_junio-agosto-2025.xlsx`
+— 3 hojas por fondo + hoja Resumen, costeo PEPS de Elite-IT. Es **N2-R** por el mismo criterio que la
+sección "Exports N2-R declarados" de este archivo (ADR-0002 §A.2, regla 2: un derivado hereda el nivel
+máximo de sus insumos), aunque este flujo **no pasa por `pnpm exportar:excel`** — es un **one-off fuera
+del piloto**, corrido con `packages/ingesta/scripts/exportar-fci.ts` (genérico, recibe rutas y config
+por `--config`, nunca hardcodeadas) contra un cliente (Elite-IT) que no tiene tenant en la base y sobre
+el cual esta tarea no persiste nada. No genera `acceso_auditoria` (no hay `INSERT`, no hay lectura vía
+`conUsuario`/`leerConAuditoria`) ni un JSON de salida con `destruirAntesDe` calculado por el script,
+porque ese mecanismo es específico de `pnpm exportar:excel` (`packages/ingesta/src/planilla/`) y este
+flujo es otro. Por eso se documenta manualmente acá, con el **mismo TTL de 7 días** que ya usa esa
+sección por analogía, a cargo de JP:
+
+| # | Fecha | Motivo | Cliente | Generado el | Se destruye el | Corrido por | Dónde quedó | Destruido |
+|---|---|---|---|---|---|---|---|---|
+| E-2/1 | 2026-08-23 | Entregable de costeo PEPS para el estudio (one-off fuera del piloto, no `pnpm exportar:excel`) | Elite-IT SAS (fuera del piloto, sin tenant) | 2026-08-23 | 2026-08-30 (generado + 7 días, mismo criterio que "Exports N2-R declarados") | Juan Pablo Marchini | `privado/extractos/Sistematizacion Conciliacion Bancaria/FCI/export/fci_elite-it_junio-agosto-2025.xlsx` | — |
+
+**(b) `SendUserFile` (herramienta del harness): evaluada y descartada como canal de entrega — no
+"no hizo falta".** Antes de decidir cómo entregar el `.xlsx` al usuario se evaluó `SendUserFile` y se
+descartó explícitamente. `security-engineer` confirmó, con cita textual de
+`code.claude.com/docs/en/data-usage` y `.../tools-reference`, que esa herramienta pasa el archivo por
+infraestructura de Anthropic: transcript sincronizado, retención estándar de aproximadamente 30 días,
+sin mecanismo de borrado propio del estudio salvo Zero Data Retention (no verificado para esta cuenta).
+Eso es **incompatible con el TTL de 7 días** que este mismo registro fija para exports N2-R — un canal
+que retiene ~30 días no puede ser el vehículo de un dato que el estudio se comprometió a destruir en 7.
+El usuario decidió: **solo se entrega el path local** (el archivo ya está en el disco de quien conduce
+la sesión, sesión CLI local) y que esta evaluación quede registrada como decisión tomada con su motivo
+real, para que no se repita la pregunta en la próxima sesión que necesite entregar un N2-R.
+
 ## Antes de pedir una excepción
 
 Estos tres pasos cierran la mayoría de los casos sin tocar un dato real:

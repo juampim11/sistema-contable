@@ -3,7 +3,7 @@
 > **Este documento es la fuente única y autocontenida del estado de FCI.** Si estás retomando esto
 > sin haber visto la sesión que lo escribió (otra sesión de Claude Code, Codex, o la conversación de
 > Claude.ai que originó el pedido): todo lo que hace falta saber está acá. `HANDOFF.md` tiene el
-> registro cronológico de las entradas (103-108) pero el detalle vive acá, no repartido.
+> registro cronológico de las entradas (103-108, 114) pero el detalle vive acá, no repartido.
 >
 > 🟢 **Paso 1 (núcleo puro) — commiteado.** `packages/fci/` en `main` (`a1189e2`, `9de816c`), sin
 > migración, sin persistencia, sin Capa D, sin adapter de PDF.
@@ -18,9 +18,18 @@
 > múltiples capas (el caso real que motivó el subsistema); chequeo de coherencia final exacto en los
 > 3 fondos. Ver sección 5.
 >
+> 🟢 **Paso 4 (export `.xlsx` para el estudio) — commiteado y corrido contra el dato real.** Extensión
+> de `extraer-posiciones.ts` + `simular-fondo.ts`/`armar-libro-fci.ts` nuevos (commit `6320972`, 14
+> tests nuevos) más el script de orquestación genérico `packages/ingesta/scripts/exportar-fci.ts`
+> (recibe todo por `--config`, nunca datos de cliente en el repo). Corrida real contra los 3 PDF de
+> Elite-IT: las 5 predicciones falsables cumplidas exacto. `SendUserFile` se evaluó como canal de
+> entrega y se **descartó** por incompatibilidad de retención — ver sección 6.
+>
 > 🟡 **Bloqueado, esperando a Laura.** Las 9 preguntas de la sección "Pendiente" se enviaron
 > (ronda 3, `.docx`, fuera del repo) el **2026-08-22**. Hasta que conteste, no hay más trabajo de
-> diseño posible en FCI — ver "Bloqueado, explícitamente" más abajo para qué depende de qué.
+> **diseño** posible en FCI — el export del Paso 4 no dependía de esas respuestas (es un entregable
+> sobre la mecánica ya validada, no una decisión de negocio nueva) y por eso pudo cerrarse igual. Ver
+> "Bloqueado, explícitamente" más abajo para qué depende de qué.
 
 ## Contexto
 
@@ -358,6 +367,91 @@ medido para el fragmento de precio, que faltaba.
 **En ningún momento de todo el paso 3 salió un valor real** (cantidad, precio, resultado de PEPS) al
 contexto de ningún agente ni a ningún documento — todo lo de arriba son booleanos, conteos y
 comparaciones de igualdad, tal como exige el método reforzado de E-2.
+
+## 6. Export `.xlsx` para el estudio — paso 4, cerrado
+
+**Contexto.** Con el eje 1 (sección 4) y `consumirRescate` contra la secuencia real (sección 5) ya
+commiteados, el objetivo de esta sesión fue producir un entregable concreto para el estudio: un libro
+Excel con el costeo PEPS de los 3 fondos de Elite-IT, corte a corte. Plan formal en modo plan (CLAUDE.md
+§3.2, disparado por §3.2(c) — modifica un extractor que ya corre contra dato real— y §3.2(d) — más de 3
+archivos).
+
+**Re-verificación previa, no rediseño.** Antes de tocar código, se corrió de nuevo (script efímero,
+método reforzado de E-2) la atribución por fondo de la sección 4: mismo resultado — 3 encabezados en
+junio y agosto, 1 en julio, eje 1 exacto en los 3 fondos julio y agosto. Confirma que la sección 4
+sigue vigente, no la reemplaza.
+
+### Qué se construyó
+
+- **`extraer-posiciones.ts` extendido**: captura `cotizacionDeclarada`/`valorizadoDeclarada` — dos
+  campos que el extractor ya reconocía y validaba (son parte de la fila de 4 campos de la sección 4)
+  pero descartaba al armar el resultado. Necesarios para que el libro muestre la cotización de cada
+  corte, no solo la cantidad.
+- **`simular-fondo.ts`** (nuevo, puro): encadena `consumirRescate` (paquete `packages/fci`, sección 1)
+  corte a corte para un fondo, reusando exactamente la mecánica ya validada en la sección 5 — no
+  reimplementa PEPS, orquesta el núcleo ya cerrado.
+- **`armar-libro-fci.ts`** (nuevo, puro): arma el `ExcelJS.Workbook` — una hoja por fondo + una hoja
+  Resumen consolidada. Columna "Estimado" (por fila) / "Incluye estimados" (por hoja) para que el
+  estudio distinga, sin ambigüedad, un costo real de uno que arrastra la capa de apertura sin precio
+  conocido (mismo criterio `costoConocido: false` fijado por `contador-dominio` en la sección 1).
+- **14 tests nuevos** entre `fci-galicia-extraer-posiciones.test.ts` (7), `fci-galicia-simular-fondo.test.ts`
+  (4) y `fci-galicia-armar-libro.test.ts` (3) — medido contra el commit real, no solo reportado.
+- **`packages/ingesta/scripts/exportar-fci.ts`**: el único archivo que en runtime toca `privado/` —
+  por regla (CLAUDE.md §3.1.3), ningún agente lo toca, lo escribe quien conduce. Es **genérico**:
+  recibe rutas de PDF, fechas de corte y etiqueta de salida por `--config <archivo.json>`; el config
+  real con los datos de Elite-IT vive en `privado/` (gitignorado), nunca en el repo. Esto corrige un
+  primer intento (`exportar-fci-elite-it.ts`, con el nombre del cliente y rutas reales hardcodeadas en
+  el propio código) que `security-engineer` señaló como fuera del alcance que E-2 autoriza para código
+  que sí se commitea — ese archivo se descartó antes de llegar a un commit (no aparece en el historial
+  de git).
+
+### Revisión
+
+`code-reviewer` encontró, sobre el script de orquestación, dos hallazgos bloqueantes: faltaba el
+chequeo de `movimientosConfiables` (riesgo de descartar movimientos en silencio si un fondo quedó con
+`movimientos: []` por fecha no monótona — ver sección 5) y la marca `costoEstimado`/`parcialmenteEstimado`
+que devuelve `consumirRescate` se perdía al armar el export, sin forma de que el estudio distinguiera un
+resultado real de uno estimado. Ambos corregidos, más hallazgos menores (todos corregidos) y, tras
+genericizar el script, un hallazgo adicional no bloqueante: el orden cronológico de `config.cortes` no
+se verificaba antes de simular — corregido también (el script aborta si no viene ascendente).
+`seguridad-datos-financieros` y `security-engineer` revisaron en paralelo: sin hallazgos bloqueantes —
+confirmaron que la salida por consola es solo booleanos/conteos/rutas (nunca un valor real), que no
+hace falta entrada nueva en `clasificacion-campos.ts` (sin persistencia, Capa D sigue bloqueada), y que
+la carpeta de salida está cubierta por `/privado/` en `.gitignore`.
+
+### Commit y corrida real
+
+**Commit `6320972`** (9 archivos: `exportar-fci.ts`, `armar-libro-fci.ts`, `simular-fondo.ts`,
+`extraer-posiciones.ts`, los 3 archivos de test, `package.json`, `pnpm-lock.yaml`) — a `main`, con
+`pnpm typecheck` limpio y `pnpm vitest run packages/ingesta/tests packages/fci
+packages/data/tests/reglas-de-codigo.test.ts` en verde (37 test files / 799 tests, medido de forma
+independiente). Commiteado **antes** de correr contra el dato real, mismo orden que las secciones 4 y 5.
+
+**Corrida real** (quien conduce, no un agente — `privado/` está prohibido para todo agente):
+`privado/extractos/Sistematizacion Conciliacion Bancaria/FCI/export/fci_elite-it_junio-agosto-2025.xlsx`.
+
+### Predicción falsable — las 5, cumplidas exacto
+
+| Predicción | Resultado |
+|---|---|
+| `cantidadConsistenteEntreCortes` | `true` |
+| `movimientosConfiables` en los 3 fondos × 3 cortes | `true` en todos |
+| `rescatesConSinCubrir` | `false` |
+| Conteo de filas por hoja | `[3, 3, 42]` — idéntico a lo ya medido en la sección 4 |
+| `incluyeEstimados` | `false` |
+
+### `SendUserFile`: evaluado y descartado, no "no hacía falta"
+
+Se evaluó entregar el `.xlsx` al usuario con la herramienta `SendUserFile` del harness. Se
+**descartó explícitamente** — `security-engineer` confirmó, citando `code.claude.com/docs/en/data-usage`
+y `.../tools-reference`, que esa herramienta pasa el archivo por infraestructura de Anthropic
+(transcript sincronizado, retención estándar ~30 días, sin mecanismo de borrado propio del estudio
+salvo Zero Data Retention no verificado para esta cuenta) — incompatible con el TTL de 7 días que
+`docs/seguridad/registro-excepciones.md` fija para exports N2-R (mismo criterio que ya usa la sección
+"Exports N2-R declarados" de ese archivo, aplicado acá aunque este flujo no pasa por
+`pnpm exportar:excel`). El usuario decidió entregar solo el path local — el archivo ya está en su disco,
+sesión CLI local — y que la evaluación quede registrada como decisión tomada, no como "no hizo falta".
+Addendum completo: `docs/seguridad/registro-excepciones.md` §E-2.
 
 ## Bloqueado, explícitamente — qué depende de qué
 

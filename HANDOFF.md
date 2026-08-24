@@ -6,6 +6,77 @@
 
 ---
 
+## 2026-08-23 (114) — CIERRE del Paso 2 de FCI: export `.xlsx` para el estudio, commiteado y corrido contra los 3 PDF reales de Elite-IT. `SendUserFile` evaluado y descartado como canal de entrega.
+
+**Herramienta:** Claude Code. Continuación de (103)-(108) — cierra el Paso 2 (export) que había quedado
+pendiente al terminar esa sesión. Detalle completo y autocontenido: `docs/diseno/17-fci-peps-plan.md`
+(este documento sigue siendo la fuente única del estado de FCI, no repartida).
+
+### Paso 1 — re-verificación de la segmentación por fondo (ya cerrada en (105)-(106)-(108); esta sesión NO la rediseñó)
+
+Con un script efímero (mostrado, corrido, borrado — método reforzado de E-2,
+`docs/seguridad/registro-excepciones.md`), se corrió de nuevo la atribución por fondo: el patrón
+literal `FONDO - <nombre> CLASE <letra>` da 3 encabezados en junio y agosto (los 3 fondos activos esos
+meses), 1 en julio (solo un fondo activo — comportamiento ya documentado, no una falla), y el eje 1
+(invariante de cantidades) cierra `cierra=true` en los 3 fondos, tanto julio como agosto. Sin código
+nuevo en este paso — es re-verificación, no rediseño.
+
+### Paso 2 — export `.xlsx`, trabajo nuevo de esta sesión
+
+Plan formal en modo plan (CLAUDE.md §3.2, disparado por §3.2(c) y (d)):
+
+- `backend-dev` extendió `packages/ingesta/src/fci-galicia/extraer-posiciones.ts` (captura
+  `cotizacionDeclarada`/`valorizadoDeclarada`, dos campos que ya reconocía y validaba pero descartaba)
+  y agregó dos módulos puros: `simular-fondo.ts` (encadena `consumirRescate` corte a corte para un
+  fondo) y `armar-libro-fci.ts` (arma el `ExcelJS.Workbook`: una hoja por fondo + hoja Resumen
+  consolidada, con columna "Estimado"/"Incluye estimados" para distinguir costo real de una capa de
+  apertura sin precio conocido). 14 tests nuevos entre los tres archivos de test que llegan con el
+  commit (`fci-galicia-extraer-posiciones.test.ts`, `fci-galicia-simular-fondo.test.ts`,
+  `fci-galicia-armar-libro.test.ts`).
+- El script de orquestación (`packages/ingesta/scripts/exportar-fci.ts`, el único archivo que en
+  runtime toca `privado/` — por regla, ningún agente lo toca) es **genérico**: recibe todo por
+  `--config <json>`; el config real de Elite-IT vive en `privado/` (gitignorado), nunca en el repo.
+  Corrección de alcance sobre un primer intento (`exportar-fci-elite-it.ts`, con nombre de cliente y
+  rutas reales hardcodeadas) que `security-engineer` señaló fuera de lo que E-2 autoriza para código
+  commiteado — ese archivo se descartó sin llegar a commitearse.
+- Revisión: `code-reviewer` encontró hallazgos bloqueantes en el script de orquestación —chequeo de
+  `movimientosConfiables` faltante (riesgo de pérdida silenciosa de movimientos) y la marca
+  `costoEstimado`/`parcialmenteEstimado` de `consumirRescate` descartada en el export, sin forma de que
+  el estudio distinga un resultado real de uno estimado— más hallazgos menores, todos corregidos
+  (incluido, tras la genericización del script, verificar que `config.cortes` viene ordenado
+  cronológicamente). `seguridad-datos-financieros` y `security-engineer` revisaron en paralelo: sin
+  hallazgos bloqueantes — la salida por consola es solo booleanos/conteos/rutas, no hace falta entrada
+  en `clasificacion-campos.ts` (sin persistencia, Capa D sigue bloqueada), y la carpeta de salida está
+  cubierta por `/privado/` en `.gitignore`.
+
+**Commit `6320972`** (9 archivos: `exportar-fci.ts`, `armar-libro-fci.ts`, `simular-fondo.ts`,
+`extraer-posiciones.ts`, sus 3 archivos de test, `package.json` y `pnpm-lock.yaml`), con `pnpm typecheck`
+limpio y la suite relevante en verde — **commiteado a `main` antes de correr contra el dato real**,
+siguiendo el mismo orden que ya usó (103)-(108).
+
+**Corrida real contra Elite-IT** (yo, no un agente — `privado/` está prohibido para todo agente):
+`privado/extractos/Sistematizacion Conciliacion Bancaria/FCI/export/fci_elite-it_junio-agosto-2025.xlsx`
+— 3 hojas por fondo + Resumen, con las 5 predicciones falsables del plan cumplidas EXACTO:
+`cantidadConsistenteEntreCortes=true`, `movimientosConfiables=true` en todos, `rescatesConSinCubrir=false`,
+conteo de filas por hoja `[3, 3, 42]` (idéntico a lo medido en el Paso 1), `incluyeEstimados=false`.
+
+### `SendUserFile`: evaluado y descartado, no "no hacía falta"
+
+Se evaluó entregar el `.xlsx` con la herramienta `SendUserFile` del harness y se **descartó
+explícitamente**: `security-engineer` confirmó (con cita de `code.claude.com/docs/en/data-usage` y
+`.../tools-reference`) que esa herramienta pasa el archivo por infraestructura de Anthropic (transcript
+sincronizado, retención estándar ~30 días, sin borrado propio del estudio salvo Zero Data Retention no
+verificado) — incompatible con el TTL de 7 días que `docs/seguridad/registro-excepciones.md` fija para
+exports N2-R. El usuario decidió: solo se entrega el path local (el archivo ya está en su disco, sesión
+CLI local). Queda asentado en `docs/seguridad/registro-excepciones.md` §E-2 como decisión evaluada y
+descartada por ese motivo, no como "no hizo falta".
+
+Con esto: **el Paso 2 de FCI queda cerrado**. Sigue igual el bloqueo de fondo — nada de diseño nuevo en
+FCI hasta que Laura conteste la ronda 3 de preguntas (ver `docs/diseno/17-fci-peps-plan.md`, "Bloqueado,
+explícitamente" y "Pendiente — 9 preguntas para Laura").
+
+---
+
 ## 2026-08-23 (113) — CIERRE de sesión: fix de `macro.ts`/`RE_CUIT` commiteado, separado de R42. Pendiente de producto documentado: re-clasificación retroactiva de los 569 movimientos.
 
 **Herramienta:** Claude Code. Cierre final de todo el arco de esta sesión (109)-(112).
