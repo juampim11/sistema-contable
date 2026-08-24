@@ -113,6 +113,9 @@ importers:
       '@sistema-contable/data':
         specifier: workspace:*
         version: link:../data
+      '@sistema-contable/fci':
+        specifier: workspace:*
+        version: link:../fci
       '@sistema-contable/shared':
         specifier: workspace:*
         version: link:../shared

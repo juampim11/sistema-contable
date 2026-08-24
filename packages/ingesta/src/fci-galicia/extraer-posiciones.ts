@@ -94,7 +94,7 @@ function aTextoCanonico(texto: string): string {
   return sinMoneda.replace(/\./g, '').replace(',', '.');
 }
 
-type FragmentoClasificado = {
+export type FragmentoClasificado = {
   readonly x: number;
   readonly decimales: number | null;
   readonly esFecha: boolean;
@@ -131,8 +131,16 @@ async function filasClasificadas(bytes: Uint8Array): Promise<FilaClasificada[]> 
   }));
 }
 
-/** `nombreInterno`: SOLO para unir con el bloque de movimientos (por "contiene", no igualdad) — nunca sale. */
-type FilaPosicion = { readonly nombreInterno: string; readonly tenenciaTexto: string };
+/** `nombreInterno`: SOLO para unir con el bloque de movimientos (por "contiene", no igualdad) — nunca sale.
+ *  `cotizacionTexto`/`valorizadoTexto`: antes se descartaban (ver el comentario de `comoFilaPosicion`);
+ *  ahora se propagan porque `armar-libro-fci.ts` necesita el valor de cierre declarado, no solo la
+ *  tenencia. */
+type FilaPosicion = {
+  readonly nombreInterno: string;
+  readonly tenenciaTexto: string;
+  readonly cotizacionTexto: string;
+  readonly valorizadoTexto: string;
+};
 type FilaMovimiento = {
   readonly tipo: 'suscripcion' | 'rescate';
   readonly cantidadTexto: string;
@@ -153,7 +161,7 @@ type FilaMovimiento = {
  * módulo) y no tiene todavía ningún caller que verifique ese conteo. Quien integre este extractor a
  * un caller real tiene que agregar esa verificación ahí, no asumir que ya existe.
  */
-function comoFilaPosicion(fragmentos: readonly FragmentoClasificado[]): FilaPosicion | null {
+export function comoFilaPosicion(fragmentos: readonly FragmentoClasificado[]): FilaPosicion | null {
   if (fragmentos.length !== 4) return null;
   const [nombre, tenencia, cotizacion, valorizado] = fragmentos;
   if (!nombre || !tenencia || !cotizacion || !valorizado) return null;
@@ -164,7 +172,12 @@ function comoFilaPosicion(fragmentos: readonly FragmentoClasificado[]): FilaPosi
   if (tenencia.x < 370 || tenencia.x > 410) return null;
   if (cotizacion.x < 440 || cotizacion.x > 470) return null;
   if (valorizado.x < 510 || valorizado.x > 535) return null;
-  return { nombreInterno: nombre.texto, tenenciaTexto: aTextoCanonico(tenencia.texto) };
+  return {
+    nombreInterno: nombre.texto,
+    tenenciaTexto: aTextoCanonico(tenencia.texto),
+    cotizacionTexto: aTextoCanonico(cotizacion.texto),
+    valorizadoTexto: aTextoCanonico(valorizado.texto),
+  };
 }
 
 /**
@@ -206,6 +219,11 @@ export type FondoExtraido = {
   /** Rótulo opaco, `fondo_N` en el orden de la tabla de posición — nunca el nombre real. */
   readonly fondo: string;
   readonly tenenciaDeclarada: string;
+  /** Cotización (valor de la cuotaparte) declarada al cierre de este corte — decimal canónico. */
+  readonly cotizacionDeclarada: string;
+  /** Saldo valorizado en pesos al cierre de este corte (`tenenciaDeclarada × cotizacionDeclarada`, ya
+   *  calculado por el banco) — decimal canónico. */
+  readonly valorizadoDeclarada: string;
   /**
    * En ORDEN de documento, validado monótono no decreciente por `fecha` (ver `movimientosConfiables`
    * si no lo es). Necesario para armar capas de costo PEPS
@@ -375,6 +393,8 @@ export async function extraerPosicionesFci(
     return {
       fondo: `fondo_${indice + 1}`,
       tenenciaDeclarada: posicion.tenenciaTexto,
+      cotizacionDeclarada: posicion.cotizacionTexto,
+      valorizadoDeclarada: posicion.valorizadoTexto,
       movimientos,
       movimientosConfiables,
       suscripciones,

@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@sistema-contable/shared": "workspace:*",
+    "@sistema-contable/fci": "workspace:*",
     "exceljs": "^4.4.0",
     "unpdf": "^1.3.2",
     "zod": "^4.1.13",
