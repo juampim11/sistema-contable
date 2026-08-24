@@ -6,6 +6,40 @@
 
 ---
 
+## 2026-08-24 (115) — CIERRE de sesión, dos frentes sin relación: (A) CUIT pegado sin separador (Macro/RE_CUIT/R42) y (B) export PEPS de FCI. Documentador auditó y completó las dos fuentes.
+
+**Herramienta:** Claude Code. Cierra toda la sesión que produjo (103)-(114). Esta entrada es el punto de
+entrada único: no repite el detalle de las 15+ entradas anteriores — cada frente tiene su propio
+documento autocontenido, y este resumen remite a ambos en vez de reexplicarlos.
+
+**Frente A — CUIT de contraparte pegado sin separador (Macro/RE_CUIT/R42).** Detalle completo, ya
+auditado contra código y `git log` reales por `documentador` en esta misma sesión:
+`docs/diseno/18-cuit-pegado-sin-separador.md`. Dos commits, en orden: `fbf163e` (mecanismo
+`auditoria_seguridad_readonly`/R42, ADR-0002 §B.2 — desambiguado en el documento respecto de cualquier
+otra "R42" ajena a este repo) y `cb084a0` (fix de `macro.ts`/columna `REFERENCIA` + fix real de
+`RE_CUIT`, juntos). Medido contra el piloto real: **cero fuga de confidencialidad** en el histórico ya
+ingerido — el CUIT sí se redactaba, pero mal clasificado (`documento` en vez de `cuit`) en 569
+movimientos. **Pendiente, decisión de PRODUCTO, no técnica, sin dueño asignado:** si vale la pena
+re-clasificar retroactivamente esos 569 movimientos para que `distinguir_tercero_de_socio` los
+reconozca sin esperar una re-ingesta — la revisa el titular por separado. El documento deja además
+anotado, con honestidad, que no se puede confirmar desde el repo si el rastro estructurado
+(`registrarUsoSoloLectura`) se invocó de verdad en la corrida real del diagnóstico, porque el script fue
+efímero y se borró — queda como advertencia abierta, no como algo resuelto.
+
+**Frente B — costeo PEPS de FCI, export para el estudio.** Detalle completo, autocontenido:
+`docs/diseno/17-fci-peps-plan.md`. Paso 1 (extractor/atribución por fondo) y Paso 2 (export `.xlsx` con
+simulación PEPS encadenada) cerrados y corridos contra los 3 PDF reales de Elite-IT. `SendUserFile`
+evaluado y descartado como canal de entrega (incompatible con el TTL de 7 días de exports N2-R). **Ya
+entregado y funcionando** — esto NO está bloqueado. **Lo que sí está bloqueado:** eje 3, Capa D
+(persistencia) y el adapter oficial de FCI — la ronda 3 de preguntas para Laura ya se envió y nada de
+diseño nuevo en FCI avanza hasta que conteste.
+
+**Estado de salida de la sesión:** `git status` limpio salvo los dos archivos de esta entrada y los dos
+documentos de diseño (18 y 17, cada uno tocado por su frente correspondiente). Nada más pendiente de
+commitear.
+
+---
+
 ## 2026-08-23 (114) — CIERRE del Paso 2 de FCI: export `.xlsx` para el estudio, commiteado y corrido contra los 3 PDF reales de Elite-IT. `SendUserFile` evaluado y descartado como canal de entrega.
 
 **Herramienta:** Claude Code. Continuación de (103)-(108) — cierra el Paso 2 (export) que había quedado

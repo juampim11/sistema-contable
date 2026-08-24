@@ -3,7 +3,7 @@
 > **Este documento es la fuente única y autocontenida del estado de FCI.** Si estás retomando esto
 > sin haber visto la sesión que lo escribió (otra sesión de Claude Code, Codex, o la conversación de
 > Claude.ai que originó el pedido): todo lo que hace falta saber está acá. `HANDOFF.md` tiene el
-> registro cronológico de las entradas (103-108, 114) pero el detalle vive acá, no repartido.
+> registro cronológico de las entradas (103-108, 114, 115) pero el detalle vive acá, no repartido.
 >
 > 🟢 **Paso 1 (núcleo puro) — commiteado.** `packages/fci/` en `main` (`a1189e2`, `9de816c`), sin
 > migración, sin persistencia, sin Capa D, sin adapter de PDF.
@@ -18,12 +18,18 @@
 > múltiples capas (el caso real que motivó el subsistema); chequeo de coherencia final exacto en los
 > 3 fondos. Ver sección 5.
 >
-> 🟢 **Paso 4 (export `.xlsx` para el estudio) — commiteado y corrido contra el dato real.** Extensión
-> de `extraer-posiciones.ts` + `simular-fondo.ts`/`armar-libro-fci.ts` nuevos (commit `6320972`, 14
-> tests nuevos) más el script de orquestación genérico `packages/ingesta/scripts/exportar-fci.ts`
-> (recibe todo por `--config`, nunca datos de cliente en el repo). Corrida real contra los 3 PDF de
-> Elite-IT: las 5 predicciones falsables cumplidas exacto. `SendUserFile` se evaluó como canal de
-> entrega y se **descartó** por incompatibilidad de retención — ver sección 6.
+> 🟢 **Paso 4 (export `.xlsx` para el estudio) — commiteado, con DOS rondas de ajustes, entregado.**
+> Ronda 1 (`6320972`): extensión de `extraer-posiciones.ts` + `simular-fondo.ts`/`armar-libro-fci.ts`
+> nuevos, 14 tests, script de orquestación genérico `packages/ingesta/scripts/exportar-fci.ts` (recibe
+> todo por `--config`, nunca datos de cliente en el repo). Ronda 2 (`46f83c7`, `de95947`): nombre real
+> de fondo como nombre de hoja (ya no `fondo_N`, decisión de exposición evaluada y confirmada por el
+> titular — no heredada de la autorización de segmentación), formato de número por tipo de columna
+> ($ + AR para montos, sin $ para cantidad de cuotaparte, 6 decimales sin redondear para la cotización),
+> pulido visual (título, colores, freeze panes, bordes), y columnas Total del Resumen (sin "Cantidad
+> total": no es una magnitud homogénea entre fondos distintos). Las 6 predicciones falsables (5 + el
+> guard nuevo de nombres únicos) se repitieron EXACTO en las 3 corridas reales contra Elite-IT.
+> `SendUserFile` se evaluó como canal de entrega y se **descartó** por incompatibilidad de retención.
+> `.xlsx` final entregado al usuario (path local, nunca por herramienta del harness) — ver sección 6.
 >
 > 🟡 **Bloqueado, esperando a Laura.** Las 9 preguntas de la sección "Pendiente" se enviaron
 > (ronda 3, `.docx`, fuera del repo) el **2026-08-22**. Hasta que conteste, no hay más trabajo de
@@ -453,6 +459,81 @@ salvo Zero Data Retention no verificado para esta cuenta) — incompatible con e
 sesión CLI local — y que la evaluación quede registrada como decisión tomada, no como "no hizo falta".
 Addendum completo: `docs/seguridad/registro-excepciones.md` §E-2.
 
+## 7. Ronda 2 del export — nombres reales, formato por columna, visual (cerrado)
+
+**Contexto.** El titular abrió el `.xlsx` de la ronda 1 (sección 6) y pidió, en un solo pedido con 4
+puntos: nombre real de fondo como nombre de hoja, desambiguar si el rendimiento consolidado del
+Resumen era mensual o del ejercicio, formato de número correcto por tipo de columna (no a ciegas en
+todas), y pulido visual. Modo plan otra vez (CLAUDE.md §3.2(c) — vuelve a modificar
+`extraer-posiciones.ts`; §3.2(d)).
+
+### Qué cambió
+
+- **`extraer-posiciones.ts`**: `FondoExtraido.fondo` deja de ser `fondo_N` y pasa a ser el nombre real
+  del fondo (`nombreInterno` de la tabla de posición, ya reconocido, antes solo usado como clave
+  interna de unión). 🔴 **Esta es una decisión de exposición NUEVA, con su propio motivo — el titular
+  corrigió explícitamente una primera redacción mía que citaba la autorización de segmentación (el
+  patrón `FONDO - <nombre ABREVIADO> CLASE <letra>`) como si ya cubriera esto — no la cubre, son dos
+  campos distintos.** `seguridad-datos-financieros`, convocado específicamente para ESTA decisión,
+  razonó por estructura/dominio que es probable que sea seguro pero no pudo confirmarlo con certeza
+  (no tiene acceso a `privado/`). El titular confirmó **mirando los 3 PDF reales**: la columna trae
+  únicamente `FIMA <nombre> CLASE <letra>`, sin dato de cuenta/comitente/apodo de Elite-IT. Addendum
+  registrado: `docs/seguridad/registro-excepciones.md` §E-2 (2026-08-24).
+- **`armar-libro-fci.ts`**: `FMT_CANTIDAD` (2 decimales, sin `$`), `FMT_IMPORTE` (`$` + 2 decimales AR),
+  `FMT_PRECIO` (6 decimales fijos, sin `$` — **nunca** se redondea la cotización real, forzarla a 2
+  decimales la haría no coincidir con el extracto del banco). Fila de título por hoja de fondo (nombre
+  + período), freeze panes bajo título+header, header con relleno celeste + negrita, bordes finos,
+  columnas Total del Resumen con relleno dorado + negrita.
+- **Columna renombrada**: "Rendimiento por rescates (consolidado)" → **"Rendimiento por rescates del
+  mes"** — confirmado en el código (`exportar-fci.ts`) que el cálculo siempre filtró por
+  `cons.corte === c.corte`: siempre fue mensual, nunca acumuló entre meses. Cambio de nombre de
+  columna, no de cálculo.
+- **Columnas Total del Resumen**: originalmente 3 (Cantidad/Valor histórico/Valuación al cierre,
+  totales), reducidas a **2** en un segundo ajuste — `code-reviewer` señaló, y el titular confirmó, que
+  sumar cuotapartes de fondos DISTINTOS no es una magnitud homogénea (cada cuotaparte vale algo
+  distinto según el fondo) — a diferencia de los totales en pesos, que sí son comparables entre fondos.
+  Quedan solo Valor histórico total y Valuación al cierre total.
+
+### Revisión (3 rondas, code-reviewer + seguridad-datos-financieros + security-engineer cada vez)
+
+Primera pasada de la ronda 2: sin bloqueantes de código, pero `security-engineer` encontró 2 mejoras
+baratas (colisión de nombre de hoja con "Resumen" — `ExcelJS` no valida nombres duplicados; nombre de
+hoja vacío/con apóstrofe en el borde sin abortar) y una sugerencia (test de no-inyección-de-fórmula).
+Segunda pasada, ya con esos 3 fixes aplicados: `code-reviewer` confirmó los fixes y encontró un cuarto
+hallazgo real — la hoja Resumen agrupa por STRING de nombre de fondo, y con el nombre real (no un
+índice) dos fondos con el mismo nombre en un mismo corte perderían datos en silencio; corregido con un
+guard de unicidad en `exportar-fci.ts` antes de armar el Resumen. Los 4 fixes + el ajuste de "Cantidad
+total" quedaron commiteados y verificados (`pnpm typecheck` limpio, 69 tests en verde) antes de correr
+contra el dato real.
+
+### Commits de la ronda 2, en orden
+
+`46f83c7` (nombre real + formato + visual + 4 fixes de robustez) → `de95947` (saca "Cantidad total") →
+`6460a65` (addendum E-2 sobre la confirmación del nombre de fondo).
+
+### Las 6 predicciones falsables, repetidas EXACTO en las 3 corridas reales de esta ronda
+
+La corrida real se repitió 3 veces (una por cada ajuste de código: nombre+formato+visual, saca
+"Cantidad total", ronda 1 original) contra los mismos 3 PDF de Elite-IT — **los 6 números dieron
+idénticos las 3 veces**, confirmando que ningún ajuste de exposición/formato tocó el cálculo:
+
+| Predicción | Resultado (las 3 corridas) |
+|---|---|
+| `cantidadConsistenteEntreCortes` | `true` |
+| `movimientosConfiables` en los 3 fondos × 3 cortes | `true` en todos |
+| `nombres de fondo únicos` (guard nuevo de la ronda 2) | `true` |
+| `rescatesConSinCubrir` | `false` |
+| Conteo de filas por hoja | `[3, 3, 42]` |
+| `incluyeEstimados` | `false` |
+
+### Entrega final
+
+El `.xlsx` final (`privado/extractos/Sistematizacion Conciliacion Bancaria/FCI/export/
+fci_elite-it_junio-agosto-2025.xlsx`, nunca en el repo — `/privado/` en `.gitignore`) se entregó al
+usuario indicándole el path local, **no** por `SendUserFile` (ver sección 6). El usuario lo revisó
+directamente en su disco. Con esto, el Paso 4 (export) queda **cerrado por completo**, en las dos
+rondas.
+
 ## Bloqueado, explícitamente — qué depende de qué
 
 | Bloqueado | Por qué (la causa real, no solo "falta Laura") |
@@ -492,7 +573,10 @@ cuando entre un tercer paquete con este mismo patrón (núcleo puro sin SQL, sin
 
 ## Cómo retomar esto, en una frase
 
-**Nada que hacer en FCI hasta que Laura conteste la ronda 3.** Cuando conteste: releer las 9
-preguntas de arriba con sus respuestas, actualizar esta misma sección (no crear un doc nuevo), y
-recién ahí decidir si arranca el eje 3, Capa D, o el adapter oficial — en ese orden de dependencia,
-según la tabla de "Bloqueado, explícitamente".
+**El export (Paso 4, las dos rondas) está cerrado y entregado. Nada más que hacer en FCI hasta que
+Laura conteste la ronda 3.** Cuando conteste: releer las 9 preguntas de arriba con sus respuestas,
+actualizar esta misma sección (no crear un doc nuevo), y recién ahí decidir si arranca el eje 3, Capa
+D, o el adapter oficial — en ese orden de dependencia, según la tabla de "Bloqueado, explícitamente".
+Si el titular pide más ajustes al `.xlsx` ya entregado (una tercera ronda): es trabajo de presentación
+sobre la mecánica ya validada, no depende de Laura — mismo criterio que ya permitió cerrar las rondas 1
+y 2 sin esperarla.

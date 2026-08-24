@@ -112,12 +112,100 @@ Antes del fix, la hipótesis era que un CUIT pegado a una palabra **no se redact
 riesgo de secreto fiscal expuesto en datos ya persistidos del piloto.
 
 **Mecanismo construido para medirlo, con su propio modo plan** (2026-08-23): `MotivoJob` nuevo
-`auditoria_seguridad_readonly` (R42, `docs/arquitectura/ADR-0002-seguridad.md` §B.2), con dos capas de
-contención (`set transaction read only` + grant `select` acotado por columna, migración `0023`) y
-rastro estructurado reusable (`registrarUsoSoloLectura`). Dos rondas completas de 5 agentes +
-revisiones livianas; commiteado (`fbf163e`) antes de tocar piloto. Migraciones `0022` (ajena, pendiente
-desde 2026-08-19 por despliegue escalonado) y `0023` aplicadas a piloto en dos pasos, cada uno con su
-propia autorización explícita (CLAUDE.md §1.9).
+`auditoria_seguridad_readonly` (**R42**, `docs/arquitectura/ADR-0002-seguridad.md` §B.2 — fila `R42`
+de esa tabla), con dos capas de contención (`set transaction read only` + grant `select` acotado por
+columna, migración `0023`) y rastro estructurado reusable (`registrarUsoSoloLectura`). Dos rondas
+completas de 5 agentes + una revisión liviana; commiteado (`fbf163e`) antes de tocar piloto.
+
+> ⚠️ **Nota de desambiguación (pedida explícitamente por el titular):** esta **R42** es exclusivamente
+> la de `docs/arquitectura/ADR-0002-seguridad.md` §B.2 — auditoría de solo lectura sobre `conJob`.
+> **No** es la misma regla que un eventual "R42" de otro documento (por ejemplo, uno de Project
+> Knowledge sobre plan de cuentas, fuera de este repo): son catálogos de reglas independientes con
+> numeración propia, y coincide el número por casualidad de conteo, no por relación de contenido. Ante
+> cualquier cita de "R42" sin archivo de origen explícito, la referencia de ESTA regla es siempre
+> `ADR-0002-seguridad.md` §B.2, fila `R42` — nunca asumir que se trata de la otra.
+
+**La tensión que resuelve `registrarUsoSoloLectura`, y por qué hace falta un mecanismo propio** (pedido
+explícito del titular, verificado leyendo el código, no asumido del propio documento):
+
+`conJob` (`packages/data/src/db/conexion.ts:274-313`) es la credencial que salta la RLS para un trabajo
+de sistema — no hay un usuario humano detrás de la llamada, así que construye **siempre** su `Tx` con
+`usuarioId: null` (`envolver(cliente, null)`, línea 300; comentario del propio código, línea 296-298:
+"`motivo_job` y no `motivo`"). El choke point normal para dejar rastro de una lectura N2-R,
+`leerConAuditoria` (`packages/data/src/db/auditoria.ts`), exige `tx.usuarioId` para fabricar el
+`ContextoAuditado` que necesita — y con `usuarioId` siempre `null`, **ningún** `MotivoJob` puede
+invocarlo. No es un descuido de este motivo puntual: es estructural al mecanismo de jobs (mismo texto,
+casi literal, en el comentario de cabecera de `packages/data/src/db/auditoria-solo-lectura.ts:6-9`).
+Sin nada más, el único rastro que deja una corrida de `conJob('auditoria_seguridad_readonly', …)` es el
+`logger.warn('db.job.bypassrls', { motivo_job, entorno })` genérico que emite `conJob` en **cada**
+llamada (línea 299) — sin cliente, sin alcance, sin conteo de filas leídas: insuficiente para responder
+"quién vio el CUIT de qué tercero, cuándo" (R32).
+
+`registrarUsoSoloLectura` (`packages/data/src/db/auditoria-solo-lectura.ts`) resuelve esa tensión sin
+tocar `leerConAuditoria` ni simular una identidad de usuario que no existe: es un log estructurado
+propio de esta familia de eventos (`loggerAcotado`, evento `auditoria_solo_lectura.uso`) que el
+**script** de diagnóstico llama explícitamente **después** de correr su consulta — nunca `conJob` en
+sí, que no tiene esa información —, con lo que solo el script conoce: `motivo_job` (tipado,
+`MotivoJob`, nunca un `string` suelto), `entorno`, `cliente_ids` (**lista** de uuid tocados, no un
+conteo — revisión 2026-08-23 de `security-engineer` + `seguridad-datos-financieros`: un conteo agregado
+no permite responder SI el diagnóstico tocó un cliente fuera del alcance autorizado), `filas_leidas` y
+un `detalle` opcional de máximo 100 caracteres que nunca es un valor de dato leído, con `ocurrido_en`
+calculado **dentro** de la propia función (no a criterio del llamador). No reemplaza `acceso_auditoria`:
+la complementa para el único caso donde el camino auditado normal es imposible de invocar. Queda
+pensado para reusarse en cualquier `MotivoJob` futuro con la misma tensión, no solo en este.
+
+🔴 **Advertencia honesta, no cerrada por esta revisión:** la fila `R42` del ADR, escrita al commitear
+`fbf163e` (antes de que corriera el script real), deja anotado que "nadie llama todavía a esta función
+desde un script real contra el piloto — eso entra cuando se escriba el diagnóstico". El diagnóstico real
+sí corrió después (HANDOFF 111-112, ver más abajo), pero fue un **script efímero, corrido y borrado**
+(mismo método reforzado de E-2 que usa el frente FCI) — no queda en el repo ningún archivo que permita
+confirmar si esa corrida invocó `registrarUsoSoloLectura` de verdad. No se afirma que sí lo haya hecho:
+sería inventar sobre un archivo que ya no existe. Y la fila `R42` del ADR tampoco se actualizó después
+de la corrida (`git log` sobre `ADR-0002-seguridad.md` no muestra ningún commit posterior a `fbf163e`)
+— así que, tal como queda escrita hoy, la propia regla sigue describiendo el mecanismo como no invocado
+todavía. Quien retome esto y necesite asegurarse de que el rastro estructurado se dejó de verdad en esa
+corrida puntual: no hay forma de confirmarlo desde el repo; habría que preguntarle a quien corrió el
+script, o exigir que el próximo uso de este motivo llame a `registrarUsoSoloLectura` sin excepción antes
+de darlo por hecho.
+
+**Cada migración con su propia autorización explícita, en los términos exactos de CLAUDE.md §1.9
+(listar, confirmar, frenar) — detalle real, sacado de HANDOFF (111), no la frase corta que este
+documento tenía antes:**
+
+Antes de tocar el piloto, `--estado` (solo lectura) mostró **dos** migraciones pendientes, no una:
+`0022_cotizacion_bna.sql` (**ajena a este frente** — catálogo N0 sin RLS, aplicada a LOCAL desde el
+2026-08-19 vía commit `54d353d`, nunca había llegado a piloto por despliegue escalonado **por diseño**,
+confirmado contra `docs/diseno/12-cotizacion-bna-plan.md:91-92` y HANDOFF (76), no un olvido) y
+`0023_auditoria_seguridad_readonly.sql`. Se frenó, se listaron las dos explícitamente, se confirmó con
+el usuario — autorización separada para cada una, no "lo pendiente" en bloque.
+
+Antes de tocar piloto con cualquiera de las dos, el usuario pidió commitear `0023` primero (sin
+versionar todavía era, para él, un riesgo de pérdida — precedente reciente: el único PDF de Macro ya
+perdido durante esta misma investigación). El primer intento de commit lo bloqueó el pre-commit hook
+(barrido de fuga en modo estricto): un CUIT real con dígito verificador válido había quedado como
+ejemplo en la fila #11 de `registro-incidentes.md`, escrito por `security-engineer` en la sesión
+anterior — la misma clase de fuga que ya se había corregido una vez en `detectores-forma.ts` (§2 más
+arriba). Corregido a un valor sintético, barrido re-corrido en verde, recién ahí el commit `fbf163e`
+entró.
+
+Aplicadas a piloto en dos pasos separados, cada uno con su propia autorización:
+
+1. **`0022` sola.** `0023` se movió temporalmente fuera de `packages/data/migrations/` para que
+   `pnpm db:migrate` (con el `DATABASE_URL` de `.env.piloto`) solo viera `0022` pendiente. Aplicada,
+   verificada con `--estado`, `0023` devuelta a su lugar (confirmado con `ls` real, no supuesto).
+2. **`0023`.** Mostrada completa en el chat, autorización explícita del usuario, aplicada con
+   `pnpm db:migrate` normal — era la única pendiente en ese momento.
+
+`--estado` final contra piloto: las 23 migraciones, todas `= aplicada`, nada más pendiente. En este caso
+puntual no apareció ninguna migración de más que frenar — pero el paso 1 de la regla (listar antes de
+correr nada) se cumplió igual, con las dos nombradas antes de tocar cualquier cosa.
+
+**Casi se mide mal, y se corrigió antes de correr (HANDOFF 112):** en la revisión final del script,
+`security-engineer` encontró que el filtro SQL usaba `!~` en vez de `~` para "no redactado" — con ese
+bug, la consulta habría contado filas **bien** redactadas como expuestas: el peor error posible en una
+medición de seguridad (falsa tranquilidad, no falsa alarma). Corregido junto con 2 errores de
+TypeScript estricto (`TS18048`, acceso a fila posiblemente `undefined`) encontrados por el mismo agente
+corriendo `tsc --noEmit`, antes de correr contra datos reales.
 
 **Medición real, con todo el pattern-matching corriendo en SQL (nunca una fila cruda salió a Node):**
 
@@ -154,13 +242,43 @@ de seguridad, y fuera del alcance de esta tarea.
 - Ningún valor real de cliente en ningún archivo commiteado — todos los CUIT de ejemplo en código y
   tests son sintéticos (dígitos repetidos, prefijo AFIP válido, nunca un CUIT real).
 
+## 7. Commits de este frente, en orden cronológico
+
+Verificado con `git log --oneline` y `git show --stat` sobre cada uno — no asumido de este documento ni
+de HANDOFF. Son exactamente dos, ambos del 2026-08-23:
+
+1. **`fbf163e`** (15:05:40 -0300) — `feat(data): MotivoJob auditoria_seguridad_readonly (R42), grant
+   angosto + rastro estructurado`. El mecanismo completo de §5: `conJob`, la migración
+   `0023_auditoria_seguridad_readonly.sql` (**incluida en este commit — no tiene commit propio**), la
+   fila `R42` del ADR, `registrarUsoSoloLectura` y sus tests (9 archivos). Commiteado **antes** de tocar
+   el piloto, a pedido explícito del usuario.
+2. **`cb084a0`** (15:31:14 -0300) — `fix(ingesta): CUIT de contraparte pegado sin separador — Macro
+   REFERENCIA + RE_CUIT`. Lleva **juntos** los dos fixes de §2 y §4 de este documento (el fix de
+   `RE_CUIT` en `packages/shared/src/seguridad/detectores-forma.ts` y el fix de la columna `REFERENCIA`
+   en `packages/ingesta/src/adaptadores/macro.ts`), sus tests, la fila #11 de
+   `docs/seguridad/registro-incidentes.md`, y este mismo documento en su versión original (7 archivos,
+   confirmado con `git show cb084a0 --stat`).
+
+**No es parte de este frente, pero se aplicó al piloto en la misma ventana de autorización que `0023`**
+(ver §5): `54d353d` (2026-08-19) — `feat(data): 0022 — caché de cotización BNA, paso 1`. Se cita acá
+solo para que quede claro por qué `--estado` mostraba dos migraciones pendientes y no una al momento de
+tocar el piloto — el contenido de `0022` es ajeno a CUIT/R42 y no se documenta acá (ver
+`docs/diseno/12-cotizacion-bna-plan.md`).
+
 ## Cómo retomar
 
-1. Si el usuario ya decidió el mecanismo de acceso de solo-lectura para medir el histórico del piloto
-   (§5): correr esa medición (conteos únicamente) y, con el número en mano, decidir si hace falta
-   construir la herramienta de reproceso o si el número da chico y alcanza con dejarlo documentado como
-   riesgo conocido.
+1. **Decisión de producto pendiente, sin dueño técnico todavía** (HANDOFF 113): decidir si vale la pena
+   re-clasificar retroactivamente los 569 movimientos del piloto que quedaron con su identificador en
+   `identificadores.documento` en vez de `identificadores.cuit` (§5) — mover el candidato de
+   contraparte de una clase a otra en datos ya persistidos, para que `distinguir_tercero_de_socio` los
+   reconozca sin esperar una re-ingesta. No es una decisión de seguridad (§5: sin fuga, los datos ya
+   estaban redactados) — es de impacto en datos que Laura (la contadora) ya pudo haber visto y trabajado
+   con la clasificación actual. La revisa el titular por separado.
 2. Si aparece un PDF real nuevo de Galicia o Santander (más allá de los 3 ya medidos en §3): repetir el
    mismo diagnóstico de "letra pegada a CUIT" antes de asumir que el patrón no existe ahí.
-3. Entrada de HANDOFF que cierra esta tarea: referencia a este documento y a la fila #11 de
-   `docs/seguridad/registro-incidentes.md` — no repite contenido.
+3. Si se necesita confirmar que `registrarUsoSoloLectura` (§5) se invocó de verdad en la corrida real
+   del diagnóstico: no se puede, desde el repo — el script era efímero y se borró (§5, nota de
+   advertencia). Si hace falta esa garantía hacia adelante, dejarla como exigencia explícita del próximo
+   script que use este `MotivoJob`, no como algo ya cerrado.
+4. Entrada de HANDOFF que cierra esta tarea (y la de FCI en paralelo): referencia a este documento y a
+   la fila #11 de `docs/seguridad/registro-incidentes.md` — no repite contenido.
