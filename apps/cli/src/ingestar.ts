@@ -42,6 +42,7 @@ import {
   type ObjectStorage,
 } from '@sistema-contable/almacenamiento';
 import {
+  adaptadorBancor,
   adaptadorGalicia,
   adaptadorMacro,
   adaptadorSantander,
@@ -76,6 +77,7 @@ import { cargarEnv } from '../../../tools/cargar-env.ts';
 registrarAdaptador(adaptadorGalicia);
 registrarAdaptador(adaptadorMacro);
 registrarAdaptador(adaptadorSantander);
+registrarAdaptador(adaptadorBancor);
 
 /**
  * La configuración se carga acá y no se asume heredada del shell.

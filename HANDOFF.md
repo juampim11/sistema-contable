@@ -6,6 +6,222 @@
 
 ---
 
+## 2026-08-25 (119) — BBVA bloqueado (imagen pura, causa medida) → pivote a Bancor: adapter cerrado, criterio de diseño para los 3 adapters que faltan, e incidente de redacción parcial registrado
+
+**Herramienta:** Claude Code. Modo plan (§3.2) por datos de clientes + 3+ archivos. Convocatoria real de
+`dba-data` + `security-engineer` + `seguridad-datos-financieros` + `tech-lead` sobre el diseño y la
+migración, y `code-reviewer` + `tester` + `qa-automation` sobre el código terminado — los siete con
+hallazgos reales, ninguno cosmético. `pnpm verificar` completo, corrido dos veces (antes y después de
+aplicar los fixes de la revisión): verde las dos, **93 archivos, 1855 tests + 7 todo** en la segunda.
+
+### Por qué esta entrada no es "adapter de BBVA"
+
+La tarea arrancó como BBVA (multi-cuenta, flag D/C de Ley 25413 en la columna Origen). Medido contra el
+PDF real de `privado/` por dos vías independientes (`aFilas()`/`pdf.js`: 6 páginas, todas `sinTexto`;
+`pdftotext`: 6 bytes de salida sobre 1,1 MB): **BBVA es imagen pura**. Esto ya estaba en HANDOFF
+2026-08-09 (4) y el archivo real es el mismo (fecha 9 de agosto) — no cambió. **Queda declarado como
+deuda con causa medida, no como pendiente sin razón**: necesita un proyecto de OCR aparte, del mismo
+tamaño que `docs/diseno/15-ocr-liquidaciones-plan.md`, no un ajuste del adapter de columnas. Con
+autorización del titular, se pivoteó a **Bancor** (13.330 caracteres extraíbles, confirmado con
+`pdftotext` antes de construir nada).
+
+### Incidente de sesión: redacción parcial en un comando de shell suelto
+
+Midiendo la estructura real de Bancor, un comando ad hoc (`pdftotext | sed` redactando solo dígitos, no
+letras) expuso razón social y nombre de titular reales en la salida de terminal de esta sesión —
+severidad baja, nunca a disco, nunca a un tercero (el receptor es el propio titular del estudio).
+Registrado en `docs/seguridad/registro-incidentes.md` **fila 12**, a pedido explícito de JP (a diferencia
+del precedente de HANDOFF 2026-08-24, donde se decidió no abrir fila). Backlog en
+`docs/diseno/10-deuda-declarada.md` §C: ninguna herramienta de la sesión fuerza `formaParaLog` sobre un
+comando de shell suelto contra un documento real — es un hábito de trabajo, no una regla de código
+verificable. El resto de la medición de Bancor se hizo con un script correcto (`formaParaLog`, letras y
+dígitos), y quedó confirmado por `seguridad-datos-financieros` que `docs/diseno/20-formato-bancor.md`
+(el spec medido, nuevo) no tiene ningún dato real — 0 coincidencias por grep, vocabulario N0 correcto.
+
+### Decisión de diseño para los adapters que faltan (ICBC, Nación, y BBVA cuando se retome)
+
+1. **El catálogo de bancos (tabla `banco`) nunca lista un código sin adapter real registrado que lo
+   respalde.** `0024_catalogo_bancor.sql` da de alta **solo** `bancor` — no BBVA/ICBC/Nación. Confirmado
+   por `dba-data` y `security-engineer`: precargar códigos sin adapter no mejora nada (`resolverAdaptador`
+   ya falla cerrado igual) y si acaso empeora la trazabilidad de catálogo.
+2. **Se descartó el wrapper de "cliente explícito" (`procesarExtractoX({clienteId, filas})`) que esta
+   tarea planeaba al principio para los 4 adapters nuevos.** `tech-lead` rastreó el pipeline real
+   (`apps/cli/src/ingestar.ts`) y confirmó que `clienteId` **nunca** llega al adapter hoy — se valida como
+   UUID en el borde del CLI y viaja directo a `resolverCuentaDelExtracto`/`persistirCuenta`, nunca a
+   `adaptador.leer()` (que es y sigue siendo cliente-agnóstico, lee el mismo documento igual sin importar
+   quién lo suba). Un wrapper que recibe el UUID y lo descarta sería una 4ª forma paralela sin caller real
+   — código muerto disfrazado de preparación. **Corolario para la próxima sesión de un adapter nuevo: NO
+   reintroducir ese wrapper sin revisar esto primero.** El día que exista un caller real (la UI futura que
+   elige cliente+banco+tipo de documento), el chequeo de cliente va en SU propio límite, no en el adapter.
+3. **Security-engineer dejó un hallazgo preexistente, no bloqueante, en `10-deuda-declarada.md` §C:**
+   `--banco <código no catalogado>` (ej. `bbva` hoy) pierde el lote-ancla por violación de FK en el CLI
+   **antes** de que exista dónde asentar el rechazo — sin rastro en `acceso_auditoria`, peor observabilidad
+   que un banco catalogado sin adapter (que sí falla con rastro). Pendiente, sin dueño.
+
+### Adapter Bancor — cerrado, con dos correcciones reales de diseño y cuatro bugs corregidos en revisión
+
+`packages/ingesta/src/adaptadores/bancor.ts` (nuevo) + `packages/ingesta/tests/bancor.test.ts` (30
+tests) + `docs/diseno/20-formato-bancor.md` (spec medida) + `packages/data/migrations/
+0024_catalogo_bancor.sql` (solo `bancor`) + registro en `packages/ingesta/src/index.ts`,
+`apps/cli/src/ingestar.ts` y `packages/ingesta/scripts/probar-adaptador.ts`.
+
+**Lo estructuralmente nuevo de este banco** (ningún adapter anterior lo necesitaba): no publica columna
+de crédito/débito ni signo en el importe — se deriva de la cadena de saldos, `delta = saldo(n) −
+saldo(n−1)` contra el importe, **comparación EXACTA en centavos, sin tolerancia** (corrección de
+`tech-lead` sobre el primer borrador, que proponía tolerancia — "no hay float que redondear, una
+tolerancia sería el único punto del módulo donde una fila mal leída se cuela como cierra igual"). Y, a
+diferencia de Galicia, un movimiento cierra en su propia fila (fecha+concepto+importe+saldo completos),
+con líneas de continuación opcionales reconocidas por forma (5+ dígitos al inicio de la banda de
+concepto) — nunca por "cualquier texto con un movimiento abierto".
+
+**Cuatro bugs reales encontrados por `code-reviewer` y `tester`, corregidos antes de cerrar (ninguno
+cosmético, los cuatro fail-open donde el resto del módulo es fail-closed):**
+1. Una fila sin fragmento de concepto emitía un movimiento con `descripcionLineas: []`/`descripcion: ''`
+   — un estado que el propio esquema Zod declara imposible (`.min(1)`), y nada en producción corre
+   `.parse()` sobre la salida del adaptador. Corregido: se reporta `columna_sin_ancla`, no se emite.
+2. `leerPeriodo` tomaba las dos primeras fechas `dd/mm/yyyy` de una fila por posición; una tercera fecha
+   decoy en la misma fila (ej. fecha de emisión) invertía el período y rechazaba el archivo entero en
+   silencio. Corregido: exige exactamente 2 fechas en la fila, nunca "al menos 2".
+3. El detector del bloque de totales (`$importe`) se evaluaba contra la fila entera ANTES de intentar
+   abrir movimiento — un `$` legítimo dentro del concepto de un movimiento real lo hacía desaparecer
+   completo. Corregido: se prioriza abrir movimiento primero.
+4. Una línea con forma de continuación (5+ dígitos) sin movimiento abierto al que atribuirse cae a
+   `fueraDelCuerpo` en vez de reportarse — contradice lo que la propia spec promete. Corregido: se
+   reporta `linea_fuera_de_zona`.
+   Más un guard menor: importe 0 ya no se clasifica arbitrariamente como crédito (ambas ramas ciertas a
+   la vez) — se reporta indeterminado.
+
+**Hallazgo de regla dura de `qa-automation`, corregido:** el CUIT sintético del test tenía dígito
+verificador VÁLIDO (podría pertenecerle a un contribuyente real) — cambiado al mismo sintético inválido
+que ya usa `macro.test.ts` (`30000000000`).
+
+**Verificado por mutación real** (no solo "el test pasa"): 3 mutaciones elegidas por `qa-automation`
+sobrevivían a la suite ANTES de esta ronda de tests nuevos — se replantaron y las 3 fueron atrapadas
+después: aflojar `RE_CONTINUACION` de 5+ a 1+ dígitos, quitar el cierre de movimiento en la rama de ruido,
+y quitar el guard de importe negativo. Las 3, revertidas al estado correcto y confirmadas en verde.
+
+**Pendiente, declarado, sin dueño (no bloquea el cierre de esta tarea):**
+- Bloque de totales de la página final de Bancor: 9 líneas detectadas por estructura, literal de etiqueta
+  NO confirmado contra el documento real (el clasificador de permisos bloqueó, correctamente, una lectura
+  cruda adicional). Van a `lineasNoInterpretadas`, no a `anexos[]`. Ver `10-deuda-declarada.md` §C.
+- **Migración `0024` NO se pudo aplicar a la base local**: `0023_auditoria_seguridad_readonly.sql` está
+  aplicada en local con un hash distinto del archivo actual en disco (drift preexistente, de otra sesión,
+  no tocado acá). `pnpm db:migrate`/`--listar` fallan duro antes de llegar a `0024`. No se intentó
+  recrear la base local sin autorización — a cargo de JP decidir cómo resolver el drift de `0023`.
+
+### Estado de salida
+
+`pnpm typecheck` limpio. `pnpm verificar` completo verde dos veces (93 archivos, 1855 tests + 7 todo la
+última). Corregida además, de paso, una fuga preexistente y NO relacionada con esta tarea en
+`packages/ingesta/tests/fci-santander-extraer-posiciones.test.ts:151` (un importe sintético coincidía con
+material real de `privado/`, cambiado a otro valor) — sin la cual `pnpm verificar` no podía correr.
+Ningún commit todavía.
+
+---
+
+## 2026-08-25 (118) — FCI Santander: primera validación del motor contra Pannonica SAS, cliente real del estudio SIN tenant en el piloto. Extractor migrado dos veces (unpdf híbrido → pdftotext/Poppler única fuente). Estructura y valores verificados; Eje 1/Eje 3 queda como pregunta abierta, no como bug; `.xlsx` de entrega BLOQUEADO hasta alta de tenant.
+
+**Herramienta:** Claude Code. Autorizado bajo **E-5** (`docs/seguridad/registro-excepciones.md`).
+Expediente técnico completo, autocontenido: **`docs/diseno/19-fci-santander-extractor-hibrido.md`**
+— esta entrada es el resumen ejecutivo y el punto de entrada, no repite el detalle.
+
+### Qué se cerró
+
+`packages/ingesta/src/fci-santander/extraer-posiciones.ts` (nuevo) — extractor PRELIMINAR (mismo
+criterio que `fci-galicia`, sin adapter oficial) para el layout de Santander, DISTINTO del de Galicia.
+Reusa sin tocar `packages/fci` (núcleo PEPS) y `fci-galicia/verificar-posicion.ts` (aritmética del
+Eje 1, reusada para importe en vez de cantidad).
+
+**Camino recorrido, con evidencia real en cada paso** (detalle completo en el doc 19): el primer
+diseño (geométrico, `unpdf`/`pdf.js`, igual que Galicia) falló porque en este documento las etiquetas
+y los números viven en zonas de `y` completamente disjuntas — no es un problema de tolerancia. Un
+diseño intermedio (`pdftotext` solo para la secuencia de etiquetas + cola numérica de `unpdf` para los
+valores, emparejadas por secuencia) dio estructura perfecta pero aritmética que nunca cerraba — porque
+la cola numérica de `unpdf` no reconstruye bien las filas de esa zona. **Diseño final: `pdftotext
+-layout` (Poppler) como fuente ÚNICA** — cada línea ya viene alineada por columnas; se parte por 2+
+espacios y cada campo se identifica por FORMA (Cantidad=4 decimales, Valor=6, Importe=2 — sin
+ambigüedad, no por posición). `unpdf` queda fuera del extractor por ahora (no como cruce activo: se
+probó cruzar las tres categorías contra él y las tres fallaban por el mismo motivo de fondo — un cruce
+garantizado a fallar no es una verificación).
+
+**Verificado contra el conteo independiente del titular, exacto**: 3 fondos, con 0/2, 2/1 y 0/1
+movimientos suscripción/rescate respectivamente — coincide dígito a dígito. `movimientosConfiables:
+true` en los 3.
+
+**Hallazgo de infraestructura real, no anecdótico**: el `pdftotext` disponible en este entorno de
+desarrollo es **xpdf** (Glyph & Cog), no Poppler — mismo nombre de comando, proyecto de código
+DISTINTO, y produce resultados de `-layout` estructuralmente diferentes para el mismo PDF (confirmado
+con `pdftotext -v` en ambos entornos). El extractor ahora exige Poppler explícito
+(`verificarBuildDePdftotext`/`BuildDePdftotextIncorrectaError`) y aborta si no lo encuentra, en vez de
+correr silencioso contra la build equivocada. Poppler se instaló en este entorno vía `winget install
+oschwartz10612.Poppler` (el paquete `poppler` de Chocolatey resultó ser solo código fuente, sin
+binarios — descartado). `pdffonts` sobre el PDF real confirmó la causa de fondo de por qué `unpdf`
+fallaba con SALDO/INICIAL/FINAL: 2 fuentes no embebidas (`Helvetica`, `Helvetica-Bold`), ninguna con
+`ToUnicode` — consistente con el patrón conocido de `pdf.js` para fuentes estándar sin `ToUnicode`
+(la fila resaltada en gris, con la variante bold, es la que falla).
+
+### Tres pendientes con dueño — no cerrados, cada uno por separado
+
+1. ~~🔴 Identidad del titular del documento: sin confirmar, bloquea la entrega.~~ **RESUELTA
+   2026-08-25.** La carátula del PDF dice **"PANNONICA SAS"** — confirmado por JP: cliente real y
+   distinto del estudio, ya identificado, con plan de cuentas propio. El encuadre original de esta
+   tarea (El Prat S.A.S.) fue un error de atribución, nunca verificado contra la carátula real —
+   corregido acá, en `docs/seguridad/registro-excepciones.md` (addendum E-5, 2026-08-25) y en
+   `docs/diseno/19-fci-santander-extractor-hibrido.md`. El extractor es genérico (sin referencia a
+   cliente ni tenant en su código, verificado por grep) — por eso no necesitó ningún cambio con la
+   corrección.
+
+   🔴 **Pendiente nuevo, el que reemplaza a este: Pannonica SAS NO tiene tenant dado de alta en el
+   piloto.** Verificado por lectura directa contra `tenant_node` en la base del piloto
+   (`sistema_contable_piloto`, 2026-08-25): 0 coincidencias por nombre, sobre un total de 4 tenants
+   registrados. "Identificado y con plan de cuentas" no es lo mismo que "dado de alta en la base" — son
+   cosas distintas, y esta es la que falta. **El `.xlsx` de entrega queda BLOQUEADO** hasta que
+   Pannonica se dé de alta como cliente nuevo del piloto, mismo proceso ya usado para Bracci/ROKA/El
+   Prat — no se fuerza ni se inventa un tenant provisorio. **Acción, a cargo de JP:** decidir si/cuándo
+   se da de alta a Pannonica en el piloto; hasta entonces esta tarea queda con la validación técnica
+   cerrada (estructura y Eje 2 verificados) pero sin entregable generado.
+2. 🔴 **Eje 1 (importe) no cierra en los 3 fondos — hipótesis de negocio razonable, NO verificada con
+   un segundo invariante.** La estructura y los valores extraídos están verificados correctos (conteo
+   exacto contra el titular, formas de línea confirmadas limpias para SALDO y movimiento). La
+   hipótesis: un FCI cambia de valor por cotización de la cuotaparte, no solo por flujo de
+   suscripciones/rescates — el mismo terreno que `docs/diseno/17-fci-peps-plan.md` ya bloquea como
+   "Eje 3". Se intentó un segundo invariante (cantidad de cuotapartes, estimada dividiendo importe por
+   el valor de la primera/última operación) para confirmarlo con datos, no solo con lógica: **el
+   resultado fue ambiguo** — cantidad e importe dieron categorías de cercanía prácticamente iguales en
+   los 2 fondos comparables (no "cantidad cierra mucho mejor", que sería la confirmación limpia), y el
+   tercer fondo no fue comparable (saldo final estimado en cero, consistente con un rescate que cierra
+   la posición). **No se cierra como confirmado ni como refutado. Acción:** se resuelve cuando Laura
+   conteste la ronda 3 de preguntas de FCI (`17-fci-peps-plan.md`, preguntas 1-2-9 en particular).
+3. Los dos pendientes de infraestructura de hoy (validación legal de Poppler-como-subproceso antes de
+   vender a un segundo cliente; promoción de la regla "reconcile-or-refuse" a R43 en `ADR-0002` §B,
+   con su prerequisito de prueba de mutación §B.0) **ya están anotados en
+   `docs/diseno/10-deuda-declarada.md` §C** — no se repiten acá con detalle distinto, esta entrada solo
+   referencia esa fila.
+
+### Qué NO se hizo, a propósito
+
+- **Nada se persistió contra el piloto.** E-5 no autoriza persistencia bajo ningún concepto — el
+  resultado es un objeto en memoria, verificado por script, nunca escrito a `packages/data`.
+- **El `.xlsx` de entrega no se generó todavía** — bloqueado por el pendiente 1 (Pannonica SAS sin
+  tenant en el piloto): no tiene sentido armar el entregable para un cliente que todavía no está dado
+  de alta en la base contra la que correría en producción.
+- **Capa D, adapter oficial, Eje 3**: mismos bloqueos que ya documenta `17-fci-peps-plan.md`, sin
+  tocar.
+
+### Estado de salida
+
+`packages/ingesta/src/fci-santander/extraer-posiciones.ts` + `packages/ingesta/tests/
+fci-santander-extraer-posiciones.test.ts` (42 tests, todos puros, sin PDF real) — `pnpm typecheck`
+limpio, tests en verde, medido de forma independiente. `docs/arquitectura/ADR-0000-stack-infra.md`
+§2.4 (licencias), `docs/devops/01-entornos.md` §3.bis (binarios de sistema),
+`docs/seguridad/registro-excepciones.md` §E-5 (con su addendum de identidad), `docs/diseno/
+10-deuda-declarada.md` §C (los dos pendientes de infraestructura) y `docs/diseno/
+19-fci-santander-extractor-hibrido.md` (expediente completo) — todos tocados en esta sesión. Ningún
+commit todavía: pendiente de que JP revise el diff completo antes de commitear (no pedido en esta
+sesión).
+
+---
+
 ## 2026-08-24 (117) — Parte 4 CERRADA: % de identidad resuelta remedido contra los 3 bancos — **24,1% exacto, sin residual**. Hallazgo estructural: un placeholder sintético nunca puede mover este número.
 
 **Herramienta:** Claude Code. Cierra la tarea de 4 partes completa (entradas 116 y esta). Script nuevo

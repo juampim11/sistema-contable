@@ -50,3 +50,10 @@ export {
   leerSantander,
   reconoceSantander,
 } from './adaptadores/santander.ts';
+export {
+  adaptadorBancor,
+  CAPACIDADES_BANCOR,
+  leerBancor,
+  reconoceBancor,
+  type SalidaBancor,
+} from './adaptadores/bancor.ts';

@@ -79,6 +79,53 @@ esquema puro.
 - **`0016_path_coherente.sql` quedó en el historial de migraciones** aunque `0017` la reemplazó por
   completo. No se toca (una migración aplicada no se edita), pero quien lea el directorio va a
   encontrar dos migraciones del mismo invariante.
+- 🟡 **Validación legal de Poppler (`pdftotext`) como subproceso externo, pendiente — sin dueño.**
+  `packages/ingesta/src/fci-santander/extraer-posiciones.ts` invoca `pdftotext` (Poppler, licencia GPL)
+  como binario de sistema vía `node:child_process`, nunca importado/linkeado — ADR-0000 §2.4 documenta
+  el criterio ("GPL solo como proceso externo separado"). Ese criterio es la práctica de la industria,
+  **no fue revisado por un abogado**. Cierre: antes de vender este producto a un **segundo estudio o
+  cliente externo al piloto**, confirmar con asesoría legal que el patrón sostiene la distribución
+  comercial tal como está planteada — y, si no, decidir reemplazo de binario o cambio de modelo de
+  distribución. Detalle completo: `docs/arquitectura/ADR-0000-stack-infra.md` §2.4.
+- 🟡 **Promoción de "reconcile-or-refuse" a regla formal (candidata R43) en `ADR-0002-seguridad.md`
+  §B — pendiente, sin dueño.** Principio ya aplicado en código (`SaldoDesalineadoError`,
+  `EncabezadoDeFondoNoEncontradoError`, `ConsistenciaInternaPdftotextError`,
+  `FuentesDesincronizadasError` — `fci-santander/extraer-posiciones.ts`): ningún extractor que compare
+  dos fuentes para el mismo dato numérico/estructural puede reconciliar una discrepancia en silencio,
+  siempre abortar con el detalle exacto. Documentado como principio en
+  `docs/diseno/19-fci-santander-extractor-hibrido.md`, **no promovido formalmente todavía**: la
+  promoción a regla de `ADR-0002` §B exige la **prueba de mutación de §B.0** (código defectuoso que la
+  ponga roja, caso legítimo, conteo de mutaciones declarado) — esa prueba es parte de la tarea de
+  cierre, no un paso posterior opcional.
+- 🟡 **Ninguna herramienta de la sesión de trabajo fuerza `formaParaLog` sobre un comando de shell
+  suelto contra un documento real — pendiente, sin dueño.** `registro-incidentes.md` fila **12**
+  (2026-08-25): un agente corrió `pdftotext -layout ... \| sed 's/[0-9]/9/g'` directo por Bash para medir
+  la estructura de un PDF real, redactando solo dígitos — dos cadenas de letras (razón social, nombre de
+  titular) quedaron en texto plano en la salida. El código de producción está bien (`formaParaLog` cubre
+  letras y dígitos, y es lo que usan `probar-adaptador.ts` y los scripts de medición del propio módulo);
+  el hueco es que **nada impide que un agente use el binario de sistema directo en vez del script del
+  proyecto**. No hay lint ni test que pueda cubrir esto — es un hábito de trabajo, no una regla
+  verificable de ADR-0002 §B. Cierre, si alguna vez se decide cerrar: un wrapper de repo para lecturas
+  ad hoc de un documento real (`pnpm medir <archivo>` con salida ya pasada por `formaParaLog`), para que
+  la vía rápida sea también la segura — hoy la vía rápida (`pdftotext` a mano) es la insegura.
+- 🟡 **Bloque de totales/comisiones de Bancor (página final del extracto), literal no confirmado —
+  pendiente, sin dueño.** `docs/diseno/20-formato-bancor.md` §6: 9 líneas con patrón `etiqueta: $importe`
+  detectadas por estructura, pero sin el texto exacto de la etiqueta confirmado contra el documento real
+  (el clasificador de permisos bloqueó una lectura cruda adicional, correctamente — ver incidente #12 de
+  `registro-incidentes.md`). Hoy van a `lineasNoInterpretadas` (`linea_fuera_de_zona`), no a `anexos[]`:
+  `anexoExtractoSchema` exige el literal real, no una forma. Cierre: confirmar las 9 etiquetas contra el
+  PDF real (o uno nuevo del mismo banco) y promoverlas a `anexos[]` con su `relacionConMovimientos`.
+- 🟡 **`--banco <código no catalogado>` pierde el lote-ancla, sin rastro en `acceso_auditoria` —
+  preexistente, no específico de Bancor.** Hallazgo de `security-engineer` al revisar
+  `0024_catalogo_bancor.sql`: en `apps/cli/src/ingestar.ts`, el PASO 4 inserta en `lote_ingesta` con
+  `banco_codigo` referenciando `banco(codigo)` (FK). Si el operador declara un código que no está en el
+  catálogo (hoy: `bbva`, `icbc`, `nacion`), el `insert` viola la FK **antes** de que exista el lote-ancla
+  — la transacción revierte sin dejar fila de auditoría, al revés de lo que el propio comentario del
+  archivo promete ("el lote se crea antes de todo... para que el rechazo tenga dónde asentarse"). No es
+  una fuga (sale por `redactar()`, código de salida distinto de cero), pero es peor observabilidad que el
+  camino de un banco catalogado sin adapter (que sí falla con rastro, vía `sin_adaptador` en el PASO 6).
+  Cierre: validar `--banco` contra el catálogo ANTES del PASO 4, con su propio motivo de rechazo
+  auditado, en vez de dejar que la FK sea el único guardia.
 - El resto de las secciones de este documento.
 
 ---
