@@ -25,10 +25,12 @@ import { RE_CUIT as RE_CUIT_COMPARTIDO } from '@sistema-contable/shared/segurida
 import { centavosAImporte, importeACentavos, importeCanonicoACentavos, parsearFecha } from '../parseo-ar.ts';
 import { hashesDeCuenta, normalizarNumeroCuenta, type ClaveCuenta } from '../hash.ts';
 import type {
+  AnexoExtracto,
   CapacidadesAdaptador,
   CuentaConMovimientos,
   LineaNoInterpretada,
   MovimientoBancarioCrudo,
+  RelacionAnexo,
 } from '../esquema.ts';
 import { fragmentoEnVentanaDerecha, fragmentoEnX, textoDeFila, type FilaGeometrica } from '../texto-pdf.ts';
 import type { EntradaDeAdaptador, SalidaDeAdaptador } from './registro.ts';
@@ -52,8 +54,9 @@ export const VERSION = 1;
 export const CAPACIDADES_BANCOR: CapacidadesAdaptador = {
   familiaLayout: 'ancho-fijo',
   cadenaDeSaldos: 'completa',
-  // No se captura ningún total declarado: el bloque final (spec §6) no tiene su literal confirmado
-  // todavía, así que no hay `totalCreditosDeclarado`/`totalDebitosDeclarado` que ofrecer.
+  // El bloque final (spec §6) SÍ se captura, como `anexos[]` — 9 etiquetas confirmadas contra el
+  // documento real. Pero no son `totalCreditosDeclarado`/`totalDebitosDeclarado` (eso es un total de
+  // TODA la cuenta, y este bloque es un detalle de impuestos/retenciones): sigue en `false`.
   traeTotalesDeclarados: false,
   // "SALDO RES. ANTERIOR" viene con etiqueta explícita — no se deriva por aritmética, a diferencia de
   // Galicia.
@@ -116,12 +119,101 @@ const RUIDO_BANCOR: readonly { readonly patron: RegExp; readonly motivo: string 
 const RE_CONTINUACION = /^\d{5,}/;
 
 /**
- * El bloque de totales/comisiones de la página final (spec §6): cualquier fragmento con forma de importe
- * con signo `$` pegado. **No se modela como movimiento, no se descarta**: se reporta en
- * `lineasNoInterpretadas` con `linea_fuera_de_zona` — el literal de etiqueta no está confirmado contra el
- * documento real, así que no se puede promover a `anexos[]` (que exige el rótulo real, no una forma).
+ * Cualquier línea del bloque de totales trae un importe con `$` — esto es lo que la distingue de un
+ * movimiento del cuerpo (spec §6). Se usa PRIMERO para decidir "esto no es un movimiento", y DESPUÉS se
+ * intenta anclar contra las 9 etiquetas conocidas (`ETIQUETAS_TOTALES_BANCOR`); lo que traiga `$` y no
+ * matchee ninguna etiqueta conocida sigue reportándose como residuo — el vocabulario podría crecer.
  */
-const RE_TOTAL_CON_SIGNO_PESOS = /\$\s*[\d.]+,\d{2}/;
+const RE_TOTAL_CON_SIGNO_PESOS = /\$\s*(?:[\d.]+,\d{2}|\d+\.\d{2})/;
+
+/**
+ * Las 9 etiquetas del bloque de totales, confirmadas por JP contra el documento real (spec §6) — nunca
+ * un agente leyó el literal. Ancladas al inicio (`^Total\s+...`), en orden de más específico a menos
+ * para que `SIRCREB` sola (etiqueta 4) no capture por error a `SIRCREB CBA`/`C.A.B.A.`/`Sta. Fe.` — su
+ * propio patrón exige que el `:` venga INMEDIATAMENTE después de `SIRCREB`, así que en la práctica el
+ * orden no cambia el resultado, pero se mantiene explícito para que quede legible.
+ *
+ * `relacionConMovimientos` es `'resume_movimientos_del_cuerpo'` únicamente para las dos etiquetas con
+ * cruce implementado (`verificarTotalesBancor`, spec §6.1) — las otras 7 quedan `'no_determinada'`:
+ * fail-closed, no se afirma una relación que no se verificó.
+ */
+const ETIQUETAS_TOTALES_BANCOR: readonly {
+  readonly patron: RegExp;
+  readonly conceptoLiteral: string;
+  readonly relacion: RelacionAnexo;
+}[] = [
+  {
+    patron: /^Total\s+Impuesto\s+al\s+Valor\s+Agregado\b/i,
+    conceptoLiteral: 'Total Impuesto al Valor Agregado',
+    relacion: 'resume_movimientos_del_cuerpo',
+  },
+  {
+    patron: /^Total\s+Imp\.?\s*L\.?\s*Competitiv\.?\s*Cr[eé]dito\s+Compensable\b/i,
+    conceptoLiteral: 'Total Imp.L.Competitiv. Credito Compensable',
+    relacion: 'no_determinada',
+  },
+  {
+    patron: /^Total\s+Imp\.?\s*Ley\s+de\s+Competitividad\b/i,
+    conceptoLiteral: 'Total Imp.Ley de Competitividad',
+    relacion: 'no_determinada',
+  },
+  {
+    patron: /^Total\s+SIRCREB\s+CBA\b/i,
+    conceptoLiteral: 'Total SIRCREB CBA',
+    relacion: 'resume_movimientos_del_cuerpo',
+  },
+  {
+    patron: /^Total\s+SIRCREB\s+C\.?\s*A\.?\s*B\.?\s*A\.?\b/i,
+    conceptoLiteral: 'Total SIRCREB C.A.B.A.',
+    relacion: 'no_determinada',
+  },
+  {
+    patron: /^Total\s+SIRCREB\s+Sta\.?\s*Fe\.?\b/i,
+    conceptoLiteral: 'Total SIRCREB Sta. Fe.',
+    relacion: 'no_determinada',
+  },
+  {
+    // Anclada con `\s*:` para no capturar "SIRCREB CBA"/"SIRCREB C.A.B.A."/"SIRCREB Sta. Fe." — esas
+    // tienen más palabras entre "SIRCREB" y el ":".
+    patron: /^Total\s+SIRCREB\s*:/i,
+    conceptoLiteral: 'Total SIRCREB',
+    relacion: 'no_determinada',
+  },
+  {
+    patron: /^Total\s+Percepciones\s+C\.?\s*A\.?\s*B\.?\s*A\.?\b/i,
+    conceptoLiteral: 'Total Percepciones C.A.B.A.',
+    relacion: 'no_determinada',
+  },
+  {
+    patron: /^Total\s+Percepciones\s+por\s+consumos\s+en\s+el\s+exterior\b/i,
+    conceptoLiteral: 'Total Percepciones por consumos en el exterior',
+    relacion: 'no_determinada',
+  },
+];
+
+/**
+ * El importe del bloque de totales viene en DOS formatos dentro del MISMO bloque, confirmado por JP
+ * contra el documento real (spec §6): argentino (`1.234,56`, coma decimal) cuando el importe es
+ * distinto de cero, y con PUNTO decimal (`0.00`, sin separador de miles) cuando es cero — 5 de las 9
+ * líneas, en el documento medido. Aceptar solo uno de los dos formatos deja esas líneas sin importe
+ * pese a que la etiqueta matchea perfecto.
+ */
+function importeAnexoACentavos(token: string): bigint | null {
+  if (/^\d{1,3}(?:\.\d{3})*,\d{2}$/.test(token)) return importeACentavos(token);
+  const puntoDecimal = /^(\d+)\.(\d{2})$/.exec(token);
+  if (puntoDecimal?.[1] !== undefined && puntoDecimal[2] !== undefined) {
+    return BigInt(puntoDecimal[1]) * 100n + BigInt(puntoDecimal[2]);
+  }
+  return null;
+}
+
+/** Corta el importe (cualquiera de los dos formatos) de una línea del bloque de totales. */
+function leerImporteDeAnexo(texto: string): { readonly token: string; readonly cent: bigint } | null {
+  const m = /\$\s*([\d.]+,\d{2}|\d+\.\d{2})/.exec(texto);
+  if (!m?.[1]) return null;
+  const cent = importeAnexoACentavos(m[1]);
+  return cent === null ? null : { token: m[1], cent };
+}
 
 export type SalidaBancor = SalidaDeAdaptador & {
   readonly destinos: ConteoDeDestinos<DestinoBase>;
@@ -141,6 +233,8 @@ type MovimientoEnCurso = {
 export function leerBancor(filas: readonly FilaGeometrica[]): SalidaBancor {
   const noInterpretadas: LineaNoInterpretada[] = [];
   const movimientos: MovimientoBancarioCrudo[] = [];
+  const anexos: AnexoExtracto[] = [];
+  let ordenDeAnexo = 0;
   const periodo = leerPeriodo(filas);
 
   const destinoDeFila = new Map<number, DestinoBase>();
@@ -203,6 +297,32 @@ export function leerBancor(filas: readonly FilaGeometrica[]): SalidaBancor {
      */
     if (!abreMovimiento && RE_TOTAL_CON_SIGNO_PESOS.test(texto)) {
       cerrarContinuaciones();
+
+      const etiqueta = ETIQUETAS_TOTALES_BANCOR.find((e) => e.patron.test(texto));
+      const importe = leerImporteDeAnexo(texto);
+
+      if (etiqueta && importe) {
+        // Anexo reconocido (spec §6): las 9 etiquetas confirmadas por JP, cualquiera de los dos
+        // formatos de importe. `periodoDato: 'no_publicado'` — el bloque no declara período propio y
+        // el sistema nunca lo rellena con el del extracto.
+        ordenDeAnexo += 1;
+        marcar(indice, 'anexo');
+        anexos.push({
+          tipoFila: 'anexo',
+          conceptoLiteral: etiqueta.conceptoLiteral,
+          ordenEnLote: ordenDeAnexo,
+          atribucionCuenta: 'cuenta_unica_del_lote',
+          periodoDato: 'no_publicado',
+          importeDeclarado: centavosAImporte(importe.cent),
+          moneda: 'ARS',
+          relacionConMovimientos: etiqueta.relacion,
+          paginaPdf: fila.pagina,
+        });
+        continue;
+      }
+
+      // Trae `$` pero no matchea ninguna de las 9 etiquetas conocidas (o el importe no se pudo leer):
+      // se reporta, no se descarta — el vocabulario del bloque podría crecer en otro extracto.
       marcar(indice, 'residuo');
       noInterpretadas.push({
         codigo: 'linea_fuera_de_zona',
@@ -353,7 +473,7 @@ export function leerBancor(filas: readonly FilaGeometrica[]): SalidaBancor {
   // cuenta — el bucle terminó y nadie más va a llamar a `cerrarContinuaciones()`.
   cerrarContinuaciones();
 
-  const cuenta = armarCuenta(filas, movimientos, periodo);
+  const cuenta = armarCuenta(filas, movimientos, periodo, anexos);
   return {
     cuentas: cuenta ? [cuenta] : [],
     lineasNoInterpretadas: noInterpretadas,
@@ -480,6 +600,7 @@ function armarCuenta(
   filas: readonly FilaGeometrica[],
   movimientos: readonly MovimientoBancarioCrudo[],
   periodo: { readonly desde: string; readonly hasta: string } | null,
+  anexos: readonly AnexoExtracto[],
 ): CuentaConMovimientos | null {
   if (movimientos.length === 0) return null;
 
@@ -524,8 +645,62 @@ function armarCuenta(
       ...(titularDocumento === null ? {} : { titularDocumento }),
     },
     movimientos: conHash,
-    anexos: [],
+    anexos: [...anexos],
   };
+}
+
+/**
+ * Los dos cruces del bloque de totales que SÍ tienen literal de cuerpo confirmado (spec §6.1, sugeridos
+ * por JP): "Total SIRCREB CBA" contra la suma de movimientos `RECAU.SIRCREB CBA`, y "Total Impuesto al
+ * Valor Agregado" contra la suma de movimientos `IVA 21%` + `COMISIONES`.
+ *
+ * 🔴 El segundo cruce (`IVA 21%`/`COMISIONES`) se busca por SUBSTRING sobre `descripcion` —no está
+ * medido geométricamente por este adapter, es el literal que indicó JP leyendo el documento. El primero
+ * (`RECAU.SIRCREB CBA`) sí es un literal ya confirmado independientemente (spec §8).
+ *
+ * Función PURA, separada del contrato `SalidaDeAdaptador` — no cambia lo que ya consume el registro ni
+ * el CLI. **Nunca fuerza a que cuadre**: si no hay anexo con ese `conceptoLiteral`, no hay resultado
+ * para ese cruce; si la suma no coincide, `coincide: false` y las dos cifras quedan expuestas para que
+ * quien la use decida qué hacer — mismo criterio que el resto del proyecto (reportar, no reconciliar).
+ */
+export type VerificacionTotalBancor = {
+  readonly conceptoLiteral: string;
+  readonly declarado: string;
+  readonly calculado: string;
+  readonly coincide: boolean;
+};
+
+const CRUCES_DE_TOTALES: readonly { readonly conceptoLiteral: string; readonly contieneEnGlosa: readonly string[] }[] =
+  [
+    { conceptoLiteral: 'Total SIRCREB CBA', contieneEnGlosa: ['RECAU.SIRCREB CBA'] },
+    { conceptoLiteral: 'Total Impuesto al Valor Agregado', contieneEnGlosa: ['IVA 21%', 'COMISIONES'] },
+  ];
+
+export function verificarTotalesBancor(cuenta: CuentaConMovimientos): readonly VerificacionTotalBancor[] {
+  const magnitud = (importeCanonico: string): bigint => {
+    const c = importeCanonicoACentavos(importeCanonico) ?? 0n;
+    return c < 0n ? -c : c;
+  };
+
+  const resultados: VerificacionTotalBancor[] = [];
+  for (const cruce of CRUCES_DE_TOTALES) {
+    const anexo = cuenta.anexos.find((a) => a.conceptoLiteral === cruce.conceptoLiteral);
+    if (!anexo) continue;
+
+    const sumaCent = cuenta.movimientos
+      .filter((m) =>
+        cruce.contieneEnGlosa.every((token) => m.descripcion.toUpperCase().includes(token.toUpperCase())),
+      )
+      .reduce((acc, m) => acc + magnitud(m.importe), 0n);
+
+    resultados.push({
+      conceptoLiteral: cruce.conceptoLiteral,
+      declarado: anexo.importeDeclarado,
+      calculado: centavosAImporte(sumaCent),
+      coincide: sumaCent === (importeCanonicoACentavos(anexo.importeDeclarado) ?? 0n),
+    });
+  }
+  return resultados;
 }
 
 export const adaptadorBancor = {

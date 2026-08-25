@@ -101,9 +101,6 @@ después: aflojar `RE_CONTINUACION` de 5+ a 1+ dígitos, quitar el cierre de mov
 y quitar el guard de importe negativo. Las 3, revertidas al estado correcto y confirmadas en verde.
 
 **Pendiente, declarado, sin dueño (no bloquea el cierre de esta tarea):**
-- Bloque de totales de la página final de Bancor: 9 líneas detectadas por estructura, literal de etiqueta
-  NO confirmado contra el documento real (el clasificador de permisos bloqueó, correctamente, una lectura
-  cruda adicional). Van a `lineasNoInterpretadas`, no a `anexos[]`. Ver `10-deuda-declarada.md` §C.
 - **Migración `0024` NO se pudo aplicar a la base local**: `0023_auditoria_seguridad_readonly.sql` está
   aplicada en local con un hash distinto del archivo actual en disco (drift preexistente, de otra sesión,
   no tocado acá). `pnpm db:migrate`/`--listar` fallan duro antes de llegar a `0024`. No se intentó
@@ -115,6 +112,45 @@ y quitar el guard de importe negativo. Las 3, revertidas al estado correcto y co
 última). Corregida además, de paso, una fuga preexistente y NO relacionada con esta tarea en
 `packages/ingesta/tests/fci-santander-extraer-posiciones.test.ts:151` (un importe sintético coincidía con
 material real de `privado/`, cambiado a otro valor) — sin la cual `pnpm verificar` no podía correr.
+
+### Addendum (mismo día) — el bloque de totales de Bancor, RESUELTO: 9/9 etiquetas confirmadas por JP
+
+El pendiente de arriba (0 de 9 literales confirmados) se cerró **en la misma sesión**: JP leyó el
+documento completo y pasó las 9 etiquetas reales (vocabulario bancario genérico — nombre de tributo o
+régimen de retención, mismo criterio N0 que el resto del léxico de concepto):
+
+`Total Impuesto al Valor Agregado`, `Total Imp.Ley de Competitividad`, `Total Imp.L.Competitiv. Credito
+Compensable`, `Total SIRCREB`, `Total SIRCREB CBA`, `Total SIRCREB C.A.B.A.`, `Total SIRCREB Sta. Fe.`,
+`Total Percepciones C.A.B.A.`, `Total Percepciones por consumos en el exterior`.
+
+**Hallazgo de formato real, confirmado por JP, no asumido:** dentro del MISMO bloque, las líneas con
+importe ≠ 0 usan el formato argentino (`$1.234,56`) y las líneas con importe = 0 usan **punto decimal**
+(`$0.00`, sin separador de miles) — 5 de las 9 en el documento medido. `bancor.ts` ahora acepta los dos
+formatos (`importeAnexoACentavos`); antes solo aceptaba coma decimal.
+
+Las 9 líneas ahora se modelan como `anexos[]` (`AnexoExtracto`), ancladas por regex exacta contra cada
+etiqueta (mismo patrón `RELACION_POR_LITERAL` de `galicia.ts`) — dejaron de ir a `lineasNoInterpretadas`.
+`relacionConMovimientos` es `'resume_movimientos_del_cuerpo'` solo para las 2 etiquetas con cruce
+implementado (ver abajo); las otras 7 quedan `'no_determinada'` — fail-closed, no se afirma una relación
+sin verificar. Una línea de totales que NO matchee ninguna de las 9 sigue cayendo a
+`lineasNoInterpretadas` (el vocabulario podría crecer en otro extracto).
+
+**Verificación cruzada opcional, agregada** (sugerida por JP, no bloqueante): `verificarTotalesBancor()`,
+función pura y separada del contrato `SalidaDeAdaptador` — compara `Total SIRCREB CBA` contra la suma de
+movimientos `RECAU.SIRCREB CBA`, y `Total Impuesto al Valor Agregado` contra la suma de movimientos con
+`IVA 21%` + `COMISIONES` en la glosa (este segundo literal, indicado por JP, no está medido
+geométricamente por este adapter — el match es por substring). Reporta la diferencia si no cierra, nunca
+la fuerza a cuadrar. **`verificarTotalesBancor` existe y está testeada, pendiente de conectarse al flujo
+de ingesta real cuando se decida si la verificación cruzada corre siempre o es opcional por banco** —
+decisión de alcance deliberada, no un olvido: es la misma disciplina que llevó a descartar hoy el wrapper
+de cliente explícito (ver más arriba en esta entrada) — no cablear un caller sin que exista todavía la
+decisión de cuándo/cómo debe correr.
+
+`docs/diseno/20-formato-bancor.md` §6/§6.1 actualizado con las 9 etiquetas, la nota de formato dual, y el
+cruce. `bancor.test.ts`: 30 → **37 tests** (9 etiquetas reconocidas sin colisión, los dos formatos, el
+cruce cerrando y no cerrando, conformidad de esquema). `pnpm verificar` completo, corrido una tercera vez
+tras este addendum: **93 archivos, 1862 tests + 7 todo, verde**. Sin commit todavía — a la espera de que
+JP revise antes de aprobar.
 Ningún commit todavía.
 
 ---

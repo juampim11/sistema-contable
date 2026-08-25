@@ -18,9 +18,14 @@ import {
   CAPACIDADES_BANCOR,
   leerBancor,
   reconoceBancor,
+  verificarTotalesBancor,
 } from '../src/adaptadores/bancor.ts';
 import { verificarAritmetica } from '../src/verificacion/invariantes.ts';
-import { cuentaConMovimientosSchema, movimientoBancarioCrudoSchema } from '../src/esquema.ts';
+import {
+  anexoExtractoSchema,
+  cuentaConMovimientosSchema,
+  movimientoBancarioCrudoSchema,
+} from '../src/esquema.ts';
 import type { FilaGeometrica } from '../src/texto-pdf.ts';
 
 // -----------------------------------------------------------------------------
@@ -229,10 +234,13 @@ describe('leerBancor — cadena de saldos deriva el signo', () => {
     expect(m?.descripcion).not.toContain('pie legal');
   });
 
-  it('el bloque de totales va a lineasNoInterpretadas, no se descarta ni se cuenta como movimiento', () => {
+  it('una etiqueta de totales DESCONOCIDA (no una de las 9 confirmadas) va a lineasNoInterpretadas, no se descarta ni se cuenta como movimiento', () => {
+    // El fixture usa "Total Comisión Mantenimiento:", que no es ninguna de las 9 etiquetas reales
+    // confirmadas por JP (spec §6) — tiene que caer al residuo genérico, no inventarse un anexo.
     const total = salida.lineasNoInterpretadas.find((l) => l.codigo === 'linea_fuera_de_zona');
     expect(total).toBeDefined();
     expect(salida.cuentas[0]?.movimientos).toHaveLength(4);
+    expect(salida.cuentas[0]?.anexos).toHaveLength(0);
   });
 
   it('resuelve el período de carátula y lo usa para completar el año de cada fecha', () => {
@@ -449,6 +457,133 @@ describe('leerBancor — fail-closed: hallazgos de code-reviewer/tester sobre el
     expect(salida.lineasNoInterpretadas.some((l) => l.codigo === 'importe_en_columna_desconocida')).toBe(
       true,
     );
+  });
+});
+
+/**
+ * Las 9 etiquetas reales del bloque de totales de Bancor (spec §6) — confirmadas por JP mirando el
+ * documento completo, no leídas por ningún agente. Vocabulario bancario genérico (nombre de tributo o
+ * régimen de retención), mismo criterio N0 que el resto del léxico de concepto.
+ */
+function agregarBloqueDeTotales(h: ReturnType<typeof hoja>): void {
+  const filas: readonly [string, string][] = [
+    ['Total Impuesto al Valor Agregado', '$1.234,56'],
+    ['Total Imp.Ley de Competitividad', '$2.500,00'],
+    ['Total Imp.L.Competitiv. Credito Compensable', '$0.00'],
+    ['Total SIRCREB', '$0.00'],
+    ['Total SIRCREB CBA', '$300,00'],
+    ['Total SIRCREB C.A.B.A.', '$0.00'],
+    ['Total SIRCREB Sta. Fe.', '$0.00'],
+    ['Total Percepciones C.A.B.A.', '$0.00'],
+    ['Total Percepciones por consumos en el exterior', '$50,00'],
+  ];
+  for (const [etiqueta, importe] of filas) {
+    h.agregar([{ texto: `${etiqueta}:`, x: 45.8 }, { texto: importe, x: 252.3 }]);
+  }
+}
+
+describe('leerBancor — bloque de totales (spec §6, 9 etiquetas confirmadas por JP)', () => {
+  function documentoConTotales(): readonly FilaGeometrica[] {
+    const h = hoja();
+    h.pagina(1);
+    agregarCaratula(h, '01/06/2026', '30/06/2026');
+    agregarSaldoAnterior(h, 10_000n * CENT);
+    agregarMovimiento(h, {
+      ddmm: '05/06',
+      concepto: 'Concepto sintetico 1',
+      importeCent: 1_000n * CENT,
+      saldoCent: 11_000n * CENT,
+    });
+    agregarBloqueDeTotales(h);
+    h.agregar([{ texto: '-', x: 10.0 }]);
+    return h.filas;
+  }
+
+  it('las 9 líneas se reconocen y van a anexos[], no a lineasNoInterpretadas', () => {
+    const salida = leerBancor(documentoConTotales());
+    const anexos = salida.cuentas[0]?.anexos ?? [];
+    expect(anexos).toHaveLength(9);
+    expect(salida.lineasNoInterpretadas.some((l) => l.codigo === 'linea_fuera_de_zona')).toBe(false);
+  });
+
+  it('acepta los DOS formatos de importe dentro del mismo bloque — coma decimal Y punto decimal', () => {
+    const anexos = leerBancor(documentoConTotales()).cuentas[0]?.anexos ?? [];
+    const conComa = anexos.find((a) => a.conceptoLiteral === 'Total Impuesto al Valor Agregado');
+    const conPunto = anexos.find((a) => a.conceptoLiteral === 'Total SIRCREB');
+    expect(conComa?.importeDeclarado).toBe('1234.56');
+    expect(conPunto?.importeDeclarado).toBe('0.00');
+  });
+
+  it('cada anexo valida contra el esquema Zod, con la relación declarada por etiqueta', () => {
+    const anexos = leerBancor(documentoConTotales()).cuentas[0]?.anexos ?? [];
+    for (const a of anexos) {
+      expect(() => anexoExtractoSchema.parse(a)).not.toThrow();
+    }
+    const sircrebCba = anexos.find((a) => a.conceptoLiteral === 'Total SIRCREB CBA');
+    expect(sircrebCba?.relacionConMovimientos).toBe('resume_movimientos_del_cuerpo');
+    const percepciones = anexos.find((a) => a.conceptoLiteral === 'Total Percepciones C.A.B.A.');
+    expect(percepciones?.relacionConMovimientos).toBe('no_determinada');
+  });
+
+  it('no confunde "Total SIRCREB" (sola) con "Total SIRCREB CBA"/"C.A.B.A."/"Sta. Fe."', () => {
+    const anexos = leerBancor(documentoConTotales()).cuentas[0]?.anexos ?? [];
+    const literales = anexos.map((a) => a.conceptoLiteral);
+    expect(literales).toContain('Total SIRCREB');
+    expect(literales).toContain('Total SIRCREB CBA');
+    expect(literales).toContain('Total SIRCREB C.A.B.A.');
+    expect(literales).toContain('Total SIRCREB Sta. Fe.');
+    expect(new Set(literales).size).toBe(9); // las 9, sin duplicados ni colisiones
+  });
+});
+
+describe('verificarTotalesBancor — cruce opcional (spec §6.1)', () => {
+  it('cierra: la suma de RECAU.SIRCREB CBA coincide con el anexo declarado', () => {
+    const h = hoja();
+    h.pagina(1);
+    agregarCaratula(h, '01/06/2026', '30/06/2026');
+    agregarSaldoAnterior(h, 10_000n * CENT);
+    agregarMovimiento(h, {
+      ddmm: '05/06',
+      concepto: 'RECAU.SIRCREB CBA',
+      importeCent: 300n * CENT,
+      saldoCent: 10_300n * CENT,
+    });
+    h.agregar([{ texto: 'Total SIRCREB CBA:', x: 45.8 }, { texto: '$300,00', x: 252.3 }]);
+
+    const cuenta = leerBancor(h.filas).cuentas[0];
+    if (!cuenta) throw new Error('fixture sin cuenta');
+    const [resultado] = verificarTotalesBancor(cuenta);
+    expect(resultado?.coincide).toBe(true);
+    expect(resultado?.declarado).toBe('300.00');
+    expect(resultado?.calculado).toBe('300.00');
+  });
+
+  it('NO cierra: reporta la diferencia, nunca la fuerza a cuadrar', () => {
+    const h = hoja();
+    h.pagina(1);
+    agregarCaratula(h, '01/06/2026', '30/06/2026');
+    agregarSaldoAnterior(h, 10_000n * CENT);
+    agregarMovimiento(h, {
+      ddmm: '05/06',
+      concepto: 'RECAU.SIRCREB CBA',
+      importeCent: 300n * CENT,
+      saldoCent: 10_300n * CENT,
+    });
+    // El anexo declara 350, pero el cuerpo solo trae 300 de SIRCREB CBA.
+    h.agregar([{ texto: 'Total SIRCREB CBA:', x: 45.8 }, { texto: '$350,00', x: 252.3 }]);
+
+    const cuenta = leerBancor(h.filas).cuentas[0];
+    if (!cuenta) throw new Error('fixture sin cuenta');
+    const [resultado] = verificarTotalesBancor(cuenta);
+    expect(resultado?.coincide).toBe(false);
+    expect(resultado?.declarado).toBe('350.00');
+    expect(resultado?.calculado).toBe('300.00');
+  });
+
+  it('sin anexo con ese conceptoLiteral, no hay resultado para ese cruce (no se inventa)', () => {
+    const cuenta = leerBancor(documentoLimpio()).cuentas[0];
+    if (!cuenta) throw new Error('fixture sin cuenta');
+    expect(verificarTotalesBancor(cuenta)).toHaveLength(0);
   });
 });
 

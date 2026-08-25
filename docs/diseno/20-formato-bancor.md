@@ -128,24 +128,57 @@ nadie lea `cadenaDeSaldos: 'completa'` en el catálogo y asuma una verificación
 este banco, no existe — mismo estilo que ya usa `santander.ts` para documentar qué invariante no corre y
 por qué.
 
-## 6. El bloque de totales (página final, antes del pie legal)
+## 6. El bloque de totales (página final, antes del pie legal) — RESUELTO, literal confirmado por JP
 
 Después del último movimiento y antes del separador (`x=10.0`, línea `-`), la página final trae **9
-líneas** con un patrón repetido: palabra de 5 letras a `x≈45.8` (forma `Aaaaa`) + una segunda etiqueta
-variable + `:` + un importe con signo `$` (`x≈252–278`).
+líneas** con un patrón repetido: palabra `Total` a `x≈45.8` + una segunda etiqueta variable + `:` + un
+importe con signo `$` (`x≈252–278`). El literal exacto de las 9 etiquetas —bloqueado inicialmente porque
+el clasificador de permisos de la sesión rechazó, correctamente, una lectura cruda adicional por shell
+(incidente #12 de `registro-incidentes.md`)— lo confirmó **JP mirando el documento completo**, no un
+agente. Las 9, en orden de lectura:
 
-🔴 **No se confirmó el literal exacto de las 9 etiquetas contra el documento real** — el clasificador de
-permisos de la sesión bloqueó una lectura cruda adicional por shell (correctamente: es la guarda que
-motivó el incidente #12 de `registro-incidentes.md`), y el titular decidió no habilitarla puntualmente.
+1. `Total Impuesto al Valor Agregado`
+2. `Total Imp.Ley de Competitividad`
+3. `Total Imp.L.Competitiv. Credito Compensable`
+4. `Total SIRCREB`
+5. `Total SIRCREB CBA`
+6. `Total SIRCREB C.A.B.A.`
+7. `Total SIRCREB Sta. Fe.`
+8. `Total Percepciones C.A.B.A.`
+9. `Total Percepciones por consumos en el exterior`
 
-**No se modela como `anexos[]`.** `anexoExtractoSchema` exige `conceptoLiteral` (el rótulo TAL COMO lo
-escribe el banco, no una forma estructural) e `importeDeclarado` como valores reales, no opcionales:
-completarlos sin el literal confirmado sería exactamente lo que el proyecto prohíbe — inventar un dato
-con forma de dato verificado. En vez de eso, estas 9 líneas van a `lineasNoInterpretadas` con código
-`linea_fuera_de_zona` y su `forma` (nunca su texto) — declaradas, no descartadas, y **sin verificación**
-contra la suma de movimientos hasta que alguien confirme el literal contra el documento real (pendiente,
-declarado, sin dueño — ver `10-deuda-declarada.md` §C). Promoverlas a `anexos[]` es trabajo de la
-próxima sesión que tenga el literal real a la vista.
+Vocabulario bancario genérico (nombre de tributo o régimen de retención) — mismo criterio de
+clasificación N0 que el resto del léxico de concepto (§8), no dato de cliente.
+
+**🔴 Inconsistencia de formato real dentro del mismo bloque, confirmada por JP, no asumida.** Las líneas
+con importe **≠ 0** usan el formato argentino de siempre (`$#.###,##`, coma decimal). Las líneas con
+importe **= 0** usan **punto decimal** (`$0.00`), sin separador de miles — 5 de las 9, en el documento
+medido. El parser tiene que aceptar las DOS formas; un patrón que solo reconozca coma decimal deja esas
+5 líneas cayendo en `lineasNoInterpretadas` aunque la etiqueta matchee perfecto.
+
+**Ahora sí se modela como `anexos[]`** (`AnexoExtracto`), con las 9 etiquetas ancladas por regex (mismo
+patrón `RELACION_POR_LITERAL` que ya usa `galicia.ts`): `atribucionCuenta: 'cuenta_unica_del_lote'`
+(un solo lote, una sola cuenta — spec §2), `periodoDato: 'no_publicado'` (el bloque no declara período
+propio, y el sistema **nunca** rellena esto con el período del extracto). `relacionConMovimientos` es
+`'resume_movimientos_del_cuerpo'` solo para las dos etiquetas con cruce implementado (§6.1); las otras
+7 quedan `'no_determinada'` — fail-closed, no se afirma una relación que no se verificó. Una línea con
+forma de totales (`$importe`) que NO matchee ninguna de las 9 etiquetas conocidas sigue cayendo a
+`lineasNoInterpretadas` (`linea_fuera_de_zona`) — el vocabulario podría crecer en un extracto futuro.
+
+## 6.1. Verificación cruzada opcional (dos de nueve, sugerida por JP)
+
+No bloqueante, agregada porque es barata con el mecanismo de anexo ya construido:
+
+- **`Total SIRCREB CBA`** contra la suma de los movimientos del cuerpo cuya glosa contiene
+  `RECAU.SIRCREB CBA` (literal ya confirmado en §8).
+- **`Total Impuesto al Valor Agregado`** contra la suma de los movimientos cuya glosa contiene `IVA 21%`
+  y `COMISIONES` (literal indicado por JP; **no medido geométricamente por este adapter** — el match es
+  por substring sobre `descripcion`, no por posición).
+
+`verificarTotalesBancor()` en `bancor.ts` es una función pura, separada del contrato
+`SalidaDeAdaptador` (no se cambia el contrato compartido para esto): compara y devuelve la diferencia si
+no cierra. **Nunca fuerza a que cuadre** — mismo criterio que el resto del proyecto. No está conectada
+al CLI todavía; es una utilidad para quien la necesite (queda declarado, no es deuda oculta).
 
 ## 6.1. Las tres capacidades que el catálogo (0024) declara y este documento no había medido todavía
 

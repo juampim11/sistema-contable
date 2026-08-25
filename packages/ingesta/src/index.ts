@@ -55,5 +55,7 @@ export {
   CAPACIDADES_BANCOR,
   leerBancor,
   reconoceBancor,
+  verificarTotalesBancor,
   type SalidaBancor,
+  type VerificacionTotalBancor,
 } from './adaptadores/bancor.ts';
