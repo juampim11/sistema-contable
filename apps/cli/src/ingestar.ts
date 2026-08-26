@@ -44,6 +44,7 @@ import {
 import {
   adaptadorBancor,
   adaptadorGalicia,
+  adaptadorIcbc,
   adaptadorMacro,
   adaptadorNacion,
   adaptadorSantander,
@@ -80,6 +81,7 @@ registrarAdaptador(adaptadorMacro);
 registrarAdaptador(adaptadorSantander);
 registrarAdaptador(adaptadorBancor);
 registrarAdaptador(adaptadorNacion);
+registrarAdaptador(adaptadorIcbc);
 
 /**
  * La configuración se carga acá y no se asume heredada del shell.

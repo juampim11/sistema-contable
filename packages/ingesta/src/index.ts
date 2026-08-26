@@ -66,3 +66,10 @@ export {
   reconoceNacion,
   type SalidaNacion,
 } from './adaptadores/nacion.ts';
+export {
+  adaptadorIcbc,
+  CAPACIDADES_ICBC,
+  leerIcbc,
+  reconoceICBC,
+  type SalidaIcbc,
+} from './adaptadores/icbc.ts';

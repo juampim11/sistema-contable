@@ -33,6 +33,7 @@ import { adaptadorMacro } from '../src/adaptadores/macro.ts';
 import { adaptadorSantander } from '../src/adaptadores/santander.ts';
 import { adaptadorBancor } from '../src/adaptadores/bancor.ts';
 import { adaptadorNacion } from '../src/adaptadores/nacion.ts';
+import { adaptadorIcbc } from '../src/adaptadores/icbc.ts';
 import { registrarAdaptador, resolverAdaptador } from '../src/adaptadores/registro.ts';
 import {
   verificarAritmetica,
@@ -52,6 +53,7 @@ registrarAdaptador(adaptadorMacro);
 registrarAdaptador(adaptadorSantander);
 registrarAdaptador(adaptadorBancor);
 registrarAdaptador(adaptadorNacion);
+registrarAdaptador(adaptadorIcbc);
 
 const SALTO = String.fromCharCode(10);
 const p = (t: string): void => {
