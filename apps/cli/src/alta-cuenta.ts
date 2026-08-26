@@ -45,6 +45,7 @@ import {
   extraerPeriodo,
   extraerTexto,
   reconoceBancor,
+  reconoceNacion,
   seccionesPorClave,
   valorPorEtiqueta,
   type FilaGeometrica,
@@ -257,8 +258,10 @@ const RE_NUMERO_CUENTA_EN_CABECERA = /N\u00BA\s*(\d{3}-\d{6}\/\d)/;
 const RE_ES_DOLARES = /especial\s+U\$S/i;
 
 /**
- * \uD83D\uDD34 **Bancor es la \u00DANICA rama de `leerCaratula` que necesita geometr\u00EDa (`aFilas`), no texto plano
- * (`aLineas`)** \u2014 y esto se midi\u00F3, no se asumi\u00F3 por analog\u00EDa con el adapter.
+ * \uD83D\uDD34 **Bancor fue la primera rama de `leerCaratula` que necesit\u00F3 geometr\u00EDa (`aFilas`), no texto
+ * plano (`aLineas`)** \u2014 y esto se midi\u00F3, no se asumi\u00F3 por analog\u00EDa con el adapter. (Nota de
+ * `code-reviewer`: Naci\u00F3n agreg\u00F3 una segunda rama geom\u00E9trica m\u00E1s abajo por el mismo motivo \u2014 esta
+ * nota describe por qu\u00E9 Bancor la necesit\u00F3 primero, ya no es la \u00FAnica.)
  *
  * Las otras tres ramas (Macro, Santander, gen\u00E9rica) leen por ETIQUETA o por una cabecera de texto
  * reconocible, y `aLineas()` \u2014el texto del content-stream, en su propio orden interno\u2014 alcanza para
@@ -278,14 +281,32 @@ const RE_ES_DOLARES = /especial\s+U\$S/i;
  * tercero del cuerpo, sin resolver la causa (el desorden de `aLineas()`).
  *
  * `aFilas()` s\u00ED preserva el orden VISUAL (reconstruye filas por coordenada, no por content-stream) \u2014 es
- * la misma v\u00EDa que ya usa el propio adapter, y es la \u00FAnica de las cuatro ramas de esta funci\u00F3n que la
- * necesita. `reconoceBancor` (p\u00FAblico, de `@sistema-contable/ingesta`) se reusa tal cual para la
- * detecci\u00F3n \u2014 no se duplica, a diferencia de las regex de Macro/Santander, porque ya es parte de la
+ * la misma v\u00EDa que ya usa el propio adapter, y es una de las cinco ramas de esta funci\u00F3n que la
+ * necesita (la otra: Naci\u00F3n, m\u00E1s abajo). `reconoceBancor` (p\u00FAblico, de `@sistema-contable/ingesta`)
+ * se reusa tal cual para la detecci\u00F3n \u2014 no se duplica, a diferencia de las regex de Macro/Santander,
+ * porque ya es parte de la
  * superficie p\u00FAblica del paquete.
  */
 const FILAS_DE_CARATULA_BANCOR = 20;
 const RE_NUMERO_CUENTA_BANCOR = /(?<!\d)\d{5}\/\d{2}(?!\d)/;
 const RE_CBU_BANCOR = /\b\d{22}\b/;
+
+/**
+ * 🔴 **Nación es la SEGUNDA rama de `leerCaratula` que necesita geometría (`aFilas`), no texto plano
+ * — mismo motivo que Bancor.** Nación tampoco imprime NINGUNA etiqueta para el número de cuenta ni
+ * para el CBU (`docs/diseno/21-formato-nacion.md` §2) — están por forma y posición, sin rótulo, mismo
+ * dato que ya resuelve el adapter (`nacion.ts`, vía `fragmentoDeColumna`/regex locales). A diferencia
+ * de Bancor, acá no hizo falta descartar `aLineas()` por reordenamiento del content-stream — no se
+ * midió ese problema en el único documento real disponible — pero como de todos modos no hay etiqueta
+ * que buscar, el mecanismo geométrico es el único que puede encontrar el dato sin importar el orden.
+ *
+ * Ventana y regex **verificadas con un script de solo lectura contra el PDF real antes de escribir
+ * esta rama** (mismo protocolo que Bancor): número y CBU aparecen en la MISMA fila (16), exactamente
+ * un match de cada patrón dentro de las primeras 20 filas — sin ambigüedad.
+ */
+const FILAS_DE_CARATULA_NACION = 20;
+const RE_NUMERO_CUENTA_NACION = /(?<!\d)\d{10}(?!\d)/;
+const RE_CBU_NACION = /\b\d{22}\b/;
 
 /**
  * Lee de la carátula lo que hace falta para el alta.
@@ -329,9 +350,9 @@ export function leerCaratula(
   cbuManual: string | undefined,
   tipoManual: TipoCuentaAlta | undefined = undefined,
   /**
-   * Solo Bancor la necesita (ver la nota de `FILAS_DE_CARATULA_BANCOR` más arriba) — opcional y `[]`
-   * por default para que las otras tres ramas, y todos los tests que ya existían antes de Bancor, no
-   * tengan que cambiar su firma de llamada.
+   * Solo Bancor y Nación la necesitan (ver las notas de `FILAS_DE_CARATULA_BANCOR`/
+   * `FILAS_DE_CARATULA_NACION` más arriba) — opcional y `[]` por default para que las otras ramas, y
+   * todos los tests que ya existían antes de Bancor, no tengan que cambiar su firma de llamada.
    */
   filasGeometricas: readonly FilaGeometrica[] = [],
 ): {
@@ -345,6 +366,7 @@ export function leerCaratula(
   const seccionadoMacro = seccionesPorClave(lineas, claveDeSeccionMacro);
   const cabecerasCuenta = lineas.filter((l) => RE_CABECERA_CUENTA.test(l));
   const esBancor = reconoceBancor(filasGeometricas);
+  const esNacion = reconoceNacion(filasGeometricas);
 
   let numero: string;
   let tipoCuenta: TipoCuentaAlta;
@@ -518,6 +540,76 @@ export function leerCaratula(
     tipoCuenta = 'cuenta_corriente';
     cbuAtribuido = cbuEncontrado;
     seccionUsada = 'Bancor (cuenta única, por forma geométrica en la carátula)';
+  } else if (esNacion) {
+    // Una sola cuenta, sin ambigüedad de moneda ni de tipo (spec Nación, `21-formato-nacion.md` §2):
+    // no hace falta `moneda`/`tipoManual` para elegir nada, mismo caso que Bancor.
+    //
+    // 🔴 Geometría (`aFilas`), no texto de línea (`aLineas`) — ver la nota de
+    // `FILAS_DE_CARATULA_NACION` más arriba. Se busca por FRAGMENTO (no por fila unida): mismo
+    // criterio que `nacion.ts`, porque el número y el CBU son cada uno su propio fragmento
+    // geométrico, sin texto pegado al lado.
+    const fragmentosDeCaratula = filasGeometricas
+      .slice(0, FILAS_DE_CARATULA_NACION)
+      .flatMap((f) => f.fragmentos);
+
+    /**
+     * 🔴 **Hallazgo de `tester`: sin chequeo de ambigüedad, esto era exactamente el riesgo que la
+     * cabecera del archivo prohíbe** ("dar de alta una cuenta con el identificador de un tercero").
+     * `.find()` toma el PRIMER match sin verificar si hay un segundo — un decoy de 10 dígitos
+     * (código de sucursal, teléfono, número de comprobante) antes del dato real en la ventana
+     * ganaría en silencio, sin ninguna señal. Mismo criterio de "listar, nunca elegir el más
+     * cercano" que ya usan las ramas Macro/Santander para sus propias candidatas: se deduplican
+     * valores idénticos (`new Set`, un mismo número repetido no es ambigüedad) y se falla ruidoso
+     * si sobrevive más de uno — nunca se adivina cuál es el real.
+     */
+    const numerosEncontrados = [
+      ...new Set(
+        fragmentosDeCaratula
+          .map((f) => RE_NUMERO_CUENTA_NACION.exec(f.texto)?.[0])
+          .filter((v): v is string => v !== undefined),
+      ),
+    ];
+    if (numerosEncontrados.length === 0) {
+      throw new Error(
+        'No encontré el número de cuenta (10 dígitos) en la carátula (Nación). Nación no lo ' +
+          'imprime con etiqueta — revisá que el archivo sea la primera página del resumen.',
+      );
+    }
+    if (numerosEncontrados.length > 1) {
+      throw new Error(
+        `Encontré ${numerosEncontrados.length} valores distintos con forma de número de cuenta ` +
+          '(10 dígitos) en la carátula (Nación) — no puedo elegir uno solo sin arriesgar tomar el ' +
+          'de un tercero. Revisá el archivo.',
+      );
+    }
+    const numeroEncontrado = numerosEncontrados[0] as string;
+
+    const cbusEncontrados = [
+      ...new Set(
+        fragmentosDeCaratula
+          .map((f) => RE_CBU_NACION.exec(f.texto)?.[0])
+          .filter((v): v is string => v !== undefined),
+      ),
+    ];
+    if (cbusEncontrados.length === 0) {
+      throw new Error(
+        'No encontré el CBU (22 dígitos) en la carátula (Nación). Nación no lo imprime con ' +
+          'etiqueta "CBU" — revisá que el archivo sea la primera página del resumen.',
+      );
+    }
+    if (cbusEncontrados.length > 1) {
+      throw new Error(
+        `Encontré ${cbusEncontrados.length} valores distintos con forma de CBU (22 dígitos) en la ` +
+          'carátula (Nación) — no puedo elegir uno solo sin arriesgar tomar el de un tercero. ' +
+          'Revisá el archivo.',
+      );
+    }
+    const cbuEncontrado = cbusEncontrados[0] as string;
+
+    numero = numeroEncontrado;
+    tipoCuenta = 'cuenta_corriente';
+    cbuAtribuido = cbuEncontrado;
+    seccionUsada = 'Nación (cuenta única, por forma geométrica en la carátula)';
   } else {
     // Las etiquetas están documentadas en `docs/diseno/02-formato-galicia.md` §3. Las variantes cubren que
     // el banco cambie `Nro.` por `Número` entre versiones del resumen.
@@ -679,8 +771,9 @@ if (esEjecucionDirecta) {
     imprimir('  ABORTA: el PDF no tiene texto extraíble (es un escaneo). No hay carátula que leer.');
     process.exit(1);
   }
-  // Solo la rama Bancor de `leerCaratula` la usa (ver la nota junto a `FILAS_DE_CARATULA_BANCOR`) — se
-  // computa siempre, es barato, y así ninguna de las dos llamadas de abajo se olvida de pasarla.
+  // Solo las ramas Bancor y Nación de `leerCaratula` la usan (ver las notas junto a
+  // `FILAS_DE_CARATULA_BANCOR`/`FILAS_DE_CARATULA_NACION`) — se computa siempre, es barato, y así
+  // ninguna de las dos llamadas de abajo se olvida de pasarla.
   const filasGeometricas = await aFilas(contenido);
 
   /**

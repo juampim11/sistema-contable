@@ -6,6 +6,76 @@
 
 ---
 
+## 2026-08-26 (122) — Entrega A cerrada: catálogo `nacion` (migración) + 5ta rama de `leerCaratula` para Nación. Entrega B (alta real de HYJ SAS en el piloto) todavía NO arrancó — pendiente de que JP confirme `--estado` contra piloto.
+
+**Herramienta:** Claude Code. Modo plan (§3.2), serie E-6 (`docs/seguridad/registro-excepciones.md`,
+que ya nombra a Nación explícitamente). Convocatoria completa: `dba-data` + `security-engineer`
+(migración) + `seguridad-datos-financieros` (obligatorio, cliente real) + `tech-lead` (coherencia de
+la 5ta rama) + `code-reviewer` + `tester` (adversarial) — los seis con hallazgos reales o ajustes,
+ninguno cosmético puro salvo dos.
+
+### Qué se cerró
+
+1. **`packages/data/migrations/0025_catalogo_nacion.sql`** — 5ta fila de `banco`, mismo patrón exacto
+   que `0024_catalogo_bancor.sql` (`on conflict do nothing`, capacidades resumidas de
+   `CAPACIDADES_NACION`). Aprobada por `dba-data` sin ajustes.
+2. **`apps/cli/src/alta-cuenta.ts` — 5ta rama de `leerCaratula`, para Nación**, mismo mecanismo que la
+   de Bancor (geometría `aFilas`, sin etiqueta para número/CBU — Nación tampoco los imprime
+   rotulados). Verificado con un script efímero de solo lectura contra el PDF real de HYJ SAS ANTES
+   de escribir la rama: número (10 dígitos) y CBU (22 dígitos) en la misma fila (16), un solo match
+   de cada uno dentro de las primeras 20 filas — sin ambigüedad en el documento real.
+3. **`apps/cli/tests/alta-cuenta.test.ts`**: 50 → **60 tests** (7 de la rama nueva + 3 de regresión
+   de ambigüedad, ver abajo). Rename `filaBancor` → `filaGeometrica` (pedido de `tech-lead`: ya no es
+   ayuda privada de un solo banco).
+
+### Hallazgo real de `tester`, corregido antes de cerrar
+
+**Sin chequeo de ambigüedad, la rama Nación (recién escrita) tenía el mismo riesgo que la cabecera
+del archivo prohíbe explícitamente: "dar de alta una cuenta con el identificador de un tercero".**
+`.find()` tomaba el PRIMER match de número/CBU dentro de la ventana de carátula sin verificar si
+había un segundo — un decoy de 10 dígitos (sucursal, teléfono, comprobante) antes del dato real
+ganaría en silencio. Las ramas Macro/Santander ya resuelven esto contando candidatas; Bancor y
+Nación no lo tenían. **Corregido en Nación**: se juntan todos los matches, se deduplican, y se falla
+ruidoso si sobrevive más de uno — nunca se elige el primero. 3 tests de regresión (dos decoys, uno
+por campo, más el caso "mismo valor repetido no es ambigüedad").
+
+**Bancor QUEDA CON EL MISMO HUECO, sin corregir** — es código ya usado contra un cliente real
+(Contenedores Paoluc S.A.S.) y tocarlo pide su propia revisión, no un fix de pasada acá. Elevado a
+`docs/diseno/10-deuda-declarada.md` §2.14 (prioridad media, con dueño: `tech-lead`). Dos hallazgos
+más de `tester`, de menor severidad, también declarados ahí: §2.15 (`alta-cuenta.ts` no cruza contra
+`resolverAdaptador` como sí hace `ingestar.ts` — riesgo de layout específico, sin caso real) y §2.16
+(la ventana de carátula geométrica es global al documento, no por página — sin caso real, los dos
+documentos reales disponibles caben dentro de la ventana en su página 1).
+
+### Hallazgo menor, no bloqueante
+
+`apps/cli/src/alta-cuenta.ts` tiene, desde antes de esta tarea, bloques de comentario con secuencias
+de escape Unicode literales (`🔴`, `ÚNICA`, etc.) en vez de los caracteres reales —
+confirmado que el archivo en sí es UTF-8 válido (los `Edit` con acentos/emoji reales matchearon y
+aplicaron sin problema), así que es una cuestión de cómo se relee ese bloque puntual, no corrupción
+del archivo. Se corrigieron las dos líneas que `code-reviewer` señaló como contradictorias (la nota
+de Bancor decía "única rama que usa geometría" al lado del bloque de Nación que dice lo contrario).
+No se tocó el resto del archivo — no es el alcance de esta tarea.
+
+### Verificación de cierre (Entrega A)
+
+`pnpm typecheck` limpio. `apps/cli/tests/alta-cuenta.test.ts`: 60/60. Suite completa de `apps/cli`:
+**11 archivos, 163 tests, todos verdes**. Barrido de fuga: 1021 archivos, 0 fugas reales. Commiteado
+y pusheado (ver hash en el log de git — esta entrada se escribe antes de confirmar el push exacto).
+
+### Estado de salida — Entrega B (alta real) NO arrancó
+
+Próximo paso, explícito: `ENV_FILE=.env.piloto pnpm db:migrate --estado` contra el piloto, **reportar
+la lista exacta a JP y esperar su autorización puntual** antes de aplicar `0025` o cualquier otra
+migración — regla dura CLAUDE.md §1.9, mismo criterio que el drift de `0024`/Bancor. Nada del
+procedimiento de 8 pasos de la Entrega B (backup, alta de cliente con razón social real "H y J
+Servicios y Obras S.A.S.", alta de cuenta, ingesta, verificación por consulta directa) corrió
+todavía. Investigado y confirmado sin fricción antes de arrancar: `cuenta_bancaria` no tiene
+`unique(cliente_id)` ni ninguna restricción de una sola cuenta por cliente — agregar la futura cuenta
+BBVA de este mismo cliente, el día que se destrabe con OCR, no necesita ningún cambio de esquema.
+
+---
+
 ## 2026-08-26 (121) — Contrato de salida ampliado (2 campos) + 5° adapter de banco: Nación (cliente real HYJ SAS). Modo plan §3.2, panel completo convocado, 3 hallazgos reales de `tester`/`code-reviewer` corregidos antes de cerrar.
 
 **Herramienta:** Claude Code. Dos pasos en orden estricto, el segundo recién tras confirmar el primero

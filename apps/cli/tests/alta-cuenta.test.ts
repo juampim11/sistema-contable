@@ -97,16 +97,37 @@ const CARATULA_GALICIA = [
 const NUMERO_CUENTA_BANCOR_SINTETICO = '99999/99';
 const CBU_BANCOR_SINTETICO = '9990000090000000000003';
 
-/** Fila geométrica sintética mínima: un fragmento, ancho derivado del texto (mismo criterio que `bancor.test.ts`). */
-function filaBancor(texto: string, x: number, pagina = 1, y = 800): FilaGeometrica {
+/**
+ * Fila geométrica sintética mínima: un fragmento, ancho derivado del texto (mismo criterio que
+ * `bancor.test.ts`/`nacion.test.ts`). Usada por las secciones Bancor y Nación — las dos ramas
+ * geométricas de `leerCaratula` (`tech-lead`: ya no es una ayuda privada de un solo banco).
+ */
+function filaGeometrica(texto: string, x: number, pagina = 1, y = 800): FilaGeometrica {
   return { pagina, y, fragmentos: [{ texto, x, y, ancho: texto.length * 5 }] };
 }
 
 const FILAS_CARATULA_BANCOR: readonly FilaGeometrica[] = [
-  filaBancor('Banco de la Provincia de Córdoba S.A.', 400),
-  filaBancor('www.bancor.com.ar', 400),
-  filaBancor(NUMERO_CUENTA_BANCOR_SINTETICO, 311.3),
-  filaBancor(CBU_BANCOR_SINTETICO, 130.1),
+  filaGeometrica('Banco de la Provincia de Córdoba S.A.', 400),
+  filaGeometrica('www.bancor.com.ar', 400),
+  filaGeometrica(NUMERO_CUENTA_BANCOR_SINTETICO, 311.3),
+  filaGeometrica(CBU_BANCOR_SINTETICO, 130.1),
+];
+
+/**
+ * Nación tampoco imprime "Número de cuenta" ni "CBU" como etiqueta — el número (10 dígitos) y el CBU
+ * (22 dígitos) están en la carátula por FORMA, sin rótulo, mismo criterio que Bancor (ver la nota
+ * junto a `FILAS_DE_CARATULA_NACION` en `alta-cuenta.ts`). A diferencia de Bancor, el letterhead de
+ * reconocimiento (`reconoceNacion`) exige las dos marcas en filas CONSECUTIVAS — por eso acá van en
+ * las dos primeras filas, en ese orden, no sueltas en cualquier posición.
+ */
+const NUMERO_CUENTA_NACION_SINTETICO = '9999999999';
+const CBU_NACION_SINTETICO = '9990000090000000000004';
+
+const FILAS_CARATULA_NACION: readonly FilaGeometrica[] = [
+  filaGeometrica('BANCO DE LA', 84.9),
+  filaGeometrica('NACION ARGENTINA', 84.9),
+  filaGeometrica(NUMERO_CUENTA_NACION_SINTETICO, 87.6),
+  filaGeometrica(CBU_NACION_SINTETICO, 413.7),
 ];
 
 describe('argumentos()', () => {
@@ -207,17 +228,125 @@ describe('leerCaratula() — Bancor, una sola cuenta, sin etiqueta, por GEOMETR�
   });
 
   it('no busca más allá de la carátula: un número/CBU real corrido más allá de la ventana geométrica no se encuentra', () => {
-    const relleno = Array.from({ length: 25 }, (_, i) => filaBancor(`Relleno de cuerpo linea ${i}`, 172.2));
+    const relleno = Array.from({ length: 25 }, (_, i) => filaGeometrica(`Relleno de cuerpo linea ${i}`, 172.2));
     const conDatosTardios: readonly FilaGeometrica[] = [
-      filaBancor('Banco de la Provincia de Córdoba S.A.', 400),
-      filaBancor('www.bancor.com.ar', 400),
+      filaGeometrica('Banco de la Provincia de Córdoba S.A.', 400),
+      filaGeometrica('www.bancor.com.ar', 400),
       ...relleno,
-      filaBancor(NUMERO_CUENTA_BANCOR_SINTETICO, 311.3),
-      filaBancor(CBU_BANCOR_SINTETICO, 130.1),
+      filaGeometrica(NUMERO_CUENTA_BANCOR_SINTETICO, 311.3),
+      filaGeometrica(CBU_BANCOR_SINTETICO, 130.1),
     ];
     expect(() =>
       leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, conDatosTardios),
     ).toThrow(/número de cuenta/);
+  });
+});
+
+describe('leerCaratula() — Nación, una sola cuenta, sin etiqueta, por GEOMETRÍA (aFilas, no aLineas)', () => {
+  it('lee número y CBU por forma geométrica, sin necesitar moneda/tipo para desambiguar', () => {
+    const r = leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, FILAS_CARATULA_NACION);
+    expect(r.numero).toBe(NUMERO_CUENTA_NACION_SINTETICO);
+    expect(r.cbu).toBe(CBU_NACION_SINTETICO);
+    expect(r.tipoCuenta).toBe('cuenta_corriente');
+    expect(r.seccionUsada).toMatch(/Nación/);
+  });
+
+  it('falla explícito si no encuentra el número (10 dígitos)', () => {
+    const sinNumero = FILAS_CARATULA_NACION.filter(
+      (f) => f.fragmentos[0]?.texto !== NUMERO_CUENTA_NACION_SINTETICO,
+    );
+    expect(() =>
+      leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, sinNumero),
+    ).toThrow(/número de cuenta/);
+  });
+
+  it('falla explícito si no encuentra el CBU (22 dígitos)', () => {
+    const sinCbu = FILAS_CARATULA_NACION.filter(
+      (f) => f.fragmentos[0]?.texto !== CBU_NACION_SINTETICO,
+    );
+    expect(() => leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, sinCbu)).toThrow(/CBU/);
+  });
+
+  it('un documento de otro banco (sin geometría/letterhead de Nación) no cae por error en esta rama', () => {
+    // `filasGeometricas` por default es `[]` — `reconoceNacion([])` da `false`, cae al camino normal.
+    const r = leerCaratula(textoDe(...CARATULA_GALICIA), 'ARS', undefined);
+    expect(r.seccionUsada).not.toMatch(/Nación/);
+  });
+
+  it('un documento de Bancor (geometría real, pero sin las marcas de Nación) no cae en esta rama', () => {
+    const r = leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, FILAS_CARATULA_BANCOR);
+    expect(r.seccionUsada).not.toMatch(/Nación/);
+  });
+
+  it('no reconoce con las dos marcas del letterhead sueltas, en filas NO consecutivas', () => {
+    const marcasSueltas: readonly FilaGeometrica[] = [
+      filaGeometrica('BANCO DE LA', 84.9),
+      filaGeometrica('un renglón intermedio cualquiera', 84.9),
+      filaGeometrica('NACION ARGENTINA', 84.9),
+      filaGeometrica(NUMERO_CUENTA_NACION_SINTETICO, 87.6),
+      filaGeometrica(CBU_NACION_SINTETICO, 413.7),
+    ];
+    const r = leerCaratula(textoDe(...CARATULA_GALICIA), 'ARS', undefined, undefined, marcasSueltas);
+    expect(r.seccionUsada).not.toMatch(/Nación/);
+  });
+
+  it('no busca más allá de la carátula: un número/CBU real corrido más allá de la ventana geométrica no se encuentra', () => {
+    const relleno = Array.from({ length: 25 }, (_, i) => filaGeometrica(`Relleno de cuerpo linea ${i}`, 172.2));
+    const conDatosTardios: readonly FilaGeometrica[] = [
+      filaGeometrica('BANCO DE LA', 84.9),
+      filaGeometrica('NACION ARGENTINA', 84.9),
+      ...relleno,
+      filaGeometrica(NUMERO_CUENTA_NACION_SINTETICO, 87.6),
+      filaGeometrica(CBU_NACION_SINTETICO, 413.7),
+    ];
+    expect(() =>
+      leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, conDatosTardios),
+    ).toThrow(/número de cuenta/);
+  });
+
+  /**
+   * Regresión de un hallazgo real de `tester`: sin chequeo de ambigüedad, un decoy de 10 dígitos
+   * (código de sucursal, teléfono, comprobante) ANTES del número real dentro de la ventana ganaba
+   * en silencio por ser el primer match de `.find()` — exactamente el riesgo que la cabecera del
+   * archivo prohíbe ("dar de alta una cuenta con el identificador de un tercero"). Mismo criterio
+   * que ya usan Macro/Santander para sus propias candidatas: nunca elegir, listar y fallar.
+   */
+  it('con DOS valores distintos con forma de número de cuenta en la ventana, falla explícito en vez de elegir el primero', () => {
+    const conDecoy: readonly FilaGeometrica[] = [
+      filaGeometrica('BANCO DE LA', 84.9),
+      filaGeometrica('NACION ARGENTINA', 84.9),
+      filaGeometrica('1111111111', 200), // decoy: forma de 10 dígitos, ANTES del real
+      filaGeometrica(NUMERO_CUENTA_NACION_SINTETICO, 87.6),
+      filaGeometrica(CBU_NACION_SINTETICO, 413.7),
+    ];
+    expect(() =>
+      leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, conDecoy),
+    ).toThrow(/Encontré 2 valores distintos con forma de número de cuenta/);
+  });
+
+  it('con DOS valores distintos con forma de CBU en la ventana, falla explícito en vez de elegir el primero', () => {
+    const conDecoy: readonly FilaGeometrica[] = [
+      filaGeometrica('BANCO DE LA', 84.9),
+      filaGeometrica('NACION ARGENTINA', 84.9),
+      filaGeometrica(NUMERO_CUENTA_NACION_SINTETICO, 87.6),
+      filaGeometrica('1111111111111111111111', 200), // decoy: forma de 22 dígitos, ANTES del real
+      filaGeometrica(CBU_NACION_SINTETICO, 413.7),
+    ];
+    expect(() =>
+      leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, conDecoy),
+    ).toThrow(/Encontré 2 valores distintos con forma de CBU/);
+  });
+
+  it('el MISMO número repetido dos veces no es ambigüedad (deduplicado antes de contar)', () => {
+    const repetido: readonly FilaGeometrica[] = [
+      filaGeometrica('BANCO DE LA', 84.9),
+      filaGeometrica('NACION ARGENTINA', 84.9),
+      filaGeometrica(NUMERO_CUENTA_NACION_SINTETICO, 87.6),
+      filaGeometrica(NUMERO_CUENTA_NACION_SINTETICO, 200), // mismo valor, otra fila — no es ambigüedad
+      filaGeometrica(CBU_NACION_SINTETICO, 413.7),
+    ];
+    const r = leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, repetido);
+    expect(r.numero).toBe(NUMERO_CUENTA_NACION_SINTETICO);
   });
 });
 

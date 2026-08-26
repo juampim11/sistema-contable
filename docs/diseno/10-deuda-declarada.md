@@ -664,6 +664,75 @@ todavía) pero **no se resuelve solo**: queda para la próxima vez que se toque 
 adapters, o antes si aparece un `no_cuadra`/`no_verificable` inexplicado en producción sobre alguno de
 ellos.
 
+### 2.14 🔴 La rama Bancor de `leerCaratula` (`alta-cuenta.ts`) tiene la misma falta de chequeo de ambigüedad que `tester` encontró y corrigió en la rama Nación
+
+**Contexto:** dando de alta el 5° cliente real de la serie (HYJ SAS, Banco Nación,
+`docs/seguridad/registro-excepciones.md` E-6), `tester` atacó la rama Nación nueva de `leerCaratula`
+(`apps/cli/src/alta-cuenta.ts`) y encontró que `.find()` tomaba el PRIMER match de
+`RE_NUMERO_CUENTA_NACION`/`RE_CBU_NACION` dentro de la ventana de carátula **sin verificar si había un
+segundo** — un decoy de 10 dígitos (código de sucursal, teléfono, comprobante) antes del dato real
+ganaba en silencio. Es exactamente el riesgo que la cabecera del propio archivo prohíbe ("dar de alta
+una cuenta con el identificador de un tercero") y que las ramas Macro/Santander sí resuelven contando
+candidatas y fallando ruidoso ante más de una.
+
+**Corregido en Nación**, con su test de regresión (`apps/cli/tests/alta-cuenta.test.ts`, sección
+Nación: dos tests de decoy, uno para número y uno para CBU, más uno que confirma que el MISMO valor
+repetido no es ambigüedad).
+
+**NO corregido en Bancor — mismo patrón exacto, mismo archivo, código ya usado contra un cliente real
+(Contenedores Paoluc S.A.S., `HANDOFF.md` (120)).** `tester` lo señaló explícitamente al encontrar el
+bug en Nación: la rama Bancor (líneas 494-520 al momento de este hallazgo) usa el mismo `.find()`
+sin conteo de candidatas para `RE_NUMERO_CUENTA_BANCOR`/`RE_CBU_BANCOR`. No se corrigió en esta tarea
+porque:
+- Es código ya usado contra datos reales de OTRO cliente — tocarlo pide su propia revisión completa
+  (`tech-lead` + `security-engineer`), no un fix de pasada dentro de una tarea de Nación.
+- El único documento real de Bancor disponible (`docs/diseno/20-formato-bancor.md`) ya se auditó
+  contra este vector cuando se escribió — no hay evidencia de que el bug se haya disparado ahí, pero
+  tampoco se verificó con un test adversarial dedicado en su momento.
+
+**Qué hacer:** `tech-lead` decide si conviene subir el chequeo de ambigüedad (contar + deduplicar +
+fallar si `> 1`) a una función compartida del toolkit de `alta-cuenta.ts` que las dos ramas
+geométricas (Bancor y Nación) usen igual — evita que la próxima rama geométrica (un 3er banco sin
+etiqueta) repita el mismo hueco por tercera vez. Aplicar después a Bancor, con su propio test de
+regresión y con la misma disciplina de "medido contra el archivo real, no solo el fixture sintético".
+**Prioridad media** (a diferencia de §2.13, acá SÍ hay un caso real ya cargado en el piloto con esta
+clase de código sin el guardrail) — no bloquea ningún alta en curso, pero no queda para "cuando se
+toque Bancor de todos modos": es el tipo de hallazgo que hay que agendar.
+
+### 2.15 🟡 `reconoceNacion`/`reconoceBancor` sin cruce de ambigüedad en `alta-cuenta.ts` (a diferencia del pipeline de ingesta real)
+
+**Contexto:** mismo ataque de `tester` de §2.14. El pipeline real de ingesta (`ingestar.ts`) resuelve
+el banco con `resolverAdaptador`, que corre **todos** los adaptadores registrados contra el documento
+y devuelve `ambiguo` si más de uno reconoce el mismo archivo (el caso real ya documentado: un PDF de
+Credicoop byte-idéntico a uno de ICBC). `alta-cuenta.ts` **no pasa por ese mecanismo** — llama
+`reconoceBancor`/`reconoceNacion` de forma aislada, cada uno contra sus propias marcas, sin verificar
+si el documento también matchea el letterhead de otro banco. `tester` construyó un documento
+simulado cuyo pie de página, envuelto por casualidad de layout en dos filas geométricas consecutivas,
+coincide exacto con las dos marcas de Nación — la rama se activa igual y lee número/CBU del cuerpo de
+un documento ajeno.
+
+**No es un vector garantizado en la práctica** (depende de una coincidencia de layout específica), y
+`reconoceNacion` ya es más estricto que `reconoceBancor` en este mismo archivo (exige adyacencia de
+fila, no solo presencia en 15 filas) — pero la asimetría estructural con `ingestar.ts` es real: un
+script que da de alta cuentas reales no tiene la misma red que el pipeline de lectura cotidiana.
+
+**Qué hacer:** evaluar (`arquitecto-software`/`tech-lead`) si `alta-cuenta.ts` debería correr
+`resolverAdaptador` (o una versión liviana del mismo cruce) contra los bancos ya registrados antes de
+tomar la primera rama geométrica que matchee, en vez de evaluarlas en cascada `if/else if`.
+**Prioridad baja** — no hay caso real medido, es un vector de layout específico, y el operador
+siempre declara `--banco` de antemano (que es exactamente lo que este script no cruza contra lo
+detectado, a diferencia de `resolverAdaptador`).
+
+### 2.16 🟡 La ventana de carátula geométrica (`FILAS_DE_CARATULA_BANCOR`/`NACION`) es global al documento, no por página
+
+**Contexto:** mismo ataque de `tester`. `filasGeometricas.slice(0, N)` corta sobre el array completo
+de filas del PDF sin filtrar por `fila.pagina` — con una página 1 corta (menos de `N` filas), el
+corte se completa leyendo filas de la página 2, que pueden no ser carátula de nadie. **No se dispara
+hoy**: el único documento real de Nación tiene 43 filas en una sola página, y el de Bancor mide 3
+páginas pero su carátula real cabe dentro de las primeras 20 filas de la página 1 (ver
+`20-formato-bancor.md`). **Prioridad baja, deuda declarada sin caso real** — se revisa si aparece un
+documento real con una carátula de página 1 más corta que la ventana.
+
 ---
 
 ## 3. Lo que se corrigió en esta tanda (para que no se busque acá)
