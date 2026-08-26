@@ -149,9 +149,54 @@ decisión de cuándo/cómo debe correr.
 `docs/diseno/20-formato-bancor.md` §6/§6.1 actualizado con las 9 etiquetas, la nota de formato dual, y el
 cruce. `bancor.test.ts`: 30 → **37 tests** (9 etiquetas reconocidas sin colisión, los dos formatos, el
 cruce cerrando y no cerrando, conformidad de esquema). `pnpm verificar` completo, corrido una tercera vez
-tras este addendum: **93 archivos, 1862 tests + 7 todo, verde**. Sin commit todavía — a la espera de que
-JP revise antes de aprobar.
-Ningún commit todavía.
+tras este addendum: **93 archivos, 1862 tests + 7 todo, verde**.
+
+### Addendum 2 (mismo día) — migración `0024` aplicada a LOCAL; corrida de punta a punta contra el PDF real encontró y corrigió 2 bugs reales; suite COMPLETA no confirmada por corte del entorno, no del código
+
+**Drift de `0023` resuelto primero** (bloqueaba `pnpm db:migrate`): diagnóstico completo mostró que la
+diferencia entre lo aplicado en local y el archivo actual era **cosmética** (un comentario corregido
+antes del commit `fbf163e`, nunca el `grant` en sí — confirmado comparando los permisos reales de
+`app_job` en la base contra el archivo de hoy: idénticos). El piloto no tiene este problema (recibió la
+versión ya corregida, aplicada después del commit). Corregido con una sola `update` sobre la fila de
+`_migraciones` — cero permisos tocados.
+
+**`0024_catalogo_bancor.sql` aplicada a LOCAL** (no a piloto): `bancor` confirmado como banco activo en
+el catálogo.
+
+**Corrida de punta a punta contra el PDF real** (con `probar-adaptador.ts`, sin persistir — nunca se
+tocó la base ni el almacenamiento) — encontró **2 bugs reales que ni el fixture sintético ni la medición
+por separado habían mostrado**:
+
+1. **La ventana de `importe`/`saldo` estaba mal calculada**: la primera medición había anotado el borde
+   IZQUIERDO del fragmento como si fuera el derecho (`fragmentoEnVentanaDerecha` busca por `x + ancho`).
+   Contra el archivo real esto hacía que **el adapter no armara un solo movimiento** (0 de 94) — los 37
+   tests sintéticos pasaban igual porque el fixture usa `enBordeDerecho()`, que construye la geometría a
+   partir del borde derecho que uno declare, nunca ejercitando el borde real medido mal. Corregido con
+   el borde derecho real, medido sobre las 186 filas completas del documento: `saldo` = 576.8 (constante,
+   95/95 filas); `importe` tiene dos bordes reales, 420.9 (82/94) y ~492–497 (12/94), la ventana ahora
+   cubre las dos.
+2. **Faltaba capturar número de cuenta y CBU de la carátula** (sin etiqueta de texto propia, por eso la
+   primera pasada no los vio — se ancla por FORMA: `NNNNN/NN` para el número, 22 dígitos corridos para el
+   CBU). Sin esto, el lote parseaba perfecto pero **`resolverCuentaDelExtracto` (INV-6) lo habría
+   rechazado igual** — el CUIT del titular no alcanza, INV-6 exige número o CBU. Corregido.
+
+**Resultado final contra el PDF real**: 94 movimientos, `cuadra` (0 rupturas de cadena), 9 anexos
+reconocidos, número y CBU capturados, **INV-6 resoluble = SÍ**, 0 fugas de secreto (INV-13/14), esquema
+Zod válido. `bancor.test.ts`: 37 → **38 tests** (agregado el test que protege los dos bugs).
+
+🔴 **La suite COMPLETA no se pudo confirmar en esta sesión, y es el entorno, no el código:** tres
+intentos de `pnpm verificar`/`vitest run` completo terminaron cortados (`killed`) — el primero con un
+crash de acceso a memoria de Windows a mitad de la suite (código de salida `0xC0000142`, patrón conocido
+de Node en Windows bajo carga pesada, no relacionado con ninguna aserción fallida), el tercero cortado de
+inmediato sin output, consistente con una interrupción externa a la corrida misma. Ningún proceso
+`node` colgado quedó atrás (verificado con `tasklist`) — no es el patrón de "dos `pnpm test` en
+paralelo" ya conocido de este repo. Lo que SÍ está confirmado, aislado: `pnpm typecheck` limpio y
+`packages/ingesta/tests/bancor.test.ts` en **38/38 verde** — que es donde vive todo lo que cambió en este
+addendum. **Antes de dar el repo por "verde de punta a punta" la próxima vez que se retome, correr
+`pnpm verificar` completo una vez, en foreground, y confirmar que termina.**
+
+Commiteados los 2 fixes + sus tests (`bancor.ts`, `bancor.test.ts`). Sin push — a la espera de que JP
+confirme el resumen final.
 
 ---
 

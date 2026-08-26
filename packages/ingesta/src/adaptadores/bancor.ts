@@ -74,13 +74,27 @@ export const CAPACIDADES_BANCOR: CapacidadesAdaptador = {
   declaraDestinos: true,
 };
 
-/** Las columnas, en puntos PDF (spec §3). */
+/**
+ * Las columnas, en puntos PDF (spec §3).
+ *
+ * 🔴 **`importe`/`saldo` corregidos contra el documento real completo (186 filas), no contra la primera
+ * medición.** La medición original (antes de esta corrección) había anotado el borde IZQUIERDO de estos
+ * fragmentos como si fuera el derecho — `fragmentoEnVentanaDerecha` busca por `x + ancho`, y con la
+ * ventana vieja (`saldo: 515-535`) el borde derecho REAL (`576.8`, constante en las 95 filas con saldo
+ * del documento) caía fuera: **el adapter no armaba un solo movimiento contra el PDF real**, aunque los
+ * 37 tests sintéticos pasaran — porque el fixture usaba `enBordeDerecho()`, que construye la geometría a
+ * partir del borde derecho que uno declare, y nunca ejercitó el borde real medido mal.
+ *
+ * `importe` tiene DOS bordes derechos reales, no uno: `420.9` (82 de 94 filas) y `~492.5–496.7` (12 de
+ * 94) — la ventana es lo bastante ancha para las dos, sin tocar `saldo` (hueco de 15 pt entre `500` y
+ * `570`).
+ */
 const COLUMNAS = {
   fecha: { x: 88.0, tolerancia: 1.5 },
   concepto: { x: 172.2, tolerancia: 2 },
   referencia: { x: 265.0, tolerancia: 2 },
-  importe: { desde: 360, hasta: 470 },
-  saldo: { desde: 515, hasta: 535 },
+  importe: { desde: 360, hasta: 500 },
+  saldo: { desde: 570, hasta: 585 },
 } as const;
 
 const RE_FECHA_CUERPO = /^\d{2}\/\d{2}$/;
@@ -596,6 +610,51 @@ function leerCuitTitular(filas: readonly FilaGeometrica[]): string | null {
   return null;
 }
 
+/**
+ * Cuántas filas del principio son carátula, para el número de cuenta y el CBU (spec §2). Mismo
+ * horizonte que usa `leerCuitTitular`, con un poco más de margen porque estos dos valores caen algunas
+ * filas más abajo.
+ */
+const FILAS_DE_CARATULA_BANCOR = 20;
+
+/**
+ * El número de cuenta: `NNNNN/NN` (spec §2), en la misma fila geométrica que las dos fechas del período
+ * — SIN etiqueta textual propia (a diferencia de Galicia/Santander/Macro, que sí la tienen). Se ancla
+ * por FORMA dentro de la carátula, no por posición absoluta de `x`: la carátula de Bancor intercala
+ * fragmentos sin `x` estable entre versiones de resumen (mismo fenómeno que documenta `leerCbu` de
+ * `galicia.ts` para su propia carátula).
+ *
+ * 🔴 **Hallazgo real, de la corrida contra el PDF real** (no del fixture sintético): sin este campo,
+ * `cuenta.numero` y `cuenta.cbu` quedaban los dos ausentes, y `resolverCuentaDelExtracto` (INV-6) exige
+ * uno de los dos — el titular, aunque el CUIT esté capturado, no alcanza. El lote parseaba perfecto
+ * (94/94, `cuadra`) y se habría **rechazado igual** en la primera corrida real contra la base.
+ */
+const RE_NUMERO_CUENTA_BANCOR = /^\d{5}\/\d{2}$/;
+
+function leerNumeroDeCuentaBancor(filas: readonly FilaGeometrica[]): string | null {
+  for (const fila of filas.slice(0, FILAS_DE_CARATULA_BANCOR)) {
+    const frag = fila.fragmentos.find((f) => RE_NUMERO_CUENTA_BANCOR.test(f.texto));
+    if (frag) return frag.texto;
+  }
+  return null;
+}
+
+/**
+ * El CBU: 22 dígitos corridos, sin separadores (spec §2), en su propia fila de carátula, justo antes de
+ * `RESPONSABLE INSCRIPTO`. Sin etiqueta propia — se ancla por FORMA, acotado a la carátula: el cuerpo
+ * tiene corridas de 11 dígitos (CUIT de contrapartes) pero no de 22, así que el riesgo de colisión que
+ * motiva el mismo criterio en `galicia.ts` no está medido acá, y de todos modos se acota por las dudas.
+ */
+const RE_CBU_BANCOR = /^\d{22}$/;
+
+function leerCbuBancor(filas: readonly FilaGeometrica[]): string | null {
+  for (const fila of filas.slice(0, FILAS_DE_CARATULA_BANCOR)) {
+    const frag = fila.fragmentos.find((f) => RE_CBU_BANCOR.test(f.texto));
+    if (frag) return frag.texto;
+  }
+  return null;
+}
+
 function armarCuenta(
   filas: readonly FilaGeometrica[],
   movimientos: readonly MovimientoBancarioCrudo[],
@@ -605,13 +664,12 @@ function armarCuenta(
   if (movimientos.length === 0) return null;
 
   const titularDocumento = leerCuitTitular(filas);
+  const numero = leerNumeroDeCuentaBancor(filas);
+  const cbu = leerCbuBancor(filas);
 
   const clave: ClaveCuenta = {
     bancoCodigo: BANCO_CODIGO,
-    // Sin número de cuenta con etiqueta propia medido en este archivo (spec §2: el ancla de identidad es
-    // el CUIT del titular, no un número de cuenta). Se normaliza `'sin_numero'` como el resto del roster
-    // hace cuando el dato no está — INV-6 resuelve igual por CUIT/CBU cuando estén disponibles.
-    numeroNormalizado: normalizarNumeroCuenta('sin_numero'),
+    numeroNormalizado: normalizarNumeroCuenta(numero ?? 'sin_numero'),
     moneda: 'ARS',
   };
   const hashes = hashesDeCuenta(
@@ -642,6 +700,8 @@ function armarCuenta(
       ...(periodo ? { periodoDesde: periodo.desde, periodoHasta: periodo.hasta } : {}),
       ...(saldoInicial === undefined ? {} : { saldoInicialDeclarado: saldoInicial }),
       ...(ultima?.saldo === undefined ? {} : { saldoFinalDeclarado: ultima.saldo }),
+      ...(numero === null ? {} : { numero }),
+      ...(cbu === null ? {} : { cbu }),
       ...(titularDocumento === null ? {} : { titularDocumento }),
     },
     movimientos: conHash,

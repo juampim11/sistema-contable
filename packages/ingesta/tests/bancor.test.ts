@@ -38,9 +38,11 @@ const X = {
   referencia: 265.0,
 } as const;
 
+// Bordes derechos REALES, medidos contra las 186 filas del documento completo (no la primera pasada,
+// que había anotado el borde izquierdo por error — ver la nota de `COLUMNAS` en `bancor.ts`).
 const R = {
-  importe: 460.0,
-  saldo: 526.0,
+  importe: 420.9,
+  saldo: 576.8,
 } as const;
 
 /**
@@ -105,7 +107,11 @@ function importeAr(centavos: bigint): string {
 
 const CENT = 100n;
 
-/** Carátula común a todos los fixtures: letterhead + CUIT del titular + período. */
+/** Sintéticos: forma real medida (`NNNNN/NN`, 22 dígitos), valores inventados. */
+const NUMERO_CUENTA_SINTETICO = '99999/99';
+const CBU_SINTETICO = '9990000090000000000001'; // mismo patrón ya usado en santander.test.ts
+
+/** Carátula común a todos los fixtures: letterhead + CUIT del titular + período + número + CBU. */
 function agregarCaratula(h: ReturnType<typeof hoja>, desde: string, hasta: string): void {
   h.agregar([{ texto: 'Banco de la Provincia de Córdoba S.A.', x: 400 }]);
   h.agregar([{ texto: 'www.bancor.com.ar', x: 400 }]);
@@ -113,7 +119,21 @@ function agregarCaratula(h: ReturnType<typeof hoja>, desde: string, hasta: strin
   h.agregar([{ texto: 'Concepto sintetico S.A.', x: X.concepto }]);
   h.agregar([{ texto: CUIT_SINTETICO, x: 193.3 }]);
   h.agregar([{ texto: 'TITULAR', x: 193.3 }]);
-  h.agregar([{ texto: desde, x: 121.7 }, { texto: hasta, x: 176.5 }]);
+  // Misma fila geométrica que el período, spec §2 — número de cuenta sin etiqueta propia, por forma.
+  h.agregar([
+    { texto: desde, x: 121.7 },
+    { texto: hasta, x: 176.5 },
+    { texto: NUMERO_CUENTA_SINTETICO, x: 311.3 },
+    { texto: 'BANCA', x: 467.2 },
+    { texto: 'DE', x: 492.5 },
+    { texto: 'EMPRESAS', x: 505.1 },
+  ]);
+  // CBU en su propia fila, sin etiqueta propia, justo antes de RESPONSABLE INSCRIPTO — spec §2.
+  h.agregar([
+    { texto: CBU_SINTETICO, x: 130.1 },
+    { texto: 'RESPONSABLE', x: 260.7 },
+    { texto: 'INSCRIPTO', x: 311.3 },
+  ]);
 }
 
 function agregarSaldoAnterior(h: ReturnType<typeof hoja>, saldoCent: bigint): void {
@@ -251,6 +271,18 @@ describe('leerBancor — cadena de saldos deriva el signo', () => {
 
   it('captura el CUIT del titular anclado a la etiqueta TITULAR', () => {
     expect(salida.cuentas[0]?.cuenta.titularDocumento).toBe(CUIT_SINTETICO);
+  });
+
+  /**
+   * Hallazgo real de la corrida contra el PDF real (no del fixture): sin `numero`/`cbu`, el lote parseaba
+   * perfecto pero `resolverCuentaDelExtracto` (INV-6) lo habría rechazado igual — el CUIT del titular no
+   * alcanza. Este test es la red para que no vuelva a pasar en silencio.
+   */
+  it('captura número de cuenta y CBU de la carátula — sin esto, INV-6 rechazaría el lote', () => {
+    const cuenta = salida.cuentas[0]?.cuenta;
+    expect(cuenta?.numero).toBe(NUMERO_CUENTA_SINTETICO);
+    expect(cuenta?.cbu).toBe(CBU_SINTETICO);
+    expect(cuenta?.numero !== undefined || cuenta?.cbu !== undefined).toBe(true);
   });
 
   it('declara destinos completos: ninguna fila queda sin clasificar', () => {
