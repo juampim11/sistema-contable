@@ -628,6 +628,42 @@ ejemplo, exportar `claveDeSeccion` como `claveDeSeccionMacro`, que ya es exactam
 `seccionesPorClave` recibe en producción), un test podría correr la misma cadena literal contra las dos
 copias. Decisión de superficie pública del paquete, no de este fix puntual. No bloqueante.
 
+### 2.13 🔴 `fragmentoEnVentanaDerecha` es inclusiva en los DOS extremos — riesgo NO VERIFICADO en Galicia/Santander/Macro/Bancor
+
+**Contexto:** construyendo el 5° adapter (Nación, `HANDOFF.md` 2026-08-26 (121)), `tester` encontró que
+`fragmentoEnVentanaDerecha` (`texto-pdf.ts`) — a diferencia de `fragmentosEnBanda`, que documenta
+`[desde, hasta)` semi-abierto **a propósito** (ver el comentario de esa función) — hace
+`derecha >= desde && derecha <= hasta`, **inclusiva en los dos extremos**. Con dos ventanas contiguas
+que comparten un valor límite exacto (`ventanaA.hasta === ventanaB.desde`), un fragmento cuyo borde
+derecho cae justo ahí matchea las DOS ventanas a la vez — y por `.find()` sobre fragmentos ordenados
+por `x` ascendente, la ventana equivocada puede ganar **en silencio**. En Nación esto llegó a
+reemplazar el saldo real de una fila por el valor de un crédito vecino, sin ningún código en
+`lineasNoInterpretadas` — el peor modo de falla del módulo, un número creíble y equivocado.
+
+**Lo que se corrigió:** `nacion.ts` (2pt de zona muerta entre `comprobante`/`debito`/`credito`/
+`saldo`, más un piso de borde izquierdo contra la banda de concepto — `code-reviewer` encontró un
+segundo vector relacionado, distinto al de los límites compartidos).
+
+**Lo que NO se hizo, y por qué queda acá y no como nota suelta:** `Galicia`/`Santander`/`Macro`/
+`Bancor` **usan la misma función compartida** (`bancor.ts:523,528`; `galicia.ts:1136,1167`;
+`santander.ts:1604-1607,1615`; `toolkit.ts:693,698-699` vía `parDeColumnas`, que a su vez usan
+Santander y Macro) y **no se auditaron** en esta tarea — estaba fuera de alcance ("no retrofitear
+los cuatro adapters existentes"). **No hay evidencia hoy de que alguno tenga ventanas contiguas con
+este problema** (es una hipótesis de patrón, no un bug confirmado en esos cuatro) — pero los cuatro
+ya procesan datos reales de clientes en el piloto (Bancor: Contenedores Paoluc S.A.S., HANDOFF
+(120)), así que si la hipótesis fuera cierta en alguno, el riesgo no es teórico.
+
+**Qué hacer:** `tech-lead` audita `COLUMNAS`/`VENTANAS` de los cuatro adapters buscando pares de
+ventanas contiguas (`X.hasta === Y.desde`) pasadas a `fragmentoEnVentanaDerecha`. Si aparece alguna,
+aplicar el mismo tipo de corrección (margen entre ventanas, o el piso de borde izquierdo si el vector
+es el de `code-reviewer`) — con su propio test de regresión, mismo criterio que Nación. Alternativa de
+fondo, más cara: endurecer `fragmentoEnVentanaDerecha` a `[desde, hasta)` como ya hace
+`fragmentosEnBanda`, y correr la suite completa de los cinco adapters para confirmar que ningún test
+existente dependía de la inclusión del límite superior. **Prioridad baja** (sin evidencia de bug real
+todavía) pero **no se resuelve solo**: queda para la próxima vez que se toque cualquiera de los cuatro
+adapters, o antes si aparece un `no_cuadra`/`no_verificable` inexplicado en producción sobre alguno de
+ellos.
+
 ---
 
 ## 3. Lo que se corrigió en esta tanda (para que no se busque acá)

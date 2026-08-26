@@ -6,6 +6,126 @@
 
 ---
 
+## 2026-08-26 (121) — Contrato de salida ampliado (2 campos) + 5° adapter de banco: Nación (cliente real HYJ SAS). Modo plan §3.2, panel completo convocado, 3 hallazgos reales de `tester`/`code-reviewer` corregidos antes de cerrar.
+
+**Herramienta:** Claude Code. Dos pasos en orden estricto, el segundo recién tras confirmar el primero
+cerrado. Sin commits (dueño del repo commitea).
+
+### Aviso previo, importante para retomar sin perder contexto
+
+El pedido citaba `docs/diseno/14-arquitectura-cierre-mensual.md` §2.3 como fuente de los campos del
+paso 1. **Ese archivo no existe en este repo ni existió nunca** (verificado contra `docs/diseno/`
+completo e historial de git — el "14" de este repo es `14-liquidaciones-tarjeta-plan.md`, tema
+distinto). Vive en el Project Knowledge de claude.ai, al que Claude Code no tiene acceso directo. Se
+avisó explícitamente antes de avanzar; el dueño del repo confirmó contra el documento real que 2 de
+los 3 campos pedidos tenían buena fidelidad y corrigió el tercero (ver abajo). **Si otra sesión
+necesita ese documento, hay que pegarlo o darle la ruta — no está en el filesystem.**
+
+### Paso 1 — `packages/ingesta/src/esquema.ts`, 2 campos nuevos (el tercero, descartado)
+
+1. **`coberturaPeriodo`** (`COBERTURAS_PERIODO`: `completo | parcial | corte_a_fecha`) en
+   `cuentaDetectadaSchema`, al lado de `periodoDesde`/`periodoHasta` que ya existían.
+2. **`origenSigno`** (`ORIGENES_SIGNO`: `columna_separada | columna_con_token | cadena_de_saldos`) en
+   `movimientoBancarioCrudoSchema`, al lado de `columnaOrigen` — dice CÓMO se determinó el signo, no
+   CUÁL columna.
+
+Los dos opcionales, sin default. **Los cuatro adapters existentes (Galicia/Santander/Macro/Bancor) NO
+se tocaron** — devuelven `undefined` en los dos, tal como estaba planeado. Sin migración, sin entrada
+en `clasificacion-campos.ts` (no hay columna de base todavía).
+
+**El tercer campo pedido — un digest/referencia por renglón — se descartó del contrato de
+`packages/ingesta`.** El dueño del repo, contra el documento real, corrigió: ese digest tiene que ser
+una **columna generada por Postgres**, mismo criterio que `entrada_digest` desde la migración `0021`
+— lo calcula la base al persistir, no el parser al leer. Depende además de una tabla que **todavía no
+existe** (`documento_ingerido`). **Queda pendiente para `dba-data`, el día que se construya esa
+tabla — no se resuelve con un campo provisorio en TypeScript.** (Memoria guardada:
+`digest-por-renglon-es-columna-generada-postgres`.)
+
+Convocado: `tech-lead` (aprobó con 2 ajustes ya aplicados: constantes exportadas con tipo derivado en
+vez de `z.enum([...])` inline, y documentar por qué NO hay un `.refine()` que acople
+`corte_a_fecha`/`periodoDesde` — decisión confirmada: sin ese refine todavía, sin caso real que lo
+reclame). `code-reviewer`: sin hallazgos. Cierre: typecheck limpio, suite de `packages/ingesta` sin
+cambio de conteo (795→795, cero uso de los campos nuevos fuera de `esquema.ts`).
+
+### Paso 2 — `packages/ingesta/src/adaptadores/nacion.ts`, spec `docs/diseno/21-formato-nacion.md`, fixture `nacion.test.ts` (31 tests)
+
+Cliente real: **HYJ SAS** (H y J Servicios y Obras S.A.S.) — mismo cliente que BBVA (bloqueado, imagen
+pura), primera vía real para sus movimientos. PDF real: 1 sola página, 43 filas geométricas, **UN SOLO
+movimiento** en todo el período — cuenta de muy baja actividad, no una falla de lectura.
+
+Medido y documentado en la spec (con la disciplina de `formaParaLog`, más 3 lecturas puntuales de
+texto crudo restringidas a información bancaria/regulatoria genérica —letterhead, CUIT propio del
+banco, etiqueta de la Ley 25413— nunca a carátula del titular ni a movimientos; scripts temporales
+usados y borrados de inmediato, nunca commiteados; `seguridad-datos-financieros` confirmó sin
+hallazgos y corrió el barrido de fuga limpio):
+
+- Fecha y arranque del concepto vienen PEGADOS en un mismo fragmento (`dd/mm/aa<resto>`) — medido
+  contra 1 solo movimiento, declarado explícitamente como no confirmado como regla del banco.
+- DEBITOS/CREDITOS son columnas separadas (`origenSigno: 'columna_separada'`, primer uso real del
+  campo del paso 1).
+- `SALDO ANTERIOR`/`SALDO FINAL` son DOS fragmentos sueltos (`SALDO` + etiqueta), a diferencia del
+  literal único de Bancor.
+- Anexo Ley 25413 reusa el mecanismo `$` de `bancor.ts`, con el mes variable nunca hardcodeado.
+- `coberturaPeriodo: 'completo'` siempre (el ciclo de Nación arranca un día antes del mes calendario,
+  capturado literal, nunca forzado al 1°).
+
+**Panel convocado y con 3 hallazgos reales, todos corregidos antes de cerrar:**
+- `tech-lead`: aprobado con 2 ajustes menores de documentación (ya aplicados).
+- `seguridad-datos-financieros`: sin hallazgos bloqueantes.
+- `tester`: **3 bugs reales.** (1-2) Las ventanas `comprobante`/`debito`/`credito`/`saldo`
+  compartían un valor límite exacto (`fragmentoEnVentanaDerecha` es inclusiva en los dos extremos) —
+  un importe en ese límite podía matchear DOS ventanas a la vez, y en el peor caso **reemplazaba el
+  saldo real en silencio, sin ninguna señal**. Corregido con 2pt de zona muerta entre cada ventana.
+  (3) `SALDO ANTERIOR`/`FINAL` sin importe legible quedaba marcado `saldoDeclarado` igual, sin
+  ningún código en `lineasNoInterpretadas`. Corregido: ahora reporta `fila_sin_importe`. (4) riesgo de
+  falso positivo: `reconoceNacion` aceptaba las 2 marcas del letterhead en cualquier posición de las
+  primeras 15 filas, sin exigir adyacencia — un disclaimer de OTRO banco que mencione "Banco de la
+  Nación Argentina" podría colar. Corregido: exige las 2 marcas en filas consecutivas.
+- `code-reviewer` (revisión final, tras los fixes de `tester`): **1 bug real más**, distinto del de
+  arriba: un fragmento de la banda de concepto puede tener el borde IZQUIERDO en la banda pero el
+  borde DERECHO cayendo en la ventana de una columna vecina — el margen de 2pt no lo cubre, porque no
+  es un choque entre ventanas sino entre la banda y una ventana. Corregido con `fragmentoDeColumna`
+  (nueva función local, reemplaza el uso directo de `fragmentoEnVentanaDerecha` en este archivo):
+  exige además borde izquierdo `>= 235`. También sugirió extraer el código duplicado de `SALDO
+  ANTERIOR`/`FINAL` a un helper — aplicado (`leerSaldoDeclarado`).
+
+**Hallazgo cruzado, no resuelto en esta tarea — para `tech-lead`/`devops`:** la causa raíz de los
+hallazgos 1-2 de `tester` (`fragmentoEnVentanaDerecha` inclusiva en los dos extremos, a diferencia de
+`fragmentosEnBanda` que es `[desde,hasta)` a propósito) es **infraestructura compartida**
+(`texto-pdf.ts`), usada también por Bancor/Santander/Macro/Galicia. No se auditaron esos cuatro
+adapters en esta tarea (fuera de alcance, "no retrofitear") — vale la pena que alguien revise si
+alguno tiene ventanas contiguas con el mismo riesgo.
+
+**Verificación de cierre:**
+- `pnpm typecheck`: limpio.
+- Suite de `packages/ingesta`: **37 archivos, 826 tests + 7 todo, todos verdes** (antes de esta
+  tarea: 795 tests).
+- `pnpm probar --banco nacion --archivo <PDF real>`: 1 cuenta, 1 movimiento, 0 no interpretadas,
+  INV-13/INV-14 en 0, hashes únicos, esquema Zod válido, **`VEREDICTO DEL LOTE: cuadra`** — resultado
+  idéntico antes y después de los 3 fixes (no se movió nada del real, solo se cerraron vectores de
+  falla que el fixture sintético no ejercitaba).
+
+### Deuda declarada, explícita (no silenciosa)
+
+- **Digest por renglón**: pendiente de `documento_ingerido` (ver arriba), dueño `dba-data`.
+- **Ventana CREDITOS de Nación**: nunca se ejerció contra el documento real (el único movimiento es
+  un débito). Revisar contra el primer crédito real.
+- **Riesgo compartido en `fragmentoEnVentanaDerecha`**: elevado a ítem de seguimiento con dueño,
+  `docs/diseno/10-deuda-declarada.md` §2.13 (no es solo una nota — los cuatro adapters ya procesan
+  datos reales de clientes en el piloto). Prioridad baja, sin evidencia de bug confirmado todavía.
+- **`apps/cli/src/completar-lote.ts` y `recapturar-conceptos.ts` no registran `adaptadorBancor` ni
+  `adaptadorNacion`** — gap preexistente de Bancor, no ampliado a propósito en esta tarea (se hubiera
+  mezclado un fix de un gap viejo con esta tarea).
+- **¿Se repite la carátula por página en un documento Nación multi-página?** El único real es de 1
+  página — no se pudo medir. Afecta si la asimetría de continuación-huérfana (spec §8) sigue siendo
+  correcta en un documento más largo.
+- **ICBC** sigue afuera (columna de saldo no publicada en todas las filas — se mide aparte).
+- **`docs/diseno/14-arquitectura-cierre-mensual.md`** no es accesible desde Claude Code (ver aviso
+  arriba) — si Codex sí tiene acceso, confirmar que el resto de §2.3 (más allá de los 3 campos ya
+  tratados acá) no tenga algo más que este contrato debería capturar.
+
+---
+
 ## 2026-08-26 (120) — Alta de cliente REAL en el PILOTO: Contenedores Paoluc S.A.S. (Bancor), cuenta cargada, 94 movimientos ingestados y verificados por consulta directa. Primer cliente de una serie nueva (clientes reales directo al piloto). Hallazgo real en el camino: migración 0024 faltaba en piloto — corregido con autorización puntual.
 
 **Herramienta:** Claude Code. Modo plan (§3.2) por datos de clientes reales directo al piloto.

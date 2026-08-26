@@ -59,3 +59,10 @@ export {
   type SalidaBancor,
   type VerificacionTotalBancor,
 } from './adaptadores/bancor.ts';
+export {
+  adaptadorNacion,
+  CAPACIDADES_NACION,
+  leerNacion,
+  reconoceNacion,
+  type SalidaNacion,
+} from './adaptadores/nacion.ts';

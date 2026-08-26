@@ -153,6 +153,19 @@ export const TIPOS_CUENTA = [
 ] as const;
 
 /**
+ * Qué tan completo es el período que el extracto declara en su carátula (`periodoDesde`/
+ * `periodoHasta`, abajo). **Se agregó cuando el 5° adapter (Nación) mostró el caso real**: hasta acá
+ * los cuatro bancos medidos eran siempre un ciclo mensual completo, y "el período que dice la
+ * carátula" y "toda la actividad de ese ciclo" eran la misma cosa. Con más bancos deja de serlo, y
+ * sin esta declaración un consumidor no puede distinguir "este extracto cubre todo el mes" de "esto
+ * es una foto del saldo a una fecha" — mismo razonamiento que ya sostiene `traeTotalesDeclarados` y
+ * el resto de las capacidades: la ausencia de dato y el dato-que-dice-que-no-hay-más se ven iguales
+ * si no se declaran por separado.
+ */
+export const COBERTURAS_PERIODO = ['completo', 'parcial', 'corte_a_fecha'] as const;
+export type CoberturaPeriodo = (typeof COBERTURAS_PERIODO)[number];
+
+/**
  * Un PDF puede traer VARIAS cuentas y VARIAS monedas (verificado: un banco del roster trae tres cuentas
  * en un archivo). El resultado del parseo no es una tabla plana.
  *
@@ -171,6 +184,21 @@ export const cuentaDetectadaSchema = z.object({
   moneda: monedaSchema,
   periodoDesde: fechaIso.optional(),
   periodoHasta: fechaIso.optional(),
+  /**
+   * Declarada por el extractor a partir de la carátula, nunca inferida del nombre de archivo.
+   * `undefined` = este adapter todavía no la declara (los cuatro bancos previos a Nación no la
+   * emiten: mismo criterio que `cuentasDeclaradas`/`paginasDeclaradas`, ausencia ≠ "completo").
+   *
+   * 🔴 **Sin acoplar a `periodoDesde`/`periodoHasta` a propósito.** Podría exigirse que
+   * `corte_a_fecha` implique `periodoDesde === undefined` (una foto de saldo no tiene "desde"), como
+   * hace `anexoExtractoSchema` con `periodoDato`. No se agrega ese `.refine()` en esta tarea porque
+   * no hay todavía un documento real de tipo `corte_a_fecha` que lo reclame — inventar la regla sin
+   * caso real es el mismo error que este archivo ya evitó con `inferirCortes`/`cortarEnColumnas`
+   * (ver `08-plan-de-construccion.md` §1.2: "CERO usuarios… borrar cuando se confirme"). Se
+   * endurece cuando aparezca ese caso (candidato: FCI, que ya maneja corte a fecha de forma
+   * implícita hoy).
+   */
+  coberturaPeriodo: z.enum(COBERTURAS_PERIODO).optional(),
   saldoInicialDeclarado: importe.optional(),
   saldoFinalDeclarado: importe.optional(),
   totalCreditosDeclarado: importeNoNegativo.optional(),
@@ -259,6 +287,29 @@ export const CAPTURAS_CONTRAPARTE = [
 ] as const;
 export type CapturaContraparte = (typeof CAPTURAS_CONTRAPARTE)[number];
 
+/**
+ * CÓMO se determinó `columnaOrigen` (crédito/débito) para ESTE renglón — no CUÁL columna, eso ya lo
+ * dice `columnaOrigen`. Se agregó cuando el 5° adapter (Nación) mostró que hacía falta declarar el
+ * mecanismo, no solo el resultado: el asiento consolidado puede necesitar mostrar confianza distinta
+ * según cómo se supo el signo.
+ *
+ * Los tres valores son los tres mecanismos ya medidos en el roster, nunca inventados:
+ * - `columna_separada`: el banco publica débito y crédito en columnas propias, sin señal redundante
+ *   (Santander, Macro — `traeSignoEnElImporte: false`, ver `parDeColumnas`).
+ * - `columna_con_token`: columna(s) con un token adicional (signo o letra) que confirma el sentido
+ *   (Galicia — `traeSignoEnElImporte: true`).
+ * - `cadena_de_saldos`: no hay columna ni token; se deriva del delta entre el saldo de esta fila y el
+ *   de la anterior (Bancor, `columnaPorCadenaDeSaldos` en `bancor.ts` — comparación EXACTA en
+ *   centavos, nunca por tolerancia).
+ *
+ * Por renglón y no como capacidad agregada: mismo criterio que `conceptoBancoEstrategia`, "para que
+ * la procedencia sea auditable en los datos y no solo en un test". `undefined` = este adapter
+ * todavía no lo declara — los cuatro bancos previos a Nación no lo emiten (no se retrofitean en
+ * esta tarea).
+ */
+export const ORIGENES_SIGNO = ['columna_separada', 'columna_con_token', 'cadena_de_saldos'] as const;
+export type OrigenSigno = (typeof ORIGENES_SIGNO)[number];
+
 export const TIPOS_REFERENCIA = [
   'factura',
   'cheque',
@@ -345,6 +396,8 @@ export const movimientoBancarioCrudoSchema = z
 
     /** La columna del banco. `importe` se DERIVA de esto, no al revés. */
     columnaOrigen: z.enum(['credito', 'debito']),
+    /** Cómo se determinó `columnaOrigen` para este renglón. Ver `ORIGENES_SIGNO`. */
+    origenSigno: z.enum(ORIGENES_SIGNO).optional(),
     credito: importeNoNegativo.optional(),
     debito: importeNoNegativo.optional(),
     /** Derivado y signado: crédito = +, débito = −. El signo es el efecto sobre el saldo del banco. */
