@@ -6,6 +6,35 @@
 
 ---
 
+## 2026-08-26 (125) — Verificación de solo lectura post-cierre del adaptador ICBC: `tenant_node` en 7 (1 estudio + 6 clientes), sin duplicados, correspondencia UUID→banco confirmada para los 3 clientes con etiqueta genérica. Sin hallazgos, sin acción tomada.
+
+**Herramienta:** Claude Code. Continuación directa de la entrada (124), a pedido explícito de JP:
+chequeo de solo lectura contra el piloto antes de dar por cerrada la tarea del adaptador ICBC.
+
+`select count(*) from tenant_node` = **7** (1 `estudio` + 6 `cliente`), coincide con lo esperado.
+Los 6 nombres son **todos distintos**, ninguno duplicado ni reemplazó a otro: 3 con **etiqueta
+genérica** (`CLIENTE PILOTO 01/02/03` — altas de hace semanas, previas a la decisión de "razón
+social real desde el día uno" que arrancó con Contenedores Paoluc) y 3 con **razón social real**
+(Contenedores Paoluc S.A.S., H y J Servicios y Obras S.A.S., MEB Integración y Montaje S.A.S. — los
+tres altas de esta serie). El propio nodo raíz también tiene nombre genérico (`ESTUDIO PILOTO`, no
+el nombre real del estudio) — mismo criterio de la época en que se creó, **sin acción a tomar**.
+
+**Correspondencia UUID → cliente real confirmada por consulta directa contra `cuenta_bancaria`, sin
+asumir por el orden de aparición** — JP pidió cruzar explícitamente contra `banco_codigo` en vez de
+confiar en el orden de la lista:
+
+| `tenant_node.id` | `nombre` | `banco_codigo` (cuenta_bancaria) | Cliente real esperado |
+|---|---|---|---|
+| `f84d9ecc-6d54-4009-8fb6-b6fa3f8d8579` | CLIENTE PILOTO 01 | `galicia` (2 cuentas) | Bracci — ✅ coincide |
+| `80741296-8cbf-4a4f-bcf1-8e8cb1c57584` | CLIENTE PILOTO 02 | `santander` (2 cuentas) | El Prat — ✅ coincide |
+| `69479b8f-9b6a-4d6b-bdb2-bff817c2e750` | CLIENTE PILOTO 03 | `macro` (3 cuentas) | ROKA — ✅ coincide |
+
+**Sin hallazgos, sin discrepancias, sin ninguna acción tomada** — verificación de cierre, no un
+incidente. Ningún nombre de cliente real (Bracci/ROKA/El Prat) ni razón social de MEB/HYJ/Paoluc
+impreso más allá de lo ya autorizado en entradas anteriores de esta bitácora.
+
+---
+
 ## 2026-08-26 (124) — 6ª rama de `alta-cuenta.ts` (ICBC) + Alta de cliente REAL en el PILOTO: MEB Integración y Montaje S.A.S. Migración `0026` + Entrega completa (código y datos reales) CERRADAS. Cuenta cargada, 9 movimientos ingestados y verificados por consulta directa, idéntico al dry-run del Paso 2.
 
 **Herramienta:** Claude Code. Continuación directa de la entrada (123). Convocatoria completa sobre
