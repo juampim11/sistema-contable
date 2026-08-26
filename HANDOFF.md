@@ -6,6 +6,199 @@
 
 ---
 
+## 2026-08-26 (124) — 6ª rama de `alta-cuenta.ts` (ICBC) + Alta de cliente REAL en el PILOTO: MEB Integración y Montaje S.A.S. Migración `0026` + Entrega completa (código y datos reales) CERRADAS. Cuenta cargada, 9 movimientos ingestados y verificados por consulta directa, idéntico al dry-run del Paso 2.
+
+**Herramienta:** Claude Code. Continuación directa de la entrada (123). Convocatoria completa sobre
+la 6ª rama y la migración: `tech-lead` (coherencia de la rama, sin bloqueantes) + `dba-data` +
+`security-engineer` + `seguridad-datos-financieros` (los tres sobre `0026_catalogo_icbc.sql`, sin
+bloqueantes) — los cuatro con dictamen antes de tocar el piloto.
+
+### 6ª rama de `leerCaratula` (ICBC), `apps/cli/src/alta-cuenta.ts`
+
+Mismo patrón geométrico que Bancor/Nación, con dos diferencias reales medidas en el Paso 1
+(`docs/diseno/22-formato-icbc.md` §1, H1): número y CBU viven en el MISMO fragmento geométrico (no
+dos separados), y el CBU viene partido en dos grupos de dígitos (8+14) tras la etiqueta `C.B.U.:` —
+la deduplicación de ambigüedad usa la clave `${grupo1}:${grupo2}` (el par completo, no el CBU ya
+unido), confirmado inyectivo por `tech-lead` (longitudes fijas 8/14, sin colisión posible).
+
+**El chequeo de ambigüedad (deduplicar + contar + fallar si `>1`) se escribió DESDE EL DÍA UNO** —
+no como fix posterior, a diferencia de lo que pasó con Nación (HANDOFF 122). `apps/cli/tests/
+alta-cuenta.test.ts`: 71 → **81 tests** (10 nuevos del describe ICBC, mismo número que tiene el
+describe de Nación).
+
+**Dos hallazgos de `tech-lead`, declarados como deuda, NO bloqueantes** (`docs/diseno/
+10-deuda-declarada.md` §2.19-2.20): ningún adapter real (Bancor/Nación/ICBC) reordena min/max su
+propio período en `leerPeriodo` — solo Bancor lo declaró a propósito, Nación e ICBC tienen el mismo
+supuesto no verificado que ya costó una corrida fallida en Nación; y el chequeo de ambigüedad está
+duplicado DOS veces sin extraerse (Nación + ICBC), cruzando el umbral de "dos usuarios reales" que
+este mismo repo usa como criterio de extracción — candidato a un helper compartido, con Bancor como
+tercer usuario en la misma tarea (Bancor sigue sin este chequeo, §2.14).
+
+### Migración `0026_catalogo_icbc.sql`
+
+6ª fila de `banco`, mismo patrón exacto que `0024`/`0025`. Primera vez que el catálogo declara
+`cadenaDeSaldos: "por_puntos_de_control"` (los cinco anteriores son `"completa"`) — confirmado por
+`dba-data` que la columna `capacidades` no tiene `check` de contenido (solo `codigo`) y que el valor
+es parte del enum `CADENAS_DE_SALDOS` ya existente en `esquema.ts`. `security-engineer`:
+`nombre` del banco es información pública, sin superficie nueva. `seguridad-datos-financieros`:
+confirmó que `docs/seguridad/registro-excepciones.md` E-6 ya generaliza el criterio a ICBC
+explícitamente — no hizo falta ampliarlo.
+
+### Entrega — procedimiento de 8 pasos, cada uno verificado antes del siguiente
+
+1. **`--estado` contra piloto**: UNA sola migración pendiente, `0026_catalogo_icbc.sql` — reportada
+   a JP dos veces (antes y después de escribir el archivo) y autorizada puntualmente antes de tocar
+   nada (regla dura CLAUDE.md §1.9). El comando de aplicación fue bloqueado por el clasificador de
+   modo automático (escritura de esquema contra base con datos reales) — reintentado con aprobación
+   explícita del titular vía el prompt de permiso normal, no vía autorización narrada.
+2. **Backup fresco**: `respaldos/piloto_20260826-181810Z.dump`, hash SHA-256
+   `8c3e2289d5ec27ba6f02231513d20ffb379eb7fd8b274d281b00703642fbdf14`.
+3. **Migración `0026` aplicada**, verificada por `--estado` y por consulta directa a `banco`: **6
+   filas** (bancor/galicia/icbc/macro/nacion/santander), todas `activo=true`.
+4. **Membership del operador verificada** por consulta directa: usuario
+   `11111111-1111-1111-1111-111111111111`, rol `socio`, `activo=true`, en el nodo raíz (`tipo=estudio`,
+   `parent_id is null`).
+5. **`pnpm alta:cliente`**, razón social real: `tenant_node` **5 → 6** (verificado por conteo antes y
+   después), nodo nuevo `id=b50560ae-27f7-4619-826c-d719bf526983`, `tipo=cliente`,
+   `nombre='MEB Integración y Montaje S.A.S.'` (exacto, forma confirmada contra la carátula real del
+   Paso 1 — el PDF la imprime en mayúsculas sin acento, `MEB INTEGRACION Y MONTAJE S.A.S.`, mismo
+   criterio de normalización de caja que HYJ SAS), `parent_id` = estudio raíz. Confirmado por consulta
+   directa que **no existía ya** un tenant para este cliente antes del alta (búsqueda por nombre, 0
+   resultados).
+6. **`pnpm alta:cuenta --banco icbc`**: cuenta creada, `cuenta_bancaria_id=
+   29ca0d57-44cd-40ee-9d29-ca7333bd4d3a`, `banco_codigo=icbc`, moneda ARS; identificador con CBU solo
+   como HMAC (32 bytes) + últimos 4 dígitos; `vigente_desde=2026-06-01` (el período real). La 6ª rama
+   leyó número y CBU sin ambigüedad contra el documento real, primera corrida.
+7. **`pnpm ingesta`**: `lote_id=d6dcf4c5-8f08-4955-b4f2-e0cc6300fc63`, `estado=procesado`,
+   `verificacion_estado=cuadra`, **9 movimientos, 2 anexos** — resultado **idéntico** al dry-run de
+   `pnpm probar` de la entrada (123), confirmando que la persistencia real no introdujo ninguna
+   diferencia respecto del parseo ya verificado.
+8. **Verificación final por consulta directa** (no solo el output del CLI): `lote_ingesta`
+   (`cliente_id` correcto, `banco_codigo=icbc`, `filas_leidas=9`, `filas_rechazadas=0`);
+   `lote_ingesta_cuenta` (`periodo_desde=2026-06-01`, `periodo_hasta=2026-06-30`,
+   `verificacion_estado=cuadra`, `filas_aceptadas=9`); `movimiento_bancario_crudo` — **9 filas por
+   lote, las 9 del mismo `cliente_id`** (aislamiento correcto, nada mezclado de otro cliente), **9
+   hashes únicos de 9**.
+
+### Hallazgo real del camino: `ENV_FILE=.env.piloto`, no exportar `DATABASE_URL` a mano
+
+El primer intento de `alta:cliente` falló con `estudio_no_encontrado` — no porque el uuid estuviera
+mal, sino porque exportar `DATABASE_URL` a mano (para las consultas directas) sin `ENV_FILE=
+.env.piloto` deja que `cargarEnv()` cargue el resto de las variables (`DATABASE_URL_APP`, que es la
+que usa `conUsuario()`) desde el `.env` LOCAL — el script corrió contra la base local, donde ese
+estudio no existe. **Falló limpio, sin escribir nada** (el error es previo a cualquier insert).
+Corregido usando `ENV_FILE=.env.piloto` para todos los comandos de escritura del CLI, y `DATABASE_URL`
+exportado a mano SOLO para las consultas de verificación directas (que no pasan por `cargarEnv()`).
+
+### Estado de salida
+
+Migración `0026`, alta de cliente y alta de cuenta: commits pendientes (dueño del repo commitea).
+Ingesta real: 9 movimientos persistidos y verificados. Ningún dato real de MEB (CUIT, CBU, número de
+cuenta, razón social fuera de lo que JP ya dio como contexto) impreso en ningún log más allá de lo ya
+registrado en el incidente #13. Consultas de verificación, todas ad hoc por `node -e`, ninguna
+commiteada.
+
+---
+
+## 2026-08-26 (123) — Paso 1 (medición) + Paso 2 (adapter) del 6° banco: ICBC, cliente real MEB Integración y Montaje S.A.S. Panel completo convocado, 3 bugs reales corregidos, 1 incidente de seguridad menor registrado. Dry-run contra el PDF real: cuadra. **Paso 3 (alta real en el piloto) NO se tocó — a la espera de autorización explícita de JP.**
+
+**Herramienta:** Claude Code. Modo plan (§3.2), tarea de tres pasos con STOP explícito entre cada
+uno. Convocatoria completa del Paso 2: `seguridad-datos-financieros` + `tech-lead` + `code-reviewer`
++ `tester` + `qa-automation`, los cinco con hallazgos reales o dictamen sin bloqueantes.
+
+### Paso 1 — Medición, `docs/diseno/22-formato-icbc.md`
+
+PDF real: 1 página, 33 filas geométricas, 9 movimientos (8 débitos + 1 crédito) — extracto de baja
+actividad, como Nación. Las 4 hipótesis pedidas, respondidas:
+
+1. **¿Rama genérica de `leerCaratula` alcanza?** NO — confirmado con la función real
+   `valorPorEtiqueta`: sin etiqueta de número de cuenta, y el CBU (con etiqueta `C.B.U.:`) viene
+   partido en dos grupos (8+14 dígitos) que `\b\d{22}\b` no matchea. Hace falta una 6ª rama
+   geométrica — pendiente para cuando se toque `alta-cuenta.ts` (Paso 3).
+2. **¿DEBITOS/CREDITOS columnas separadas?** SÍ, con una particularidad: DEBITOS trae un signo `-`
+   final redundante (`importeACentavos` ya lo soporta, "signo atrás", sin tocar `parseo-ar.ts`).
+3. **¿Proporción de filas con SALDO?** 5/9 (55,6%), sin patrón de intervalo fijo. El mecanismo de
+   puntos de control que pedía la tarea **ya existe** en `verificarAritmetica` — no hizo falta
+   escribir nada nuevo.
+4. **¿Bloque de totales?** Una sola fila geométrica, 5 fragmentos, 3 valores — el corte entre el
+   segundo total y la fecha embebida (`SALDO FINAL AL <fecha>`) se ancla por FORMA (importe al
+   frente, literal + forma de fecha al final), nunca por conteo de dígitos — confirmado explícito en
+   el diseño antes de escribir el regex, a pedido de JP.
+
+**Incidente #13 (`docs/seguridad/registro-incidentes.md`), severidad BAJA, mismo criterio que el
+#12**: durante la medición read-only, un script pensado para leer solo información bancaria genérica
+se equivocó de layout (asumió por analogía con Nación que un bloque era "del banco" cuando era del
+titular) — un CUIT real de MEB quedó impreso en la salida de una herramienta, nunca a disco.
+Detectado por el propio agente, confirmado y corregido por JP en el mismo turno. Layout real:
+bloque izquierdo (filas 0-3) = titular; bloque derecho (filas 1-6) = mezcla, con la línea
+`CUIT N°`/`IVA :` siendo del TITULAR pese a compartir columna con datos genéricos de sucursal.
+
+### Paso 2 — `packages/ingesta/src/adaptadores/icbc.ts`, fixture `icbc.test.ts` (35 tests)
+
+6° adapter del roster. `reconoceICBC` ancla en el encabezado de columnas (único literal bancario
+disponible — ningún nombre de banco aparece como texto extraíble en la carátula, hallazgo del propio
+incidente #13). `cadenaDeSaldos: 'por_puntos_de_control'`, primera vez que el roster declara este
+valor (Nación/Bancor/Santander/Macro son `'completa'`).
+
+**Panel convocado, 5 agentes, hallazgos reales de 3 de los 5:**
+- `seguridad-datos-financieros`: sin hallazgos bloqueantes. Sugerencia BAJA (no aplicada, declarada
+  en `10-deuda-declarada.md` §2.18.4): anclar CBU/número por fragmento como Nación/Bancor, no por
+  fila unida.
+- `tech-lead`: **BLOQUEANTE** — faltaba `adaptadorIcbc` en `apps/cli/src/ingestar.ts` (el único CLI
+  que persiste; sin esto, ICBC quedaba codeado y testeado pero no se podía ingestar de verdad).
+  Corregido. Deuda declarada §2.18 (1-3): promoción de `fragmentoDeColumna` a `texto-pdf.ts`, gate
+  del bloque de totales (`fueraDelCuerpo` en vez de `residuo` si la primera etiqueta no matchea),
+  `nacion.ts` sin el mismo guard de valor absoluto. Y confirmó el 2° caso real (con Nación) de
+  `extraerPeriodo` case-sensitive — anotado en §2.17, sigue sin tocar la función compartida.
+- `code-reviewer`: **BLOQUEANTE** — la columna de referencia (`/^\d+/`) descartaba en silencio el
+  texto pegado al comprobante en la única fila real con esa forma (`#### AAAA`, borde 343.0 — número
+  que nunca había llegado a la spec, agregado en la misma revisión). Corregido: se captura el
+  fragmento completo, sin recortar, mismo criterio que `nacion.ts`.
+- `tester`: **bug real** — el signo atrás de DEBITOS estaba defendido con `abs()`, CREDITOS no; un
+  crédito firmado armaba `credito: "-500.00"`, violando el propio esquema (`importeNoNegativo`) sin
+  ningún residuo que lo atrapara. Corregido, simétrico en las dos columnas.
+- `qa-automation`: **hueco de cobertura real**, confirmado por mutación — `cadenaDeSaldos:
+  'por_puntos_de_control'` no estaba sostenida por ningún test (mutarla a `'no_disponible'` dejaba
+  la suite 30/30 verde igual). Encontró el mismo bug de crédito que `tester`, de forma independiente.
+  Agregados 5 tests: ruptura real de cadena (`ARIT_CADENA_ROTA`), crédito con signo atrás,
+  `saldoEsAcreedor` con saldo real, documento sin línea de PERIODO, y validación Zod de las 5 clases
+  de `lineasNoInterpretadas`. 30 → 35 tests.
+
+**Verificación de cierre:**
+- `pnpm typecheck`: limpio.
+- Suite de `packages/ingesta`: **38 archivos, 861 tests + 7 todo, todos verdes** (antes: 826).
+- Suite de `apps/cli`: **11 archivos, 164 tests, todos verdes** (incluido `ingestar.test.ts` con el
+  nuevo registro).
+- Barrido de fuga: limpio — dos vueltas de valores sintéticos "prolijos" (bloques repetidos,
+  secuencias alternadas) colisionaron por VALOR contra el material real de `privado/` antes de dar
+  con valores seguros generados por `Math.random()` y verificados contra `esFuga()`.
+- `pnpm probar --banco icbc --archivo <PDF real de MEB>`: **1 cuenta, 9 movimientos (8 débitos + 1
+  crédito), 0 no interpretadas, INV-13/INV-14 en 0, 9/9 hashes únicos, esquema Zod válido,
+  `VEREDICTO DEL LOTE: cuadra`** — idéntico antes y después de los 3 fixes del panel (ninguno movió
+  el resultado contra el real, solo cerraron vectores que el fixture sintético no ejercitaba).
+
+### Deuda declarada, explícita
+
+- `docs/diseno/10-deuda-declarada.md` §2.17 (anotación) y §2.18 (nueva): 5 ítems no bloqueantes con
+  dueño sugerido, ninguno con evidencia de fallo contra el documento real disponible.
+- **6ª rama de `leerCaratula` (`alta-cuenta.ts`) para ICBC**: no se tocó en esta tarea (fuera del
+  alcance del Paso 2) — necesaria antes del Paso 3, ya que el Paso 1 confirmó que la rama genérica no
+  alcanza.
+- **Ventana CREDITOS**: medida sobre UN solo caso real (spec §H2) — igual límite que tuvo Nación con
+  su propia columna de crédito.
+- **`titularCondicionIva`** (`IVA : INSCRIPTO`, confirmado en la carátula): no se captura en esta
+  tarea, mismo alcance que el resto del roster no lo hace sistemáticamente.
+
+### Estado de salida
+
+Paso 1 y Paso 2 cerrados, commits pendientes (dueño del repo commitea). **Paso 3 (alta real de MEB en
+el piloto) NO se tocó** — requiere autorización explícita de JP antes de escribir nada, como pide la
+tarea original. Ningún dato real de MEB (CUIT, CBU, número de cuenta, razón social fuera de lo que JP
+ya dio como contexto) impreso en ningún log, doc ni fixture más allá de lo ya registrado en el
+incidente #13. Scripts de medición, todos efímeros, borrados después de cada uso — ninguno commiteado.
+
+---
+
 ## 2026-08-26 (122) — Alta de cliente REAL en el PILOTO: H y J Servicios y Obras S.A.S. (Banco Nación). Entrega A (código) + Entrega B (datos reales) CERRADAS. Cuenta cargada, 1 movimiento ingestado y verificado por consulta directa. Hallazgo real en el camino: `extraerPeriodo` compartida no soporta el conector en mayúsculas — resuelto con una función propia de Nación, sin tocar la compartida.
 
 **Herramienta:** Claude Code. Modo plan (§3.2), serie E-6 (`docs/seguridad/registro-excepciones.md`,
