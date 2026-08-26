@@ -733,6 +733,33 @@ páginas pero su carátula real cabe dentro de las primeras 20 filas de la pági
 `20-formato-bancor.md`). **Prioridad baja, deuda declarada sin caso real** — se revisa si aparece un
 documento real con una carátula de página 1 más corta que la ventana.
 
+### 2.17 🟡 `extraerPeriodo` (`toolkit.ts`, compartida con Galicia/Macro) es case-sensitive — no lee el conector "AL" en mayúsculas
+
+**Contexto:** primera corrida real de `alta-cuenta.ts` contra el PDF real de HYJ SAS (Banco Nación,
+`docs/seguridad/registro-excepciones.md` E-6). La rama Nación de `leerCaratula` leyó número y CBU
+correctamente (por geometría), pero el paso compartido posterior — `extraerPeriodo(lineas.join(...))`
+— falló con "No pude leer el período del resumen" contra un documento real y válido.
+
+**Causa, confirmada por medición (no supuesta):** el regex de `extraerPeriodo`
+(`(?:a(?:l)?|hasta|-|—)`, sin flag `i`) exige el conector en MINÚSCULAS. El documento real de Nación
+imprime el conector en MAYÚSCULAS ("AL") — confirmado con `formaParaLog` contra el archivo real (el
+token se enmascaró como dos letras mayúsculas). Galicia y Macro, los otros dos usuarios de esta
+función, aparentemente siempre lo imprimen en minúsculas — nunca se había medido el caso mayúsculas
+hasta ahora.
+
+**Resuelto puntualmente, sin tocar la función compartida:** `alta-cuenta.ts` agregó
+`RE_PERIODO_NACION`/`extraerPeriodoNacion`, duplicados a propósito (mismo criterio que
+`RE_NUMERO_CUENTA_NACION`/`RE_CBU_NACION`), usados solo cuando `esNacion`. Decisión explícita de JP:
+**no tocar `extraerPeriodo` compartida bajo la presión de un alta real** — agregarle el flag `i`
+ensancharía la superficie de match para Galicia/Macro sin que nadie lo haya revisado contra sus
+documentos reales.
+
+**Qué hacer:** cuando haya convocatoria real de `tech-lead` (+ quien tenga a mano los documentos
+reales de Galicia/Macro para reverificar que agregar `i` no introduce un falso positivo), evaluar si
+`extraerPeriodo` debería aceptar el conector en cualquier capitalización de una vez por todas —
+sacaría la duplicación de `alta-cuenta.ts` y cerraría el mismo hueco para cualquier banco futuro.
+**Prioridad baja**: el caso real de Nación ya está resuelto por su cuenta propia, sin bloquear nada.
+
 ---
 
 ## 3. Lo que se corrigió en esta tanda (para que no se busque acá)

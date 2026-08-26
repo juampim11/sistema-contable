@@ -309,6 +309,32 @@ const RE_NUMERO_CUENTA_NACION = /(?<!\d)\d{10}(?!\d)/;
 const RE_CBU_NACION = /\b\d{22}\b/;
 
 /**
+ * 🔴 **El período de Nación no lo puede leer `extraerPeriodo` (`toolkit.ts`), compartida con
+ * Galicia/Macro.** Esa función exige el conector ("al"/"hasta") en MINÚSCULAS — sin flag `i` — y
+ * el documento real de Nación lo imprime en MAYÚSCULAS ("AL"), confirmado por `formaParaLog` contra
+ * el archivo real (el token se enmascaró como dos letras mayúsculas, nunca minúsculas). Mismo
+ * patrón que `RE_PERIODO` de `nacion.ts` (el adapter, ya medido y probado), duplicado a propósito
+ * acá — igual criterio que las regex de número/CBU: no se toca `extraerPeriodo` compartida bajo la
+ * presión de un alta real sin la revisión que le corresponde a un cambio de comportamiento
+ * compartido con otros dos bancos (declarado en `docs/diseno/10-deuda-declarada.md`).
+ */
+const RE_PERIODO_NACION = /(\d{2})\/(\d{2})\/(\d{4})\s*AL\s*(\d{2})\/(\d{2})\/(\d{4})/i;
+
+function extraerPeriodoNacion(texto: string): { readonly desde: string; readonly hasta: string } | null {
+  const m = RE_PERIODO_NACION.exec(texto);
+  if (!m) return null;
+  const iso = (d: string, mes: string, anio: string): string => `${anio}-${mes}-${d}`;
+  const primera = iso(m[1] ?? '', m[2] ?? '', m[3] ?? '');
+  const segunda = iso(m[4] ?? '', m[5] ?? '', m[6] ?? '');
+  // Mismo criterio que `extraerPeriodo`: se toma min/max, nunca "la primera es desde" — el orden de
+  // emisión es un detalle del extractor, no una propiedad del documento.
+  const desde = primera <= segunda ? primera : segunda;
+  const hasta = primera <= segunda ? segunda : primera;
+  if (desde === hasta) return null;
+  return { desde, hasta };
+}
+
+/**
  * Lee de la carátula lo que hace falta para el alta.
  *
  * **Por etiqueta, nunca por patrón libre.** Buscar "el primer número de 22 dígitos" encuentra el CBU de
@@ -659,7 +685,9 @@ export function leerCaratula(
     cbuAtribuido = cbuEncontrado.valor;
   }
 
-  const periodo = extraerPeriodo(lineas.join(SALTO));
+  // Nación: conector "AL" en mayúsculas, `extraerPeriodo` compartida no lo matchea (ver la nota de
+  // `RE_PERIODO_NACION` más arriba) — usa su propia extracción, duplicada a propósito.
+  const periodo = esNacion ? extraerPeriodoNacion(lineas.join(SALTO)) : extraerPeriodo(lineas.join(SALTO));
   if (!periodo) {
     /**
      * **Sin período no se inventa una fecha.**

@@ -251,6 +251,27 @@ describe('leerCaratula() — Nación, una sola cuenta, sin etiqueta, por GEOMETR
     expect(r.seccionUsada).toMatch(/Nación/);
   });
 
+  /**
+   * Hallazgo real de la primera corrida contra el PDF real de HYJ SAS: el documento imprime el
+   * conector del período en MAYÚSCULAS ("AL"), y `extraerPeriodo` compartida (`toolkit.ts`, usada
+   * por Galicia/Macro) es case-sensitive y solo acepta minúsculas — la carátula de Nación fallaba
+   * con "No pude leer el período" pese a que número y CBU se leían bien. Corregido con
+   * `extraerPeriodoNacion` propia (mismo patrón de duplicación que número/CBU). Este test usa el
+   * conector en mayúsculas a propósito, para que una futura regresión de este fix se vea acá y no
+   * recién contra el archivo real de un cliente.
+   */
+  it('lee el período con el conector "AL" en MAYÚSCULAS (real en el documento de Nación, no minúsculas como el resto de los bancos)', () => {
+    const periodoMayusculas = 'Periodo Informado: 29/05/2026 AL 30/06/2026';
+    const r = leerCaratula(
+      textoDe(periodoMayusculas),
+      'ARS',
+      undefined,
+      undefined,
+      FILAS_CARATULA_NACION,
+    );
+    expect(r.desde).toBe('2026-05-29');
+  });
+
   it('falla explícito si no encuentra el número (10 dígitos)', () => {
     const sinNumero = FILAS_CARATULA_NACION.filter(
       (f) => f.fragmentos[0]?.texto !== NUMERO_CUENTA_NACION_SINTETICO,
