@@ -69,10 +69,68 @@ ANTES de armar el plan, no asumir que lo aplicado en local ya está en piloto.**
 
 ### Estado de salida
 
-`pnpm typecheck` limpio, `alta-cuenta.test.ts` 50/50 verde (código + tests commiteados, sin push — a la
-espera de que JP revise). Ningún dato real (CUIT, CBU, razón social) impreso en ningún log ni en esta
-conversación fuera de lo que JP mismo escribió como contexto de la tarea. Scripts de verificación
-read-only, todos efímeros, borrados después de cada uso — ninguno commiteado.
+`pnpm typecheck` limpio, `alta-cuenta.test.ts` 50/50 verde (código + tests commiteados, con push).
+Ningún dato real (CUIT, CBU, razón social) impreso en ningún log ni en esta conversación fuera de lo que
+JP mismo escribió como contexto de la tarea. Scripts de verificación read-only, todos efímeros, borrados
+después de cada uso — ninguno commiteado.
+
+### Addendum (mismo día) — CI roto en `main` desde el commit `fe7028c` de esta sesión, corregido
+
+JP reportó (captura del Action de GitHub) que `pnpm verificar` en CI viene fallando en **todos** los
+push de esta sesión, con `Cannot find module '../src/fci-santander/extraer-posiciones.ts'` en
+`packages/ingesta/tests/fci-santander-extraer-posiciones.test.ts`. Causa: ese test quedó **commiteado**
+en `fe7028c` (el primer commit de Bancor de esta sesión — se agregó ahí solo para corregirle un importe
+sintético que colisionaba con material real y así poder correr el barrido) pero su archivo fuente,
+`packages/ingesta/src/fci-santander/extraer-posiciones.ts`, **nunca se commiteó** — a propósito, esa
+tarea sigue pendiente de revisión aparte del titular. Localmente `pnpm verificar` pasaba igual porque el
+archivo fuente sigue en disco sin trackear; el checkout limpio de CI no lo tiene.
+
+**Corregido** (`git rm --cached`, el archivo queda intacto en disco, sin tocar el resto de la tarea de
+FCI Santander ni commitear su fuente): los tres artefactos de FCI Santander (doc, fuente, test) quedan
+consistentemente **sin trackear** — verificado con `git ls-tree -r HEAD` que no hay ninguna referencia.
+Commit `18f1828`, pusheado. **Lección: al tocar un archivo de otra tarea para destrabar el propio gate
+(acá, un fix de una línea), revisar si ESE archivo debería commitearse siquiera — un test puede quedar
+trackeado mientras su fuente no, y eso rompe CI sin que el gate local lo vea nunca.**
+
+### Addendum 2 (mismo día) — segunda corrida de CI rota tras el fix anterior, `barrido-aceptados.json` desactualizado, corregido y verificado con el comando exacto
+
+El fix de `18f1828` sacó el break del test de FCI Santander, pero la corrida siguiente volvió a fallar
+— esta vez en el modo CI del barrido de fuga (`tools/barrido-fuga.ts`), con **35 candidatos sin
+verificar** contra el allowlist de huellas `tools/barrido-aceptados.json`. Causa: el allowlist quedó
+desactualizado — incluía contenido nuevo de esta sesión (Bancor, FCI Santander) y también archivos
+previos que nunca se habían aceptado; en modo estricto (contra `privado/` real) esto se ve al toque,
+pero CI corre en modo huella y no tiene `privado/` contra qué comparar.
+
+**Corregido** con `pnpm barrido --aceptar` en modo estricto, local, cruzando contra el material real de
+`privado/` (60 archivos, 25M+ caracteres) — **0 fugas reales** confirmadas antes de regenerar el
+allowlist. Commit `e2e0a28`, pusheado. Diff verificado explícitamente antes de darlo por cerrado, a
+pedido de JP (no alcanzaba "en teoría"):
+
+```
+tools/barrido-aceptados.json | 88 +++++++++++++++++++++++++++++++++++++++++++-
+1 file changed, 87 insertions(+), 1 deletion(-)
+```
+
+Un solo archivo tocado — sin `.gitignore`, sin ningún archivo de FCI Santander ni de ningún otro test o
+fuente. Solo huellas (fingerprints) nuevas y el contador del comentario del propio archivo.
+
+**Verificación final, con el comando específico pedido** (no la inferencia de un polling anterior):
+push confirmado (`HEAD` local y `origin/main` coinciden en `e2e0a284d0fbb67ca96df3ce397d660ea8ebded0`),
+corrida `32925417738` (https://github.com/juampim11/sistema-contable/actions/runs/32925417738) con
+`headSha` correcto, y:
+
+```
+$ gh run watch 32925417738 --exit-status
+Run CI (32925417738) has already completed with 'success'
+EXIT_CODE=0
+```
+
+**Estado de salida:** ambos breaks de CI de esta sesión (test huérfano de FCI Santander, allowlist de
+barrido desactualizado) cerrados y verificados de punta a punta contra GitHub Actions real, no contra
+una expectativa. **Lección: "el gate local pasa" y "CI pasa" no son la misma afirmación** cuando hay un
+modo del barrido que depende de material que solo existe fuera del checkout (`privado/`) — el modo CI
+(huella) puede quedar desactualizado sin que ningún chequeo local lo note, salvo correr `pnpm barrido
+--aceptar` explícitamente antes de cada push que toque contenido nuevo cerca del barrido.
 
 ---
 
