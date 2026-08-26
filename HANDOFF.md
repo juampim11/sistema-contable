@@ -6,7 +6,7 @@
 
 ---
 
-## 2026-08-26 (122) — Entrega A cerrada: catálogo `nacion` (migración) + 5ta rama de `leerCaratula` para Nación. Entrega B (alta real de HYJ SAS en el piloto) todavía NO arrancó — pendiente de que JP confirme `--estado` contra piloto.
+## 2026-08-26 (122) — Alta de cliente REAL en el PILOTO: H y J Servicios y Obras S.A.S. (Banco Nación). Entrega A (código) + Entrega B (datos reales) CERRADAS. Cuenta cargada, 1 movimiento ingestado y verificado por consulta directa. Hallazgo real en el camino: `extraerPeriodo` compartida no soporta el conector en mayúsculas — resuelto con una función propia de Nación, sin tocar la compartida.
 
 **Herramienta:** Claude Code. Modo plan (§3.2), serie E-6 (`docs/seguridad/registro-excepciones.md`,
 que ya nombra a Nación explícitamente). Convocatoria completa: `dba-data` + `security-engineer`
@@ -63,16 +63,67 @@ No se tocó el resto del archivo — no es el alcance de esta tarea.
 **11 archivos, 163 tests, todos verdes**. Barrido de fuga: 1021 archivos, 0 fugas reales. Commiteado
 y pusheado (ver hash en el log de git — esta entrada se escribe antes de confirmar el push exacto).
 
-### Estado de salida — Entrega B (alta real) NO arrancó
+### Entrega B — datos reales en el piloto, procedimiento de 8 pasos, cada uno verificado antes del siguiente
 
-Próximo paso, explícito: `ENV_FILE=.env.piloto pnpm db:migrate --estado` contra el piloto, **reportar
-la lista exacta a JP y esperar su autorización puntual** antes de aplicar `0025` o cualquier otra
-migración — regla dura CLAUDE.md §1.9, mismo criterio que el drift de `0024`/Bancor. Nada del
-procedimiento de 8 pasos de la Entrega B (backup, alta de cliente con razón social real "H y J
-Servicios y Obras S.A.S.", alta de cuenta, ingesta, verificación por consulta directa) corrió
-todavía. Investigado y confirmado sin fricción antes de arrancar: `cuenta_bancaria` no tiene
-`unique(cliente_id)` ni ninguna restricción de una sola cuenta por cliente — agregar la futura cuenta
-BBVA de este mismo cliente, el día que se destrabe con OCR, no necesita ningún cambio de esquema.
+1. **`--estado` contra piloto**: UNA sola migración pendiente, `0025_catalogo_nacion.sql` — reportada
+   a JP y autorizada puntualmente antes de tocar nada (regla dura CLAUDE.md §1.9).
+2. **Backup fresco**: `respaldos/piloto_20260826-150402Z.dump`, hash SHA-256
+   `4f609516fa03a29ded173f46ca793dfb67f702a6781a120198d75a53bfb872e8`.
+3. **Migración `0025` aplicada** al piloto, verificada por `--estado` y por consulta directa a
+   `banco` (las 5 filas: galicia/santander/macro/bancor/nacion, todas `activo=true`).
+4. **Membership del operador verificada** por consulta directa: usuario
+   `11111111-1111-1111-1111-111111111111`, rol `socio`, `activo=true`, en el nodo raíz (`tipo=estudio`,
+   `parent_id is null`).
+5. **`pnpm alta:cliente`**, razón social real: `tenant_node` **5 → 6** (verificado por conteo antes y
+   después), nodo nuevo `id=26e90bbb-991c-4d3b-9ab8-799aaea1a8e3`, `tipo=cliente`,
+   `nombre='H y J Servicios y Obras S.A.S.'` (exacto, no la abreviatura "HYJ SAS" de la lista maestra),
+   `parent_id` = estudio raíz. Confirmado por consulta directa que **no existía ya** un tenant para
+   este cliente antes del alta (búsqueda por nombre, 0 resultados) — mismo criterio de "identificado
+   no es dado de alta" de sesiones anteriores.
+6. **`pnpm alta:cuenta --banco nacion`** — con el hallazgo real de abajo en el medio. Cuenta creada:
+   `cuenta_bancaria_id=ef94a9ec-8dfa-41f1-a1d6-b0a0e5a6b390`, `banco_codigo=nacion`, moneda ARS;
+   identificador con CBU solo como HMAC (32 bytes) + últimos 4 dígitos, `vigente_desde=2026-05-29`
+   (el período real, capturado literal — no forzado al 1° del mes).
+7. **`pnpm ingesta`**: `lote_id=e50a9b4a-5def-4e0c-920f-e4a7508fd67c`, `estado=procesado`,
+   `verificacion_estado=cuadra`, 1 movimiento, 1 anexo — resultado **idéntico** al dry-run de
+   `pnpm probar` de la sesión anterior (HANDOFF 121), confirmando que la persistencia real no
+   introdujo ninguna diferencia respecto del parseo ya verificado.
+8. **Verificación final por consulta directa** (no solo el output del CLI): `lote_ingesta`
+   (`cliente_id` correcto, `banco_codigo=nacion`, `filas_leidas=1`, `filas_rechazadas=0`);
+   `lote_ingesta_cuenta` (`periodo_desde=2026-05-29`, `periodo_hasta=2026-06-30`,
+   `verificacion_estado=cuadra`); `movimiento_bancario_crudo` — **1 fila por lote, 1 por `cliente_id`**
+   (mismo número: aislamiento correcto, nada mezclado de otro cliente), **1 hash único de 1**.
+
+### Hallazgo real de la primera corrida contra el piloto, corregido en el camino (commit `0f26919`)
+
+El primer intento de `alta:cuenta` falló limpio (0 filas escritas, verificado antes de tocar nada
+más) con "No pude leer el período del resumen" — pese a que número/CBU se leían bien por geometría.
+Causa, confirmada por medición con un script efímero de solo lectura (nunca contra el piloto):
+`extraerPeriodo` (`toolkit.ts`, compartida con Galicia/Macro) es case-sensitive y exige el conector
+("al"/"hasta") en minúsculas; el documento real de Nación lo imprime en MAYÚSCULAS ("AL"). **No se
+tocó la función compartida** — decisión explícita de JP para no ensanchar comportamiento de Galicia/
+Macro bajo la presión de un alta real sin la revisión que le correspondería. Se agregó
+`RE_PERIODO_NACION`/`extraerPeriodoNacion` como función propia de la rama Nación (mismo patrón de
+duplicación ya usado para número/CBU), confirmada contra el PDF real con un script efímero ANTES de
+reintentar contra el piloto, con su test de regresión (conector en mayúsculas). Declarado en
+`docs/diseno/10-deuda-declarada.md` §2.17 (prioridad baja, candidato a resolver de fondo —
+`extraerPeriodo` con flag `i` — cuando haya convocatoria real de `tech-lead` + revisión contra los
+documentos reales de Galicia/Macro).
+
+### Investigado antes de arrancar, sin fricción encontrada
+
+`cuenta_bancaria` no tiene `unique(cliente_id)` ni ninguna restricción de una sola cuenta por
+cliente — agregar la futura cuenta BBVA de este mismo cliente, el día que se destrabe con OCR, no
+necesita ningún cambio de esquema.
+
+### Estado de salida
+
+Entrega A: commits `681d2dd` (migración + rama Nación) y `0f26919` (fix de período), pusheados.
+Entrega B: 8 pasos verificados por consulta directa, **sin commitear todavía** — a pedido explícito
+de JP, a la espera de su revisión de esta misma entrada de HANDOFF antes de decidir si se commitea.
+Ningún dato real (CUIT, CBU, número de cuenta, razón social fuera de lo que JP mismo dio como
+contexto) impreso en ningún log ni en esta conversación más allá de lo ya autorizado por E-6. Scripts
+de verificación read-only, todos efímeros, borrados después de cada uso — ninguno commiteado.
 
 ---
 
