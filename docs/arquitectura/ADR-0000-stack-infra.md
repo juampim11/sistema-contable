@@ -100,6 +100,33 @@ sistema-contable/
 - La representación exacta del importe (escala de `numeric`, o entero de centavos) se fija en el ADR
   del modelo de dominio; para el Módulo 1 alcanza `numeric(18,2)` + `string` (ver ADR-0001 §5).
 
+### 2.4. Licencias de dependencias externas
+
+Regla fijada al sumar la primera dependencia externa a un binario de sistema (`pdftotext`/Poppler,
+extractor de FCI Santander, `docs/diseno/19-fci-santander-extractor-hibrido.md`), para que la próxima
+vez que aparezca esta pregunta no se decida ad hoc:
+
+- **MIT, Apache-2.0, BSD**: se usan libremente, sin pedir permiso adicional.
+- **GPL** (cualquier versión): solo como **proceso externo separado, invocado por línea de comandos**
+  — nunca importado ni linkeado dentro del código del producto. Es lo que mantiene al proyecto fuera de
+  la obligación de licenciar el código propio bajo GPL (la "cláusula viral" de GPL alcanza al código que
+  *enlaza* con la librería, no al que simplemente invoca un binario externo como subproceso). El primer
+  caso real: Poppler (`pdftotext -layout` corrido con `node:child_process`, nunca una librería de
+  binding), en `packages/ingesta/src/fci-santander/extraer-posiciones.ts`.
+- **AGPL, o cualquier licencia con cláusula comercial/de red** (SaaS clause y similares): **prohibido
+  sumarla sin una decisión explícita, registrada, antes de agregarla** — ni siquiera como subproceso
+  externo, porque el disparador de AGPL no es "enlazar", es "ofrecer el servicio a terceros por red", que
+  es exactamente el modelo de este producto. Ejemplo concreto a evitar sin esa decisión: `PyMuPDF`
+  (AGPL).
+
+🔴 **Pendiente de validación legal, no urgente hoy, pero visible para no perderlo de vista**: el
+argumento "GPL como subproceso no obliga a GPL-licenciar el producto" es la práctica de la industria,
+pero no fue revisado por un abogado. Antes de vender este producto a un **segundo estudio o cliente
+externo al piloto** (es decir, antes de que deje de ser uso interno/demo), hay que confirmar con
+asesoría legal que el patrón "Poppler invocado como subproceso, nunca importado" sostiene la
+distribución comercial tal como está planteada — y, si no, decidir ahí si se reemplaza el binario, se
+cambia el modelo de distribución, o se resuelve de otra forma. Sin dueño asignado todavía.
+
 ---
 
 ## 3. Decisión — Agnóstico de proveedor: tres abstracciones

@@ -118,6 +118,22 @@ scopes del hosting **y** en tu `.env.local`. Si falta en alguno, ese entorno rom
 
 ---
 
+## 3.bis Binarios de sistema requeridos (fuera de `pnpm`)
+
+No todo se instala con `pnpm install`. Lo que sigue tiene que estar en el `PATH` de la máquina (local o
+CI) antes de correr el código que depende de eso — `pnpm verificar` no lo detecta por sí solo.
+
+| Binario | Para qué | Build requerida, y por qué | Instalación (Windows/Chocolatey) |
+|---|---|---|---|
+| `pdftotext` | `packages/ingesta/src/fci-santander/extraer-posiciones.ts` — fuente auxiliar de la SECUENCIA de etiquetas (ver `docs/diseno/19-fci-santander-extractor-hibrido.md`) | **Poppler**, no xpdf ni cualquier binario que resuelva ese nombre. Confirmado en esta sesión (2026-08-25): xpdf 4.00 y Poppler producen resultados estructuralmente DISTINTOS para el mismo PDF real con `-layout` — el diseño del extractor se validó contra Poppler 24.02.0. Verificar la build con `pdftotext -v` antes de asumir que "ya está instalado" alcanza. | `choco install poppler -y` (shell elevada) |
+
+🔴 **Sin chequeo automático todavía.** Si este binario llega a ser una dependencia real de producción
+(no solo de un extractor preliminar), agregar una verificación de arranque (mismo espíritu que el guard
+de `conUsuario()` contra `BYPASSRLS`) que confirme la build correcta antes de correr, en vez de fallar
+tarde con un resultado silenciosamente distinto.
+
+---
+
 ## 4. Aplicar cambios de base (migraciones) — el paso que no es automático
 
 **Principio 4 — El hosting despliega CÓDIGO, no ESQUEMA.** Código y base se coordinan a mano:
