@@ -760,6 +760,88 @@ reales de Galicia/Macro para reverificar que agregar `i` no introduce un falso p
 sacaría la duplicación de `alta-cuenta.ts` y cerraría el mismo hueco para cualquier banco futuro.
 **Prioridad baja**: el caso real de Nación ya está resuelto por su cuenta propia, sin bloquear nada.
 
+🔴 **ANOTACIÓN 2026-08-26 (`tech-lead`, revisión del 6° adapter — ICBC) — SEGUNDO caso real del
+mismo defecto, sube la prioridad de "cuándo" pero no la de "ahora".** `docs/diseno/22-formato-
+icbc.md` §1.1 mide el mismo problema exacto contra el PDF real de MEB Integración y Montaje S.A.S.:
+el período se imprime `PERIODO dd-mm-aaaa AL dd-mm-aaaa`, con `AL` en MAYÚSCULA — `icbc.ts` resuelve
+con su propio `RE_PERIODO` local (con `/i`), mismo patrón de duplicación deliberada que ya usa
+`nacion.ts`, nunca tocando `extraerPeriodo` compartida. **Con dos bancos reales (Nación e ICBC)
+midiendo el conector en mayúscula y CERO midiéndolo en minúscula desde que existe el caso**, el
+argumento de "agregar `i` amplía sin revisar" empieza a pesar menos que "dos de dos documentos
+nuevos ya lo necesitan". Sigue siendo **no bloqueante** (los dos casos reales están resueltos por su
+cuenta propia) — pero el día que aparezca un 7° banco con el mismo síntoma, corresponde resolverlo de
+fondo en `extraerPeriodo` en vez de agregar una cuarta copia local.
+
+---
+
+### 2.18 🟡 Cuatro hallazgos no bloqueantes del panel del 6° adapter (ICBC), declarados con dueño
+
+Del panel completo convocado para `icbc.ts` (`seguridad-datos-financieros` + `tech-lead` +
+`code-reviewer` + `tester` + `qa-automation`, 2026-08-26). Los bugs reales que encontraron
+(crédito con signo atrás sin normalizar, pérdida silenciosa del comprobante con texto pegado, y la
+falta de registro en `apps/cli/src/ingestar.ts`) se corrigieron en la misma tarea — esta entrada es
+solo lo que quedó **declarado, no bloqueante**:
+
+1. **`fragmentoDeColumna` duplicado entre `nacion.ts` y `icbc.ts`** (mismo guard: excluir fragmentos
+   con borde izquierdo dentro de la banda de concepto). `tech-lead`: con DOS usuarios reales ya se
+   cumple el umbral propio de este repo para subir a compartido — candidato a `texto-pdf.ts`
+   (parametrizado por `bandaHasta`, no `toolkit.ts`: geometría/extracción vive en `texto-pdf.ts` por
+   convención ya escrita en la cabecera de `toolkit.ts`). Dueño sugerido: `backend-dev` +
+   `tech-lead`, próxima vez que se toque cualquiera de los dos adapters.
+2. **El bloque de totales de `icbc.ts` puede caer en `fueraDelCuerpo` en vez de `residuo`** cuando el
+   primer fragmento no matchea `RE_ETIQUETA_TOTAL_1` — a diferencia de Bancor/Nación, donde cualquier
+   fila con `$` no reconocida siempre va a `residuo`. No se disparó contra el único documento real
+   medido (los tests lo confirman), pero es una asimetría de fail-closed frente al resto del roster.
+   Dueño sugerido: quien reabra `icbc.ts` para un segundo documento real.
+3. **`nacion.ts` no tiene el mismo guard de valor absoluto que `icbc.ts` aplica ahora a DEBITOS y
+   CREDITOS.** Hoy inofensivo (0 tokens firmados medidos en el único documento real de Nación), pero
+   es un hueco de coherencia entre los adaptadores de la familia `columna_separada`
+   (Santander/Macro/Nación/ICBC). Dueño sugerido: la próxima vez que se toque `nacion.ts`.
+4. **`RE_NUMERO_CUENTA_ICBC`/`RE_CBU_ICBC` matchean sobre `textoDeFila(fila)` (la fila entera ya
+   unida), no por fragmento con ancla `^...$` completa como `nacion.ts`/`bancor.ts`.**
+   `seguridad-datos-financieros`: severidad BAJA, sin evidencia de explotación (ventana acotada a la
+   carátula, un único fragmento real portador del dato, confirmado por barrido del documento
+   completo). Sugerido armonizar con el patrón del roster antes de un segundo documento real de
+   ICBC, no bloqueante para esta tarea.
+
+### 2.19 🟡 Ningún adapter geométrico reordena min/max su propio período — solo Bancor lo declaró a propósito
+
+Hallazgo de `tech-lead`, revisión de la 6ª rama de `alta-cuenta.ts` (ICBC), 2026-08-26. La CLI
+(`extraerPeriodoNacion`/`extraerPeriodoIcbc` en `alta-cuenta.ts`) heredó la lección de
+`toolkit.ts:483-492` (`extraerPeriodo` compartida): el orden en que `pdf.js` emite las dos fechas del
+período es un detalle del extractor, no una propiedad del documento — por eso se toma **min/max**,
+nunca "la primera es desde".
+
+**Ninguno de los tres `leerPeriodo` de los adapters reales (`icbc.ts:447-456`, `nacion.ts:453-461`,
+`bancor.ts:574-585`) tiene esa misma defensa** — asignan el primer grupo capturado a `desde` y el
+segundo a `hasta`, directo. Para **Bancor es deliberado y documentado**
+(`bancor.ts:565-572`, hallazgo de `tester`: un período invertido tiene que rechazar el archivo
+entero en silencio — fail-closed, no "plausible y mal"). **Para Nación e ICBC no hay ningún
+comentario que confirme que un período invertido efectivamente falla cerrado aguas abajo** — es un
+supuesto no verificado, la misma clase de supuesto que ya costó una corrida fallida contra el piloto
+en Nación (conector en mayúscula, HANDOFF 121/122).
+
+**No bloquea nada hoy** (`alta-cuenta.ts`, el único camino que da de alta cuentas reales en el
+piloto, sí reordena) — es deuda del pipeline de ingesta mensual. Dueño sugerido: quien mida un
+segundo documento real de cualquiera de los dos bancos, o quien construya el caso de test que
+confirme qué pasa hoy con un período invertido en cada adapter.
+
+### 2.20 🟡 El chequeo de ambigüedad (dedupe + contar + fallar si `>1`) está duplicado DOS veces en `alta-cuenta.ts`, sin extraerse
+
+Hallazgo de `tech-lead`, misma revisión. `10-deuda-declarada.md` §2.14/§2.15 ya pedían este cruce
+—"con uno es una apuesta, con dos no"— y ahora hay **dos usuarios reales funcionando sin
+incidentes**: la rama Nación (`alta-cuenta.ts:635-677`) y la rama ICBC (`:700-749`), con la misma
+forma exacta (deduplicar por clave, contar candidatos, fallar ruidoso si sobrevive más de uno) salvo
+que Nación dedupea por valor único y ICBC por par de grupos.
+
+**Ya cruzó el umbral que este mismo rol usa para decidir extracción** — no es una sugerencia para
+"cuando aparezca la próxima rama": la próxima rama ya apareció (ICBC) y repitió la duplicación en vez
+de extraer. Recomendado: un helper parametrizado (`unicoCandidatoOFallar` o similar, por
+dedupe-key/mensaje) usado por las dos ramas, y aplicado a Bancor en la misma tarea para cerrar §2.14
+con el tercer usuario real (Bancor sigue sin el chequeo de ambigüedad en absoluto). No bloquea el
+alta de ningún cliente — es reuso de estructura, no un bug. Dueño sugerido: `backend-dev` +
+`tech-lead`, próxima tarea que toque `alta-cuenta.ts`.
+
 ---
 
 ## 3. Lo que se corrigió en esta tanda (para que no se busque acá)

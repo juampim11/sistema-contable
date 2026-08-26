@@ -45,6 +45,7 @@ import {
   extraerPeriodo,
   extraerTexto,
   reconoceBancor,
+  reconoceICBC,
   reconoceNacion,
   seccionesPorClave,
   valorPorEtiqueta,
@@ -335,6 +336,47 @@ function extraerPeriodoNacion(texto: string): { readonly desde: string; readonly
 }
 
 /**
+ * 🔴 **ICBC es la TERCERA rama de `leerCaratula` que necesita geometría (`aFilas`), no texto plano
+ * — mismo motivo que Bancor y Nación.** Tampoco imprime ninguna etiqueta de texto libre para el
+ * número de cuenta (`docs/diseno/22-formato-icbc.md` §1, hipótesis H1: la rama genérica por
+ * etiqueta se probó y no matchea, ni "Número de cuenta" ni el CBU, que además viene partido en dos
+ * grupos de dígitos) — están por forma y posición, mismo dato que ya resuelve el adapter
+ * (`icbc.ts`, vía `fragmentoDeColumna`/regex locales).
+ *
+ * Ventana y regex verificadas contra el PDF real durante el Paso 1 de la construcción del adapter
+ * (spec §1, H1): número (formato `dddd/dddddddd/dd`) y CBU (`C.B.U.:` + 8 dígitos + 14 dígitos, con
+ * un espacio de separador) aparecen en la MISMA fila (7), en un solo fragmento geométrico —
+ * exactamente un match de cada patrón dentro de las primeras 10 filas, sin ambigüedad, barrido el
+ * documento completo para descartar cualquier otro candidato.
+ */
+const FILAS_DE_CARATULA_ICBC = 10;
+const RE_NUMERO_CUENTA_ICBC = /(?<!\d)\d{4}\/\d{8}\/\d{2}(?!\d)/;
+const RE_CBU_ICBC = /C\.B\.U\.:\s*(\d{8})\s+(\d{14})/i;
+
+/**
+ * 🔴 **El período de ICBC tampoco lo puede leer `extraerPeriodo` compartida** — mismo defecto que
+ * ya tiene Nación (§ arriba): el conector real es `AL` en MAYÚSCULAS y `extraerPeriodo` solo acepta
+ * minúsculas. Acá además el separador de fecha es GUION (`dd-mm-aaaa`), no barra — confirmado
+ * contra el documento real (`docs/diseno/22-formato-icbc.md` §1.1: `PERIODO 01-06-2026 AL
+ * 30-06-2026`). Mismo patrón que `RE_PERIODO` de `icbc.ts` (el adapter, ya medido y probado),
+ * duplicado a propósito acá — no se toca `extraerPeriodo` compartida bajo la presión de un alta
+ * real, mismo criterio ya fijado para Nación (`docs/diseno/10-deuda-declarada.md` §2.17).
+ */
+const RE_PERIODO_ICBC = /(\d{2})-(\d{2})-(\d{4})\s*AL\s*(\d{2})-(\d{2})-(\d{4})/i;
+
+function extraerPeriodoIcbc(texto: string): { readonly desde: string; readonly hasta: string } | null {
+  const m = RE_PERIODO_ICBC.exec(texto);
+  if (!m) return null;
+  const iso = (d: string, mes: string, anio: string): string => `${anio}-${mes}-${d}`;
+  const primera = iso(m[1] ?? '', m[2] ?? '', m[3] ?? '');
+  const segunda = iso(m[4] ?? '', m[5] ?? '', m[6] ?? '');
+  const desde = primera <= segunda ? primera : segunda;
+  const hasta = primera <= segunda ? segunda : primera;
+  if (desde === hasta) return null;
+  return { desde, hasta };
+}
+
+/**
  * Lee de la carátula lo que hace falta para el alta.
  *
  * **Por etiqueta, nunca por patrón libre.** Buscar "el primer número de 22 dígitos" encuentra el CBU de
@@ -376,9 +418,10 @@ export function leerCaratula(
   cbuManual: string | undefined,
   tipoManual: TipoCuentaAlta | undefined = undefined,
   /**
-   * Solo Bancor y Nación la necesitan (ver las notas de `FILAS_DE_CARATULA_BANCOR`/
-   * `FILAS_DE_CARATULA_NACION` más arriba) — opcional y `[]` por default para que las otras ramas, y
-   * todos los tests que ya existían antes de Bancor, no tengan que cambiar su firma de llamada.
+   * Solo Bancor, Nación e ICBC la necesitan (ver las notas de `FILAS_DE_CARATULA_BANCOR`/
+   * `FILAS_DE_CARATULA_NACION`/`FILAS_DE_CARATULA_ICBC` más arriba) — opcional y `[]` por default
+   * para que las otras ramas, y todos los tests que ya existían antes de Bancor, no tengan que
+   * cambiar su firma de llamada.
    */
   filasGeometricas: readonly FilaGeometrica[] = [],
 ): {
@@ -393,6 +436,7 @@ export function leerCaratula(
   const cabecerasCuenta = lineas.filter((l) => RE_CABECERA_CUENTA.test(l));
   const esBancor = reconoceBancor(filasGeometricas);
   const esNacion = reconoceNacion(filasGeometricas);
+  const esICBC = reconoceICBC(filasGeometricas);
 
   let numero: string;
   let tipoCuenta: TipoCuentaAlta;
@@ -636,6 +680,78 @@ export function leerCaratula(
     tipoCuenta = 'cuenta_corriente';
     cbuAtribuido = cbuEncontrado;
     seccionUsada = 'Nación (cuenta única, por forma geométrica en la carátula)';
+  } else if (esICBC) {
+    // Una sola cuenta, sin ambigüedad de moneda ni de tipo (spec ICBC, `22-formato-icbc.md` §1):
+    // no hace falta `moneda`/`tipoManual` para elegir nada, mismo caso que Bancor/Nación.
+    //
+    // 🔴 Geometría (`aFilas`), no texto de línea (`aLineas`) — ver la nota de
+    // `FILAS_DE_CARATULA_ICBC` más arriba. Se busca por FRAGMENTO: a diferencia de Bancor/Nación,
+    // acá el número Y el CBU viven en el MISMO fragmento geométrico (spec §1, H1: "N°
+    // ####/########/## C.B.U.: ######## ##############" es un solo fragmento de `pdf.js`) — no
+    // cambia el mecanismo de búsqueda (los dos regex se prueban contra cada fragmento igual), pero
+    // en la práctica los dos matches van a salir del mismo elemento del arreglo.
+    const fragmentosDeCaratula = filasGeometricas
+      .slice(0, FILAS_DE_CARATULA_ICBC)
+      .flatMap((f) => f.fragmentos);
+
+    // Mismo chequeo de ambigüedad que ya corrigió el hallazgo de `tester` en la rama Nación —
+    // escrito desde el día uno acá, no como un fix posterior: se deduplican valores idénticos y se
+    // falla ruidoso si sobrevive más de uno, nunca se elige el primero.
+    const numerosEncontrados = [
+      ...new Set(
+        fragmentosDeCaratula
+          .map((f) => RE_NUMERO_CUENTA_ICBC.exec(f.texto)?.[0])
+          .filter((v): v is string => v !== undefined),
+      ),
+    ];
+    if (numerosEncontrados.length === 0) {
+      throw new Error(
+        'No encontré el número de cuenta (formato NNNN/NNNNNNNN/NN) en la carátula (ICBC). ICBC no ' +
+          'lo imprime con etiqueta de texto — revisá que el archivo sea la primera página del resumen.',
+      );
+    }
+    if (numerosEncontrados.length > 1) {
+      throw new Error(
+        `Encontré ${numerosEncontrados.length} valores distintos con forma de número de cuenta en ` +
+          'la carátula (ICBC) — no puedo elegir uno solo sin arriesgar tomar el de un tercero. ' +
+          'Revisá el archivo.',
+      );
+    }
+    const numeroEncontrado = numerosEncontrados[0] as string;
+
+    /**
+     * 🔴 El CBU de ICBC viene PARTIDO en dos grupos de dígitos (8 + 14), a diferencia de Bancor/
+     * Nación (una sola corrida de 22) — spec §1, H1. `RE_CBU_ICBC` captura los dos grupos por
+     * separado; se concatenan DESPUÉS de la deduplicación, sobre el par completo (`${g1}:${g2}`
+     * como clave de unicidad, no el CBU ya unido) para que dos fragmentos que compartan el primer
+     * grupo pero difieran en el segundo no colapsen a un falso "sin ambigüedad".
+     */
+    const cbusEncontrados = [
+      ...new Map(
+        fragmentosDeCaratula
+          .map((f) => RE_CBU_ICBC.exec(f.texto))
+          .filter((m): m is RegExpExecArray => m !== null)
+          .map((m) => [`${m[1]}:${m[2]}`, `${m[1]}${m[2]}`] as const),
+      ).values(),
+    ];
+    if (cbusEncontrados.length === 0) {
+      throw new Error(
+        'No encontré el CBU (etiqueta "C.B.U.:" + 8 dígitos + 14 dígitos) en la carátula (ICBC) — ' +
+          'revisá que el archivo sea la primera página del resumen.',
+      );
+    }
+    if (cbusEncontrados.length > 1) {
+      throw new Error(
+        `Encontré ${cbusEncontrados.length} valores distintos con forma de CBU en la carátula ` +
+          '(ICBC) — no puedo elegir uno solo sin arriesgar tomar el de un tercero. Revisá el archivo.',
+      );
+    }
+    const cbuEncontrado = cbusEncontrados[0] as string;
+
+    numero = numeroEncontrado;
+    tipoCuenta = 'cuenta_corriente';
+    cbuAtribuido = cbuEncontrado;
+    seccionUsada = 'ICBC (cuenta única, por forma geométrica en la carátula)';
   } else {
     // Las etiquetas están documentadas en `docs/diseno/02-formato-galicia.md` §3. Las variantes cubren que
     // el banco cambie `Nro.` por `Número` entre versiones del resumen.
@@ -687,7 +803,11 @@ export function leerCaratula(
 
   // Nación: conector "AL" en mayúsculas, `extraerPeriodo` compartida no lo matchea (ver la nota de
   // `RE_PERIODO_NACION` más arriba) — usa su propia extracción, duplicada a propósito.
-  const periodo = esNacion ? extraerPeriodoNacion(lineas.join(SALTO)) : extraerPeriodo(lineas.join(SALTO));
+  const periodo = esNacion
+    ? extraerPeriodoNacion(lineas.join(SALTO))
+    : esICBC
+      ? extraerPeriodoIcbc(lineas.join(SALTO))
+      : extraerPeriodo(lineas.join(SALTO));
   if (!periodo) {
     /**
      * **Sin período no se inventa una fecha.**

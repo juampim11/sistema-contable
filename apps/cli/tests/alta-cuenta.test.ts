@@ -371,6 +371,148 @@ describe('leerCaratula() — Nación, una sola cuenta, sin etiqueta, por GEOMETR
   });
 });
 
+/**
+ * ICBC tampoco imprime "Número de cuenta" ni "CBU" como etiqueta libre — confirmado en el Paso 1 de
+ * la construcción del adapter (`docs/diseno/22-formato-icbc.md` §1, H1: la rama genérica se probó
+ * contra el documento real y no matchea). A diferencia de Bancor/Nación, `reconoceICBC` no ancla en
+ * un letterhead con el nombre del banco (no aparece como texto extraíble en la carátula real) sino
+ * en el encabezado de columnas del cuerpo — así que el fixture necesita esa fila también, no solo
+ * el número/CBU. El número y el CBU real viven en el MISMO fragmento geométrico (spec §1, H1), y el
+ * CBU viene partido en dos grupos de dígitos (8 + 14) tras la etiqueta `C.B.U.:` — a diferencia de
+ * Bancor/Nación, que lo traen como una corrida única de 22.
+ *
+ * Mismos valores sintéticos "seguros" que ya usa `packages/ingesta/tests/icbc.test.ts` (generados
+ * con `Math.random()` y verificados contra `esFuga()` del barrido de fuga antes de commitear) — no
+ * se inventa un segundo par acá.
+ */
+const NUMERO_CUENTA_ICBC_SINTETICO = '2641/76626413/47';
+const CBU_ICBC_GRUPO1 = '49563980';
+const CBU_ICBC_GRUPO2 = '35296153584813';
+const CBU_ICBC_SINTETICO = `${CBU_ICBC_GRUPO1}${CBU_ICBC_GRUPO2}`;
+const ENCABEZADO_ICBC = 'FECHA CONCEPTO F.VALOR COMPROBANTE ORIGEN CANAL DEBITOS CREDITOS SALDOS';
+/** El período genérico (`PERIODO`, arriba) usa barra y "al" — ICBC exige guion y "AL" mayúscula. */
+const PERIODO_ICBC = 'PERIODO 01-06-2026 AL 30-06-2026';
+
+const FILAS_CARATULA_ICBC: readonly FilaGeometrica[] = [
+  filaGeometrica(ENCABEZADO_ICBC, 82.6),
+  filaGeometrica(
+    `N° ${NUMERO_CUENTA_ICBC_SINTETICO} C.B.U.: ${CBU_ICBC_GRUPO1} ${CBU_ICBC_GRUPO2}`,
+    326.2,
+  ),
+];
+
+describe('leerCaratula() — ICBC, una sola cuenta, sin etiqueta, por GEOMETRÍA (aFilas, no aLineas)', () => {
+  it('lee número y CBU (partido en 8+14, unido a 22 dígitos) por forma geométrica, sin necesitar moneda/tipo para desambiguar', () => {
+    const r = leerCaratula(textoDe(PERIODO_ICBC), 'ARS', undefined, undefined, FILAS_CARATULA_ICBC);
+    expect(r.numero).toBe(NUMERO_CUENTA_ICBC_SINTETICO);
+    expect(r.cbu).toBe(CBU_ICBC_SINTETICO);
+    expect(r.tipoCuenta).toBe('cuenta_corriente');
+    expect(r.seccionUsada).toMatch(/ICBC/);
+  });
+
+  /**
+   * Igual que Nación (HANDOFF 121/122): el documento real imprime el conector del período en
+   * MAYÚSCULAS ("AL") y con GUION como separador de fecha (`dd-mm-aaaa`, a diferencia de la barra
+   * que usa Nación) — `extraerPeriodo` compartida no lo lee. Corregido con `extraerPeriodoIcbc`
+   * propia, mismo patrón de duplicación que `extraerPeriodoNacion`.
+   */
+  it('lee el período con el conector "AL" en MAYÚSCULAS y fecha con GUION (real en el documento de ICBC)', () => {
+    const periodoIcbc = 'PERIODO 01-06-2026 AL 30-06-2026';
+    const r = leerCaratula(textoDe(periodoIcbc), 'ARS', undefined, undefined, FILAS_CARATULA_ICBC);
+    expect(r.desde).toBe('2026-06-01');
+  });
+
+  it('falla explícito si no encuentra el número (formato NNNN/NNNNNNNN/NN)', () => {
+    const sinNumero = [filaGeometrica(ENCABEZADO_ICBC, 82.6)];
+    expect(() =>
+      leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, sinNumero),
+    ).toThrow(/número de cuenta/);
+  });
+
+  it('falla explícito si no encuentra el CBU (etiqueta C.B.U. + 8 y 14 dígitos)', () => {
+    const sinCbu = [
+      filaGeometrica(ENCABEZADO_ICBC, 82.6),
+      filaGeometrica(`N° ${NUMERO_CUENTA_ICBC_SINTETICO}`, 326.2),
+    ];
+    expect(() => leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, sinCbu)).toThrow(/CBU/);
+  });
+
+  it('un documento de otro banco (sin el encabezado de columnas de ICBC) no cae por error en esta rama', () => {
+    // `filasGeometricas` por default es `[]` — `reconoceICBC([])` da `false`, cae al camino normal.
+    const r = leerCaratula(textoDe(...CARATULA_GALICIA), 'ARS', undefined);
+    expect(r.seccionUsada).not.toMatch(/ICBC/);
+  });
+
+  it('un documento de Nación (geometría real, pero sin el encabezado de columnas de ICBC) no cae en esta rama', () => {
+    const r = leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, FILAS_CARATULA_NACION);
+    expect(r.seccionUsada).not.toMatch(/ICBC/);
+  });
+
+  it('no busca más allá de la carátula: número/CBU corridos más allá de la ventana geométrica no se encuentran', () => {
+    const relleno = Array.from({ length: 15 }, (_, i) => filaGeometrica(`Relleno de cuerpo linea ${i}`, 172.2));
+    const conDatosTardios: readonly FilaGeometrica[] = [
+      filaGeometrica(ENCABEZADO_ICBC, 82.6),
+      ...relleno,
+      filaGeometrica(
+        `N° ${NUMERO_CUENTA_ICBC_SINTETICO} C.B.U.: ${CBU_ICBC_GRUPO1} ${CBU_ICBC_GRUPO2}`,
+        326.2,
+      ),
+    ];
+    expect(() =>
+      leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, conDatosTardios),
+    ).toThrow(/número de cuenta/);
+  });
+
+  /**
+   * Chequeo de ambigüedad escrito desde el día uno (no como fix posterior, a diferencia de Nación) —
+   * mismo criterio: nunca elegir el primer match, listar y fallar ruidoso.
+   */
+  it('con DOS valores distintos con forma de número de cuenta en la ventana, falla explícito en vez de elegir el primero', () => {
+    const conDecoy: readonly FilaGeometrica[] = [
+      filaGeometrica(ENCABEZADO_ICBC, 82.6),
+      filaGeometrica('1111/22223333/44', 200), // decoy: misma forma, ANTES del real
+      filaGeometrica(
+        `N° ${NUMERO_CUENTA_ICBC_SINTETICO} C.B.U.: ${CBU_ICBC_GRUPO1} ${CBU_ICBC_GRUPO2}`,
+        326.2,
+      ),
+    ];
+    expect(() =>
+      leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, conDecoy),
+    ).toThrow(/Encontré 2 valores distintos con forma de número de cuenta/);
+  });
+
+  it('con DOS valores distintos con forma de CBU en la ventana, falla explícito en vez de elegir el primero', () => {
+    const conDecoy: readonly FilaGeometrica[] = [
+      filaGeometrica(ENCABEZADO_ICBC, 82.6),
+      filaGeometrica(
+        `N° ${NUMERO_CUENTA_ICBC_SINTETICO} C.B.U.: ${CBU_ICBC_GRUPO1} ${CBU_ICBC_GRUPO2}`,
+        326.2,
+      ),
+      filaGeometrica('C.B.U.: 11112222 33334444555566', 200), // decoy: otro CBU válido por forma
+    ];
+    expect(() =>
+      leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, conDecoy),
+    ).toThrow(/Encontré 2 valores distintos con forma de CBU/);
+  });
+
+  it('el MISMO número y el MISMO CBU repetidos dos veces no es ambigüedad (deduplicado antes de contar)', () => {
+    const repetido: readonly FilaGeometrica[] = [
+      filaGeometrica(ENCABEZADO_ICBC, 82.6),
+      filaGeometrica(
+        `N° ${NUMERO_CUENTA_ICBC_SINTETICO} C.B.U.: ${CBU_ICBC_GRUPO1} ${CBU_ICBC_GRUPO2}`,
+        326.2,
+      ),
+      filaGeometrica(
+        `N° ${NUMERO_CUENTA_ICBC_SINTETICO} C.B.U.: ${CBU_ICBC_GRUPO1} ${CBU_ICBC_GRUPO2}`,
+        200,
+      ), // mismo par, otra fila — no es ambigüedad
+    ];
+    const r = leerCaratula(textoDe(PERIODO_ICBC), 'ARS', undefined, undefined, repetido);
+    expect(r.numero).toBe(NUMERO_CUENTA_ICBC_SINTETICO);
+    expect(r.cbu).toBe(CBU_ICBC_SINTETICO);
+  });
+});
+
 describe('leerCaratula() — Santander, una sola cuenta en el documento', () => {
   it('no exige un CBU manual: lo lee de la etiqueta como cualquier documento de una sola cuenta', () => {
     const r = leerCaratula(textoDe(...CARATULA_SANTANDER_UNA_CUENTA), 'ARS', undefined);
