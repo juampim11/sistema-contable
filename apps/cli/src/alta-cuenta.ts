@@ -40,11 +40,14 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import {
+  aFilas,
   aLineas,
   extraerPeriodo,
   extraerTexto,
+  reconoceBancor,
   seccionesPorClave,
   valorPorEtiqueta,
+  type FilaGeometrica,
   type SeccionDetectada,
   type TextoDelPdf,
 } from '@sistema-contable/ingesta';
@@ -254,6 +257,37 @@ const RE_NUMERO_CUENTA_EN_CABECERA = /N\u00BA\s*(\d{3}-\d{6}\/\d)/;
 const RE_ES_DOLARES = /especial\s+U\$S/i;
 
 /**
+ * \uD83D\uDD34 **Bancor es la \u00DANICA rama de `leerCaratula` que necesita geometr\u00EDa (`aFilas`), no texto plano
+ * (`aLineas`)** \u2014 y esto se midi\u00F3, no se asumi\u00F3 por analog\u00EDa con el adapter.
+ *
+ * Las otras tres ramas (Macro, Santander, gen\u00E9rica) leen por ETIQUETA o por una cabecera de texto
+ * reconocible, y `aLineas()` \u2014el texto del content-stream, en su propio orden interno\u2014 alcanza para
+ * eso: no importa en qu\u00E9 orden salgan las l\u00EDneas mientras la etiqueta y su valor sigan adyacentes.
+ * Bancor no imprime NINGUNA etiqueta para el n\u00FAmero de cuenta ni para el CBU \u2014 est\u00E1n por forma y
+ * posici\u00F3n, sin r\u00F3tulo (mismo dato que ya resuelve el adapter, `bancor.ts::leerNumeroDeCuentaBancor`/
+ * `leerCbuBancor`, v\u00EDa `aFilas`).
+ *
+ * **El primer intento fue con `aLineas()`, acotado a las primeras N l\u00EDneas** (mismo criterio de "forma
+ * + ventana acotada a la car\u00E1tula" que el resto de este archivo usa para no agarrar el identificador de
+ * una contraparte del cuerpo) \u2014 y **fall\u00F3 contra el PDF real**: `aLineas()` reordena la car\u00E1tula de
+ * Bancor. El pie legal completo del documento aparece ANTES que el cuerpo de la car\u00E1tula en esa vista
+ * (orden del content-stream, no orden visual) \u2014 la ventana de l\u00EDneas nunca llega al n\u00FAmero/CBU reales,
+ * que quedan mucho m\u00E1s all\u00E1 de la car\u00E1tula "visual". Verificado con un script de solo lectura contra el
+ * archivo real, dos veces (antes y despu\u00E9s de este cambio) \u2014 nunca se ensanch\u00F3 la ventana como arreglo:
+ * eso habr\u00EDa debilitado la protecci\u00F3n real que la ventana acotada da contra leer el identificador de un
+ * tercero del cuerpo, sin resolver la causa (el desorden de `aLineas()`).
+ *
+ * `aFilas()` s\u00ED preserva el orden VISUAL (reconstruye filas por coordenada, no por content-stream) \u2014 es
+ * la misma v\u00EDa que ya usa el propio adapter, y es la \u00FAnica de las cuatro ramas de esta funci\u00F3n que la
+ * necesita. `reconoceBancor` (p\u00FAblico, de `@sistema-contable/ingesta`) se reusa tal cual para la
+ * detecci\u00F3n \u2014 no se duplica, a diferencia de las regex de Macro/Santander, porque ya es parte de la
+ * superficie p\u00FAblica del paquete.
+ */
+const FILAS_DE_CARATULA_BANCOR = 20;
+const RE_NUMERO_CUENTA_BANCOR = /(?<!\d)\d{5}\/\d{2}(?!\d)/;
+const RE_CBU_BANCOR = /\b\d{22}\b/;
+
+/**
  * Lee de la carátula lo que hace falta para el alta.
  *
  * **Por etiqueta, nunca por patrón libre.** Buscar "el primer número de 22 dígitos" encuentra el CBU de
@@ -294,6 +328,12 @@ export function leerCaratula(
   moneda: 'ARS' | 'USD',
   cbuManual: string | undefined,
   tipoManual: TipoCuentaAlta | undefined = undefined,
+  /**
+   * Solo Bancor la necesita (ver la nota de `FILAS_DE_CARATULA_BANCOR` más arriba) — opcional y `[]`
+   * por default para que las otras tres ramas, y todos los tests que ya existían antes de Bancor, no
+   * tengan que cambiar su firma de llamada.
+   */
+  filasGeometricas: readonly FilaGeometrica[] = [],
 ): {
   readonly cbu: string;
   readonly numero: string;
@@ -304,6 +344,7 @@ export function leerCaratula(
   const lineas = aLineas(texto).map((l) => l.texto);
   const seccionadoMacro = seccionesPorClave(lineas, claveDeSeccionMacro);
   const cabecerasCuenta = lineas.filter((l) => RE_CABECERA_CUENTA.test(l));
+  const esBancor = reconoceBancor(filasGeometricas);
 
   let numero: string;
   let tipoCuenta: TipoCuentaAlta;
@@ -442,6 +483,41 @@ export function leerCaratula(
       }
       cbuAtribuido = cbuManual;
     }
+  } else if (esBancor) {
+    // Una sola cuenta, sin ambigüedad de moneda ni de tipo (spec Bancor, `20-formato-bancor.md` §2):
+    // no hace falta `moneda`/`tipoManual` para elegir nada, a diferencia de Macro/Santander.
+    //
+    // 🔴 Geometría (`aFilas`), no texto de línea (`aLineas`) — ver la nota de `FILAS_DE_CARATULA_BANCOR`
+    // más arriba sobre por qué esta rama es la única excepción. Se busca por FRAGMENTO (no por fila
+    // unida): mismo criterio que `bancor.ts::leerNumeroDeCuentaBancor`/`leerCbuBancor`, porque el
+    // número y el CBU son cada uno su propio fragmento geométrico, sin texto pegado al lado.
+    const fragmentosDeCaratula = filasGeometricas
+      .slice(0, FILAS_DE_CARATULA_BANCOR)
+      .flatMap((f) => f.fragmentos);
+
+    const numeroEncontrado = fragmentosDeCaratula
+      .map((f) => RE_NUMERO_CUENTA_BANCOR.exec(f.texto)?.[0])
+      .find((v): v is string => v !== undefined);
+    if (!numeroEncontrado) {
+      throw new Error(
+        'No encontré el número de cuenta (formato NNNNN/NN) en la carátula (Bancor). Bancor no lo ' +
+          'imprime con etiqueta — revisá que el archivo sea la primera página del resumen.',
+      );
+    }
+    const cbuEncontrado = fragmentosDeCaratula
+      .map((f) => RE_CBU_BANCOR.exec(f.texto)?.[0])
+      .find((v): v is string => v !== undefined);
+    if (!cbuEncontrado) {
+      throw new Error(
+        'No encontré el CBU (22 dígitos) en la carátula (Bancor). Bancor no lo imprime con etiqueta ' +
+          '"CBU" — revisá que el archivo sea la primera página del resumen.',
+      );
+    }
+
+    numero = numeroEncontrado;
+    tipoCuenta = 'cuenta_corriente';
+    cbuAtribuido = cbuEncontrado;
+    seccionUsada = 'Bancor (cuenta única, por forma geométrica en la carátula)';
   } else {
     // Las etiquetas están documentadas en `docs/diseno/02-formato-galicia.md` §3. Las variantes cubren que
     // el banco cambie `Nro.` por `Número` entre versiones del resumen.
@@ -603,6 +679,9 @@ if (esEjecucionDirecta) {
     imprimir('  ABORTA: el PDF no tiene texto extraíble (es un escaneo). No hay carátula que leer.');
     process.exit(1);
   }
+  // Solo la rama Bancor de `leerCaratula` la usa (ver la nota junto a `FILAS_DE_CARATULA_BANCOR`) — se
+  // computa siempre, es barato, y así ninguna de las dos llamadas de abajo se olvida de pasarla.
+  const filasGeometricas = await aFilas(contenido);
 
   /**
    * Primer intento sin CBU manual. Si la carátula tiene una sola cuenta, esto alcanza y nunca se pide
@@ -613,14 +692,14 @@ if (esEjecucionDirecta) {
   let caratula: ReturnType<typeof leerCaratula>;
   let cbuFueManual = false;
   try {
-    caratula = leerCaratula(texto, args.moneda, undefined, args.tipo);
+    caratula = leerCaratula(texto, args.moneda, undefined, args.tipo, filasGeometricas);
   } catch (error) {
     const esAmbiguedadDeCbu =
       error instanceof Error && error.message.includes('no se puede atribuir a una sola moneda');
     if (!esAmbiguedadDeCbu) throw error;
     try {
       const cbuManual = await pedirCbuConfirmado();
-      caratula = leerCaratula(texto, args.moneda, cbuManual, args.tipo);
+      caratula = leerCaratula(texto, args.moneda, cbuManual, args.tipo, filasGeometricas);
       cbuFueManual = true;
     } catch (errorDePrompt) {
       const mensaje = errorDePrompt instanceof Error ? errorDePrompt.message : 'error desconocido';

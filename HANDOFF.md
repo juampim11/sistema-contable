@@ -6,6 +6,76 @@
 
 ---
 
+## 2026-08-26 (120) — Alta de cliente REAL en el PILOTO: Contenedores Paoluc S.A.S. (Bancor), cuenta cargada, 94 movimientos ingestados y verificados por consulta directa. Primer cliente de una serie nueva (clientes reales directo al piloto). Hallazgo real en el camino: migración 0024 faltaba en piloto — corregido con autorización puntual.
+
+**Herramienta:** Claude Code. Modo plan (§3.2) por datos de clientes reales directo al piloto.
+Convocatoria: `seguridad-datos-financieros` + `security-engineer` (obligatorio) + `tech-lead` sobre el
+diseño de la 4ta rama de `leerCaratula`. Excepción nueva **E-6** en `registro-excepciones.md` (detalle
+completo ahí — este resumen no lo repite).
+
+### Decisión de criterio, para toda la serie que sigue
+
+JP decidió cargar los clientes reales que se vayan identificando **directo al piloto** (no a una base
+local aparte) de acá en más — mejora la muestra real de aislamiento multi-tenant (RLS) mientras no se
+sepa con qué cliente(s) se hace el piloto final. Con eso, **cambia el criterio de `tenant_node.nombre`**
+respecto de los 3 clientes originales: ahora lleva la **razón social real** desde el alta (antes: etiqueta
+provisoria, nombre real recién en HANDOFF). Contraste explícito, dos reglas distintas: la razón social
+real SÍ va por argumento de `--nombre` (N2, riesgo aceptado por JP); **el CUIT sigue sin ir NUNCA por
+shell** — y de hecho este flujo no necesitó ningún CUIT: confirmado por grep sobre las 24 migraciones que
+ningún cliente-tenant tiene su CUIT guardado en ningún lado del esquema (toda mención de "cuit" es de
+`padron_socio`/contrapartes, otro dato). Detalle completo, con la justificación de cada punto: E-6.
+
+### `apps/cli/src/alta-cuenta.ts` — 4ta rama de `leerCaratula`, para Bancor, y un cambio de patrón real
+
+Bancor no imprime "Número de cuenta" ni "CBU" como etiqueta (a diferencia de Galicia/Santander/Macro) —
+el número (`NNNNN/NN`) y el CBU (22 dígitos) están en la carátula por forma y posición. **Primer intento,
+sobre `aLineas()` (texto plano, como las otras 3 ramas) acotado a la carátula: FALLÓ contra el PDF
+real** — verificado con un script de solo lectura antes de tocar el piloto (mismo protocolo de toda la
+sesión), no asumido. `aLineas()` reordena la carátula de Bancor (el pie legal completo del documento
+aparece ANTES que el cuerpo de la carátula, orden del content-stream y no visual) — la ventana de líneas
+nunca llegaba al número/CBU reales. **No se ensanchó la ventana** (eso habría debilitado la protección
+real que existe para no leer el identificador de una contraparte del cuerpo) — se cambió a `aFilas()`
+(geometría, la misma vía que ya usa el propio adapter `bancor.ts`), única rama de las 4 que la necesita.
+Re-verificado contra el PDF real después del cambio: `numero`/`cbu` correctos (forma), `tipoCuenta`,
+`seccionUsada` y `desde` correctos. `apps/cli/tests/alta-cuenta.test.ts`: 46 → **50 tests**, todos verde,
+incluido el que prueba que la ventana geométrica de carátula realmente limita la búsqueda (fixture con
+relleno que empuja el dato real más allá de `FILAS_DE_CARATULA_BANCOR`).
+
+### El hallazgo real de la ejecución: migración 0024 faltaba en el PILOTO
+
+Con el cliente ya dado de alta (`tenant_node`), el primer intento de `alta-cuenta.ts` contra piloto
+falló con `ING_FK (cuenta_bancaria_banco_codigo_fkey)`: el catálogo `banco` del piloto solo tenía
+`galicia`/`macro`/`santander` — `0024_catalogo_bancor.sql` nunca se había aplicado ahí (solo en local,
+sesión anterior). **Verificado por consulta directa, no asumido, que el rollback fue limpio**: 0 filas en
+`cuenta_bancaria`/`cuenta_bancaria_identificador` para el cliente nuevo antes de seguir. Se listó
+`--estado` contra piloto dos veces (antes y después de nada cambiar), JP autorizó la migración puntual
+(mismo archivo ya revisado por `dba-data`/`security-engineer`, sin DDL nuevo), se aplicó, se verificó
+`bancor` en el catálogo real del piloto, y se retomó desde `alta-cuenta.ts` sin rehacer el alta de
+cliente. **Lección para la próxima alta de esta serie (ICBC, Nación): verificar `--estado` contra piloto
+ANTES de armar el plan, no asumir que lo aplicado en local ya está en piloto.**
+
+### Resultado final, verificado por consulta directa (no solo el output del CLI)
+
+- Backup fresco del piloto antes de la primera escritura: `respaldos/piloto_20260826-022828Z.dump`,
+  hash SHA-256 `e09ed57833998700a0ad8685fd58730436eb0faa14046736a2587dbb5378ffd4`.
+- `tenant_node`: **4 → 5** (conteo total, verificado antes y después).
+- Cliente nuevo: tipo `cliente`, `parent_id` = estudio raíz, activo.
+- Cuenta bancaria: `banco_codigo='bancor'`, moneda ARS, con su identificador (CBU) guardado solo como
+  HMAC — nunca el valor completo en ninguna columna.
+- Lote de ingesta: `estado='procesado'`, `banco_codigo='bancor'`, **94 movimientos** —verificado con
+  `count(*)` sobre `movimiento_bancario_crudo` filtrado por `lote_ingesta_id` (94) y por `cliente_id`
+  (94, mismo número — aislamiento correcto, nada mezclado de otro cliente) — **94 hashes únicos de 94**
+  (sin duplicados), `verificacion_estado='cuadra'`, 9 anexos.
+
+### Estado de salida
+
+`pnpm typecheck` limpio, `alta-cuenta.test.ts` 50/50 verde (código + tests commiteados, sin push — a la
+espera de que JP revise). Ningún dato real (CUIT, CBU, razón social) impreso en ningún log ni en esta
+conversación fuera de lo que JP mismo escribió como contexto de la tarea. Scripts de verificación
+read-only, todos efímeros, borrados después de cada uso — ninguno commiteado.
+
+---
+
 ## 2026-08-25 (119) — BBVA bloqueado (imagen pura, causa medida) → pivote a Bancor: adapter cerrado, criterio de diseño para los 3 adapters que faltan, e incidente de redacción parcial registrado
 
 **Herramienta:** Claude Code. Modo plan (§3.2) por datos de clientes + 3+ archivos. Convocatoria real de

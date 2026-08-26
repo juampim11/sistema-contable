@@ -13,6 +13,7 @@
 |---|---|---|---|---|---|---|---|---|
 | **E-1** | 2026-08-10 | No es un bug: es la **construcción del piloto** (Módulo 1, primer adaptador), en encuadre de **PoC de viabilidad** — parseo, extracción y generación del asiento | Extractos bancarios completos de **varios clientes del estudio (cantidad indeterminada)**, 8 bancos, **períodos heterogéneos** (verificado al menos 11-2025 y 06-2026): carátula (CUIT, número de cuenta, CBU, titular, condición IVA) y cuerpo (fecha, concepto, importe, saldo, contrapartes con sus CUIT). Más el transcript de la entrevista | **No** — se trabaja con el material tal como lo entregó el estudio | **Juan Pablo Marchini** (titular del proyecto), **acordado con la contadora del estudio**. **Ampliación a varios titulares confirmada explícitamente el 2026-08-10** — ver §E-1 | `privado/extractos/` y `privado/laura-transcript.txt`, gitignoreados y anclados; base local Docker; MinIO local | **Sin fecha, con criterio: al pasar a producción.** Prod arranca **vacía** y procesa desde cero; nada de la demo se promueve (`docs/devops/01-entornos.md` §0.bis) | — |
 | **E-2** | 2026-08-22 | No es un bug: es descubrimiento de formato para construir/calibrar el futuro parser de posición FCI — mismo encuadre de "construcción y calibración" que E-1, alcance menor (un cliente, un tipo de documento, sin carga a base ni generación de asiento) | 3 archivos PDF: extracto de **POSICIÓN** de FCI (tenencias + movimientos por fondo) de Banco Galicia, cortes 30/06, 31/07 y 29/08 de 2025, de **Elite-IT SAS** (identificado por su CUIT en la carátula del documento, no transcripto acá — mismo criterio que el resto de este registro) — cliente **fuera del piloto, sin tenant en la base hoy** | **No** — se trabaja con el material tal cual, bajo **método reforzado**: cero fragmentos de texto (ni enmascarados) llegan al contexto de ningún agente; solo metadatos estructurales en el descubrimiento, y booleano `cierra/no-cierra` por fondo+corte en la verificación (delta solo como categoría acotada) | **"No asumo que E-1 cubre esto, registrá primero. Dos motivos, no uno: (1) el documento es distinto — extracto de posición de FCI (tenencias + movimientos por fondo), no extracto de cuenta corriente, que es lo que procesa Módulo 1; (2) el cliente es distinto — estos 3 PDF son de Elite-IT, que no es cliente del piloto y no tiene tenant en la base hoy. E-1 está scoped a Módulo 1 y al piloto, no a cualquier extracto real de cualquier cliente. Dejá constancia explícita [...] de que se amplía el alcance para: extractos de FCI (tipo de documento nuevo) de Elite-IT (cliente fuera del piloto, sin tenant), bajo el mismo método reforzado [...]. Una vez registrado, seguí con el descubrimiento de formato." — Juan Pablo Marchini, 2026-08-22** | `privado/extractos/Sistematizacion Conciliacion Bancaria/FCI/` (ya existente, gitignoreado). Ningún derivado persiste: no se carga a `packages/data` ni a ninguna base — Elite-IT no tiene tenant y esta tarea no lo crea. Script efímero en el scratchpad de la sesión, fuera del repo, borrado tras usarlo | El PDF original no genera un derivado con TTL propio (sin fixture, sin export). Pendiente y fuera del repo: revisar/borrar el output del script y este pedido en el transcript local de la sesión (mismo criterio que el incidente #9), a cargo de JP al cerrar la sesión | — |
+| **E-5** | 2026-08-24 | No es un bug: es descubrimiento de formato + primera validación del motor de FCI (`packages/fci` + `consumirRescate`) contra un **cliente real del estudio** — excepción nueva, no ampliación de E-2, por los mismos dos motivos que separaron E-2 de E-1 (documento distinto, cliente distinto) | 1 archivo PDF: extracto de **POSICIÓN** de FCI de **Banco Santander**, corte 06-2026, de **Pannonica SAS** (cliente real del estudio, identidad confirmada 2026-08-25 tras un addendum de corrección — ver §E-5; NO es El Prat S.A.S., que fue la atribución original errónea; tenant en el piloto: **confirmado que NO tiene, 2026-08-25 — ver addendum**) | **No** — se trabaja con el material tal cual, bajo el mismo **método reforzado** que E-2/E-4: cero fragmentos de texto real (ni enmascarados) al contexto de ningún agente; descubrimiento solo con metadatos estructurales, y offsets angostos descritos en términos gruesos si el rango por sí solo insinúa el contenido; verificación como booleano `cierra/no-cierra` y categoría acotada de delta, nunca el valor exacto | Ver §E-5 para el detalle y la cita completa — Juan Pablo Marchini, 2026-08-24 | `privado/extractos/Sistematizacion Conciliacion Bancaria/FCI/Santander/` (ya existente, gitignoreado). **Sin carga a `packages/data`: E-5 NO autoriza ninguna persistencia contra el piloto, bajo ningún concepto — solo lectura de metadatos y validación en memoria.** Script(s) efímero(s) en el scratchpad de la sesión, fuera del repo, mostrados antes de correr y borrados después | El PDF original no genera un derivado con TTL propio salvo el `.xlsx` de validación (ver §E-5 para su TTL, mismo criterio que el addendum de E-2). Pendiente, a cargo de JP: revisar/borrar el output local de la sesión al cerrarla | — |
 
 ### E-1 — el detalle, porque esta excepción no es como las otras
 
@@ -374,6 +375,200 @@ convocatoria y su propio modo plan, documentado como hallazgo separado en `HANDO
 **Retención residual, mismo patrón que E-2 y el incidente #9:** el script no genera ningún derivado con
 dato real — solo conteos, que quedan en la salida de la terminal de JP y, agregados, en `HANDOFF.md`.
 Pendiente, a cargo de JP: revisar y borrar el output local de la corrida al cerrar la sesión.
+
+---
+
+### E-5 — extracto de posición FCI de Santander, cliente REAL del estudio (Pannonica SAS): primera validación
+
+🔴 **Identidad corregida el 2026-08-25 — ver el addendum de resolución más abajo.** El encuadre
+original de esta excepción (lo que sigue en esta sección, tal como se escribió el 2026-08-24) asumía
+que el cliente era **El Prat S.A.S.** Es **incorrecto**: la carátula real del PDF identifica al
+titular como **Pannonica SAS** — un cliente real y distinto del estudio, ya identificado por JP y con
+plan de cuentas propio, que nunca se había cruzado con material de FCI hasta esta tarea. No es un
+archivo mal ubicado ni un cliente inventado. Se deja el texto original sin reescribir (tachado en
+espíritu, no en forma) para que quede el rastro de la corrección — el addendum de abajo es la versión
+vigente.
+
+**Por qué es excepción nueva, no una ampliación de E-2 (los mismos dos motivos que separaron E-2 de
+E-1).** El documento es distinto — extracto de POSICIÓN de FCI de **Banco Santander**, no el de
+Galicia que cubre E-2 ni el extracto de cuenta corriente de Módulo 1/E-1 — y el cliente es distinto:
+~~El Prat S.A.S.~~ **Pannonica SAS** (ver corrección arriba), un cliente real del estudio — no un
+externo sin ningún rastro en el sistema, como Elite-IT en E-2.
+
+**Encuadre:** descubrimiento de formato de un layout nuevo (Santander, distinto del de Galicia ya
+confirmado no-generalizable) + primera corrida real del motor de FCI (`packages/fci`,
+`consumirRescate`) contra un cliente real del estudio — validación, no construcción de un adapter
+oficial.
+
+**Método reforzado, mismo criterio que E-2/E-4, sin reinventar:**
+1. Descubrimiento: cero fragmentos de texto real en el contexto de ningún agente, ni siquiera el mío —
+   solo metadatos (conteo de páginas/líneas, longitud de línea, offsets de columna, matches de patrón
+   como booleano/conteo). Si un offset es tan angosto que el rango por sí solo ya insinúa fuertemente
+   el contenido de la columna, se describe en términos gruesos ("columna numérica corta hacia la
+   izquierda de la tabla") en vez del rango exacto, siempre que eso alcance para que `backend-dev`
+   implemente el extractor.
+2. Verificación: `cierra: true/false` por fondo (Eje 1, si hay con qué verificarlo — con un solo corte
+   disponible puede no serlo, ver más abajo) y `movimientosConfiables`/`rescatesConSinCubrir` como
+   booleanos (Eje 2); si un delta no cierra, se reporta como categoría acotada, nunca el valor exacto.
+3. Script(s) efímero(s) en el scratchpad de la sesión, fuera del repo; se muestran completos antes de
+   correr y se borran después.
+
+🔴 **E-5 NO autoriza ninguna persistencia contra el piloto, bajo ningún concepto.** Solo lectura de
+metadatos, extracción en memoria y validación del motor. Ningún `conUsuario`/`conJob`, ninguna fila
+nueva en `packages/data`, ningún asiento. Si en el futuro este mismo material (u otro de FCI de
+Pannonica) se usa para una tarea de persistencia real — Capa D, alta de cuentas FCI en el plan del
+cliente, etc. — **esa es una excepción NUEVA** (la siguiente letra libre en este registro), nunca una
+reinterpretación de E-5. Confirmación explícita de JP, incorporada acá como parte del texto de la
+excepción, no como nota aparte.
+
+**Con un solo corte disponible (junio 2026, sin corte anterior en la carpeta), el Eje 1 puede no ser
+verificable esta ronda** — depende de si el propio documento de Santander trae un campo de "saldo
+inicial"/"saldo anterior" propio (a determinar en el descubrimiento) o si, como Galicia, solo declara
+el saldo al cierre y necesita el corte anterior para encadenar. Si no es verificable, se documenta como
+limitación estructural (mismo caso que junio de Elite-IT en E-2), nunca se fuerza con un dato inventado.
+
+**Autorizado por:** Juan Pablo Marchini, sesión del 2026-08-24, con tres confirmaciones incorporadas al
+método de arriba: (1) que E-5 deje escrito, explícito y no implícito, que no autoriza persistencia; (2)
+que un offset angosto que insinúe contenido se reporte en términos gruesos, no como rango exacto; (3)
+que el `.xlsx` final quede en `privado/extractos/Sistematizacion Conciliacion Bancaria/FCI/export/`
+(gitignoreado), nunca en `salida/` (esa carpeta ya acumuló archivos de corridas de prueba sin limpiar
+en una sesión anterior). Con esas tres confirmaciones, la aprobación fue: **"Aprobado [...] Empezá por
+el descubrimiento de formato (metadata-only, script efímero) y reportame la predicción falsable de la
+tabla [...] antes de escribir una sola línea del extractor nuevo."**
+
+**Retención residual, mismo patrón que E-2/E-4.** El PDF original no genera derivado con TTL propio
+salvo el `.xlsx` de validación, si se llega a generar — ese se registra con su propio TTL de 7 días
+cuando exista (mismo criterio que el addendum de E-2, sección "Exports N2-R declarados"). Pendiente,
+fuera del repo, a cargo de JP: revisar y borrar los archivos locales de esta sesión al cerrarla.
+
+### Addendum E-5 (2026-08-24) — discrepancia de titular: "PANNONICA SAS" en la carátula del PDF, no
+"El Prat S.A.S." — 🔴 BLOQUEA la asociación al tenant hasta confirmar
+
+Al verificar la estructura del documento (mirándolo él mismo, no yo — mismo método reforzado), **JP
+encontró que la carátula del PDF identifica al titular como "PANNONICA SAS"**, no "El Prat S.A.S." como
+asumía el encuadre original de esta excepción (arriba, y el pedido que abrió la tarea).
+
+**No se sabe todavía si son la misma entidad** (nombre comercial "El Prat" vs. razón social "Pannonica
+SAS", como pasa con muchas pymes) **o si el documento está archivado bajo el cliente equivocado** en
+`privado/extractos/.../FCI/Santander/`. Las dos son posibles y tienen consecuencias opuestas: si es la
+misma entidad, no hay problema — el nombre comercial y la razón social frecuentemente difieren. Si NO
+lo es, este documento es de un tercero ajeno al piloto que terminó mal archivado, y ninguna fila de este
+registro autorizaría procesarlo bajo el tenant de El Prat.
+
+🔴 **Mientras esto no se confirme, NADA de este documento se asocia al tenant de El Prat
+(`80741296-8cbf-4a4f-bcf1-8e8cb1c57584`) ni a ningún otro.** El extractor nuevo
+(`fci-santander/extraer-posiciones.ts`) es código **genérico** — parsea estructura de un PDF, sin
+referencia a ningún cliente ni tenant, igual que `fci-galicia/extraer-posiciones.ts` — y por eso puede
+seguir escribiéndose y probándose sin esperar la confirmación. Lo que SÍ queda bloqueado hasta
+confirmar: cualquier `HANDOFF.md`, `.xlsx` de export, o documento que **afirme** que este resultado es
+de "El Prat" — se refiere como "titular del PDF de esta corrida, identidad pendiente de confirmar (ver
+E-5)" hasta que JP la confirme contra Laura o sus propios registros.
+
+**Hallazgo adicional de la misma revisión manual, sin cerrar:** el conteo de `rescate` del script de
+descubrimiento (2 filas) **no coincidió** con lo que JP contó mirando el PDF — algún patrón del script
+está mal calibrado (posiblemente el mismo problema que ya documentó `docs/diseno/06-formato-santander.md`
+§11.2 sobre este banco: texto que se repite o se omite según cambia la página/el grupo). Queda como
+hallazgo abierto para cuando se calibre el regex real del extractor — no bloquea escribir el extractor
+(que no depende de este conteo agregado, solo del descubrimiento lo usó como señal), pero si el
+extractor real también da un conteo distinto del que JP ve a mano, es señal de que falta ajustar el
+patrón, no de que el dato esté mal.
+
+*(Nota, 2026-08-25: este hallazgo quedó resuelto en el trabajo de código de la misma tarea — el
+extractor final identifica movimientos por línea completa de `pdftotext`, no por el conteo agregado
+del script de descubrimiento, y sus 4 campos por línea se verificaron limpios contra el documento
+real. Detalle completo: `docs/diseno/19-fci-santander-extractor-hibrido.md`.)*
+
+### Addendum E-5 (2026-08-25) — identidad RESUELTA: el cliente es Pannonica SAS, no El Prat
+
+**Confirmado por JP.** El PDF procesado en esta tarea (`Reporte FCI junio Santander 06-2026.pdf`)
+pertenece a **Pannonica SAS** — un cliente real y distinto del estudio, **no** El Prat S.A.S. Las dos
+hipótesis que dejaba abiertas el addendum anterior (nombre comercial vs. razón social del mismo
+cliente, o archivo mal ubicado de un tercero) quedan **descartadas las dos**: es un cliente real
+propio, correctamente archivado bajo su propio nombre — la atribución errónea fue del encuadre
+original de esta tarea (que asumió "El Prat" sin verificarlo contra la carátula), no del archivo.
+
+**Pannonica SAS, lo que se sabe:** identificado por JP, con **plan de cuentas ya disponible** en el
+estudio. Nunca se había cruzado con material de FCI hasta esta sesión.
+
+🔴 **CONFIRMADO 2026-08-25 — Pannonica SAS NO tiene tenant dado de alta en el piloto.** Verificado por
+lectura directa (solo `select count(*)`, sin escribir nada) contra `tenant_node` en
+`sistema_contable_piloto`: 0 coincidencias por nombre, sobre un total de 4 tenants registrados en esa
+base. "Identificado y con plan de cuentas" no es lo mismo que "dado de alta como tenant" — eran dos
+hechos independientes, y el segundo resultó negativo.
+
+**El `.xlsx` de entrega queda BLOQUEADO** hasta que Pannonica se dé de alta como cliente nuevo del
+piloto — mismo proceso ya usado para Bracci/ROKA/El Prat, alta real, nunca un tenant provisorio
+inventado para destrabar la entrega. Pendiente nuevo de backlog, a cargo de JP: decidir si/cuándo se
+da de alta a Pannonica. Hasta entonces, esta tarea queda con la validación técnica (estructura, Eje 2)
+cerrada, pero sin entregable generado.
+
+**Todas las referencias a "El Prat" dentro de esta sección E-5 (el texto original de 2026-08-24) son
+la atribución errónea que este addendum corrige** — no se reescribieron todas individualmente, se
+marcaron o se dejaron con nota. Ninguna otra sección de este registro (E-1, E-2, E-3, E-4) se ve
+afectada: E-3 es sobre El Prat de verdad, en un tema no relacionado (`padron_socio`), y sigue vigente
+tal cual.
+
+**Verificado en el código:** el extractor (`fci-santander/extraer-posiciones.ts`) es genérico — no
+tiene ningún nombre de cliente ni UUID de tenant hardcodeado (ni de El Prat ni de Pannonica) — por eso
+no necesitó ningún cambio de código con esta corrección, solo de atribución en la documentación.
+
+---
+
+### E-6 — alta de cliente REAL completo, razón social conocida desde el alta, directo al piloto: Contenedores Paoluc S.A.S. (Bancor)
+
+**Por qué es excepción nueva, y no una repetición del procedimiento de 2026-08-11.** Los 3 clientes
+originales del piloto (uno por banco: Galicia, Santander, Macro) se dieron de alta con `alta-cliente.ts`
+usando una **etiqueta provisoria genérica** en `tenant_node.nombre` — el propio script rechaza técnicamente
+cualquier forma de CUIT, y documenta como convención "nunca la razón social real", porque en ese momento
+**no se sabía** la razón social; se descubrió después (Bracci, ROKA), viviendo solo en HANDOFF, nunca en
+la base. Acá el criterio es el inverso, decisión explícita de JP: cargar clientes reales **ya
+identificados** directo al piloto desde el arranque, con su razón social real en `tenant_node.nombre`
+desde el día uno — porque mientras no se sepa con qué cliente(s) se hace el piloto final, sumar clientes
+reales mejora la muestra real de aislamiento multi-tenant (RLS) con más de tres/cuatro clientes
+conviviendo. Es el primero de una serie, no un caso puntual.
+
+**El contraste que hay que dejar explícito — dos reglas distintas, no una relajación general:**
+- **La razón social real SÍ va por argumento de shell** (`--nombre "Contenedores Paoluc S.A.S."`).
+  Riesgo aceptado explícitamente por JP: `tenant_node.nombre` es N2, protegido por RLS del propio
+  subárbol (solo lo ve quien ya tiene membership en ESE cliente) — el riesgo real de pasarlo por
+  argumento es el mismo que ya rige para cualquier dato N2 en este proyecto (queda en el historial de
+  `PSReadLine` de esa máquina), y JP decidió que ese riesgo es aceptable para este campo.
+- **El CUIT NUNCA va por argumento de shell, bajo ningún concepto** — sigue yendo, sin excepción,
+  por el prompt oculto de doble tipeo ya existente (`pedirCbuConfirmado`/`pedirValorOculto`,
+  `apps/cli/src/alta-cuenta.ts`/`alta-socio.ts`), cuando algún flujo lo necesite. Esta excepción **no
+  toca esa regla en absoluto** — de hecho, este flujo puntual (alta de cliente + cuenta Bancor) **no
+  necesitó ningún CUIT**: confirmado por grep sobre las 24 migraciones que ningún cliente-tenant en este
+  sistema tiene su CUIT guardado en ningún lado del esquema (todas las apariciones de "cuit" son de
+  `padron_socio`/contrapartes, un dato distinto). Que el nombre real se acepte por shell no relaja nada
+  sobre el CUIT — son dos decisiones separadas, con dos criterios de riesgo distintos.
+
+**Hallazgo real durante la ejecución, con su propia autorización puntual:** la migración
+`0024_catalogo_bancor.sql` (alta de `bancor` en el catálogo, ya revisada por `dba-data`/
+`security-engineer` y aplicada en local) **no estaba aplicada en el piloto**. El primer intento de
+`alta-cuenta.ts` falló limpio con `ING_FK (cuenta_bancaria_banco_codigo_fkey)` — verificado por consulta
+directa que la transacción hizo rollback completo (0 filas en `cuenta_bancaria`/
+`cuenta_bancaria_identificador` para el cliente nuevo antes del segundo intento). Se listó `--estado`
+contra piloto (una sola migración pendiente, la misma dos veces seguidas), JP autorizó explícitamente
+esa migración puntual, se aplicó, se verificó `bancor` en el catálogo del piloto, y se retomó desde
+`alta-cuenta.ts` sin rehacer el alta de cliente ya hecha — mismo criterio de CLAUDE.md §1.9 (listar,
+confirmar, frenar) aunque esto no sea DDL de esquema, es una autorización puntual sobre datos reales.
+
+**Procedimiento seguido, cada paso verificado antes del siguiente:**
+1. `pnpm respaldar:piloto` — backup fresco, hash SHA-256 registrado en `HANDOFF.md`.
+2. Membership del usuario operador verificada activa (`socio`, en el estudio raíz) antes de escribir.
+3. `pnpm alta:cliente` — tenant nuevo, razón social real, `tenant_node` 4→5 (verificado por conteo).
+4. Migración `0024` al piloto (ver hallazgo arriba), verificada con `--estado` y con el catálogo.
+5. `pnpm alta:cuenta` — cuenta Bancor, número y CBU leídos del PDF real (nunca por argumento), CBU
+   guardado solo como HMAC.
+6. `pnpm ingesta` — 94 movimientos persistidos, `cuadra`, 9 anexos, verificado por consulta directa a
+   `movimiento_bancario_crudo` (no solo el output del CLI): 94 filas para el lote, 94 para el
+   `cliente_id` (aislamiento correcto, sin mezcla con otro cliente), 94 hashes únicos de 94.
+
+**Esta excepción autoriza**: razón social real en `tenant_node.nombre` por argumento de shell, para
+clientes reales ya identificados que se den de alta directo al piloto de acá en más — mismo criterio
+para Bancor/ICBC/Nación u otros bancos cuando corresponda. **No autoriza** guardar el CUIT del cliente
+en ningún lado (no hay dónde hoy, y este flujo no lo necesita) ni relaja en nada la regla del CUIT por
+prompt oculto para cualquier otro flujo que sí lo requiera.
 
 ---
 

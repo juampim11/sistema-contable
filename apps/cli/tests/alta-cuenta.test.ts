@@ -86,6 +86,29 @@ const CARATULA_GALICIA = [
   'Cuenta Corriente',
 ];
 
+/**
+ * Bancor NO imprime "Número de cuenta" ni "CBU" como etiqueta (a diferencia de los tres formatos de
+ * arriba) — el número (`NNNNN/NN`) y el CBU (22 dígitos) están en la carátula por FORMA, sin rótulo, y
+ * `leerCaratula` los lee por GEOMETRÍA (`aFilas`/`FilaGeometrica[]`), no por línea de texto (`aLineas`)
+ * — es la única de las cuatro ramas que necesita esto (ver la nota junto a `FILAS_DE_CARATULA_BANCOR`
+ * en `alta-cuenta.ts`: `aLineas()` reordena la carátula de Bancor contra el PDF real, medido, no
+ * asumido). Mismo criterio ya validado para el adapter en `bancor.ts`.
+ */
+const NUMERO_CUENTA_BANCOR_SINTETICO = '99999/99';
+const CBU_BANCOR_SINTETICO = '9990000090000000000003';
+
+/** Fila geométrica sintética mínima: un fragmento, ancho derivado del texto (mismo criterio que `bancor.test.ts`). */
+function filaBancor(texto: string, x: number, pagina = 1, y = 800): FilaGeometrica {
+  return { pagina, y, fragmentos: [{ texto, x, y, ancho: texto.length * 5 }] };
+}
+
+const FILAS_CARATULA_BANCOR: readonly FilaGeometrica[] = [
+  filaBancor('Banco de la Provincia de Córdoba S.A.', 400),
+  filaBancor('www.bancor.com.ar', 400),
+  filaBancor(NUMERO_CUENTA_BANCOR_SINTETICO, 311.3),
+  filaBancor(CBU_BANCOR_SINTETICO, 130.1),
+];
+
 describe('argumentos()', () => {
   const base = [
     '--cliente',
@@ -148,6 +171,52 @@ describe('leerCaratula() — Galicia, formato de una sola cuenta (regresión: no
   it('sigue fallando si falta el número', () => {
     expect(() =>
       leerCaratula(textoDe(`CBU: ${CBU_SINTETICO}`, PERIODO), 'ARS', undefined),
+    ).toThrow(/número de cuenta/);
+  });
+});
+
+describe('leerCaratula() — Bancor, una sola cuenta, sin etiqueta, por GEOMETRÍA (aFilas, no aLineas)', () => {
+  it('lee número y CBU por forma geométrica, sin necesitar moneda/tipo para desambiguar', () => {
+    const r = leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, FILAS_CARATULA_BANCOR);
+    expect(r.numero).toBe(NUMERO_CUENTA_BANCOR_SINTETICO);
+    expect(r.cbu).toBe(CBU_BANCOR_SINTETICO);
+    expect(r.tipoCuenta).toBe('cuenta_corriente');
+    expect(r.seccionUsada).toMatch(/Bancor/);
+  });
+
+  it('falla explícito si no encuentra el número (formato NNNNN/NN)', () => {
+    const sinNumero = FILAS_CARATULA_BANCOR.filter(
+      (f) => f.fragmentos[0]?.texto !== NUMERO_CUENTA_BANCOR_SINTETICO,
+    );
+    expect(() =>
+      leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, sinNumero),
+    ).toThrow(/número de cuenta/);
+  });
+
+  it('falla explícito si no encuentra el CBU (22 dígitos)', () => {
+    const sinCbu = FILAS_CARATULA_BANCOR.filter(
+      (f) => f.fragmentos[0]?.texto !== CBU_BANCOR_SINTETICO,
+    );
+    expect(() => leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, sinCbu)).toThrow(/CBU/);
+  });
+
+  it('un documento de otro banco (sin geometría/letterhead de Bancor) no cae por error en esta rama', () => {
+    // `filasGeometricas` por default es `[]` — `reconoceBancor([])` da `false`, cae al camino normal.
+    const r = leerCaratula(textoDe(...CARATULA_GALICIA), 'ARS', undefined);
+    expect(r.seccionUsada).not.toMatch(/Bancor/);
+  });
+
+  it('no busca más allá de la carátula: un número/CBU real corrido más allá de la ventana geométrica no se encuentra', () => {
+    const relleno = Array.from({ length: 25 }, (_, i) => filaBancor(`Relleno de cuerpo linea ${i}`, 172.2));
+    const conDatosTardios: readonly FilaGeometrica[] = [
+      filaBancor('Banco de la Provincia de Córdoba S.A.', 400),
+      filaBancor('www.bancor.com.ar', 400),
+      ...relleno,
+      filaBancor(NUMERO_CUENTA_BANCOR_SINTETICO, 311.3),
+      filaBancor(CBU_BANCOR_SINTETICO, 130.1),
+    ];
+    expect(() =>
+      leerCaratula(textoDe(PERIODO), 'ARS', undefined, undefined, conDatosTardios),
     ).toThrow(/número de cuenta/);
   });
 });
