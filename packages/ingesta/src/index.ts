@@ -17,6 +17,7 @@ export * from './persistir.ts';
 export * from './planilla/exportar-planilla.ts';
 export * from './reproceso/recapturar-conceptos.ts';
 export * from './reproceso/backfill-contraparte.ts';
+export * from './plan-cuentas/parser.ts';
 /**
  * 🔴 **Los adaptadores se re-exportan por NOMBRE, nunca con `export *`.**
  *

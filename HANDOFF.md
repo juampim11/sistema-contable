@@ -6,6 +6,180 @@
 
 ---
 
+## 2026-08-27 (129) — Adaptador de ingesta del plan de cuentas: primera carga real en `cuenta`/`cuenta_atributo` (0027), probado de punta a punta con las 227 cuentas reales de Bracci Repuestos S.A.S. contra un tenant SINTÉTICO local. Decisión de vínculo a socio (D-25 en la práctica) resuelta con JP: Opción A, mapeo manual. Incidente #14 registrado (impresión de denominaciones de socio por un script del agente) con regla nueva de impresión, ya aplicada en el código. 29 tests nuevos, `pnpm typecheck` limpio, barrido de fuga limpio.
+
+**Herramienta:** Claude Code. Modo plan (harness), con tres rondas de decisión del usuario antes de
+salir a ejecutar — ver abajo. `documento_ingerido` no se tocó (fuera de alcance, tarea aparte).
+
+### Qué se construyó
+
+Separación parser (puro) / persistencia (`conUsuario`) / CLI, mismo patrón que los adaptadores de
+banco:
+
+- **`packages/ingesta/src/plan-cuentas/parser.ts`** — `cargarPlanDeCuentas(buffer)`. Lee las 6 columnas
+  conocidas (`CODIGO|DENOMINACION|NIVEL|RECIBE|SUMARIZA|MONETARIA`, header en la fila 4). La
+  **profundidad real se calcula caminando `SUMARIZA` hasta la raíz — nunca del campo `NIVEL`**, que el
+  archivo real demostró no confiable. Nunca corrige nada: reporta 7 tipos de anomalía
+  (`nivel_vs_sumariza`, `jerarquia_cruzada`, `denominacion_duplicada`, `recibe_con_hijos`,
+  `denominacion_placeholder`, `sumariza_huerfano`, `ciclo_sumariza` — las dos últimas bloqueantes, sin
+  `cuentaPadreId` resoluble). Dos huecos que cerró `plan-cuentas-multicliente` en la convocatoria: el
+  marcador de raíz (`SUMARIZA = "..."`) se trata ANTES del lookup de padre, y una guarda contra ciclos
+  en el cálculo recursivo de profundidad. Guarda extra: `jerarquia_cruzada` solo se evalúa si el
+  archivo usa codificación segmentada consistente (todos los códigos con la misma cantidad de
+  segmentos) — si no, `jerarquiaCruzadaEvaluable=false` y se avisa, en vez de reportar ruido.
+- **`packages/data/src/cierre/escrituras.ts`** — `altaPlanDeCuentas(tx, ctx, pedido)`. Dos pasadas sin
+  depender de orden topológico: pasada 1 crea todos los `cuenta` (identidad estable) y arma
+  `codigo → cuenta.id`; pasada 2 inserta `cuenta_atributo` resolviendo `cuentaPadreId` del mapa de la
+  pasada 1. `denominacion` nunca se modifica (R42: el código es el identificador local, la
+  denominación es presentación, ninguno es identificador de dominio).
+- **`apps/cli/src/alta-plan-cuentas.ts`** — `--cliente --usuario --archivo [--mapeo] [--confirmar]`.
+  Sin `--confirmar`: dry-run, reporta y no escribe. Aborta ANTES de tocar la base si hay anomalías
+  bloqueantes, o si una cuenta candidata a socio no tiene entrada en `--mapeo` (D-25 Opción A: nunca
+  asume por matching de texto sobre `denominacion`).
+
+### Las tres decisiones que tomó JP durante el modo plan
+
+1. **Vínculo a socio (D-25): Opción A**, tabla de mapeo manual código→`padron_socio_id`, confirmada
+   por JP antes de cargar — el adaptador aborta si falta una entrada, nunca adivina. Descartó Opción B
+   (`null` + `UPDATE` después) porque el archivo real mostró un caso de ambigüedad genuina (dos
+   "Cuenta Particular" con nombres de pila distintos entre Activo y Pasivo) que dejaría un riesgo sin
+   fecha de resolución. El mapeo real de Bracci (2 socios reales, verificados por consulta directa
+   contra el piloto, no por HANDOFF ni por matching de texto) queda documentado para la carga futura
+   contra el piloto — **no se aplicó hoy**.
+2. **Punto 1bis (hallazgo no anticipado): local no tiene el `tenant_node`/`padron_socio` real de
+   Bracci** — las altas reales de sus dos socios (HANDOFF 73 y 116) fueron contra el piloto, nunca
+   contra local, que se recreó desde cero para verificar `0027`. JP eligió no romper la convención de
+   "local = solo sintético": la corrida real de hoy usa el tenant sintético
+   `008c4548-c809-4992-a10e-bd2aa84c1ba8` ("EMPRESA DE PRUEBA 00 SRL", ya en `db:seed`) + un
+   `padron_socio` sintético creado para la prueba — verifica el mecanismo completo (detección de
+   `rolFuncional` + FK + `CHECK`), sin usar ningún dato real de padrón.
+3. **Regla de impresión, nueva y ya aplicada en el código**: vocabulario contable genérico se imprime
+   libre; una denominación que embebe nombre propio de persona real (patrón "Cuenta Particular X")
+   **nunca por `Bash` ni por salida de herramienta de agente** — solo un humano leyendo directo, o el
+   agente describiendo por código/patrón. Motivo: durante la medición inicial, un script corrido por
+   el agente imprimió las 4 denominaciones reales de socio de Bracci — autodetectado, registrado como
+   **incidente #14** en `docs/seguridad/registro-incidentes.md` (severidad baja: personas ya
+   documentadas por su nombre completo en HANDOFF committeado, sin tercero ajeno, nada nuevo a un
+   archivo del repo). `alta-plan-cuentas.ts::descripcion()` aplica la regla estructuralmente: nunca
+   imprime `denominacion` para un nodo no-genérico.
+
+### Corrida real — verificada, no solo "corrió sin error"
+
+⚠️ **El tenant y los números de esta sección fueron SUPERADOS por la corrección más abajo** ("Corrección
+real durante la revisión de JP"): el tenant `008c4548-...` usado acá quedó vacío al correr después los
+tests de persistencia (`sembrar()` lo truncó). La corrida que sigue viva hoy es la del tenant de un solo
+uso `dd02088b-ac61-457d-bee7-66b47510a0d4`, con los mismos hallazgos y los mismos 227/227 — se deja esta
+sección igual, sin reescribirla, porque documenta el mismo análisis real del archivo de Bracci que sigue
+vigente.
+
+Contra el tenant sintético, con el archivo real de Bracci (227 cuentas): **227 `cuenta_atributo`
+insertadas**, contra las 227 filas del archivo — ninguna perdida ni de más. Un chequeo inicial mostró
+228 `cuenta` contra 227 `cuenta_atributo` para ese cliente; investigado por consulta directa: es una
+fila huérfana de `aislamiento-0027.test.ts` (crea una `cuenta` suelta por cliente sintético, sin
+`cuenta_atributo`, para probar aislamiento de `asiento_propuesto_renglon`) — su `creada_en` es 10+
+horas anterior al resto, y el mismo patrón (exactamente 1 huérfano) aparece simétrico en el otro
+cliente sintético (`10ea2e23-...`). Residuo de la tarea anterior de esta misma sesión, no de esta
+carga.
+
+Árbol verificado contra `SUMARIZA` por consulta directa: 4 raíces (nivel 1, sin padre) + 223 nodos con
+padre resuelto = 227. Spot-check de los casos de anomalía reales: los dos nodos de `jerarquia_cruzada`
+quedaron colgados de su padre real por `SUMARIZA` (`4.2.2.000`), **no** del padre que sugiere su
+código (`4.2.4.xxx`) — confirma que el adaptador respeta `SUMARIZA` siempre, nunca el código. Las 4
+filas "Cuenta Particular" quedaron las 4 con `rol_funcional='cuenta_particular_socio'` y
+`padron_socio_id` no nulo, apuntando al socio sintético de la prueba.
+
+Hallazgos reales del archivo de Bracci (report, no corregidos — quedan en el plan de la sesión, no
+commiteado): 5 discrepancias NIVEL≠profundidad real, 2 jerarquías cruzadas, 3 `RECIBE=SI` con hijos, 2
+placeholders `"disponible"`, 11 grupos de denominación duplicada, 0 huérfanos, 0 ciclos.
+
+### Tests — 29 nuevos, los tres niveles
+
+- `packages/ingesta/tests/plan-cuentas.test.ts` (13): fixture 100% sintético armado en memoria con
+  `exceljs`, cubre las 7 anomalías (una por código, sin contaminar el conteo entre ellas), el marcador
+  de raíz, la guarda de ciclos, la guarda de codificación no segmentada, y el caso donde un huérfano
+  dispara DOS anomalías a la vez (no se prioriza una sobre otra).
+- `packages/data/tests/alta-plan-cuentas.test.ts` (5): `altaPlanDeCuentas` contra `s.clienteA` de
+  `sembrar()` — alta feliz con las dos pasadas en orden invertido a propósito, denominación exacta sin
+  normalizar, `padre_no_encontrado_en_el_pedido`, el `CHECK` de `0027` sigue vigente por esta vía
+  (sale como `ErrorDeBase{codigo:'ING_CHECK'}`, nunca el error crudo — R28), aislamiento cross-cliente.
+- `apps/cli/tests/alta-plan-cuentas.test.ts` (11): `argumentos()` y `resolverFilas()` puras — mapeo
+  faltante o explícitamente `null` aborta sin insertar nada, el respaldo referencia el archivo de
+  mapeo solo para filas de socio, `cuentaPadreCodigo` sale de `sumariza` y nunca de `NIVEL`.
+
+`pnpm typecheck` limpio. `pnpm barrido` limpio (1039 archivos, ningún valor de `privado/` en el repo).
+
+### Pendiente, explícito
+
+- El mapeo real Carolina/Carlos Sebastián → `padron_socio_id` (verificado contra el piloto) queda
+  documentado para cuando esta carga corra contra el piloto — **tarea aparte, con autorización
+  explícita**, como toda escritura real (regla dura §1.9 de `CLAUDE.md`).
+- El archivo de plan de sesión (`quizzical-bouncing-breeze.md`, fuera del repo) todavía tiene los
+  nombres reales de los dos socios y sus `padron_socio_id` reales — queda a criterio de JP borrarlo.
+- Ningún commit hecho todavía: se reportó "corrido y verificado" a JP antes de proponer el commit, tal
+  como pidió explícitamente.
+
+### Corrección real durante la revisión de JP — contaminación entre tareas de la misma sesión
+
+Al pedir JP la prueba puntual filtrada por `cliente_id`, se encontró que la corrida real de arriba
+**ya no existía**: correr después los tests de persistencia (que llaman `sembrar()`, y `sembrar()` hace
+`TRUNCATE tenant_node CASCADE`) había borrado el tenant sintético y con él las 227 filas. El reintento,
+además, usó por descuido `s.clienteA` (el tenant por default de `sembrar()`) para la recarga, y esa
+recarga quedó mezclada con residuo del propio test anterior (232 filas, no 227). Reintentado una
+segunda vez con un tenant de un solo uso (`dd02088b-...`, nombre verificado por grep contra
+`sembrar()`/`sembrar.ts`/todos los fixtures antes de usarlo) — recién ahí la prueba salió limpia:
+227/227, árbol correcto, 4 filas de socio sin mezcla.
+
+**Regla nueva, para esta tarea y las que sigan**: cualquier verificación puntual contra un tenant
+sintético compartido corre el riesgo real de contaminación entre tareas de la misma sesión — para
+pruebas que necesiten quedar en pie para revisión externa, usar siempre un tenant de un solo uso, nunca
+uno de los nombres ya conocidos de `sembrar()`/fixtures existentes. Y, más general: cualquier
+verificación puntual que JP pida ver se muestra ANTES de correr algo que pueda alterar el estado que la
+sustenta — no después, aunque sea "solo un test más".
+
+### Deuda encontrada al correr la suite completa: 16 tests rojos, PRE-EXISTENTES, ajenos a este adaptador
+
+Al correr `pnpm test` completo (pedido explícito de JP antes del commit final), salieron **2 archivos y
+16 tests rojos de 2022** — la primera vez que se corre la suite entera desde que `0027` se aplicó
+(entrada 128). Ninguno de los dos archivos lo toca este adaptador; los 29 tests propios de esta tarea
+(parser + persistencia + CLI) pasan limpios, sueltos y dentro de esta misma corrida completa.
+
+**Causa raíz, la misma en los dos archivos**: `0027_cierre_mensual.sql` agregó 11 tablas con
+`cliente_id` (`cierre_cliente_periodo`, `pendiente_cierre`, `pendiente_dispensa`, `fuente_cierre`,
+`expectativa_fuente_cliente`, `cuenta`, `cuenta_atributo`, `asiento_propuesto`,
+`asiento_propuesto_renglon`, `documento_ingerido`, `cierre_transicion`), y esas 11 tablas nunca se
+registraron en dos verificadores de drift independientes que ya existían antes de `0027`. La tarea de
+`0027` (128) verificó con un alcance más chico (`aislamiento-0027`+`mutaciones-0027`, `catalogo.test.ts`,
+barrido) que no incluía estos dos archivos.
+
+1. **`packages/ingesta/tests/aislamiento-modulo-1.test.ts` — 4 tests rojos**:
+   - `1 — la lista de tablas se DERIVA, para que una tabla futura entre sola > toda tabla con cliente_id
+     está o cargada por el escenario o excluida con motivo`
+   - `2 — la verificación del verificador: los datos del otro cliente EXISTEN > sin RLS de por medio,
+     cada cliente tiene exactamente las filas que el pipeline escribió`
+   - `2 — la verificación del verificador: los datos del otro cliente EXISTEN > cada contador ve lo
+     suyo, con los mismos números que ve el dueño`
+   - `3 — el barrido: ni un registro del otro cliente, en las dos direcciones > un select sin where
+     devuelve solo lo propio, no una unión de los dos`
+   - Mecanismo: `FUERA_DEL_MODULO_1` es un mapa a mano de "tablas con `cliente_id` que el pipeline de
+     ingesta del Módulo 1 NO llena, con motivo escrito". La lista de tablas se deriva del catálogo real
+     de Postgres a propósito. Las 11 tablas de `0027` nunca entraron ahí, así que el test las trata como
+     si el pipeline de ingesta tuviera que haberlas llenado — falso, son de Capa D — y falla tal como
+     está diseñado para fallar ante una tabla nueva sin declarar.
+2. **`packages/data/tests/grants-conjunto-cerrado.test.ts` — 12 tests rojos** (la mayoría de la suite
+   `R41 — prueba de mutación`, M1 a M13 y sus variantes): el conjunto cerrado de grants esperados (R41)
+   tampoco incluye los grants reales que Postgres ya tiene sobre las 11 tablas de `0027` para
+   `app_request` (`INSERT`/`SELECT`/`UPDATE` por columna, decenas de líneas `POR_COLUMNA SOBRA`). Con
+   eso, el diff basal ya no es vacío, y casi todos los tests de mutación (que asumen "el basal es
+   limpio, mi única mutación es el único diff") caen en cascada.
+
+**No es una fuga ni un privilegio ejercido de más**: los grants ya estaban desde que se aplicó `0027`
+(nadie agregó nada ahora), lo que falta es la declaración que estos dos tests verifican contra la
+realidad. Documentado también en `docs/diseno/10-deuda-declarada.md` (sección "Deuda técnica que no
+bloquea, pero se cobra sola"), con nota explícita de que el cierre **amerita convocar `dba-data` +
+`security-engineer`** antes de tocarlo — toca el mecanismo de aislamiento entre tenants y el conjunto
+cerrado de permisos, no es un mapa de nombres que se completa sin revisión. Queda como tarea aparte, con
+su propia convocatoria — no se mezcla con el adaptador de esta entrada.
+
 ## 2026-08-27 (128) — Primera migración real de Capa D: `0027_cierre_mensual.sql` aplicada a LOCAL (nunca al piloto). D-25 cerrada, convocatoria completa con tres correcciones reales sobre `23`/`24`/`25`, más un quinto hallazgo real encontrado recién al correr el gate (`catalogo.test.ts`: 15 dominios cerrados sin espejo TypeScript). Los tres verificaciones que pidió JP: 16/16 (`aislamiento-0027`+`mutaciones-0027`), 80/80 (`catalogo.test.ts`), barrido de fuga limpio.
 
 **Herramienta:** Claude Code. Modo plan (harness, con aprobación explícita del usuario y tres
