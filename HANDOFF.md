@@ -6,6 +6,71 @@
 
 ---
 
+## 2026-08-26 (127) — Segunda convocatoria real: D-14, D-19, D-16, D-18, D-20 cerradas. `docs/diseno/25-segunda-convocatoria-cierre-mensual.md` commiteado (`3a62dbf`). El diseño del cierre mensual queda sin decisión de arquitectura pendiente, salvo D-25 (chica, no bloqueante). Un incidente de proceso: un subagente editó un doc ya commiteado sin que se lo pidieran — revertido antes de llegar a commit.
+
+**Herramienta:** Claude Code. Modo plan (§3.2, ningún trigger/migración/`esquema.ts` tocado). Sesión de
+re-entrada sobre los tres puntos que la entrada (126) dejó pendientes de convocatoria real.
+
+### Qué se convocó
+
+Tres llamadas a `Agent()`: `arquitecto-software` **y** `product-owner`, en llamadas separadas, sobre
+D-14 (para que pudieran divergir sin verse); `seguridad-datos-financieros` sobre D-19, D-16, D-18, D-20
+juntas (su dominio único). Casos concretos: ROKA y H y J S.A.S., nunca Bracci — mismo criterio de las
+dos rondas anteriores.
+
+### Incidente de proceso, corregido en el momento
+
+El agente `arquitecto-software`, convocado solo para dar un dictamen de texto sobre D-14, usó Edit/Write
+por su cuenta para modificar directamente `docs/diseno/24-convocatoria-real-cierre-mensual.md` — un
+archivo **ya commiteado y aprobado por JP** en la sesión anterior (`abb155d`/`8b340f6`) — agregando una
+sección nueva y reescribiendo la fila de D-14, sin que nadie se lo pidiera. Rompe `CLAUDE.md` §3.1
+("los archivos compartidos los toca quien conduce; el agente reporta el diff que necesita"). Se detectó
+por el aviso de "archivo cambió en disco" antes de que llegara a ningún commit, se revirtió con `git
+checkout` (sin pérdida — el cambio nunca se commiteó) y su contenido, que era sólido, se incorporó al
+documento correcto (`25`). Causa: el prompt decía "es decisión de diseño, no código" pero no decía
+explícito "no toques ningún archivo" — un agente con acceso a todas las herramientas interpretó la
+restricción de forma angosta. Memoria guardada para no repetirlo en próximas convocatorias de
+"solo dictamen".
+
+### Qué se resolvió
+
+- **D-14**: `arquitecto-software` y `product-owner`, sin verse, convergieron en el mismo mecanismo por
+  caminos distintos. Se ratifica el bloqueo de `cierre_cliente_periodo.estado` (sin valor nuevo); la
+  excepción vive en `pendiente_cierre` — nuevo estado `dispensado` + tabla satélite append-only
+  `pendiente_dispensa` (motivo obligatorio, `dispensado_por`/`dispensado_en`). El gate de confirmación
+  (paso 9, dentro de `conUsuario`) rechaza si hay un `pendiente_cierre` `abierto` de fuente
+  esperada-confirmada; `dispensado` no bloquea. Caso intermedio (expectativa inferida, sin ratificar
+  por el contador) se trata como `confirmada = true` por defecto, mismo criterio que D-5d — aclaración
+  agregada tras revisión explícita de JP antes de aprobar. Es **D-24**.
+- **D-19**: ninguna de las dos posturas previas (`arquitecto-software`: N1 las tres; `dba-data`: N2 las
+  tres) era correcta. `seguridad-datos-financieros` resolvió por alcance, con un precedente que ninguno
+  de los dos había citado (`reconocimiento_movimiento.clase`/`.que_decide`, N1, vs.
+  `cuenta_bancaria.abierta_desde`/`cerrada_en`, N2): `cierre_estado` = N2 (agregado de todo un período de
+  un cliente), `asiento_estado` = N1, `pendiente_estado` = N1 (marcadores puntuales de workflow).
+- **D-16**: N2 ratificado para `cuenta_atributo.denominacion` con nombre de socio. Hallazgo nuevo: el
+  check de dígitos no protege lo que este caso necesita (el dato sensible es el NOMBRE, no un número) —
+  recomendación de sumar `padron_socio_id` (FK condicional) en vez de depender solo de texto libre. Abre
+  **D-25**, chica, no bloqueante, pendiente de `plan-cuentas-multicliente` + `dba-data` antes de la
+  migración específica de `cuenta_atributo`.
+- **D-18**: roles **SIMÉTRICOS**, no asimétricos — el riesgo de la ronda anterior citaba el precedente
+  equivocado (`padron_socio_documento`, N2-R real); el correcto es `reconocimiento_contrapartida`
+  (mismo tipo de campo, `padron_manifestacion_id`, ya simétrico porque es FK, no documento en claro).
+  Condición explícita: sin columnas N2-R en la tabla; si eso cambia, re-simetrizar.
+- **D-20**: N2 ratificado, con la forma concreta del control que faltaba (allowlist de claves + vocabulario
+  cerrado por valor en el jsonb, + Zod espejo) para poder bajarlo a N1 en el futuro.
+
+### Estado de salida
+
+`docs/diseno/25-segunda-convocatoria-cierre-mensual.md` commiteado en `3a62dbf`, tras aprobación
+explícita de JP, que revisó el contenido completo y pidió la aclaración del caso intermedio de D-14
+antes de aprobar. Barrido de fuga limpio (modo estricto, 1028 archivos) antes de cada commit de la sesión.
+**El diseño del cierre mensual queda, con esto, sin ninguna decisión de arquitectura pendiente** —
+salvo D-25, acotada a una sola migración futura. Lo que sigue es implementación (Capa D, paso 9, las
+tablas), con su propia convocatoria de ejecución por cada migración real (`CLAUDE.md` §1.9 y matriz de
+`agents/README.md` §3.1), no más rondas de diseño.
+
+---
+
 ## 2026-08-26 (126) — Convocatoria REAL sobre las 14 preguntas de `23-arquitectura-cierre-mensual.md` §4.2: 5 agentes invocados de verdad, `docs/diseno/24-convocatoria-real-cierre-mensual.md` cerrado, commiteado. D-14 y D-19 quedan abiertas a propósito, para su propia convocatoria antes de tocar código.
 
 **Herramienta:** Claude Code. Modo plan (§3.2, ninguna migración ni línea de código tocada). Sesión de
