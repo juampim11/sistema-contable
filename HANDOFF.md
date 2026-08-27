@@ -6,6 +6,88 @@
 
 ---
 
+## 2026-08-26 (126) — Convocatoria REAL sobre las 14 preguntas de `23-arquitectura-cierre-mensual.md` §4.2: 5 agentes invocados de verdad, `docs/diseno/24-convocatoria-real-cierre-mensual.md` cerrado, commiteado. D-14 y D-19 quedan abiertas a propósito, para su propia convocatoria antes de tocar código.
+
+**Herramienta:** Claude Code. Modo plan (§3.2, ninguna migración ni línea de código tocada). Sesión de
+re-entrada: `docs/diseno/23-arquitectura-cierre-mensual.md` (copiado a `docs/` el mismo día desde
+Project Knowledge de Claude.ai, sigue **sin commitear** — no se tocó en esta tarea, JP no lo pidió) traía
+tres dictámenes previos declarados como **no reales** ("ninguna de las convocatorias de este documento
+fue real"). Esta sesión hizo la convocatoria real que `23` §4.2 dejaba pendiente.
+
+### Qué se convocó
+
+Cinco llamadas a `Agent()` con `subagent_type` real, en paralelo, cada una con contexto autocontenido
+(ROKA `69479b8f-9b6a-4d6b-bdb2-bff817c2e750` y H y J S.A.S. `26e90bbb-991c-4d3b-9ab8-799aaea1a8e3` como
+casos concretos, Bracci excluido a propósito por D-12):
+
+- `contador-dominio` — preguntas 1-3 (fecha de imputación cruzando mes, tolerancia cero, fuente tardía).
+- `plan-cuentas-multicliente` — preguntas 4-5 (plan versionado, clasificación de denominación con nombre
+  de socio).
+- `arquitecto-software` **y** `dba-data`, en llamadas separadas — preguntas 6-8 (backfill de
+  `documento_ingerido`, invariante debe=haber, clasificación de columnas nuevas). A propósito en llamadas
+  separadas, para poder divergir.
+- `motor-conciliacion-contable` — pregunta 10 (cotización BNA faltante).
+- Pregunta 9 (`seguridad-datos-financieros`) **sigue sin activarse** — condición (enrutamiento real de
+  pendientes entre personas del estudio) no confirmada. Preguntas 11-14, listadas para Laura, no
+  respondidas.
+
+### Hallazgos que no estaban en `23`
+
+1. **La numeración de Project Knowledge que cita `23` (`04`, `05`, `08`, `09`, `10`, `12`) NO coincide
+   con la numeración de `docs/diseno/` de este repo** — mismos números, contenido distinto. Detectado de
+   forma independiente por `contador-dominio` y `motor-conciliacion-contable`, cada uno verificando
+   contra el archivo real del repo antes de asumir. Ningún agente inventó contenido de Project
+   Knowledge; donde hacía falta un detalle puntual no disponible, lo dijeron explícito.
+2. **El riesgo real del backfill de `documento_ingerido` no es el que `23` señalaba** (`objeto_almacenamiento`,
+   garantizado por diseño en `ingestar.ts`) **sino `periodo_desde`/`periodo_hasta` en documentos
+   multi-cuenta** — el lote real de Macro/ROKA es un solo archivo con 3 cuentas, cada una con su propio
+   período en `lote_ingesta_cuenta`, no en `lote_ingesta`. Agregado como **B.7** en
+   `10-deuda-declarada.md`, precondición explícita del backfill (no de crear las 6 tablas vacías).
+3. **`plan_cuentas_version_id` se retira** del diseño — `plan-cuentas-multicliente` propone vigencia por
+   cuenta (`cuenta` + `cuenta_atributo`, mismo patrón que `cuenta_bancaria_identificador` y `padron_socio`)
+   en vez de versión completa con supersesión, con `cuenta_id` (FK estable) + `cuenta_ref` (cita
+   congelada) reemplazándola en `asiento_propuesto_renglon`.
+4. **Divergencia real, no reconciliada, entre `arquitecto-software` y `dba-data`** sobre el nombre y
+   nivel de la columna `estado` en las tres tablas nuevas que la llevan. El hecho mecánico (el registro
+   de `clasificacion-campos.ts` clasifica por nombre de columna GLOBALMENTE, y ya hay precedente de
+   renombre — `resolucion_estado` — para evitar tapar la clasificación N1 de `lote_ingesta.estado`) lo
+   señaló solo `dba-data`, y se adoptó como no negociable (D-19): las tres se renombran a
+   `<tabla>_estado`. El **nivel** (N1 según uno, N2 según el otro) queda sin cerrar, para
+   `seguridad-datos-financieros`.
+5. **Gap de diseño real en el flujo, detectado por `contador-dominio`**: si `expectativa_fuente_cliente`
+   de un cliente tiene una fuente `confirmada=true` que sigue bloqueada (caso HYJ/BBVA), el flujo tal
+   como está descripto no debería dejar confirmar el cierre — pero no existe una vía de "confirmar con
+   reserva declarada" en el enum de `estado`. **D-14, con postura provisoria explícita** (agregada a
+   pedido de JP): limitación conocida y aceptada mientras el paso 9 (confirmación) no exista en código;
+   bloqueante para escribir ese código, no postergable una segunda vez.
+
+### Tabla de decisiones
+
+D-1 a D-12 de `23` §4.1 se mantienen, con nota de qué cambió en cada una (ninguna se revierte). Se
+agregan D-13 a D-23, renumeradas de forma coherente (cada agente había numerado "D-13" por su cuenta,
+sin verse entre sí). Detalle completo, con la tabla y los hallazgos adicionales de `dba-data` (3
+contradicciones/gaps en el boceto de `23` §2, no pedidos explícitamente), en
+`docs/diseno/24-convocatoria-real-cierre-mensual.md`.
+
+### Verificación de cierre
+
+Barrido de fuga: **limpio**, modo estricto, 1027 archivos, 1719 candidatos, 0 valores reales de
+`privado/` en el repo. Commit `abb155d`: `docs/diseno/24-convocatoria-real-cierre-mensual.md` (nuevo) +
+`docs/diseno/10-deuda-declarada.md` (B.7 agregada, 1 línea). Esta entrada (126) se commitea junto con
+`docs/diseno/23-arquitectura-cierre-mensual.md` (JP lo revisó palabra por palabra y confirmó que se
+puede commitear tal cual), en un commit aparte — JP pidió ver el diff de esta entrada antes de aprobar
+ese segundo commit, mismo protocolo de siempre.
+
+### Lo que sigue
+
+**No se avanza a migración/adapters** (pedido explícito de JP). Quedan tres puntos que necesitan su
+propia convocatoria real antes de tocar código: **D-14** (vía de excepción — `arquitecto-software` +
+`product-owner`), **D-19** (nivel de `estado` — `seguridad-datos-financieros`), y **D-16/D-18/D-20**
+(clasificación de denominación con socio + auditoría de roles de `asiento_propuesto_renglon` —
+`seguridad-datos-financieros`, obligatoria antes de escribir el trigger de `debe=haber`).
+
+---
+
 ## 2026-08-26 (125) — Verificación de solo lectura post-cierre del adaptador ICBC: `tenant_node` en 7 (1 estudio + 6 clientes), sin duplicados, correspondencia UUID→banco confirmada para los 3 clientes con etiqueta genérica. Sin hallazgos, sin acción tomada.
 
 **Herramienta:** Claude Code. Continuación directa de la entrada (124), a pedido explícito de JP:
