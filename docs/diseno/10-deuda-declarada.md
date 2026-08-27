@@ -127,39 +127,37 @@ esquema puro.
   camino de un banco catalogado sin adapter (que sí falla con rastro, vía `sin_adaptador` en el PASO 6).
   Cierre: validar `--banco` contra el catálogo ANTES del PASO 4, con su propio motivo de rechazo
   auditado, en vez de dejar que la FK sea el único guardia.
-- 🟠 **Las 11 tablas de `0027_cierre_mensual.sql` no están registradas en dos verificadores de drift
-  independientes — 16 tests rojos, encontrados recién al correr la suite completa por primera vez desde
-  que `0027` se aplicó (2026-08-27, tarea del adaptador de ingesta del plan de cuentas).** La migración
+- 🟠 **Las 11 tablas de `0027_cierre_mensual.sql` no estaban registradas en dos verificadores de drift
+  independientes — CERRADO PARCIAL (2026-08-27, HANDOFF 130): 9 tablas + 1 vista declaradas, 2 tablas
+  quedan sin declarar A PROPÓSITO por un hallazgo de seguridad bloqueante sin resolver.** La migración
   `0027` (commit `9aacbe9`, HANDOFF 128) agregó `cierre_cliente_periodo`, `pendiente_cierre`,
   `pendiente_dispensa`, `fuente_cierre`, `expectativa_fuente_cliente`, `cuenta`, `cuenta_atributo`,
   `asiento_propuesto`, `asiento_propuesto_renglon`, `documento_ingerido` y `cierre_transicion` — once
-  tablas con `cliente_id`. Esa tarea verificó con un alcance más chico
-  (`aislamiento-0027`+`mutaciones-0027`, `catalogo.test.ts`, barrido de fuga) que **no incluía** los dos
-  archivos de abajo, así que el gate nunca corrió rojo hasta que se corrió la suite entera.
-  - **`packages/ingesta/tests/aislamiento-modulo-1.test.ts` (4 tests rojos).** Mantiene
-    `FUERA_DEL_MODULO_1`, un mapa a mano de "tablas con `cliente_id` que el pipeline de ingesta del
-    Módulo 1 NO llena, con motivo escrito por tabla". La lista de tablas se DERIVA del catálogo real de
-    Postgres a propósito ("para que una tabla futura entre sola") — las 11 tablas de `0027` nunca
-    entraron a `FUERA_DEL_MODULO_1`, así que el test las trata como si el pipeline de ingesta tuviera
-    que haberlas llenado (falso: son de Capa D, no de Módulo 1) y falla exactamente como está diseñado
-    para fallar ante una tabla nueva sin declarar.
-  - **`packages/data/tests/grants-conjunto-cerrado.test.ts` (12 tests rojos).** El conjunto cerrado de
-    grants esperados (R41) tampoco incluye los grants reales que Postgres ya tiene sobre esas 11 tablas
-    para `app_request` (`INSERT`/`SELECT`/`UPDATE` por columna). Con eso, el diff basal
-    ("`POR_COLUMNA SOBRA`") ya no es vacío, y casi todos los tests de mutación de R41 (que asumen "el
-    basal es limpio, mi única mutación es el único diff") caen en cascada.
-  - **No es una fuga ni un privilegio de más ejercido**: son grants que Postgres ya tenía desde que se
-    aplicó `0027` (nadie los agregó de más ahora) — lo que falta es la **declaración** que estos dos
-    tests verifican contra la realidad. Tampoco lo causó el adaptador de ingesta del plan de cuentas de
-    la tarea que lo encontró: ese código no crea tablas ni toca grants, y sus 29 tests propios (parser,
-    persistencia, CLI) pasan limpios, sueltos y dentro de la corrida completa.
-  - **Cierre, pendiente, con su propia convocatoria**: agregar las 11 tablas a `FUERA_DEL_MODULO_1` (con
-    motivo real por tabla — son de Capa D, no de ingesta) y al conjunto cerrado de grants de R41. Esto
-    toca el mecanismo de aislamiento entre tenants y el conjunto cerrado de permisos — **amerita
-    convocar `dba-data` + `security-engineer` antes de tocarlo**, no es un mapa de nombres que se
-    completa a mano sin revisión (matriz de convocatoria, `agents/README.md` §3.1: "Migración, tabla o
-    columna nueva, cambio de RLS"). Detalle completo, con los 16 nombres de test y sus mensajes exactos:
-    `HANDOFF.md` (129).
+  tablas con `cliente_id` — más la vista `asiento_propuesto_totales` (encontrada al extraer el estado
+  real, no nombrada en el pedido original: el barrido de grants también la ve).
+  - **`packages/ingesta/tests/aislamiento-modulo-1.test.ts`: CERRADO, 16/16 verde.** Las 11 tablas
+    entraron a `FUERA_DEL_MODULO_1` con motivo real por tabla — `documento_ingerido` con motivo
+    distinto a propósito ("hoy vacía, conexión futura pendiente", D-17 de `25-segunda-convocatoria-
+    cierre-mensual.md`, no "nunca la va a llenar Módulo 1").
+  - **`packages/data/tests/grants-conjunto-cerrado.test.ts`: 12/20 SIGUE ROJO, a propósito.** Al
+    convocar `dba-data` + `security-engineer` sobre el diseño concreto, `security-engineer` encontró
+    que `cierre_cliente_periodo` y `asiento_propuesto` tienen un `grant update` a nivel TABLA (no
+    acotado por columna, a diferencia de las otras nueve) que permite reescribir
+    `confirmado_por`/`confirmado_en`/`fecha_imputacion` sobre un registro YA confirmado, sin pasar por
+    el gate de D-24 (el trigger sólo dispara `UPDATE OF cierre_estado`) y sin dejar rastro. **Hallazgo
+    BLOQUEANTE** — esas dos tablas NO se declararon; el archivo compara el esquema completo en casi
+    todos sus tests, así que 2 tablas sin declarar siguen contaminando 12 de sus 20 tests (antes: 16
+    tests rojos en total entre los dos archivos por 11 tablas sin declarar; ahora: 12, todos por estas
+    2). Convocatoria de seguimiento pendiente (`arquitecto-software` + `dba-data` +
+    `security-engineer`) para decidir el cierre real del grant — recién ahí estas dos tablas se
+    declaran y el archivo vuelve a verde completo.
+  - **No es una fuga ni un privilegio ejercido de más** en las 9 tablas + vista ya declaradas: son
+    grants que Postgres ya tenía desde `0027`, verificados línea por línea contra el `.sql` por dos
+    agentes independientes, sin discrepancia.
+  - Hallazgo de proceso aparte, separado, no cerrado acá: 13 de los últimos 15 pushes a `main` corren
+    con CI en rojo (incluidos `9aacbe9` y `e67a256`), sin que nada bloquee seguir commiteando —
+    precedente ya documentado sin cerrar (`HANDOFF.md:~10249`). Detalle completo de todo lo de arriba:
+    `HANDOFF.md` (130).
 - El resto de las secciones de este documento.
 
 ---

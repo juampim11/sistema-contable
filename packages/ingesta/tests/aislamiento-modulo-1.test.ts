@@ -170,6 +170,56 @@ const FUERA_DEL_MODULO_1: Readonly<Record<string, string>> = {
     'reconocimiento_movimiento — la escribe el motor, que corre después de la ingesta.',
   reconocimiento_contrapartida_match:
     'Satélite 0..N de reconocimiento_contrapartida (0021), misma razón que su padre.',
+  // --- Capa D, migración 0027 (HANDOFF 129/130) — el cierre mensual. Ninguna de las once la escribe
+  // la ingesta bancaria: todas nacen DESPUÉS de que un extracto ya se ingirió, o son el plan de
+  // cuentas del cliente (un dato de configuración, no un hecho que salga de un banco).
+  cierre_cliente_periodo:
+    'Tabla de Capa D (migración 0027): la entidad central del cierre mensual. Nace cuando arranca el ' +
+    'proceso de cierre de un período, después de que los documentos del período ya se ingirieron — no ' +
+    'es algo que la ingesta bancaria escriba. Cobertura de aislamiento propia en ' +
+    'packages/data/tests/aislamiento-0027.test.ts.',
+  cierre_transicion:
+    'Satélite append-only de cierre_cliente_periodo (0027): cada cambio de estado del cierre, con ' +
+    'hecho_por/hecho_via. Misma razón que su padre — la ingesta no la toca.',
+  expectativa_fuente_cliente:
+    'Tabla de Capa D (0027): qué documentos espera el estudio de cada cliente (declarados o ' +
+    'inferidos) — la premisa del gate de confirmación de D-24. Es una declaración que carga una ' +
+    'persona o se infiere, no un dato que salga de un extracto. La ingesta no la escribe.',
+  fuente_cierre:
+    'Tabla de Capa D (0027): vincula un documento_ingerido/expectativa con un cierre puntual y su ' +
+    'estado de cuadratura. Se llena cuando el cierre se arma, no cuando la ingesta corre.',
+  pendiente_cierre:
+    'Tabla de Capa D (0027): la cola de pendientes que bloquea la confirmación de un cierre (D-24). ' +
+    'La ingesta no la escribe — nace del proceso de cierre, no del proceso de ingerir un extracto.',
+  pendiente_dispensa:
+    'Satélite append-only de pendiente_cierre (0027, D-14): el motivo por el que un socio dispensó un ' +
+    'pendiente. Misma razón que su padre.',
+  cuenta:
+    'Tabla de Capa D (0027): identidad estable de una cuenta del plan de cuentas de un cliente. La ' +
+    'llena el adaptador de plan de cuentas (packages/ingesta/src/plan-cuentas/, HANDOFF 129), un ' +
+    'proceso de configuración del cliente — nunca el pipeline de ingesta bancaria del Módulo 1.',
+  cuenta_atributo:
+    'Satélite versionado de cuenta (0027): denominación, jerarquía, rol_funcional. Misma razón que ' +
+    'cuenta — la llena el adaptador de plan de cuentas, no la ingesta bancaria.',
+  asiento_propuesto:
+    'Tabla de Capa D (0027): la propuesta de asiento que arma el motor de conciliación DESPUÉS de que ' +
+    'la ingesta corrió — es el resultado de clasificar movimientos ya persistidos, mismo criterio que ' +
+    'reconocimiento_movimiento (Módulo 2): la ingesta no la escribe, el motor corre después.',
+  asiento_propuesto_renglon:
+    'Satélite de asiento_propuesto (0027): misma razón que su padre — lo escribe el motor de ' +
+    'conciliación, no la ingesta.',
+  // 🔴 Distinta de las diez de arriba: esta SÍ está pensada para conectarse al Módulo 1 en el futuro
+  // — no es "nunca la llena Módulo 1", es "todavía no". Ver D-17 de
+  // docs/diseno/25-segunda-convocatoria-cierre-mensual.md y B.7 de docs/diseno/10-deuda-declarada.md
+  // (el backfill está bloqueado por la semántica de periodo_desde/periodo_hasta en documentos
+  // multi-cuenta, no por falta de interés). El día que esa conexión exista, esta tabla sale de acá y
+  // pasa a tener su propia cobertura medida contra el pipeline real, como las demás.
+  documento_ingerido:
+    'Tabla de Capa D (0027): la evidencia de un documento ya ingerido, para cruzar contra ' +
+    'expectativa_fuente_cliente. HOY vacía — el pipeline del Módulo 1 no la escribe todavía, el ' +
+    'backfill contra los adaptadores existentes está bloqueado por B.7 de 10-deuda-declarada.md — ' +
+    'pero la conexión futura está pendiente y declarada (D-17 de 25-segunda-convocatoria-cierre-' +
+    'mensual.md), no descartada. Revisar este motivo el día que esa conexión se implemente.',
 };
 
 /** Las tablas que el pipeline de ingesta **tiene que** haber llenado en los dos clientes. */

@@ -6,6 +6,93 @@
 
 ---
 
+## 2026-08-27 (130) — Deuda de (129) cerrada PARCIAL, a propósito: `aislamiento-modulo-1.test.ts` (4 tests) declarado y VERDE; `grants-conjunto-cerrado.test.ts` queda con 12/20 rojo DOCUMENTADO — `security-engineer` encontró un hallazgo de seguridad BLOQUEANTE (grant de UPDATE a nivel tabla en `cierre_cliente_periodo`/`asiento_propuesto` permite reescribir campos post-confirmación sin pasar por el gate de D-24 y sin dejar rastro) y JP frenó la declaración de esas dos tablas. Suite completa: 2003/2022 verde (de 1999/2022), mismos 12 rojos documentados, cero regresión en otro archivo. Hallazgo de proceso aparte, urgente: 13 de los últimos 15 pushes a `main` con CI en rojo — tarea separada, prompt entregado a JP, no resuelta acá.
+
+**Herramienta:** Claude Code. Modo plan (harness, por tocar el mecanismo de aislamiento y el conjunto
+cerrado de grants — mismo criterio que una migración de esquema, aunque cero DDL). Sesión de
+re-entrada sobre la deuda declarada en (129) y en `docs/diseno/10-deuda-declarada.md`.
+
+### Qué se pidió, y qué NO se tocó
+
+Cerrar los 16 tests rojos causados por que las 11 tablas de `0027_cierre_mensual.sql` nunca se
+registraron en dos verificadores de drift — exclusivamente declarar lo que la base ya tiene, cero
+`ALTER`/`GRANT`/`REVOKE` contra la base, `0027_cierre_mensual.sql` sin tocar, el adaptador de plan de
+cuentas (`e67a256`) sin tocar.
+
+### Convocatoria — dos dictámenes que NO coincidieron en el punto crítico
+
+`dba-data` y `security-engineer`, en paralelo, sobre el diseño concreto de los dos archivos (con el
+estado real extraído del catálogo de Postgres, cruzado línea por línea contra `0027_cierre_mensual.sql`
+— coincidencia exacta, verificada por los dos agentes de forma independiente):
+
+- **`dba-data`**: sin hallazgo. El `UPDATE` a nivel tabla en `cierre_cliente_periodo`/`asiento_propuesto`
+  es intencional porque el invariante (quién puede mover el estado) vive en RLS + trigger, no en el
+  grant — mismo criterio que el resto del esquema.
+- **`security-engineer`**: 🔴 **hallazgo BLOQUEANTE**. El trigger del gate de D-24 es
+  `BEFORE UPDATE OF cierre_estado` — sólo dispara si `cierre_estado` está en el `SET` del `UPDATE`. La
+  policy de escritura (`cierre_periodo_upd_cierre`) sólo exige el rol, no restringe por el VALOR de
+  `cierre_estado`. Con el grant de TABLA completa: cualquier `socio`/`contador` puede, sobre un cierre
+  YA `confirmado`, reescribir `confirmado_por`/`confirmado_en`/`periodo_desde`/`periodo_hasta` **sin
+  pasar por el gate y sin dejar rastro** (a diferencia de una transición de estado real, que sí queda en
+  `cierre_transicion`, append-only). Mismo patrón en `asiento_propuesto`: se puede reescribir
+  `fecha_imputacion` de un asiento ya confirmado — el campo que fija en qué período contable cae.
+  Verificado que ningún test cubre esto hoy. Hallazgo secundario, no bloqueante: `pendiente_cierre` deja
+  reescribir `resuelto_por`/`resuelto_en`/`resolucion_id` incluso con el pendiente ya `resuelto` (solo
+  bloqueado por `dispensado`).
+  - Además, hallazgo de PROCESO (no pedido, encontrado corriendo `gh run list` contra el repo real):
+    **13 de los últimos 15 pushes a `main` tienen CI en rojo**, incluidos `9aacbe9` y `e67a256`, sin que
+    nada bloquee seguir commiteando — con precedente ya documentado en `HANDOFF.md` línea ~10249 (mismo
+    patrón, nunca cerrado). `pnpm test` SÍ está en el gate de CI — el problema no es que falte, es que
+    un CI rojo no frena nada.
+
+JP, con la regla ya puesta en el plan de esta tarea ("si la convocatoria encuentra que un grant real
+debería cambiar, PARÁ y reportá — es una tarea distinta"), decidió: declarar las 9 tablas + la vista
+limpias, dejar las 2 del hallazgo explícitamente sin declarar, abrir dos tareas aparte sin resolver hoy.
+
+### Qué se aplicó
+
+- **`packages/ingesta/tests/aislamiento-modulo-1.test.ts`**: las 11 tablas de `0027` agregadas a
+  `FUERA_DEL_MODULO_1`, cada una con motivo real (son de Capa D, no de ingesta) — **`documento_ingerido`
+  con motivo distinto a propósito**: "hoy vacía, conexión futura pendiente" (D-17 de
+  `25-segunda-convocatoria-cierre-mensual.md`, bloqueada por B.7 de `10-deuda-declarada.md`), no "nunca
+  la va a llenar Módulo 1". **16/16 verde.**
+- **`packages/data/tests/grants-conjunto-cerrado.test.ts`**: 9 tablas + la vista `asiento_propuesto_totales`
+  (encontrada al extraer el estado real — es una relación más de `0027`, no una de las "11 tablas" que
+  el pedido nombraba, pero el barrido de este archivo también la ve) declaradas en
+  `GRANTS_POR_COLUMNA`/`GRANTS_A_NIVEL_TABLA`, verificadas columna por columna contra el catálogo real.
+  `cierre_cliente_periodo`/`asiento_propuesto` quedan **explícitamente sin declarar**, con un bloque de
+  comentario al inicio del archivo (no solo acá) citando el hallazgo, para que quien lo vea en el futuro
+  no piense que es un bug del test.
+  - 🔴 **12 de 20 tests de este archivo siguen en rojo, y es el número correcto — no 2.** El archivo
+    compara el ESQUEMA COMPLETO en casi todos sus `it()` (no hay aislamiento por tabla), así que 2
+    tablas sin declarar contaminan la mayoría de las mutaciones (M2, M3, M4, M5, M6, M9, M10, M12, M13)
+    y los casos legítimos (L1, L2, L3) — mismo conteo de tests rojos que antes de esta tarea (16 antes:
+    4+12; ahora 12: 0+12), pero la CAUSA se redujo de 11 tablas a 2. JP decidió explícito NO ajustar los
+    asserts de cada mutación para que absorbieran el hueco — eso enseñaría a la prueba de mutación a
+    tolerar la misma falla que todavía no se resolvió, invirtiendo su propósito.
+
+### Verificación
+
+`pnpm typecheck`: limpio. `pnpm test` completo: **2003/2022 verde** (subió de 1999/2022 en (129)),
+**12 rojos, todos en `grants-conjunto-cerrado.test.ts`, todos documentados** — cero regresión en
+cualquier otro archivo, incluidos los 29 tests del adaptador de plan de cuentas (129) y el resto de la
+suite. `pnpm barrido`: limpio (1039 archivos).
+
+### Dos tareas aparte, ninguna resuelta en esta entrada
+
+1. **El hallazgo de seguridad (bloqueante)**: grant de `UPDATE` completo en `cierre_cliente_periodo` y
+   `asiento_propuesto` permite reescribir campos post-confirmación sin control, más el hallazgo
+   secundario de `pendiente_cierre_upd_general`. Convocatoria pendiente: `arquitecto-software` +
+   `dba-data` + `security-engineer`, para decidir entre (a) acotar el grant a columnas explícitas + una
+   policy que excluya `confirmado`/`anulado` de cambios que no sean la transición misma, o (b) un
+   trigger adicional que rechace cualquier `UPDATE` sobre una fila ya confirmada salvo la transición
+   legítima. Cierra este bloque de `grants-conjunto-cerrado.test.ts` cuando se resuelva.
+2. **El hallazgo de proceso (urgente, separado)**: `main` corre en rojo la mayor parte del tiempo (13
+   de 15 pushes), sin que nada lo frene, con precedente ya documentado sin cerrar
+   (`HANDOFF.md:~10249`). Prompt de re-entrada completo entregado a JP en el chat (no en un archivo del
+   repo — es contexto de arranque de sesión, no documentación de dominio). Pendiente: protección de
+   rama + convocatoria de `devops`.
+
 ## 2026-08-27 (129) — Adaptador de ingesta del plan de cuentas: primera carga real en `cuenta`/`cuenta_atributo` (0027), probado de punta a punta con las 227 cuentas reales de Bracci Repuestos S.A.S. contra un tenant SINTÉTICO local. Decisión de vínculo a socio (D-25 en la práctica) resuelta con JP: Opción A, mapeo manual. Incidente #14 registrado (impresión de denominaciones de socio por un script del agente) con regla nueva de impresión, ya aplicada en el código. 29 tests nuevos, `pnpm typecheck` limpio, barrido de fuga limpio.
 
 **Herramienta:** Claude Code. Modo plan (harness), con tres rondas de decisión del usuario antes de
