@@ -6,6 +6,97 @@
 
 ---
 
+## 2026-08-27 (128) — Primera migración real de Capa D: `0027_cierre_mensual.sql` aplicada a LOCAL (nunca al piloto). D-25 cerrada, convocatoria completa con tres correcciones reales sobre `23`/`24`/`25`, más un quinto hallazgo real encontrado recién al correr el gate (`catalogo.test.ts`: 15 dominios cerrados sin espejo TypeScript). Los tres verificaciones que pidió JP: 16/16 (`aislamiento-0027`+`mutaciones-0027`), 80/80 (`catalogo.test.ts`), barrido de fuga limpio.
+
+**Herramienta:** Claude Code. Modo plan (harness, con aprobación explícita del usuario y tres
+condiciones — ver abajo). Sesión de re-entrada: paso 3 de la secuencia que `23` §3.3 dejó prevista,
+ahora con las 25 decisiones de `23`/`24`/`25` ya resueltas.
+
+### Las tres condiciones que puso JP antes de escribir el `.sql`, todas cerradas
+
+1. **Versión real de Postgres, verificada antes de usar `NULLS NOT DISTINCT`**: `docker-compose.yml` y
+   `docker-compose.piloto.yml` fijan `postgres:16-alpine` en los dos entornos — sintaxis disponible
+   desde PG15, confirmado antes de usarla.
+2. **`hecho_por`/`hecho_via` y si una transición automática podía saltear el gate de D-24**: llevado a
+   la convocatoria completa — ver hallazgo real abajo.
+3. **`for all` vs. policies separadas en las ONCE tablas, explícito**, incluidas `documento_ingerido` y
+   `fuente_cierre` — los cuatro agentes se pronunciaron tabla por tabla, ninguna usa `for all`.
+
+### Paso 0 — D-25 cerrada en una vuelta
+
+`plan-cuentas-multicliente` + `dba-data`: se adopta `padron_socio_id` en `cuenta_atributo`, con el
+`CHECK` contra una familia nombrada de `rol_funcional` (no un literal único — `aporte_de_socio`/
+`retiro_de_socio` la necesitan igual). `denominacion` se mantiene siempre editable, nunca derivada.
+
+### Paso 2 — convocatoria completa, tres correcciones reales que ninguna ronda anterior había visto
+
+1. **`total_debe`/`total_haber` de `asiento_propuesto` NO son columnas físicas.** El mecanismo de D-18
+   (trigger + revoke) resultó no implementable sin `SECURITY DEFINER` (prohibido). `arquitecto-software`
+   encontró además que, aun con el grant abierto, un `UPDATE` directo podía corromper lo que el
+   contador ve en el paso 7 (revisión, antes de confirmar). Se reemplaza por la vista
+   `asiento_propuesto_totales` (`security_invoker = true`, PG16) — sin caché, sin agujero.
+2. **El gate de D-24 no vivía en ningún lugar verificable.** `security-engineer` encontró que, tal
+   como estaba descripto, era código de aplicación dentro de la función que confirma — nada en el
+   esquema impedía que otro camino escribiera `cierre_estado = 'confirmado'` directo. Mecanizado en
+   DOS capas sin `SECURITY DEFINER`: RLS restringe por rol Y por valor (`administrativo` nunca puede
+   escribir hacia `confirmado`/`anulado`); un trigger `BEFORE UPDATE OF cierre_estado` evalúa el
+   invariante de pendientes para CUALQUIER rol que llegue a intentarlo.
+3. **`pendiente_cierre` necesitaba `expectativa_id`**, columna que ningún boceto anterior tenía: un
+   pendiente de `documento_faltante` no tiene `fuente_cierre` (nunca se ingirió nada) — sin esa
+   referencia directa, el gate del punto 2 no tiene con qué unir.
+
+Además: seis tablas sin `unique(cliente_id,id)` (bloqueante mecánico, dba-data), `banco_codigo` no
+`banco_id`, `hecho_por` nunca nulo con `hecho_via` nuevo, `cuenta_atributo.rol_funcional` corregido a
+N2 (no N1), `pendiente_cierre.motivo` renombrado a `motivo_codigo`, y la contradicción de `23` §2.2 vs
+§2.4 sobre `cierre_cliente_periodo.superseded_by_id` cerrada (no existe esa columna).
+
+### Quinto hallazgo real — encontrado al correr `catalogo.test.ts` la primera vez, no anticipado por la convocatoria
+
+Los 4 rojos que se esperaban ("tablas fantasma", D-16/D-18/D-19/D-20 ya clasificadas antes de aplicar)
+se pusieron verdes al aplicar — pero apareció un QUINTO, distinto: *"todo check con forma de dominio
+cerrado está en la tabla de pares"*. Los 15 `CHECK` de `0027` con forma `columna in (...)` no tenían su
+constante TypeScript espejo registrada en `DOMINIOS_CERRADOS` (mismo mecanismo que ya exige
+`ACCIONES`/`QUE_DECIDE` para migraciones anteriores) — trabajo mecánico de Paso 3 que había quedado sin
+terminar, no un problema de diseño. JP pidió frenar y reportar en vez de reintentar a ciegas — se
+detalló el hallazgo, y antes de aplicar el fix JP pidió ver la lista completa de las 15 constantes con
+sus valores (dos veces: antes y después del fix), para confirmar con sus propios ojos que
+`PENDIENTE_ESTADOS` incluye `dispensado` (D-24), que `MOTIVOS_PENDIENTE_CIERRE` incluye
+`cotizacion_no_disponible` (D-22), y que los dos valores que la policy de `administrativo` le prohíbe
+escribir en `cierre_estado` (`confirmado`, `anulado`) coinciden exacto con los dos últimos de
+`CIERRE_ESTADOS` — verificado cruzando contra el `.sql` real, no contra la descripción.
+
+**Fix**: 12 constantes `as const` en `packages/data/src/cierre/tipos.ts` (tipos derivados de la
+constante, no escritos dos veces — mismo patrón que `QUE_DECIDE`), 15 entradas nuevas en
+`DOMINIOS_CERRADOS` (`catalogo.test.ts`), y 15 `comment on constraint` agregados a `0027` (editada
+antes de commitear — la base local se recreó desde cero, `drop database` + `pnpm db:migrate` +
+`pnpm db:setup`, mismo precedente que `0004`/`0005`).
+
+### Estado de salida
+
+`packages/data/migrations/0027_cierre_mensual.sql` **aplicada a la base LOCAL** (`pnpm db:up && pnpm
+db:migrate && pnpm db:setup`, sin tocar el piloto — `APP_ENTORNO=local` confirmado antes de correr
+nada). `clasificacion-campos.ts` extendido. `packages/data/src/cierre/tipos.ts` (tipos + las 12
+constantes de dominio cerrado). Los tres resultados que pidió JP, verificados:
+
+1. `aislamiento-0027.test.ts` + `mutaciones-0027.test.ts`: **16/16 verde** — el gate de D-24 en sus dos
+   capas (RLS + trigger, incluido el caso dispensado y el rechazo a `administrativo`), la equivalencia
+   `rol_funcional`⟺`padron_socio_id`, el `CHECK` de renglón, el `CHECK` de confirmación conjunta.
+2. `packages/data/tests/catalogo.test.ts`: **80/80 verde** (65 base + 15 nuevas de `DOMINIOS_CERRADOS`).
+3. Barrido de fuga: **limpio**, modo estricto, 1033 archivos.
+
+`pnpm typecheck`: limpio en cada paso. Detalle completo del diseño y las tres correcciones a D-18/D-24
+(con el "qué decía antes / por qué no se sostenía / qué se adopta" completo, más la ventana de carrera
+de §1.2.bis que JP hizo aparecer al pedir la garantía de atomicidad del trigger — declarada, no
+cerrada) en `docs/diseno/26-migracion-cierre-mensual.md`.
+
+### Lo que sigue
+
+**Aplicado solo a local — el piloto sigue sin tocarse, ninguna circunstancia.** Commit pendiente de la
+aprobación de JP sobre esta misma entrada. La conversación sobre el piloto es aparte, con autorización
+explícita, después de este commit — `CLAUDE.md` §1.9 rige completo para ese paso.
+
+---
+
 ## 2026-08-26 (127) — Segunda convocatoria real: D-14, D-19, D-16, D-18, D-20 cerradas. `docs/diseno/25-segunda-convocatoria-cierre-mensual.md` commiteado (`3a62dbf`). El diseño del cierre mensual queda sin decisión de arquitectura pendiente, salvo D-25 (chica, no bloqueante). Un incidente de proceso: un subagente editó un doc ya commiteado sin que se lo pidieran — revertido antes de llegar a commit.
 
 **Herramienta:** Claude Code. Modo plan (§3.2, ningún trigger/migración/`esquema.ts` tocado). Sesión de

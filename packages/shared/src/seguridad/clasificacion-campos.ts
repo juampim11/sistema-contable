@@ -980,6 +980,288 @@ export const CLASIFICACION = {
       created_at: MARCA_TIEMPO,
     },
   },
+
+  // ---------------------------------------------------------------------------
+  // Capa D del cierre mensual (`0027_cierre_mensual.sql`). Once tablas, todas vacías. Convocatoria
+  // completa: `24`/`25`/`26-migracion-cierre-mensual.md`. Columnas donde ninguna de las tres
+  // convocatorias se pronunció explícito quedan clasificadas por el default de CLAUDE.md ("N2 si hay
+  // duda, nunca sin clasificar") aplicando el mismo criterio que sí usaron los dictámenes reales: N1
+  // para vocabulario de proceso e identidad declarada, N2 cuando la columna revela un hecho real de
+  // ESE cliente (posición financiera, puntualidad contable, relación societaria).
+  // ---------------------------------------------------------------------------
+
+  cuenta: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      creada_en: MARCA_TIEMPO,
+    },
+  },
+
+  cuenta_atributo: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      cuenta_id: UUID_INTERNO,
+      cuenta_padre_id: UUID_INTERNO,
+      codigo: { nivel: 'N1', exportable: true, nota: 'Código del plan de cuentas del cliente, vocabulario propio — no identifica a nadie por sí solo.' },
+      denominacion: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Mismo criterio que padron_socio.denominacion: se clasifica por el peor caso, porque puede ' +
+          'llevar el nombre de un socio (D-16). El check de dígitos protege NÚMEROS, nunca nombres — la ' +
+          'defensa real es padron_socio_id, no este campo.',
+      },
+      nivel: { nivel: 'N1', exportable: true, nota: 'Profundidad en el árbol del plan de cuentas. Estructural.' },
+      rol_funcional: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'NO hereda N1 de "vocabulario cerrado": afirma un hecho real sobre la relación societaria de ' +
+          'ESTE cliente (que existe una cuenta particular/aporte/retiro de un socio) — mismo argumento que ' +
+          'ya clasificó reconocimiento_contrapartida.admite_matches en N2 pese a ser booleano cerrado ' +
+          '(seguridad-datos-financieros, convocatoria de 0027).',
+      },
+      padron_socio_id: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Seudónimo estable de un socio — mismo tier que reconocimiento_contrapartida_match.socio_id. ' +
+          'D-25, segunda convocatoria. Referencia a la SERIE de alta vigente al momento de clasificar, no ' +
+          'una identidad eterna de la persona (dba-data, convocatoria de D-25).',
+      },
+      activa: { nivel: 'N1', exportable: true },
+      vigente_desde: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Mismo criterio que padron_socio.vigente_desde: se clasifica por el peor caso (cuando ' +
+          'rol_funcional liga a un socio puntual, la vigencia es de una relación societaria, no de un ' +
+          'identificador técnico).',
+      },
+      vigente_hasta: { nivel: 'N2', exportable: true },
+      respaldo: { nivel: 'N2', exportable: true, nota: 'Prosa libre escrita por una persona — mismo criterio que cierre_transicion.motivo.' },
+      creada_en: MARCA_TIEMPO,
+    },
+  },
+
+  documento_ingerido: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      superseded_by_id: UUID_INTERNO,
+      tipo_documento: { nivel: 'N1', exportable: true, nota: 'Vocabulario cerrado de catálogo, mismo tier que lote_ingesta.banco_codigo.' },
+      banco_codigo: { nivel: 'N1', exportable: true },
+      periodo_desde: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'El borde revela cuándo se abrió/cerró la relación con esta fuente para ESTE cliente — mismo ' +
+          'nivel que cuenta_bancaria.abierta_desde/cerrada_en (ratificado HANDOFF 47, extendido acá por ' +
+          'dba-data en la convocatoria de 0027).',
+      },
+      periodo_hasta: { nivel: 'N2', exportable: true },
+      cobertura: { nivel: 'N1', exportable: true, nota: 'Vocabulario de proceso: qué tan completo declara ser el documento, no un hecho del cliente.' },
+      objeto_almacenamiento: {
+        nivel: 'N1',
+        exportable: false,
+        nota: 'Clave de storage, no contenido — mismo criterio que lote_ingesta.archivo_clave. NUNCA lleva ' +
+          'el hash del contenido (volvería al storage un oráculo de "¿tenés este archivo?").',
+      },
+      ingerido_en: MARCA_TIEMPO,
+      creado_en: MARCA_TIEMPO,
+    },
+  },
+
+  cierre_cliente_periodo: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      cierre_anterior_id: UUID_INTERNO,
+      tipo_periodo: { nivel: 'N1', exportable: true },
+      periodo_desde: { nivel: 'N2', exportable: true, nota: 'Mismo criterio que documento_ingerido.periodo_desde.' },
+      periodo_hasta: { nivel: 'N2', exportable: true },
+      cierre_estado: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'D-19 (segunda convocatoria): agregado de TODO un período de un cliente, no metadato de ' +
+          'proceso — revela su puntualidad contable real, a diferencia de lote_ingesta.estado (pipeline ' +
+          'técnico de un archivo). Renombrado de `estado` a secas: el registro clasifica por nombre ' +
+          'GLOBALMENTE y hubiera tapado la N1 de lote_ingesta.estado.',
+      },
+      confirmado_en: { nivel: 'N2', exportable: true, nota: 'Mismo tier que cierre_estado: es CUÁNDO se alcanzó ese hecho agregado, no un timestamp técnico.' },
+      confirmado_por: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Identidad declarada ≠ identidad autenticada (mismo patrón manifestado_por, D-21).',
+      },
+      creado_en: MARCA_TIEMPO,
+    },
+  },
+
+  cierre_transicion: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      cierre_id: UUID_INTERNO,
+      estado_desde: { nivel: 'N2', exportable: true, nota: 'Mismo tier que cierre_estado: es el mismo dato, en su historial.' },
+      estado_hasta: { nivel: 'N2', exportable: true },
+      motivo: { nivel: 'N2', exportable: true, nota: 'Prosa libre escrita por una persona — puede mencionar al cliente, mismo criterio que registro_auditoria.motivo.' },
+      hecho_via: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'manual|automatico — vocabulario de proceso sobre el ORIGEN de la transición, no sobre el ' +
+          'cliente (seguridad-datos-financieros + arquitecto-software, convocatoria de 0027: hecho_por ' +
+          'nunca nulo, ni para transiciones automáticas — "el nulo no es información, es camuflaje").',
+      },
+      hecho_por: { nivel: 'N1', exportable: true, nota: 'Identidad declarada ≠ autenticada.' },
+      ocurrido_en: { nivel: 'N2', exportable: true, nota: 'Mismo tier que estado_desde/estado_hasta.' },
+    },
+  },
+
+  expectativa_fuente_cliente: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      cuenta_bancaria_id: UUID_INTERNO,
+      superseded_by_id: UUID_INTERNO,
+      tipo_documento: { nivel: 'N1', exportable: true },
+      banco_codigo: { nivel: 'N1', exportable: true },
+      periodicidad: { nivel: 'N1', exportable: true },
+      origen: { nivel: 'N1', exportable: true, nota: 'declarado|inferido_* — vocabulario de proceso sobre cómo se generó la fila, no del cliente.' },
+      evidencia: { nivel: 'N2', exportable: false, nota: 'Qué disparó la inferencia — puede referenciar movimientos/literales reales del cliente.' },
+      confirmada: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Que esta fuente exista y esté ratificada revela un hecho financiero real del cliente (p. ej. ' +
+          '"tiene FCI") — no es un booleano de proceso.',
+      },
+      vigencia_desde: { nivel: 'N2', exportable: true },
+      vigencia_hasta: { nivel: 'N2', exportable: true },
+      creado_en: MARCA_TIEMPO,
+    },
+  },
+
+  fuente_cierre: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      cierre_id: UUID_INTERNO,
+      documento_ingerido_id: UUID_INTERNO,
+      expectativa_id: UUID_INTERNO,
+      cuenta_bancaria_id: UUID_INTERNO,
+      superseded_by_id: UUID_INTERNO,
+      estado_cuadratura: {
+        nivel: 'N2',
+        exportable: false,
+        nota: 'Mismo criterio que lote_ingesta_cuenta.verificacion_detalle: ninguna diferencia lleva un ' +
+          'VALOR, solo códigos y referencias de fila — pero es información de cuadratura real de ESE ' +
+          'cliente, no un booleano de proceso.',
+      },
+      creado_en: MARCA_TIEMPO,
+    },
+  },
+
+  pendiente_cierre: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      cierre_id: UUID_INTERNO,
+      fuente_cierre_id: UUID_INTERNO,
+      expectativa_id: UUID_INTERNO,
+      resolucion_id: UUID_INTERNO,
+      superseded_by_id: UUID_INTERNO,
+      referencia_origen: { nivel: 'N2', exportable: false, nota: 'Digest de un renglón de fuente, mismo criterio que reconocimiento_movimiento.entrada_digest.' },
+      motivo_codigo: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Vocabulario cerrado, mismo tier que reconocimiento_movimiento.que_decide. `_codigo` y NO ' +
+          '`motivo` a secas: ese nombre ya está clasificado N2 para prosa libre (registro_auditoria.motivo) ' +
+          '— heredarlo taparía esa clasificación (seguridad-datos-financieros, convocatoria de 0027, mismo ' +
+          'mecanismo que ya forzó `cierre_estado`/`asiento_estado`/`pendiente_estado`).',
+      },
+      pendiente_estado: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'D-19: marcador de workflow sobre UN ítem puntual de la cola, no un juicio agregado sobre el ' +
+          'cliente (a diferencia de cierre_estado).',
+      },
+      resuelto_por: { nivel: 'N1', exportable: true, nota: 'Identidad declarada ≠ autenticada.' },
+      resuelto_en: { nivel: 'N1', exportable: true, nota: 'Mismo tier que pendiente_estado.' },
+      creado_en: MARCA_TIEMPO,
+    },
+  },
+
+  pendiente_dispensa: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      pendiente_cierre_id: UUID_INTERNO,
+      motivo: { nivel: 'N2', exportable: true, nota: 'Prosa libre escrita por una persona — mismo criterio que cierre_transicion.motivo.' },
+      dispensado_por: { nivel: 'N1', exportable: true, nota: 'Identidad declarada ≠ autenticada.' },
+      dispensado_en: { nivel: 'N1', exportable: true, nota: 'Mismo tier que pendiente_estado (D-24 lo agrega como un valor de esa columna).' },
+    },
+  },
+
+  asiento_propuesto: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      cierre_id: UUID_INTERNO,
+      superseded_by_id: UUID_INTERNO,
+      tipo: { nivel: 'N1', exportable: true, nota: 'Vocabulario de proceso: qué clase de asiento es, no su contenido.' },
+      fecha_imputacion: { nivel: 'N2', exportable: true, nota: 'La fecha contable real de un hecho económico de ESTE cliente.' },
+      asiento_estado: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'D-19: marcador de workflow puntual (propuesto/confirmado/superseded), mismo tier que ' +
+          'reconocimiento_movimiento.clase/.es_propuesta.',
+      },
+      creado_en: MARCA_TIEMPO,
+    },
+  },
+
+  asiento_propuesto_renglon: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      asiento_id: UUID_INTERNO,
+      fuente_cierre_id: UUID_INTERNO,
+      padron_manifestacion_id: UUID_INTERNO,
+      orden: { nivel: 'N1', exportable: true },
+      cuenta_id: UUID_INTERNO,
+      cuenta_ref: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Cita congelada {codigo, denominacion, rol_funcional} del plan de cuentas — mismo nivel que ' +
+          'cuenta_atributo.denominacion (D-15/D-16).',
+      },
+      debe: { nivel: 'N2', exportable: true, nota: 'Importe de ESTE cliente, mismo tier que movimiento_bancario_crudo.importe.' },
+      haber: { nivel: 'N2', exportable: true },
+      fecha_imputacion: { nivel: 'N2', exportable: true },
+      referencia_origen: { nivel: 'N2', exportable: false, nota: 'Mismo criterio que pendiente_cierre.referencia_origen.' },
+      verificacion_heredada: {
+        nivel: 'N2',
+        exportable: false,
+        nota: 'D-20: N2 por defecto hasta que el CHECK de allowlist+vocabulario cerrado (0027) esté además ' +
+          'reforzado por Zod en el límite de escritura — el riesgo concreto es que se cuele ' +
+          'ConfianzaDeCampo.valorLeido de una liquidación OCR.',
+      },
+      valuacion_ref: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Cotización usada o capas de FCI consumidas — plata del propio cliente, mismo tier que valuacion en general (D-7/D-20).',
+      },
+      creado_en: MARCA_TIEMPO,
+    },
+  },
 } as const satisfies Record<string, ClasificacionTabla>;
 
 export type NombreTabla = keyof typeof CLASIFICACION;
