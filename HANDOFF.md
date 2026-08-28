@@ -6,6 +6,98 @@
 
 ---
 
+## 2026-08-27 (131) — CI ruidosa: diagnóstico cerrado, fix de `ci.yml` NO COMMITEADO (bloqueado por un segundo hallazgo real, sin relación con D-24) — DEVOPS necesita terminar esto en su propia máquina. 17/20 de los últimos runs de `main` en `failure`; JP recibe el mail en cada push pero deja de leerlo porque no distingue "ya lo sabemos" de "esto es nuevo" — precedente idéntico: HANDOFF (17)/(18), 2026-08-10, línea 10336 (`main` con el gate de CI roto, sin corregir, por una allowlist vieja).
+
+**Herramienta:** Claude Code (background job, worktree `ci-gate-split-d24`, sin `privado/`). No requirió
+modo plan (un solo archivo de CI, sin esquema ni datos de cliente) — sí convocó a `devops` por regla de
+CLAUDE.md §3.1 (todo lo que toca CI/gate pasa por ese agente antes de decidir la forma final).
+
+### 0. Verificado contra el repo real, no contra la spec
+
+- `gh run list --limit 20` en `main`: **17 `failure`, 2 `success`, 1 `cancelled`.** No es un incidente
+  puntual — main corre en rojo como estado casi permanente desde antes del 2026-08-24.
+- El run de `008b641` (HEAD actual de `main`) falla **solo** por los 12/20 casos ya documentados de
+  `grants-conjunto-cerrado.test.ts` (HANDOFF 130, hallazgo BLOQUEANTE de `security-engineer` sobre
+  `cierre_cliente_periodo`/`asiento_propuesto`, D-24) — cero regresión nueva, confirmado con
+  `gh run view --json jobs` sobre el run.
+- El ejemplo concreto que dio JP (mail del run de `e67a256`, "10 errors"): en los hechos tuvo **16
+  tests rojos en 2 archivos** — los 12 ya documentados + 4 de `aislamiento-modulo-1.test.ts` que en
+  ese momento SÍ eran una regresión real (corregida después por `008b641`). El mail no distinguió un
+  grupo del otro; JP no tenía forma de saber, sin abrir el log, cuál de los dos rojos era nuevo.
+- No hay branch protection en `main` (`gh api .../branches/main/protection` → 404). Repo público, el
+  flujo real hoy es push directo a `main`, sin PR.
+
+### 1. Mecanismo de cierre — recomendado por `devops`, escrito, NO COMMITEADO
+
+`devops` (convocado real, no narrado) recomendó separar, dentro del mismo job `verificar`, el step
+único "Tests" en dos: uno bloqueante que excluye `grants-conjunto-cerrado.test.ts`
+(`vitest run --exclude "**/grants-conjunto-cerrado.test.ts"`) y uno con `continue-on-error: true` que
+corre solo ese archivo (visible en el log, no tumba el job). Esto hace que `verificar` vuelva a poder
+terminar en `success` mientras D-24 siga abierto, y sigue fallando ante cualquier regresión real en
+cualquier otro archivo. El diff completo queda escrito en
+`.github/workflows/ci.yml` del working tree de este worktree (líneas 117-118 reemplazadas por los dos
+steps nuevos) — **sin commitear**, ver §2 para el motivo y el paso que falta.
+
+Sobre branch protection: `devops` recomienda activarla **solo sobre el check del job `verificar` ya
+partido** (nunca sobre el step no bloqueante de D-24, que por diseño puede seguir rojo indefinidamente),
+y **recién después** de que `main` esté genuinamente verde con los dos hallazgos de este documento
+resueltos. Nota técnica de `devops`: GitHub evalúa el status check requerido sobre el commit, y con
+push directo el commit no tiene ningún check corrido todavía en el momento del push — activar branch
+protection **en la práctica empuja** a un flujo de rama+PR aunque no se lo pida explícitamente. Por eso
+esto queda **sin aplicar**, documentado como recomendación aparte.
+
+**Sobre cambiar push-directo-a-main → PR obligatorio: `devops` opina que conviene, dado el punto
+anterior — pero es decisión de JP, no aplicada, a la espera de su confirmación explícita** (restricción
+del prompt original de esta tarea).
+
+### 2. 🔴 Hallazgo NUEVO, real, sin relación con D-24: la allowlist del barrido de fuga está vieja OTRA VEZ
+
+Al intentar commitear el fix de `ci.yml` en el worktree (sin `privado/`, corre en modo CI), el hook
+`pre-commit` (`node tools/barrido-fuga.ts`) **falló con 18 candidatos SIN VERIFICAR**, en archivos que
+esta tarea no tocó: `apps/cli/tests/alta-cuenta.test.ts` (9), `packages/ingesta/tests/icbc.test.ts` (4),
+`HANDOFF.md` (3), más 1 en `alta-cuenta.test.ts` de tipo `importe_ar`. Confirmado que es **pre-existente
+en `main`**, no algo introducido acá: el mismo `pnpm barrido` (comando exacto del step de CI) fallando
+igual, exit 1, corrido sobre el HEAD de `main` sin ningún cambio mío.
+
+Causa: `tools/barrido-aceptados.json` se regeneró por última vez en `e2e0a28` (2026-08-26,
+"regenerar allowlist del barrido de fuga (201 huellas, 0 fugas reales)"). Desde entonces entraron a
+`main` el adaptador ICBC (`ec80ba3`, `01c5a24`) y otros commits que agregaron fixtures nuevos sin
+volver a correr `pnpm barrido --aceptar` — **exactamente el mismo patrón que HANDOFF (17)/(18)**
+(línea 10336: detector nuevo, allowlist vieja, nadie lo notó porque otra cosa tapaba el rojo).
+
+**Por qué esto bloquea el cierre de hoy:** el step "Barrido de fuga sobre el repo" de `ci.yml` viene
+`skipped` en todos los runs recientes porque el step "Tests" falla antes y GitHub Actions no sigue.
+Si se aplica SOLO el split de `ci.yml` de §1, `verificar` va a dejar de fallar en "Tests" — y el
+siguiente step que corre de verdad, "Barrido de fuga", va a fallar por ESTO. **El split de §1 no
+alcanza solo para dejar `main` en verde**: hacen falta las dos correcciones juntas.
+
+**Por qué no lo resolví yo:** `pnpm barrido --aceptar` cruza cada candidato contra el material real de
+`privado/` (CLAUDE.md §3.1 punto 3: `privado/` está prohibido para todo agente, siempre y sin
+excepción) — y el propio hook, en la máquina de JP (`privado/` existe ahí), corre en **modo estricto**,
+no en modo CI, así que puede directamente pasar en verde sin tocar la allowlist si estos 18 son
+sintéticos (el patrón de todas las veces anteriores). Es una decisión que solo se puede tomar con
+`privado/` delante, en la máquina de JP.
+
+### 3. Qué falta — 3 pasos, en la máquina de JP (con `privado/`)
+
+1. Aplicar el diff de `.github/workflows/ci.yml` de §1 (está completo y probado estáticamente — el glob
+   `**/grants-conjunto-cerrado.test.ts` matchea la ruta real, verificado con `path.matchesGlob` de
+   Node; NO se pudo correr `vitest run` completo por el riesgo de correr el gate completo sin control
+   en un worktree sin su propio Postgres/MinIO — no se fuerza esa corrida sin confirmación, según la
+   restricción del prompt original de esta tarea).
+2. Correr `pnpm barrido --aceptar` (con `privado/` presente) y revisar el diff de
+   `tools/barrido-aceptados.json` — debería ser puramente aditivo, como las dos veces anteriores.
+3. Commitear los dos juntos (el hook va a correr en modo estricto y debería pasar limpio) y pushear.
+   Recomendado: abrir un PR primero (el trigger `pull_request` ya existe en `ci.yml`) para ver el split
+   funcionando con Postgres/MinIO real antes de que toque `main` directo — sin que esto implique
+   adoptar PR-obligatorio como política, es solo una corrida de verificación puntual.
+
+**Nada de esto tocó** `packages/data/tests/grants-conjunto-cerrado.test.ts`, la migración `0027`, ni
+ningún archivo de las tareas de HANDOFF (129)/(130) — el rojo de D-24 sigue intencional y a la espera
+de su propia corrección.
+
+---
+
 ## 2026-08-27 (130) — Deuda de (129) cerrada PARCIAL, a propósito: `aislamiento-modulo-1.test.ts` (4 tests) declarado y VERDE; `grants-conjunto-cerrado.test.ts` queda con 12/20 rojo DOCUMENTADO — `security-engineer` encontró un hallazgo de seguridad BLOQUEANTE (grant de UPDATE a nivel tabla en `cierre_cliente_periodo`/`asiento_propuesto` permite reescribir campos post-confirmación sin pasar por el gate de D-24 y sin dejar rastro) y JP frenó la declaración de esas dos tablas. Suite completa: 2003/2022 verde (de 1999/2022), mismos 12 rojos documentados, cero regresión en otro archivo. Hallazgo de proceso aparte, urgente: 13 de los últimos 15 pushes a `main` con CI en rojo — tarea separada, prompt entregado a JP, no resuelta acá.
 
 **Herramienta:** Claude Code. Modo plan (harness, por tocar el mecanismo de aislamiento y el conjunto
