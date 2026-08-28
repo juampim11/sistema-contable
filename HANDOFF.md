@@ -6,6 +6,126 @@
 
 ---
 
+## 2026-08-28 (132) — CIERRE DE SESIÓN, punto de entrada si se retoma sin este chat. Repaso completo de los dos frentes de hoy (ruido de CI + Bloque 1 de seguridad D-24), qué quedó resuelto de raíz, qué sigue abierto (PR #1, Bloque 2, Bloque 3), y una colisión de numeración a resolver cuando ese PR se mergee.
+
+**Herramienta:** Claude Code (sesión de background larga, con idas y vueltas reales — este resumen
+existe para que ninguna de ellas se pierda si se retoma en otro chat). Dos tareas separadas, cada una
+con su propio DoD, en el mismo día:
+
+- **A. Ruido de CI** (mail de "Run failed" en cada push, indistinguible de una regresión real).
+- **B. Bloque 1**: hallazgo bloqueante de seguridad D-24 (HANDOFF 130) — ya con su propia entrada
+  completa en **(131)**, este resumen no la repite, solo la referencia y la pone en contexto del resto.
+
+---
+
+### A. Ruido de CI — diagnóstico cerrado, fix en PR #1 SIN MERGEAR, y una buena noticia encontrada hoy
+
+**Diagnóstico** (verificado contra `gh run list`/`gh run view`, no supuesto): 17 de 20 runs recientes de
+`main` en `failure`, todos por el mismo motivo (grants-conjunto-cerrado.test.ts, 12/20 rojo documentado
+por D-24) — pero el mail de GitHub Actions no distingue "esto ya lo sabemos" de "esto es nuevo", así que
+JP dejó de poder leerlos. Precedente idéntico ya documentado antes: HANDOFF, línea ~10336 (mismo patrón,
+2026-08-10).
+
+**Fix aplicado**: `.github/workflows/ci.yml` con el step "Tests" partido en dos — uno bloqueante (excluye
+`grants-conjunto-cerrado.test.ts`) y uno no bloqueante (`continue-on-error`, solo ese archivo). Verificado
+corriendo de verdad contra Postgres/MinIO real en un PR: el step bloqueante da verde, el no bloqueante
+sigue reportando el 12/20 esperado sin tumbar el job.
+
+**🔴 Este fix vive en `PR #1` (https://github.com/juampim11/sistema-contable/pull/1, rama
+`fix/ci-split-tests-d24`), y sigue ABIERTO, SIN MERGEAR a `main` a la fecha de esta entrada.** Nunca se
+pusheó directo a `main` — decisión explícita de JP, mismo criterio que después se usó para Bloque 1
+("quiero verlo correr contra Postgres real en un PR antes de tocar main").
+
+**Buena noticia, encontrada recién al cerrar Bloque 1 (no estaba prevista)**: el commit `fe0afd8`
+(Bloque 1, ver sección B) hizo que **`grants-conjunto-cerrado.test.ts` pasara a estar 20/20 VERDE DE
+VERDAD** — no era solo ocultar el rojo, era resolver la causa. Confirmado con `gh run list`: el run de
+`fe0afd8` sobre `main` dio **`success`**, con el `ci.yml` VIEJO (sin el split de PR #1) todavía puesto.
+O sea: **el ruido de CI en `main` ya está resuelto de raíz, aunque PR #1 nunca se mergee.** El split de
+PR #1 sigue teniendo valor real — es la defensa genérica para la PRÓXIMA vez que alguien deje un rojo
+documentado a propósito — pero dejó de ser urgente para el estado actual de `main`. Queda como decisión
+de JP: mergearlo igual (recomendado, barato, ya probado) o cerrarlo sin mergear.
+
+**🔴 Colisión de numeración, a resolver EN EL MOMENTO de mergear PR #1**: ese PR trae su propia entrada
+de HANDOFF, también numerada **"(131)"** (tiene sentido — se escribió cuando (131) era el número libre,
+antes de que Bloque 1 tomara ese mismo número en `main`). Hoy en `main`, (131) es Bloque 1 y (132) es
+esta entrada — así que cuando PR #1 se mergee, su entrada tiene que renumerarse a **(133)** antes de
+resolver el conflicto de merge en `HANDOFF.md` (va a haber conflicto de todos modos, porque las dos
+ramas insertan en el mismo punto del archivo — es el momento natural para corregir el número).
+
+**Recomendaciones de `devops` de esa tarea, ninguna aplicada todavía** (JP pidió no aplicarlas sin
+confirmación explícita, dado que cambian el flujo de trabajo diario):
+- Branch protection sobre el check ya partido ("Tests (gate bloqueante)"), no sobre el step de D-24.
+- Evaluar pasar de "push directo a main" a "PR obligatorio" — `devops` opinó que conviene, pero es
+  decisión de JP, no de esta sesión.
+
+---
+
+### B. Bloque 1 — hallazgo de seguridad D-24, CERRADO Y MERGEADO
+
+Ver **HANDOFF (131)** para el detalle completo (la convocatoria, el desacuerdo real entre `dba-data` y
+`arquitecto-software` resuelto por verificación empírica, el diseño del trigger genérico, los dos bugs
+propios encontrados al escribir los tests). Resumen de una línea: migración `0028` aplicada a local y
+**pusheada a `main` en `fe0afd8`**, `grants-conjunto-cerrado.test.ts` 20/20, `mutaciones-0028-...test.ts`
+16/16 (archivo nuevo), cero regresión en `mutaciones-0027.test.ts`.
+
+**Bloque 2** (backfill de `documento_ingerido`, bloqueado por B.7/B.8 de `10-deuda-declarada.md`) y
+**Bloque 3** (ROKA, adaptador de plan de cuentas) de la tarea original de hoy: **sin empezar**, a
+propósito — JP pidió revisar Bloque 1 antes de arrancar cualquiera de los otros dos.
+
+---
+
+### C. El incidente de infraestructura de hoy, y las lecciones operativas que vale la pena llevarse
+
+Ninguno de estos tres puntos es específico de Bloque 1 ni de Capa D — son hallazgos sobre cómo se
+trabaja con worktrees en este repo, y probablemente vuelvan a aparecer si no quedan escritos acá:
+
+1. **`C:\Proyectos_Desa\sistema-contable` quedó con `core.bare=true`** durante esta sesión — probablemente
+   efecto colateral de tener varios `EnterWorktree` activos al mismo tiempo (4 worktrees vinculados
+   encontrados: 2 de esta sesión, 2 restos abandonados de hace 13-14 días — `qa-mutacion-0017`,
+   `qa-mutacion-r10`, ya con su propio commit de cierre, confirmados sin uso por JP). Mientras el repo
+   principal es bare, ningún comando que necesite un working tree (`git status`, `git pull`, `git commit`)
+   funciona ahí — el error es `fatal: this operation must be run in a work tree`, y NO avisa que la causa
+   es `core.bare`. **Diagnóstico rápido para la próxima vez**: `git worktree list` — si el repo principal
+   aparece marcado `(bare)`, es esto. Arreglo: `git config core.bare false` (JP lo autorizó explícito
+   después de confirmar que no había otra sesión usando los worktrees viejos).
+2. **Un worktree aislado (sin `privado/`, sin `.env` propio) puede dar falsos rojos en tests que asumen un
+   entorno completo** — pasó con `tools/barrido-credenciales.test.ts` (2/19 rojo en el worktree, 19/19
+   verde en el checkout principal, dos veces). Uno de los dos falsos rojos (`valoresVivos` en 0) es
+   coherente con la falta de `.env`; el otro (`archivosTrackeados()` contra `PERMITIDOS`) quedó sin
+   mecanismo identificado en el código — no bloqueante, señalado por si reaparece.
+3. **Al aplicar una migración en un worktree, el pre-commit hook (que corre la suite completa) puede dejar
+   el índice de git corrupto si un test que hace mutación de archivos (`.gitignore`, etc.) falla a mitad
+   de camino** — pasó una vez en el worktree de Bloque 1 (`git status` mostraba los ~450 archivos del
+   repo como borrados-y-sin-trackear a la vez). Nada se perdió (verificado con `ls -la` antes de tocar
+   nada) y se arregló con un `git reset` simple (reconstruye el índice desde `HEAD` sin tocar el working
+   tree) — pero vale la pena saber que el síntoma es aparatoso y no es un `rm -rf` real.
+4. **Detalle técnico chico, para quien escriba un script de reemplazo de texto contra archivos de este
+   repo**: son CRLF, no LF. Un script Node que arma el string viejo/nuevo con template literals normales
+   (LF) nunca va a encontrar el match contra el archivo real leído con `readFileSync(..., 'utf8')` — hay
+   que normalizar (`.replace(/\r\n/g, '\n')` al leer, `.replace(/\n/g, '\r\n')` al escribir) o el
+   reemplazo falla en silencio con "0 veces encontrado".
+
+---
+
+### D. Qué queda realmente pendiente, en una lista
+
+- [ ] **Decidir PR #1**: mergear (recomendado, ya no urgente pero sigue siendo buena defensa) o cerrar sin
+  mergear. Si se mergea: **renumerar su entrada de HANDOFF de (131) a (133)** antes de resolver el
+  conflicto de merge.
+- [ ] Branch protection sobre el check partido de CI — no aplicado, pendiente de decisión de JP.
+- [ ] Evaluar push-directo-a-main vs. PR-obligatorio como flujo de trabajo — no aplicado, pendiente de
+  decisión de JP.
+- [ ] **Bloque 2**: backfill de `documento_ingerido` — bloqueado por B.7 (semántica de período
+  multi-cuenta) y ahora también por B.8 (`uq_pendiente_cierre_natural` sin predicado parcial), ambos en
+  `docs/diseno/10-deuda-declarada.md`. Sin empezar.
+- [ ] **Bloque 3**: adaptador de plan de cuentas de ROKA. Sin empezar, incluye la ambigüedad de las 4
+  cuentas de socio contra `padron_socio` que hay que resolver ANTES de correr el parser (ver el prompt
+  original de esta tarea, no repetido acá).
+- [ ] La batería `0028-b` de `qa-automation` (~18-24 casos adicionales de mutación, listados en el
+  docblock de `mutaciones-0028-inmutabilidad-post-terminal.test.ts` como `TODO`) — no crítica, ninguno
+  de los casos deferidos reproduce un vector nuevo no cubierto por los 16 que sí entraron.
+
+---
 ## 2026-08-28 (131) — Bloque 1 CERRADO: hallazgo bloqueante de D-24 (HANDOFF 130) resuelto. Migración `0028`: grant acotado por columna en `cierre_cliente_periodo`/`asiento_propuesto` + trigger genérico `app.exigir_inmutabilidad_post_terminal()`, reusado tal cual en `pendiente_cierre` (cierra también su hallazgo secundario). `grants-conjunto-cerrado.test.ts`: 20/20 verde (era 12 rojo). `mutaciones-0027.test.ts`: 10/10, sin regresión. `mutaciones-0028-inmutabilidad-post-terminal.test.ts` (archivo nuevo): 16/16. Desacuerdo técnico real entre `dba-data` y `arquitecto-software`, resuelto por verificación empírica contra Postgres real, no por autoridad.
 
 **Herramienta:** Claude Code. Modo plan obligatorio (CLAUDE.md §3.2: toca RLS, grants y la migración
