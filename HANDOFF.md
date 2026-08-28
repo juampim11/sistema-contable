@@ -6,6 +6,126 @@
 
 ---
 
+## 2026-08-28 (131) — Bloque 1 CERRADO: hallazgo bloqueante de D-24 (HANDOFF 130) resuelto. Migración `0028`: grant acotado por columna en `cierre_cliente_periodo`/`asiento_propuesto` + trigger genérico `app.exigir_inmutabilidad_post_terminal()`, reusado tal cual en `pendiente_cierre` (cierra también su hallazgo secundario). `grants-conjunto-cerrado.test.ts`: 20/20 verde (era 12 rojo). `mutaciones-0027.test.ts`: 10/10, sin regresión. `mutaciones-0028-inmutabilidad-post-terminal.test.ts` (archivo nuevo): 16/16. Desacuerdo técnico real entre `dba-data` y `arquitecto-software`, resuelto por verificación empírica contra Postgres real, no por autoridad.
+
+**Herramienta:** Claude Code. Modo plan obligatorio (CLAUDE.md §3.2: toca RLS, grants y la migración
+0027 ya aplicada). Convocatoria real y completa: `arquitecto-software` + `dba-data` + `security-engineer`
+(las tres pedidas por JP) + `seguridad-datos-financieros` + `qa-automation` (matriz §3.1, obligatorias
+para migración/RLS y para una regla verificable nueva).
+
+### 1. El desacuerdo, y cómo se resolvió
+
+Los tres agentes convocados coincidieron en que acotar el grant por columna (mismo idioma que el resto
+de `0027`) es necesario pero no alcanza solo: `confirmado_por`/`confirmado_en` tienen que seguir siendo
+grantables (son la transición legítima), y quedan atacables sin una segunda capa.
+
+Ahí `dba-data` y `arquitecto-software` discreparon en serio: `dba-data` propuso cerrar el resto con un
+`USING` de RLS más estricto en `cierre_periodo_upd_cierre` (sin trigger nuevo). `arquitecto-software`
+objetó con el mecanismo exacto de Postgres: ya existe una policy `FOR SELECT` con visibilidad total del
+tenant, que por sí sola garantiza que la fila es "visible" para el `UPDATE` sin importar el `USING` de
+las policies de `UPDATE` — así que un `USING` más estricto en una sola policy no cierra nada mientras
+cualquier otra policy permisiva siga sin restricción.
+
+**Se verificó empíricamente, no se resolvió por autoridad**: transacciones de prueba contra Postgres
+local (rollback siempre, cero rastro persistente) reproduciendo la forma exacta de las policies reales.
+Con el fix de `dba-data`: el ataque PASÓ (`UPDATE 1`, la columna se reescribió). Con un trigger
+`BEFORE UPDATE` (sin `OF <columna>`, invoker, sin `SECURITY DEFINER`): el ataque quedó bloqueado y la
+transición legítima siguió funcionando. `arquitecto-software` tenía razón.
+
+Ambigüedad adicional resuelta con un seguimiento puntual a `arquitecto-software`: la transición legítima
+de supersesión escribe DOS columnas a la vez (estado→`'superseded'` Y el puntero, juntos) — no solo el
+puntero, como decía la primera versión del dictamen. Evidencia: `documento_ingerido` es la única tabla
+de `0027` que resuelve supersesión con SOLO el puntero, y lo dice explícito ("no hay un 'estado' que
+restringir por rol acá") — si `asiento_estado`/`pendiente_estado` nunca fueran a valer `'superseded'` en
+la práctica, ese valor del `CHECK` sería vocabulario muerto sin árbitro real.
+
+### 2. Alcance ampliado por JP durante el plan
+
+`arquitecto-software` y `dba-data` encontraron, cada uno por su cuenta, que `pendiente_cierre_upd_
+dispensa` tiene la misma forma de bug (sin restricción de valor). JP pidió incluirlo en el mismo
+Bloque 1, con el pedido explícito de que el mecanismo sea GENÉRICO y se aplique tal cual a esta tercera
+tabla, no una variante puntual — como forma de confirmar que el diseño generaliza. `seguridad-datos-
+financieros` sumó dos correcciones antes de escribir el `.sql`: el trigger nunca interpola valores de
+`old`/`new` en el mensaje de excepción (`cierre_estado` es N2, un mensaje con su valor filtraría lo que
+esa clasificación protege), y faltaba `'superseded'` en la lista de terminales de `asiento_propuesto`
+(sin eso, un asiento superseded podía revivirse a `propuesto` sin rastro).
+
+### 3. La migración — `0028_inmutabilidad_post_terminal_cierre.sql`
+
+Grant acotado (`cierre_cliente_periodo`: `cierre_estado, confirmado_en, confirmado_por`;
+`asiento_propuesto`: `asiento_estado, superseded_by_id`; `pendiente_cierre` sin cambio, ya estaba
+acotado desde `0027`) + una única función trigger genérica, parametrizada vía `TG_ARGV`, aplicada con
+argumentos distintos en las tres tablas. Sin columna de supersesión en `cierre_cliente_periodo` (D-6,
+`23-arquitectura-cierre-mensual.md` §2.4: "máquina de estados + `cierre_transicion` append-only — no se
+supersede", a diferencia de las otras dos, que sí están en la fila "Supersesión" de esa misma sección).
+Comentario del trigger cita D-6 explícito, y declara a propósito que "reabrir un período confirmado"
+(línea 612 de `23`) es capacidad prevista para el futuro, no implementada hoy.
+
+Ningún cambio a `0027_cierre_mensual.sql` (nunca se edita una migración aplicada) ni al trigger existente
+del gate de D-24.
+
+### 4. Verificación — corrida real, con dos bugs propios encontrados y corregidos en el camino
+
+`grants-conjunto-cerrado.test.ts`: **20/20 verde** (era 12/20 rojo documentado). `mutaciones-0027.test.ts`:
+**10/10**, sin regresión. `mutaciones-0028-inmutabilidad-post-terminal.test.ts` (archivo nuevo, diseño de
+`qa-automation`): **16/16**, incluidas 4 mutaciones que pasan porque demuestran correctamente que el
+código defectuoso deja pasar el ataque.
+
+Al escribir y correr ese archivo aparecieron dos hallazgos reales, ninguno del diseño del trigger:
+
+1. La mutación más importante ("¿el chequeo de 'ningún otro campo cambió' hace falta de verdad?") no se
+   podía demostrar en `asiento_propuesto`: esa tabla solo tiene DOS columnas grantables
+   (`asiento_estado`, `superseded_by_id`), así que no hay una tercera columna para "colar" — el grant
+   acotado ya cierra ese vector antes de que el trigger tenga que evaluar nada. Se movió la mutación a
+   `pendiente_cierre`, que sí tiene columnas de sobra (`resuelto_por`/`resuelto_en`/`resolucion_id`) —
+   ahí el chequeo del trigger es la única defensa real. Consecuencia declarada explícita en el docblock
+   del archivo (pedido de JP): `trg_asiento_propuesto_inmutable` hoy no tiene un ataque real que lo
+   ejercite como última línea; si el día de mañana se agrega una columna grantable nueva a esa tabla,
+   hace falta su propio test de ataque en ese momento, no asumir cobertura por analogía.
+2. El test legítimo de supersesión de `pendiente_cierre` chocó con un residuo real que
+   `arquitecto-software` ya había señalado en su dictamen: `uq_pendiente_cierre_natural` no tiene
+   predicado parcial (a diferencia de lo que asumía el boceto original de `23` §2.5), así que una fila
+   de reproceso no puede compartir la clave natural con la que reemplaza. Estaba señalado solo en la
+   conversación de convocatoria, no en ningún documento — **agregado ahora como `docs/diseno/
+   10-deuda-declarada.md` B.8**, con referencia a este bloque, para que no se pierda otra vez.
+
+### 5. Qué NO se tocó
+
+`0027_cierre_mensual.sql`, el adaptador de plan de cuentas (`e67a256`), y ningún archivo de Bloque 2
+(backfill de `documento_ingerido`) ni Bloque 3 (ROKA) — JP pidió revisar este bloque antes de arrancar
+cualquiera de los otros dos, todavía sin empezar.
+
+### 6. Hallazgo de proceso aparte, de la sesión anterior — sin resolver acá
+
+`5518049` (regenerar la allowlist del barrido de fuga, sesión de CI del 2026-08-27) existe en el
+checkout local de JP pero **no está pusheado a `origin/main`** (confirmado con `git merge-base
+--is-ancestor`). No es un commit perdido — solo no llegó al remoto. Señalado, no resuelto acá.
+
+### 7. Nota corta, sin urgencia: `tools/barrido-credenciales.test.ts` en un git worktree
+
+Al intentar cerrar este bloque desde un worktree aislado, `tools/barrido-credenciales.test.ts` dio 2
+tests rojos reproducibles ahí (`valoresVivos` en 0, y `archivosTrackeados()` devolviendo una lista
+distinta de la esperada contra `PERMITIDOS`) que **no reproducen en un checkout normal** (19/19 verde,
+confirmado dos veces). `valoresVivos` es correcto para un worktree sin `.env` propio — el test asume
+implícitamente un entorno con `.env` real, que no es el caso en un worktree limpio. La segunda falla
+quedó sin mecanismo identificado en el código (`repoSintetico()` sí aísla bien, usa un tmpdir propio) —
+no bloqueó nada real, se cerró aplicando los cambios desde el checkout principal en su lugar. Sin
+convocatoria, sin urgencia — dejar señalado por si vuelve a aparecer.
+
+### 8. Nota de proceso: el repo principal quedó `core.bare=true` durante esta tarea
+
+Al cerrar Bloque 1 se encontró que `C:\Proyectos_Desa\sistema-contable` había quedado configurado como
+repo bare (`core.bare=true` en `.git/config`), probablemente efecto colateral de los `EnterWorktree`
+usados en esta sesión (había 4 worktrees vinculados: 2 de esta tarea, y 2 restos de hace 13-14 días —
+`qa-mutacion-0017`, `qa-mutacion-r10` — ya confirmados sin uso). JP confirmó que no había otra sesión
+activa, autorizó `core.bare=false` para devolverlo a working tree normal, y se eliminaron los 4
+worktrees + sus 4 ramas locales (`git worktree remove --force` + `git branch -D` + `git worktree
+prune`) — `git worktree list` quedó con un solo renglón, el repo principal. El PR #1 (split de CI,
+rama `fix/ci-split-tests-d24`) no se vio afectado: vive en `origin`, independiente de los worktrees
+locales borrados.
+
+---
+
 ## 2026-08-27 (130) — Deuda de (129) cerrada PARCIAL, a propósito: `aislamiento-modulo-1.test.ts` (4 tests) declarado y VERDE; `grants-conjunto-cerrado.test.ts` queda con 12/20 rojo DOCUMENTADO — `security-engineer` encontró un hallazgo de seguridad BLOQUEANTE (grant de UPDATE a nivel tabla en `cierre_cliente_periodo`/`asiento_propuesto` permite reescribir campos post-confirmación sin pasar por el gate de D-24 y sin dejar rastro) y JP frenó la declaración de esas dos tablas. Suite completa: 2003/2022 verde (de 1999/2022), mismos 12 rojos documentados, cero regresión en otro archivo. Hallazgo de proceso aparte, urgente: 13 de los últimos 15 pushes a `main` con CI en rojo — tarea separada, prompt entregado a JP, no resuelta acá.
 
 **Herramienta:** Claude Code. Modo plan (harness, por tocar el mecanismo de aislamiento y el conjunto

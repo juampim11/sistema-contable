@@ -1,23 +1,19 @@
 /**
- * 🔴🔴 **ESTADO ACTUAL: 12 DE 20 TESTS DE ESTE ARCHIVO EN ROJO, A PROPÓSITO — NO ES UN BUG DEL TEST.**
+ * **CERRADO (migración `0028`).** `cierre_cliente_periodo` y `asiento_propuesto` tenían un
+ * `grant select, insert, update` a nivel TABLA (`0027_cierre_mensual.sql:372,784`) que
+ * `security-engineer` marcó como hallazgo de seguridad BLOQUEANTE (HANDOFF 130): permitía reescribir
+ * `confirmado_por`/`confirmado_en`/`periodo_desde`/`periodo_hasta`/`fecha_imputacion` sobre un
+ * cierre/asiento YA confirmado, sin pasar por el gate de D-24 y sin dejar rastro.
  *
- * `cierre_cliente_periodo` y `asiento_propuesto` (`0027_cierre_mensual.sql:372,784`) tienen un
- * `grant select, insert, update` a nivel TABLA que `security-engineer` marcó como hallazgo de
- * seguridad BLOQUEANTE (2026-08-27, convocatoria de HANDOFF 130): permite reescribir
- * `confirmado_por`/`confirmado_en`/`fecha_imputacion` sobre un cierre/asiento YA confirmado, sin
- * pasar por el gate de D-24 y sin dejar rastro. Detalle completo, con las líneas exactas del `.sql`
- * y la policy: buscar "HALLAZGO BLOQUEANTE" más abajo, junto a `GRANTS_A_NIVEL_TABLA`.
- *
- * Por eso esas dos tablas NO están declaradas en `GRANTS_POR_COLUMNA`/`GRANTS_A_NIVEL_TABLA` — y
- * como este archivo compara el ESQUEMA COMPLETO (no test por tabla), esas dos tablas sin declarar
- * contaminan la comparación de casi todos los `it()` de este archivo, no solo los que hablan de
- * ellas. **Es la señal correcta: "hay algo real sin resolver" es preferible a fingir que no lo hay**
- * ajustando cada mutación para que tolere el hueco — eso invertiría el propósito de una prueba de
- * mutación (JP, 2026-08-27, al decidir no tocar los asserts).
- *
- * Esto se resuelve — y este bloque se borra — cuando la convocatoria de seguimiento
- * (`arquitecto-software` + `dba-data` + `security-engineer`) cierre el hallazgo y las dos tablas se
- * declaren acá como las otras nueve. Hasta entonces, ver este archivo en rojo es correcto.
+ * Convocatoria real (`arquitecto-software` + `dba-data` + `security-engineer`, más
+ * `seguridad-datos-financieros` + `qa-automation` sobre el diseño concreto) encontró un desacuerdo
+ * técnico real entre `dba-data` (proponía cerrarlo solo con RLS) y `arquitecto-software` (RLS sola no
+ * alcanza porque la policy `FOR SELECT` da visibilidad total, independiente del `USING` de las
+ * policies de `UPDATE`) — resuelto por verificación empírica contra Postgres real, no por autoridad:
+ * `arquitecto-software` tenía razón. `0028` acota el grant a columnas explícitas y agrega un trigger
+ * genérico `app.exigir_inmutabilidad_post_terminal()`, reusado tal cual en `pendiente_cierre` (cierra
+ * también el hallazgo secundario no bloqueante de esa tabla). Detalle completo: HANDOFF (131 en
+ * adelante), `0028_inmutabilidad_post_terminal_cierre.sql`.
  */
 
 /**
@@ -287,8 +283,6 @@ const GRANTS_POR_COLUMNA: readonly {
   // ningún motivo de `conJob` la toca). Verificado contra `0027_cierre_mensual.sql` línea por línea,
   // sin discrepancia, por dos agentes independientes (`dba-data` + `security-engineer`).
   //
-  // 🔴 `cierre_cliente_periodo` y `asiento_propuesto` NO están acá — ver el hallazgo bloqueante justo
-  // debajo de este bloque, antes de `GRANTS_A_NIVEL_TABLA`.
   { tabla: 'cuenta', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'creada_en', 'id'] },
   { tabla: 'cuenta', rol: 'app_request', privilegio: 'SELECT', columnas: ['cliente_id', 'creada_en', 'id'] },
   { tabla: 'cuenta_atributo', rol: 'app_request', privilegio: 'INSERT', columnas: ['activa', 'cliente_id', 'codigo', 'creada_en', 'cuenta_id', 'cuenta_padre_id', 'denominacion', 'id', 'nivel', 'padron_socio_id', 'respaldo', 'rol_funcional', 'vigente_desde', 'vigente_hasta'] },
@@ -296,6 +290,16 @@ const GRANTS_POR_COLUMNA: readonly {
   // Sólo `activa`/`vigente_hasta`: dar de baja o reabrir una cuenta es reversible; cambiarle el
   // código, la denominación, el padre o el rol_funcional es otra cosa (D-25, cuenta_particular_socio).
   { tabla: 'cuenta_atributo', rol: 'app_request', privilegio: 'UPDATE', columnas: ['activa', 'vigente_hasta'] },
+  // `0028` cierra el hallazgo bloqueante (HANDOFF 130): grant de UPDATE acotado a las tres columnas
+  // que la transición legítima escribe. `periodo_desde`/`periodo_hasta`/`tipo_periodo`/
+  // `cierre_anterior_id` NUNCA fueron re-otorgadas — son identidad fijada al INSERT, sin camino
+  // legítimo que las reescriba jamás. La inmutabilidad post-terminal de `cierre_estado`/
+  // `confirmado_en`/`confirmado_por` la cierra el trigger `trg_cierre_periodo_inmutable`
+  // (`app.exigir_inmutabilidad_post_terminal()`, `0028`), no una policy — verificado empíricamente
+  // que un `USING` de RLS más estricto NO alcanza acá (ver comentario de la migración).
+  { tabla: 'cierre_cliente_periodo', rol: 'app_request', privilegio: 'INSERT', columnas: ['cierre_anterior_id', 'cierre_estado', 'cliente_id', 'confirmado_en', 'confirmado_por', 'creado_en', 'id', 'periodo_desde', 'periodo_hasta', 'tipo_periodo'] },
+  { tabla: 'cierre_cliente_periodo', rol: 'app_request', privilegio: 'SELECT', columnas: ['cierre_anterior_id', 'cierre_estado', 'cliente_id', 'confirmado_en', 'confirmado_por', 'creado_en', 'id', 'periodo_desde', 'periodo_hasta', 'tipo_periodo'] },
+  { tabla: 'cierre_cliente_periodo', rol: 'app_request', privilegio: 'UPDATE', columnas: ['cierre_estado', 'confirmado_en', 'confirmado_por'] },
   { tabla: 'cierre_transicion', rol: 'app_request', privilegio: 'INSERT', columnas: ['cierre_id', 'cliente_id', 'estado_desde', 'estado_hasta', 'hecho_por', 'hecho_via', 'id', 'motivo', 'ocurrido_en'] },
   { tabla: 'cierre_transicion', rol: 'app_request', privilegio: 'SELECT', columnas: ['cierre_id', 'cliente_id', 'estado_desde', 'estado_hasta', 'hecho_por', 'hecho_via', 'id', 'motivo', 'ocurrido_en'] },
   { tabla: 'documento_ingerido', rol: 'app_request', privilegio: 'INSERT', columnas: ['banco_codigo', 'cliente_id', 'cobertura', 'creado_en', 'id', 'ingerido_en', 'objeto_almacenamiento', 'periodo_desde', 'periodo_hasta', 'superseded_by_id', 'tipo_documento'] },
@@ -309,14 +313,20 @@ const GRANTS_POR_COLUMNA: readonly {
   { tabla: 'fuente_cierre', rol: 'app_request', privilegio: 'UPDATE', columnas: ['estado_cuadratura', 'superseded_by_id'] },
   { tabla: 'pendiente_cierre', rol: 'app_request', privilegio: 'INSERT', columnas: ['cierre_id', 'cliente_id', 'creado_en', 'expectativa_id', 'fuente_cierre_id', 'id', 'motivo_codigo', 'pendiente_estado', 'referencia_origen', 'resolucion_id', 'resuelto_en', 'resuelto_por', 'superseded_by_id'] },
   { tabla: 'pendiente_cierre', rol: 'app_request', privilegio: 'SELECT', columnas: ['cierre_id', 'cliente_id', 'creado_en', 'expectativa_id', 'fuente_cierre_id', 'id', 'motivo_codigo', 'pendiente_estado', 'referencia_origen', 'resolucion_id', 'resuelto_en', 'resuelto_por', 'superseded_by_id'] },
-  // ⚠️ Hallazgo secundario de `security-engineer` (2026-08-27, no bloqueante): `resuelto_por` /
-  // `resuelto_en` / `resolucion_id` son reescribibles mientras `pendiente_estado <> 'dispensado'` —
-  // incluso con el pendiente ya en `resuelto`. El grant en sí es por columna (deliberado, no de
-  // tabla), así que se declara tal cual está; la convocatoria de seguimiento (ver HANDOFF 130) decide
-  // si esto necesita una policy más estricta.
+  // El grant por columna no cambia (ya estaba acotado desde `0027`) — lo que cerró el hallazgo
+  // secundario, no bloqueante, de `security-engineer` (HANDOFF 130: `resuelto_por`/`resuelto_en`/
+  // `resolucion_id` reescribibles con el pendiente ya `resuelto`) fue el mismo trigger genérico de
+  // `0028` (`trg_pendiente_cierre_inmutable`), reusado tal cual sobre esta tabla sin variante puntual.
   { tabla: 'pendiente_cierre', rol: 'app_request', privilegio: 'UPDATE', columnas: ['pendiente_estado', 'resolucion_id', 'resuelto_en', 'resuelto_por', 'superseded_by_id'] },
   { tabla: 'pendiente_dispensa', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'dispensado_en', 'dispensado_por', 'id', 'motivo', 'pendiente_cierre_id'] },
   { tabla: 'pendiente_dispensa', rol: 'app_request', privilegio: 'SELECT', columnas: ['cliente_id', 'dispensado_en', 'dispensado_por', 'id', 'motivo', 'pendiente_cierre_id'] },
+  // `0028`: mismo patrón que `cierre_cliente_periodo` arriba. `tipo`/`fecha_imputacion`/`cierre_id`
+  // NUNCA fueron re-otorgadas — identidad fijada al INSERT. `asiento_estado`/`superseded_by_id` siguen
+  // grantables porque son la transición legítima (confirmar, superseder) — la inmutabilidad post-
+  // terminal la cierra `trg_asiento_propuesto_inmutable`, no la policy.
+  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
+  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
+  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'UPDATE', columnas: ['asiento_estado', 'superseded_by_id'] },
   { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
   { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
   // La vista `asiento_propuesto_totales` (`security_invoker=true`, D-16 de HANDOFF 128): sin este
@@ -324,41 +334,6 @@ const GRANTS_POR_COLUMNA: readonly {
   // un agregado, no una tabla).
   { tabla: 'asiento_propuesto_totales', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_id', 'cliente_id', 'total_debe', 'total_haber'] },
 ];
-
-/**
- * 🔴 HALLAZGO BLOQUEANTE de `security-engineer` (2026-08-27, convocatoria de HANDOFF 130) — SIN
- * RESOLVER, tarea aparte pendiente.
- *
- * `cierre_cliente_periodo` y `asiento_propuesto` (`0027_cierre_mensual.sql:372,784`) tienen
- * `grant select, insert, update` A NIVEL TABLA, sin acotar por columna — a diferencia de las otras
- * nueve tablas de la misma migración, que sí acotan `UPDATE` a columnas explícitas con su motivo
- * escrito. El trigger del gate de D-24 es `BEFORE UPDATE OF cierre_estado`: sólo dispara si
- * `cierre_estado` está en el `SET` del UPDATE, y la policy de escritura
- * (`cierre_periodo_upd_cierre`) sólo exige el rol, no restringe por el VALOR de `cierre_estado`.
- * Combinado con el grant de tabla completa: un `socio`/`contador` puede, sobre un cierre YA
- * `confirmado`, reescribir `confirmado_por`/`confirmado_en`/`periodo_desde`/`periodo_hasta` sin
- * pasar por el gate y sin dejar rastro (a diferencia de una transición de estado real, que sí queda
- * en `cierre_transicion`). Mismo patrón en `asiento_propuesto`: se puede reescribir `fecha_imputacion`
- * de un asiento ya confirmado.
- *
- * Por eso estas dos NO se declaran en `GRANTS_A_NIVEL_TABLA` como si fuera una decisión ya tomada —
- * el propio comentario de esa lista (más abajo) exige que un renglón de `UPDATE`/`INSERT` venga con
- * su motivo escrito porque es una decisión de seguridad, y ese motivo hoy no existe para estas dos.
- *
- * 🔴 **Esto NO se queda acotado a un par de `it()` puntuales.** Casi todos los `it()` de este archivo
- * comparan el ESQUEMA COMPLETO contra lo declarado (`discrepancias(b)` o `toEqual(DECLARADO_*)`), así
- * que estas dos tablas sin declarar contaminan la comparación de CUALQUIER test que la haga — medido:
- * 12 de los 20 `it()` de este archivo (L1, L2, L3, M2, M3, M4, M5, M6, M9, M10, M12, M13) quedan en
- * rojo por este motivo, no porque cada uno "hable" de estas tablas. Es el costo correcto de un barrido
- * de esquema completo (mismo diseño que el resto del archivo, R39c): no hay forma de dejarlo "sólo
- * parcialmente rojo" sin enseñarle a la prueba de mutación a tolerar un hueco sin resolver.
- *
- * Convocatoria de seguimiento pendiente: `arquitecto-software` + `dba-data` + `security-engineer`,
- * para decidir entre (a) achicar el grant a columnas explícitas + una policy que excluya el estado
- * `confirmado`/`anulado` de cambios que no sean la transición misma, o (b) un trigger adicional que
- * rechace cualquier UPDATE sobre una fila ya confirmada salvo la transición legítima. Detalle
- * completo: HANDOFF.md (130).
- */
 
 /**
  * Privilegios que **NO se pueden expresar por columna** y que por lo tanto
@@ -405,13 +380,17 @@ const GRANTS_A_NIVEL_TABLA: readonly string[] = [
   'acceso_auditoria|app_request|SELECT',
   'anexo_extracto|app_request|INSERT',
   'anexo_extracto|app_request|SELECT',
-  // Capa D (0027) — ver el bloque de arriba: cierre_cliente_periodo y asiento_propuesto NO están acá
-  // a propósito (hallazgo bloqueante de security-engineer, HANDOFF 130).
+  // `0028`: SELECT/INSERT siguen sin acotar por columna (nunca fueron el problema); solo UPDATE se
+  // acotó — por eso no aparece acá, ver GRANTS_POR_COLUMNA.
+  'asiento_propuesto|app_request|INSERT',
+  'asiento_propuesto|app_request|SELECT',
   'asiento_propuesto_renglon|app_request|INSERT',
   'asiento_propuesto_renglon|app_request|SELECT',
   'asiento_propuesto_totales|app_request|SELECT',
   'banco|app_job|SELECT',
   'banco|app_request|SELECT',
+  'cierre_cliente_periodo|app_request|INSERT',
+  'cierre_cliente_periodo|app_request|SELECT',
   'cierre_transicion|app_request|INSERT',
   'cierre_transicion|app_request|SELECT',
   'cotizacion_bna|app_request|SELECT',
