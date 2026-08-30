@@ -159,6 +159,27 @@ esquema puro.
     con CI en rojo (incluidos `9aacbe9` y `e67a256`), sin que nada bloquee seguir commiteando —
     precedente ya documentado sin cerrar (`HANDOFF.md:~10249`). Detalle completo de todo lo de arriba:
     `HANDOFF.md` (130).
+- 🟠 **`.githooks/pre-commit` corrompe el índice de git en un worktree — mecanismo YA DIAGNOSTICADO,
+  dueño sugerido: `devops` o `qa-automation` (quien sea responsable del arnés de test).** Síntoma ya
+  descrito sin causa en `HANDOFF.md` (2026-08-28, entrada 132, §C.3): al commitear desde un worktree,
+  `git status` pasa a mostrar los ~450 archivos del repo como borrados-y-sin-trackear a la vez, de forma
+  no destructiva (el working tree queda intacto; `git reset` reconstruye el índice sin tocar nada).
+  Reproducido 2/2 al invocar `git commit` (que dispara el hook), y 0/2 al correr manualmente las mismas
+  dos líneas del hook (`node tools/barrido-fuga.ts` + `vitest run tools/barrido-credenciales.test.ts`)
+  fuera de ese contexto. **Causa raíz encontrada** (`GIT_TRACE=1 git commit`): git exporta
+  `GIT_INDEX_FILE=<worktree>/index` como variable de entorno al invocar el hook — y ese valor se hereda
+  por los procesos `node`/`vitest` hijos. Si `repoSintetico()` (`tools/barrido-credenciales.test.ts`),
+  al crear su repo git aislado en un tmpdir propio, no des-setea `GIT_INDEX_FILE`/`GIT_DIR` heredados
+  antes de invocar sus propios comandos `git`, esos comandos —aunque el `cwd` sea el tmpdir— terminan
+  operando sobre el índice del worktree REAL en vez del sintético, porque la variable de entorno tiene
+  prioridad sobre el descubrimiento por `cwd`. No verificado leyendo el código de `repoSintetico()` en
+  esta entrada — es la hipótesis que explica los cuatro hechos medidos (reproduce solo vía hook, nunca a
+  mano; el working tree nunca se daña; `git reset` alcanza para arreglarlo; el síntoma es "índice
+  completo desalineado", coherente con que un test corrió `git add`/`git rm` contra el índice
+  equivocado). Cierre: confirmar la hipótesis leyendo `repoSintetico()`, y si se confirma, hacer que
+  desetee expĺicitamente `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE`/`GIT_COMMON_DIR` (o pase
+  `--git-dir`/`--work-tree` explícitos) antes de cualquier `git` propio — para que un commit real desde
+  un worktree no dependa de que quien lo corre sepa hacer `git reset` después.
 - El resto de las secciones de este documento.
 
 ---

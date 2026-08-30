@@ -230,7 +230,10 @@ que convierte *"141 líneas sin interpretar"* en *"seis bloques conocidos"*.
    **la spec está mal** y hay que corregirla antes de codear.
 3. **Declará las capacidades** del banco con su sección de referencia: `traeSignoEnElImporte`,
    `traeTotalesDeclarados`, `multiCuenta`, `traeConsolidadoPorMoneda`, `traeMovimientosFueraDelPeriodo`. Cada
-   una decide qué controles se pueden exigir.
+   una decide qué controles se pueden exigir. **`multiCuenta` no es "sí" o "no" a mano: se descubre leyendo
+   el documento real, nunca se asume `false` porque el primer archivo de prueba tenía una sola cuenta** — el
+   número de cuentas es un dato del documento, no del banco (regla 4 de `adaptadores/contrato.ts`, con el
+   caso real de BBVA y de Macro/ROKA).
 
 ### Al escribir el adaptador
 

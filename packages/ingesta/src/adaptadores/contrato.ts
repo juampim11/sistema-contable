@@ -28,6 +28,31 @@
  * texto**. Es la diferencia entre "leí 324 de 326 filas y te digo cuáles dos no entendí" y "leí 324 filas",
  * que es el peor modo de falla del módulo: un número plausible que nadie vuelve a mirar.
  *
+ * ### 4. Un adaptador reconoce N cuentas, nunca asume 1 ni una cantidad fija
+ *
+ * El número de cuentas reales que trae un cliente puntual **no es una propiedad del banco, es un dato del
+ * documento**. `CapacidadesAdaptador.multiCuenta` dice si ESE banco publica más de una cuenta por documento;
+ * `SalidaDeAdaptador.cuentas` es **siempre** una lista, para los ocho, sin excepción — ningún adaptador
+ * devuelve "la cuenta", devuelve las que encontró. Y `cuentasDeclaradas` se cuenta desde un **literal
+ * distinto** del que se usó para sectorizar (nunca contra las propias secciones que el adaptador armó):
+ * contarse a sí mismo sería la misma autocertificación que prohíbe la regla 1, aplicada al número de cuentas
+ * en vez de al importe de una fila.
+ *
+ * 🔴 **Por qué está acá y no es hipotético.** BBVA fue el primero en refutar "un documento, una cuenta":
+ * detecta bloques de cuenta antes de extraer movimientos y procesa cada uno que encuentra. Macro lo confirmó
+ * con un documento real de un cliente (ROKA) con **tres** cuentas consolidadas en un solo PDF — si el
+ * adaptador hubiera asumido una, dos de las tres cuentas del cliente habrían desaparecido con el lote en
+ * verde: la cadena de saldos de la cuenta leída cierra igual, y el control de conteo de cuentas es
+ * precisamente el que existe porque una cuenta puede no abrirse nunca sin romper nada más
+ * (`docs/diseno/09-lecciones-aprendidas.md` §4). El patrón se repitió dos veces con el mismo síntoma: **es
+ * una señal, no una excepción**, y por eso pasa de "cómo resultó que se escribió este banco" a regla del
+ * contrato.
+ *
+ * Lo que esto prohíbe en un adaptador nuevo: derivar el número de cuentas de una constante, de un `if`
+ * sobre el nombre del banco, o de "cuántas encontré en el fixture con el que probé". Lo que exige: sectorizar
+ * por una clave del documento (nunca por posición ni por denominación, que se repite entre cuentas —
+ * ver `RE_SECCION` en `macro.ts`) y declarar `multiCuenta` con la sección de la spec que lo respalda.
+ *
  * ## Lo que un adaptador NO hace
  *
  * No clasifica contablemente, no adivina la cuenta contable, no netea, no agrupa y no propone asientos. Eso

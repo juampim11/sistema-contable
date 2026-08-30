@@ -572,6 +572,50 @@ prompt oculto para cualquier otro flujo que sí lo requiera.
 
 ---
 
+### E-7 — FCI (Bracci, ROKA) y tarjeta corporativa (Bracci): descubrimiento de formato, método reforzado
+
+**Por qué es excepción nueva, y no una ampliación de E-1.** Mismo criterio que ya fijó E-2: el documento
+es distinto del extracto de cuenta corriente que cubre E-1 (FCI = posición de fondos; tarjeta corporativa
+= liquidación de la procesadora), y aunque Bracci y ROKA sí son clientes cubiertos por E-1 para sus
+extractos bancarios, **la cobertura de E-1 es por tipo de documento, no por cliente** — no se hereda a un
+tipo de documento nuevo sin su propia excepción (memoria operativa: "no heredar autorización de
+exposición"). Encontrado por `seguridad-datos-financieros`, convocado durante el inventario de Capa D del
+2026-08-28 (`docs/diseno/23-arquitectura-cierre-mensual.md`), al confirmar que ninguna fila de este
+registro cubre estos dos tipos de documento para estos dos clientes.
+
+**Encuadre:** descubrimiento de formato — confirmar si el extractor `fci-galicia` o `fci-santander`
+(ambos preliminares, `packages/ingesta/src/fci-*`) reconoce el layout real de Bracci/ROKA, y si alguno de
+los 3 formatos de liquidación registrados (`cabal_debito`/`visa_credito`/`visa_debito`,
+`packages/ingesta/src/liquidaciones/formatos/`) reconoce la tarjeta corporativa de Bracci. Mismo espíritu
+que E-2: construcción y calibración, no carga a la base — **sin `INSERT`, sin tenant nuevo, sin tocar el
+piloto**.
+
+**Método reforzado** (mismo dictamen que E-2/E-4/E-5, aplicado por `seguridad-datos-financieros` en esta
+convocatoria):
+1. Cero fragmentos de texto real en el contexto de ningún agente, ni enmascarados — solo metadatos
+   (conteo de páginas, `requiereOcr`, cantidad de fondos, movimientos por fondo, `movimientosConfiables`,
+   qué formato de liquidación coincide como categoría/booleano).
+2. Script efímero (`packages/ingesta/scripts/_sondeo-efimero-e7.ts`), mostrado completo en el chat para
+   que JP lo vea antes/junto con su corrida — regla fijada tras el incidente #10 —, corrido por quien
+   conduce (autorizado explícitamente por JP para esta tarea, a diferencia de E-2 donde lo corrió JP en
+   su propia terminal: acá el script en sí nunca imprime texto real, solo conteos/booleanos, así que la
+   garantía la da el script, no quién lo ejecuta). Se borra al cerrar la tarea, nunca se commitea.
+3. Reusa exclusivamente funciones ya auditadas y en producción (`extraerPosicionesFci`,
+   `extraerPosicionesFciSantander`, `extraerConOcrSiHaceFalta`, `resolverAdaptadorDeLiquidacion`) — no
+   escribe ningún parser nuevo ni adivina estructura por su cuenta.
+
+**Sin carga a la base: controles 6-8 de E-1 son no-aplica declarado.** El script no importa
+`packages/data`, no llama `conUsuario`/`conJob`, no hay `INSERT`. Si una tarea futura persiste este
+material (oficializar el adapter de FCI, conectar liquidaciones a `documento_ingerido`), los tres
+controles rigen igual que en E-1, con su propia convocatoria completa (`dba-data` + `security-engineer`
++ `seguridad-datos-financieros`) — sin excepción por venir de esta medición.
+
+**Retención residual, mismo patrón que E-2/incidente #9.** El PDF no genera derivado con TTL propio. Lo
+que puede quedar es la salida del script (conteos/booleanos, no dato en claro) en el transcript local de
+la sesión — pendiente, fuera del repo, a cargo de JP, revisar y borrar al cerrar la sesión.
+
+---
+
 ## Antes de pedir una excepción
 
 Estos tres pasos cierran la mayoría de los casos sin tocar un dato real:
