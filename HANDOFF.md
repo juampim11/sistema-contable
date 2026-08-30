@@ -6,6 +6,84 @@
 
 ---
 
+## 2026-08-29 (134) — Sesión 1 de Capa D (`27-roadmap-capa-d.md`), Bloque 1 CERRADO: B.7 decidido (período de documento multi-cuenta se declara POR CUENTA, no por archivo) + confirmación empírica del bug de `GIT_INDEX_FILE` (133 §2, ya no hipótesis) con un hallazgo nuevo más grave (`archivosTrackeados()`, código de producción, no solo el test). Sin commit propio: bloqueada por ese mismo bug de infra, esta sesión entrega diffs para que JP los aplique desde su checkout principal.
+
+**Herramienta:** Claude Code, sesión de background con worktree aislado (`worktree-capa-d-sesion1`).
+Modo plan por instrucción de JP (4 bloques secuenciales, aprobación explícita antes de cada uno).
+Este cierre corresponde solo a Bloque 1.
+
+> **Nota de numeración**: esta entrada toma el **(134)** que `HANDOFF` (132) había reservado para
+> cuando se mergee `PR #1`. Sigue el mismo patrón que (132) ya describió: cuando `PR #1` se mergee, su
+> entrada (que hoy vive numerada como "(131)" en esa rama) va a chocar con este archivo igual, así que
+> se renumera a **(135)** en ese momento — no antes, no acá.
+
+### 1. B.7 cerrado — convocatoria real a `analista-funcional` + `contador-dominio`
+
+Ambos, por separado, sin disenso: el período de un documento multi-cuenta se declara **por cuenta**,
+no por archivo. Un agregado `MIN`/`MAX` por archivo no puede distinguir "la cuenta USD recién existe
+desde el 15" (apertura real) de "falta la primera quincena del extracto" (documento incompleto) — son
+exactamente las dos lecturas que confunde, y es el caso real de Macro/ROKA (3 cuentas, 1 archivo) que
+motivó el hallazgo original de `dba-data`. Detalle completo, con los dos veredictos íntegros, la
+cuantificación (0 de los 3 lotes del primer backfill son multi-cuenta, así que B.7 no bloquea ese
+backfill trivial) y lo que queda para Bloque 2 (dónde vive el DDL de la granularidad — `fuente_cierre`
+extendida vs. tabla hija nueva, decisión de `dba-data`): `docs/diseno/10-deuda-declarada.md` B.7 y
+`docs/diseno/27-roadmap-capa-d.md`.
+
+Hallazgo adicional de `analista-funcional`, no nombrado en ningún documento anterior: la columna
+`cobertura` de `documento_ingerido` tiene el mismo defecto estructural que `periodo_desde`/`periodo_
+hasta` — un valor por archivo no puede representar "completo para 2 cuentas, parcial para la tercera".
+
+### 2. Bug de `GIT_INDEX_FILE` — confirmado, y más grave de lo que decía `133` §2
+
+Al intentar commitear el cierre de B.7 desde el worktree de esta sesión, el pre-commit hook corrompió
+el índice real dos veces seguidas (mismo síntoma no destructivo de `132` §C.3 — `git reset` lo arregla
+sin tocar el working tree, verificado con `ls -la` antes de tocar nada las dos veces). Se diagnosticó
+en serio, no se reintentó a ciegas:
+
+- **Reproducido el mecanismo exacto**: `tools/barrido-credenciales.test.ts` da 19/19 verde corrido a
+  mano (`npx vitest run`, sin `GIT_INDEX_FILE` en el entorno) y falla 1 a 5 de 19 corrido vía `git
+  commit` real (que sí exporta esa variable al invocar el hook) — la única diferencia entre ambas
+  corridas es esa variable de entorno heredada. Confirma la hipótesis de `133` §2 leyendo el código:
+  `repoSintetico()` (`tools/barrido-credenciales.test.ts:47-60`) invoca `git init`/`git add -f .` sin
+  despojar el `env` heredado, así que esos comandos terminan escribiendo el repo sintético del tmpdir
+  sobre el ÍNDICE REAL del worktree.
+- **Hallazgo NUEVO, más grave**: el mismo patrón está en `archivosTrackeados()`
+  (`tools/barrido-credenciales.ts:157-162`), que es **código de producción** — la función que decide
+  qué archivos escanea el detector de fuga de credenciales real (R37, el mismo del incidente #3), no
+  solo el helper de test. Se probó un fix acotado a `repoSintetico()` (despojar `GIT_INDEX_FILE`/
+  `GIT_DIR`/`GIT_WORK_TREE` del `env` de sus dos `execFileSync`) y **funcionó para esa parte** pero
+  destapó que `archivosTrackeados()` tiene el mismo defecto: bajo el hook, los tests de mutación de R37
+  (los que plantan una credencial de mentira y esperan que el barrido la detecte) empezaron a fallar en
+  **falso NEGATIVO** — exactamente el peor modo de falla de un detector de seguridad, el mismo patrón
+  que ya costó R33/R13/R10 en este repo.
+- **El fix se revirtió explícitamente, sin commitear** (`git checkout -- tools/barrido-credenciales.
+  test.ts`), por decisión de JP: tocar `archivosTrackeados()` es tocar el detector de credenciales de
+  producción, y eso necesita su propia convocatoria a `security-engineer` (no `devops`/`qa-automation`
+  como sugería `133`/la entrada vieja de `10-deuda-declarada.md`) con verificación por mutación — no un
+  parche de paso en una tarea de Capa D. Documentado completo, con el cierre propuesto sin aplicar, en
+  `docs/diseno/10-deuda-declarada.md`, mismo bullet que reemplaza al de `133`.
+
+### 3. Por qué esta sesión no tiene commit propio
+
+El bug de la sección 2 bloquea **cualquier** commit desde **cualquier** worktree de este repo, no solo
+el de esta tarea — y arreglarlo de fondo excede el mandato de Bloque 1. Con JP: se acordó **no** forzar
+un commit (ni con `--no-verify`, ni aplicando el fix acotado sin su propia convocatoria) y en cambio
+entregar el diff exacto de los archivos de documentación para que JP lo aplique desde su checkout
+principal, donde el hook corre limpio (tiene `.env` real y no es un worktree). Diffs de `docs/diseno/
+10-deuda-declarada.md`, `docs/diseno/27-roadmap-capa-d.md` y esta misma entrada de `HANDOFF.md`,
+entregados en el chat de la sesión, no en un archivo aparte.
+
+### 4. Qué sigue
+
+- [ ] JP aplica los tres diffs desde su checkout principal.
+- [ ] Bloque 2 (B.8 + D-18 + D-19), **sin empezar**, esperando aprobación explícita de JP —
+  no arranca solo porque Bloque 1 cerró.
+- [ ] El bug de `GIT_INDEX_FILE`/`archivosTrackeados()` queda declarado en `10-deuda-declarada.md`,
+  dueño `security-engineer`, sin convocatoria todavía — no se convocó en esta sesión porque hacerlo
+  hubiera requerido el mismo commit bloqueado que motivó esta entrada.
+
+---
+
 ## 2026-08-28 (133) — Regla 4 de N-cuentas en `contrato.ts` + causa raíz del hallazgo `GIT_INDEX_FILE` (132 §C.3) + excepción E-7 (FCI Bracci/ROKA, tarjeta corporativa Bracci) + incidente #15 (severidad ALTA, sondeo `pdftotext`+`grep` sin enmascarar contra extracto real de Bracci). Sesión de inventario Capa D, commit `b4e95d5`, sin código de producción tocado.
 
 **Herramienta:** Claude Code. Sesión de inventario/descubrimiento sobre material nuevo de Laura

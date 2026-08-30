@@ -67,7 +67,7 @@ esquema puro.
 | **B.4** | **Login / `AuthProvider`** — hoy la identidad entra por un GUC que setea la sesión (**incidente #8**). No hay autenticación de personas en ningún lado | Es la otra mitad del #8: sin aplicación que firme, `hecho_por` no vale como atribución |
 | **B.5** | **FCI y tarjetas** — suscripción y rescate de FCI con **inventario PEPS**, pago de tarjeta corporativa, y la **liquidación del adquirente**. `01-modulo-1-ingesta-bancaria.md` marca el inventario PEPS de apertura como *«lo único que no se puede reconstruir después»* y la liquidación del adquirente como *«sin ella la regla 11 queda mal para siempre»* | Material del estudio + `contador-dominio`. **Alta prioridad de captura, aunque el cálculo venga después** |
 | **B.6** | **`knowledge/` sigue vacío** — siete huecos normativos. Los cuatro que el Módulo 2 consume directo: crédito fiscal, percepciones, régimen de recaudación bancaria provincial, y porción computable del impuesto a los débitos y créditos | Es la razón por la que los agentes fiscales contestan *«no tengo esa fuente cargada»*. **Eso es el guardrail funcionando, no una falla a compensar** — pero tiene costo operativo real desde el incidente #3 |
-| **B.7** | 🔴 **Antes de backfillear `documento_ingerido` con los 3 lotes reales del piloto** (Bancor/Nación/ICBC, arquitectura de `23-arquitectura-cierre-mensual.md` + `24-convocatoria-real-cierre-mensual.md`), cerrar la semántica de `periodo_desde`/`periodo_hasta` para **documentos multi-cuenta**. Hoy el período vive en `lote_ingesta_cuenta` (por cuenta), no en `lote_ingesta` (por archivo) — el lote real de Macro/ROKA es un solo archivo con 3 cuentas, cada una con su propio período. Un backfill que compute `MIN`/`MAX` en silencio puede mentir si una cuenta se abrió a mitad de mes. Hallazgo de `dba-data`, convocatoria real 2026-08-26 (`24-convocatoria-real-cierre-mensual.md`, D-17) | Precondición del **backfill** (no de crear las 6 tablas vacías, que puede hacerse sin esto resuelto). Bloquea a D-17 de `24` |
+| **B.7** | ✅ **CERRADO (2026-08-29, Sesión 1 de `27-roadmap-capa-d.md`, Bloque 1). Veredicto: el período se declara POR CUENTA, no por archivo.** Convocatoria real a `analista-funcional` + `contador-dominio`, cada uno por separado, ambos coinciden sin disenso: un solo rango `periodo_desde`/`periodo_hasta` por archivo (`documento_ingerido`, agregado tipo `MIN`/`MAX`) no puede distinguir "la cuenta USD recién existe desde el 15" (apertura real, cierre completo igual) de "falta la primera quincena del extracto" (documento incompleto, no se puede cerrar) — son las dos lecturas opuestas que un agregado ciego confunde, y es exactamente el caso real de Macro/ROKA que motivó el hallazgo original de `dba-data`. `contador-dominio` agrega el argumento de fondo: la pregunta que el contador necesita responder para cerrar el mes es "¿tengo la fuente completa de CADA cuenta?", que es una pregunta por cuenta, no por documento. **Hallazgo adicional de `analista-funcional`, no nombrado antes**: la columna `cobertura` de `documento_ingerido` (`completo`/`parcial`/`corte_a_fecha`) tiene el mismo defecto estructural — un valor por archivo no puede representar "completo para 2 cuentas, parcial para la tercera" — cualquier cierre de B.7 que no la incluya vuelve a mentir por la misma vía. **Queda para Bloque 2 (`dba-data`), sin decidir acá**: DÓNDE vive la granularidad por cuenta en el esquema — dos candidatas ya existentes, `fuente_cierre` (ya tiene `documento_ingerido_id` + `cuenta_bancaria_id`, hoy sin período) o una tabla hija nueva tipo `documento_ingerido_cuenta` (espejo de `lote_ingesta_cuenta`) — la diferencia es de TIMING: `fuente_cierre` nace recién al asignarse a un `cierre_id`, y la comparación "tengo 2 de 5 fuentes" parece necesitar la cobertura por cuenta antes de que exista ese cierre. **No medido, queda para `dba-data`/`qa-funcional` antes de escribir el backfill**: si los 3 lotes reales ya ingeridos (Bancor/Nación/ICBC) tienen hoy períodos divergentes entre cuentas — ninguno de los 3 es multi-cuenta, así que no bloquea el backfill trivial. **Pendiente de Laura, sin resolver por supuesto** (`contador-dominio`): cómo se determina el período real de cada cuenta en el PDF de Macro (fecha de apertura declarada por el banco vs. inferida por ausencia de movimientos — la segunda es un dato frágil, cuenta inactiva ≠ cuenta recién abierta) | Cerraba precondición del **backfill** (D-17 de `24`). El DDL que instrumenta la granularidad por cuenta queda para Bloque 2, no crea trabajo nuevo para Bloque 1 |
 | **B.8** | 🟠 **`uq_pendiente_cierre_natural` (`0027_cierre_mensual.sql`) no tiene predicado parcial** — a diferencia de lo que asumía el boceto original (`23-arquitectura-cierre-mensual.md` §2.5, que proponía `UNIQUE(...) WHERE superseded_by_id IS NULL`). Consecuencia real: la fila NUEVA que reemplaza a un `pendiente_cierre` superseded no puede compartir la misma clave natural (`cliente_id, cierre_id, fuente_cierre_id, referencia_origen, motivo_codigo`) que la fila vieja — choca contra la `unique`. Encontrado por `arquitecto-software` (convocatoria de `0028`, hallazgo de seguridad de HANDOFF 130) y confirmado en la práctica al escribir `mutaciones-0028-inmutabilidad-post-terminal.test.ts` (el test legítimo de supersesión de `pendiente_cierre` solo pasa dándole `referencia_origen` distinta a la fila nueva — un workaround del test, no un arreglo del esquema) | Bloquea el flujo REAL de reproceso de `pendiente_cierre` (Capa D, todavía sin implementar) — no bloquea el trigger de inmutabilidad de `0028`, que solo gobierna la fila vieja. Necesita `dba-data` cuando se implemente ese flujo: o la `unique` pasa a `WHERE superseded_by_id IS NULL`, o la clave natural de la fila de reproceso cambia a propósito |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
@@ -159,27 +159,41 @@ esquema puro.
     con CI en rojo (incluidos `9aacbe9` y `e67a256`), sin que nada bloquee seguir commiteando —
     precedente ya documentado sin cerrar (`HANDOFF.md:~10249`). Detalle completo de todo lo de arriba:
     `HANDOFF.md` (130).
-- 🟠 **`.githooks/pre-commit` corrompe el índice de git en un worktree — mecanismo YA DIAGNOSTICADO,
-  dueño sugerido: `devops` o `qa-automation` (quien sea responsable del arnés de test).** Síntoma ya
-  descrito sin causa en `HANDOFF.md` (2026-08-28, entrada 132, §C.3): al commitear desde un worktree,
-  `git status` pasa a mostrar los ~450 archivos del repo como borrados-y-sin-trackear a la vez, de forma
-  no destructiva (el working tree queda intacto; `git reset` reconstruye el índice sin tocar nada).
-  Reproducido 2/2 al invocar `git commit` (que dispara el hook), y 0/2 al correr manualmente las mismas
-  dos líneas del hook (`node tools/barrido-fuga.ts` + `vitest run tools/barrido-credenciales.test.ts`)
-  fuera de ese contexto. **Causa raíz encontrada** (`GIT_TRACE=1 git commit`): git exporta
-  `GIT_INDEX_FILE=<worktree>/index` como variable de entorno al invocar el hook — y ese valor se hereda
-  por los procesos `node`/`vitest` hijos. Si `repoSintetico()` (`tools/barrido-credenciales.test.ts`),
-  al crear su repo git aislado en un tmpdir propio, no des-setea `GIT_INDEX_FILE`/`GIT_DIR` heredados
-  antes de invocar sus propios comandos `git`, esos comandos —aunque el `cwd` sea el tmpdir— terminan
-  operando sobre el índice del worktree REAL en vez del sintético, porque la variable de entorno tiene
-  prioridad sobre el descubrimiento por `cwd`. No verificado leyendo el código de `repoSintetico()` en
-  esta entrada — es la hipótesis que explica los cuatro hechos medidos (reproduce solo vía hook, nunca a
-  mano; el working tree nunca se daña; `git reset` alcanza para arreglarlo; el síntoma es "índice
-  completo desalineado", coherente con que un test corrió `git add`/`git rm` contra el índice
-  equivocado). Cierre: confirmar la hipótesis leyendo `repoSintetico()`, y si se confirma, hacer que
-  desetee expĺicitamente `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE`/`GIT_COMMON_DIR` (o pase
-  `--git-dir`/`--work-tree` explícitos) antes de cualquier `git` propio — para que un commit real desde
-  un worktree no dependa de que quien lo corre sepa hacer `git reset` después.
+- 🔴 **`.githooks/pre-commit` corrompe el índice de git en un worktree — CONFIRMADO (2026-08-29, Sesión 1
+  Capa D, Bloque 1), ya no es hipótesis. Dueño: `security-engineer` (no `devops`/`qa-automation` como
+  decía la entrada anterior — ver por qué, abajo).** Síntoma ya descrito sin causa en `HANDOFF.md`
+  (2026-08-28, entrada 132, §C.3): al commitear desde un worktree, `git status` pasa a mostrar los ~450
+  archivos del repo como borrados-y-sin-trackear a la vez, de forma no destructiva (el working tree queda
+  intacto; `git reset` reconstruye el índice sin tocar nada).
+  - **Causa raíz, ahora verificada leyendo el código, no solo inferida por `GIT_TRACE`**: git exporta
+    `GIT_INDEX_FILE=<worktree>/index` al invocar el hook, y ese valor se hereda por los procesos hijos.
+    `repoSintetico()` (`tools/barrido-credenciales.test.ts:47-60`) invoca `execFileSync('git', ['init'…])`
+    y `execFileSync('git', ['add', '-f', '.'])` con `cwd` en un tmpdir propio pero **sin despojar el
+    `env` heredado** — el `GIT_INDEX_FILE` inherited tiene prioridad sobre el descubrimiento por `cwd`,
+    así que esos comandos escriben en el ÍNDICE REAL del worktree en vez del sintético. **Reproducido
+    directamente**: el test pasa 19/19 corrido a mano (`npx vitest run`, sin `GIT_INDEX_FILE` en el
+    entorno) y falla 1-5/19 corrido vía `git commit` real (con el hook, que sí exporta la variable) —
+    la única diferencia entre ambas corridas es esa variable de entorno.
+  - **Hallazgo NUEVO en esta sesión, más grave que el original**: el mismo patrón está en
+    `archivosTrackeados()` (`tools/barrido-credenciales.ts:157-162`, código de **producción**, no de
+    test) — `execFileSync('git', ['ls-files', '-z'], { cwd: raiz, ... })` tampoco despoja el `env`
+    heredado. Es la función que decide qué archivos escanea el detector de fuga de credenciales real
+    (R37, el mismo que investigó el incidente #3). Un intento de arreglo acotado solo a `repoSintetico()`
+    (probado y revertido en esta sesión, sin commitear) deja `archivosTrackeados()` con el mismo defecto
+    cuando se la llama con un `raiz` explícito — los tests de mutación de R37 (los que plantan una
+    credencial en un repo sintético y esperan que el barrido la detecte) empiezan a fallar en falso
+    NEGATIVO bajo el hook, exactamente lo que R13/R10 ya enseñaron que es el peor tipo de falla de un
+    detector de seguridad: verde donde debería estar rojo.
+  - **Por qué el dueño cambia de `devops`/`qa-automation` a `security-engineer`**: no es un test flaky
+    cualquiera — es el detector de credenciales de producción operando sobre el índice equivocado
+    durante su propia prueba de mutación, dentro del mismo hook que lo usa como gate real antes de cada
+    commit. Necesita su propia convocatoria y verificación (mismo criterio que ADR-0002 §B.0: probar
+    rompiendo, no solo corregir y asumir), no un parche de paso en una tarea de otro dominio — por eso
+    NO se aplicó el fix en esta sesión (revertido explícitamente, ver HANDOFF de esta fecha).
+  - **Cierre propuesto, sin aplicar**: despojar `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE`/
+    `GIT_COMMON_DIR` del `env` en los tres call sites (`repoSintetico()` ×2 y `archivosTrackeados()` ×1),
+    y agregar un caso de prueba que reproduzca el escenario del hook (`GIT_INDEX_FILE` seteado) para que
+    la regresión, si vuelve, se detecte sin depender de commitear desde un worktree real.
 - El resto de las secciones de este documento.
 
 ---

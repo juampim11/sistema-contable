@@ -87,10 +87,10 @@ adivina por matching de texto).
 
 1. **Bloque 2 — backfill de `documento_ingerido` con los 3 lotes reales del piloto (Bancor/Nación/ICBC).**
    Bloqueado por dos hallazgos de `docs/diseno/10-deuda-declarada.md`:
-   - **B.7**: la semántica de `periodo_desde`/`periodo_hasta` para documentos multi-cuenta no está
-     cerrada — hoy el período vive en `lote_ingesta_cuenta` (por cuenta), no en `lote_ingesta` (por
-     archivo), y un backfill que compute `MIN`/`MAX` en silencio puede mentir si una cuenta se abrió a
-     mitad de mes (caso real: Macro/ROKA, un archivo con 3 cuentas).
+   - **B.7**: ✅ **CERRADO 2026-08-29 (Sesión 1, Bloque 1)** — veredicto **por cuenta, no por archivo**
+     (convocatoria real a `analista-funcional` + `contador-dominio`, sin disenso; detalle completo en
+     `10-deuda-declarada.md`). Queda para Bloque 2 el DDL que instrumenta la granularidad (extender
+     `fuente_cierre` o tabla hija nueva) — decisión de `dba-data`, no cerrada acá.
    - **B.8**: `uq_pendiente_cierre_natural` no tiene predicado parcial — una fila de reproceso no puede
      compartir clave natural con la que reemplaza. No bloquea `0028` (que solo gobierna la fila vieja),
      pero sí bloquea el flujo real de reproceso de `pendiente_cierre`.
@@ -174,6 +174,9 @@ sin predicado parcial), resolver o registrar explícitamente D-18 y D-19, aplica
 0027/0028 al piloto siguiendo `CLAUDE.md` §1.9 (listar lo pendiente, confirmar contra lo autorizado,
 frenar ante cualquier exceso), y cargar el plan de cuentas real de Bracci (227 cuentas) en el tenant
 real del piloto — hoy solo está probado contra un tenant sintético.
+
+> **Estado (2026-08-29): Bloque 1 CERRADO** (B.7, ver arriba). Bloques 2, 3 y 4 sin empezar — pendientes
+> de aprobación explícita de JP, uno a la vez, antes de arrancar cada uno.
 
 **Por qué esta y no otra antes:** es literalmente imposible escribir la lógica de asignación de cuenta
 (la pieza de valor real) mientras el esquema de Capa D solo existe en local y el backfill de
