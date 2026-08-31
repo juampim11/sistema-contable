@@ -7,6 +7,11 @@ traduce en `cuenta_id` + `debe`/`haber`. **Modo plan, cero código.** Precedida 
 `contador-dominio`, `motor-conciliacion-contable`, `plan-cuentas-multicliente`, `qa-funcional` —
 cada uno solo-lectura, sin escritura de archivos. Sus dictámenes completos quedaron en la sesión que
 produjo este documento; acá se sintetizan.
+
+**Actualización 2026-08-31 (sesión de re-entrada, misma fecha):** ronda de cierre real de D-29
+(§2), convocatoria a `contador-dominio` + `plan-cuentas-multicliente` + `dba-data`, cada uno viendo
+la respuesta de los otros dos antes de responder. Modo plan, cero código, cero DDL. D-29 cerrada con
+acuerdo real — ver §2 y `HANDOFF.md`.
 ---
 
 # 28 — Diseño del motor de clasificación (Sesión 2b) — primera convocatoria real
@@ -89,58 +94,97 @@ documento_ingerido → fuente_cierre → pendiente_cierre / asiento_propuesto_re
 
 ## 2. Pregunta 2 — dónde vive la regla `tipo_movimiento → cuenta_id`
 
-**Divergencia real entre agentes convocados, documentada sin forzar consenso.**
+**D-29 — CERRADA (2026-08-31), ronda de cierre real con `contador-dominio` + `plan-cuentas-
+multicliente` + `dba-data`, cada uno respondiendo habiendo visto la posición de los otros dos.**
+Reemplaza la divergencia sin resolver que dejó la primera convocatoria (Sesión 2b, más abajo se
+conserva el historial). Acuerdo real de los tres — `plan-cuentas-multicliente` concedió de forma
+explícita, no forzada.
 
-### Posición A — `motor-conciliacion-contable` + `contador-dominio` (convergentes, sin coordinarse)
+### Decisión final
 
-`rol_funcional` se queda tal como está (4 valores, marca **identidad societaria** únicamente — nunca
-"para qué sirve la cuenta en general"). La resolución `tipo_movimiento → cuenta_id` se separa en dos
-piezas nuevas:
+`rol_funcional` **se queda tal como está** (4 valores, marca **identidad societaria** únicamente —
+nunca "para qué sirve la cuenta en general" ni "a qué cuenta imputar tal concepto"). La resolución
+`tipo_movimiento → cuenta_id` se separa en dos piezas nuevas:
 
 1. **Pata "banco"**: `cuenta_bancaria_id → cuenta_id`, mapeo fijo 1:1 por cliente. Resuelve la mitad
    de cada asiento, para los 31 tipos, de una sola vez.
 2. **Pata "contrapartida"**: tabla nueva de reglas de imputación **por cliente**, clave
-   `(cliente_id, tipo_movimiento[, concepto], vigencia) → cuenta_id`. Retoma un diseño **ya escrito y
-   nunca reconciliado** con `23`/`27`: `04-imputacion-contable.md` §8 ya proponía esta "tabla de
-   imputación" (N2 por cliente, versionada, con `cuentaResolucion: 'fija' | 'por_socio' |
-   'por_jurisdiccion' | 'por_impuesto'`) — que hoy **no existe** como tabla en el esquema aplicado.
-   La rama `'por_socio'` delega en `cuenta_atributo.rol_funcional` + `padron_socio_id` +
-   `ResolucionDeContraparte` (ya la produce Capa C) — solo para los 3 tipos ligados a un socio
-   puntual.
+   `(cliente_id, tipo_movimiento[, concepto], vigencia) → cuenta_id`. Retoma el diseño de
+   `04-imputacion-contable.md` §8 (N2 por cliente, versionada, con `cuentaResolucion: 'fija' |
+   'por_socio' | 'por_jurisdiccion' | 'por_impuesto'`), nunca reconciliado con `23`/`27` hasta esta
+   convocatoria. La rama `'por_socio'` delega en `cuenta_atributo.rol_funcional` + `padron_socio_id`
+   + `ResolucionDeContraparte` (ya la produce Capa C) — solo para los tipos ligados a un socio
+   puntual, **resolviendo el `rol_funcional` vigente a la fecha del movimiento**, no el rol actual
+   (condición de cierre de `plan-cuentas-multicliente`, sin verificar explícitamente en ninguna
+   respuesta anterior — queda anotada acá para que `dba-data` no la pase por alto al migrar).
 
-**Riesgo que señalan**: sobrecargar `rol_funcional` (columna N2, D-16) con dos responsabilidades —
-identidad societaria y clasificación de 31 tipos — cuando el propio comentario de la migración `0027`
-la marcó chica a propósito.
+**Regla operativa para trazar la línea, hacia el próximo concepto que aparezca** (criterio de
+`dba-data`, ratificado sin reservas por `contador-dominio` y por `plan-cuentas-multicliente` en su
+concesión): un valor va a `rol_funcional` únicamente si **(i)** el conjunto de valores posibles lo
+define el **producto**, no el plan de un cliente puntual, y **(ii)** dispara una regla de negocio
+**transversal a todo el sistema** (como el veto duro de auto-resolución + el veto de exposición de la
+familia socio en `exportar-planilla.ts:84-90`) — no solo "resuelve a qué cuenta imputar". Si hace
+falta mirar el plan de UN cliente para decidir el nombre o la cantidad de valores, es dato de cliente
+→ va a la tabla, nunca al enum.
 
-### Posición B — `plan-cuentas-multicliente`
+**Gobernanza de la tabla nueva** (condición de cierre de `contador-dominio`, avalada por
+`plan-cuentas-multicliente`): mismo control de acceso que `cuenta`/`cuenta_atributo`
+(`0027_cierre_mensual.sql:88-91,192-193`) — escritura restringida a `socio`/`contador`, nunca
+`administrativo`. Decidir a qué cuenta imputa un tipo de movimiento es la misma clase de decisión
+contable que renombrar o reclasificar una cuenta, no una carga administrativa.
 
-Ampliar `ROLES_FUNCIONALES_CUENTA` con un valor por cada concepto estructuralmente **singular** del
-plan (comisión bancaria, IVA sobre gasto bancario, percepción impositiva, obligación fiscal, etc.),
-reusando la infraestructura de vigencia **ya construida y probada** en `cuenta_atributo` (Bracci/
-ROKA) — sin tabla nueva. Suma una restricción de unicidad `(cliente_id, rol_funcional)` por vigencia
-para la familia no-socio, análoga en espíritu al `CHECK` que ya existe para la familia socio.
+**Disciplina de la tabla nueva** (condiciones de cierre de `plan-cuentas-multicliente`, sin
+objeción de los otros dos):
 
-**Riesgo que señala**: crear una tabla paralela cuando la infraestructura de vigencia ya existe y
-funciona contra datos reales.
+- Misma disciplina de vigencia que `cuenta_atributo` — `desde`/`hasta` + respaldo del cambio, nunca
+  un valor pisado en su lugar.
+- **No reescribe historia**: un cambio posterior en la regla de imputación nunca altera a qué
+  `cuenta_id` apuntan los `asiento_propuesto_renglon` ya generados con la regla vigente al momento de
+  generarse.
 
-**Duda abierta que deja, sin resolver por su cuenta**: si "comisión bancaria" es siempre una sola
-cuenta por cliente o depende de la cuenta bancaria de origen (ROKA es multi-banco) — no confirmado
-contra el archivo real de ROKA.
+### Por qué cerró así — el argumento que de verdad lo decidió
 
-### Punto de acuerdo real entre las tres voces
+El dato empírico que motivó esta ronda (verificado contra el archivo real,
+`Plan de cuentas ROKA REPUESTOS SAS.xlsx`, corriendo `packages/ingesta/src/plan-cuentas/parser.ts`
+sin CLI intermedia): ROKA (multi-banco, 3 cuentas Macro — cta cte, cta cte especial, cta en dólares)
+tiene **una sola** cuenta `4.2.5.200 "Gastos y comisiones bancarias"` para las tres — la duda que la
+Posición B original había dejado abierta (¿"comisión bancaria" es 1 cuenta por cliente o depende de
+la cuenta de origen?) se resuelve a favor de la Posición B: **no depende del origen**, al menos en
+este cliente. (Cuentas relacionadas pero distintas del mismo archivo, para que no se confundan:
+`4.2.3.310 "Impuesto al Débito Bancario"`, `4.2.4.500 "Comisiones Tarjetas de Crédito"`,
+`4.2.4.510 "Comisiones sobre ventas"`.)
+
+Ese dato **no fue lo que cerró la decisión** — la propia `plan-cuentas-multicliente` lo señala en su
+concesión: si esa hubiera sido la única objeción en juego, su posición seguiría de pie. Lo que la
+hizo ceder fue un argumento estructural, independiente del dato de ROKA:
+
+- `cuenta_atributo.rol_funcional` es `text not null`, **una fila = un rol** — una relación 1:1 entre
+  cuenta y concepto (reforzada por el propio `CHECK (cliente_id, rol_funcional)` único por vigencia
+  que la Posición B original proponía sumar).
+- El problema real, `tipo_movimiento → cuenta_id`, tiene **31 valores cerrados de `tipo_movimiento`**
+  que no tienen por qué alinearse 1:1 con la granularidad de cuentas de cada plan — es una relación
+  **N:1** (varios tipos pueden converger en una cuenta; un cliente puede querer separar mañana lo que
+  hoy comparte cuenta). Una columna 1:1 no puede expresarlo sin inflar el enum con variantes que no
+  son roles societarios reales — el mismo riesgo de "hornear variantes" que `04-imputacion-contable.md`
+  §8 ya advertía, y que la Posición B terminaba reproduciendo por otra vía.
+- **Evidencia real de cómo trabaja Laura** (`contador-dominio`, no inventada): `HANDOFF.md:5991` — no
+  se le re-pregunta la cuenta destino una vez que respondió, la respuesta "queda vigente" y se reusa
+  hacia adelante. Ella no piensa "esta cuenta ES la cuenta de comisión" como propiedad fija de la
+  cuenta — **resuelve movimiento por movimiento**, con memoria de decisiones anteriores. Eso es la
+  forma de una tabla de reglas versionada, no la de un atributo 1:1 del plan de cuentas.
+- El propio patrón del repo lo confirma (`dba-data`): `banco` (tabla) absorbió 3 altas de banco
+  (`0024`/`0025`/`0026`) sin tocar nunca un `CHECK` ni un enum TS, puro `insert ... on conflict`; en
+  cambio `pendiente_cierre.motivo_codigo` (`CHECK`, nació con 2 valores en `0027`) ya quedó anotado
+  para su primera reapertura por migración (D-28) a las dos sesiones de nacer, y el propio comentario
+  de `0027` sobre `rol_funcional` ya asumía que se reabriría — cero veces en este repo un catálogo
+  cerrado con `CHECK` absorbió una necesidad de dato-por-cliente sin volver a una migración.
+
+### Punto de acuerdo real, ya sentado antes de esta ronda y sin reabrir
 
 Para `tipo_movimiento` de **cardinalidad abierta** (`pago_a_proveedor_transferencia`,
 `cobranza_de_cliente` — N cuentas candidatas posibles, no una), **ningún mapeo estático cierra el
 caso**: hace falta evidencia de Capa C + propuesta del motor + confirmación del contador. Coinciden
-`motor-conciliacion-contable`, `contador-dominio` y `plan-cuentas-multicliente`.
-
-### Cómo se cierra esto
-
-Esta es la decisión más importante pendiente antes de escribir código real de Sesión 2b.
-**Recomendación, no vinculante** (esta convocatoria no tuvo mandato de forzar una elección): una
-ronda de cierre específica entre `contador-dominio` + `plan-cuentas-multicliente` + `dba-data`, con
-`04-imputacion-contable.md` §8 puesto en la mesa explícitamente — es un diseño que quedó sin
-reconciliar con `23`/`27` y nadie lo había notado hasta esta convocatoria.
+los tres agentes de la ronda de cierre y los de la convocatoria original.
 
 ---
 
@@ -241,7 +285,7 @@ adelante existía antes de esta convocatoria (confirmado por grep sobre `docs/di
 | D-26 | Importe/fecha/descripción no viajan en `Reconocimiento` (por diseño, `04`§3); el servicio de I/O de Capa D los reúne por JOIN `reconocimiento_movimiento.movimiento_id → movimiento_bancario_crudo` | `motor-conciliacion-contable` |
 | D-27 | Gap de esquema, sin FK física, entre `documento_ingerido`/`fuente_cierre` y `lote_ingesta`/`movimiento_bancario_crudo` — se resuelve hoy por rango `(cliente_id, cuenta_bancaria_id, fecha ∈ periodo)`, documentado como supuesto de "sin solape", o con FK nueva — pendiente de convocar `dba-data`. **Candidato a sumarse como ítem nuevo de `10-deuda-declarada.md`, sección B, sin dueño todavía** | `motor-conciliacion-contable` |
 | D-28 | `pendiente_cierre.motivo_codigo` (hoy 2 valores) necesita migración que amplíe su dominio con motivos de Capa D — candidatos: `cuenta_no_configurada`, `cuenta_ambigua`, `tipo_sin_regla_imputacion`, `cliente_sin_plan_de_cuentas`. Vocabulario exacto lo cierra `contador-dominio` + `analista-funcional`; migración es de `dba-data` | `motor-conciliacion-contable` + `qa-funcional` (fusionado) |
-| D-29 | DIVERGENCIA sin resolver por esta convocatoria — ver §2 (Posición A vs. B), con recomendación de ronda de cierre explícita | `motor-conciliacion-contable` + `contador-dominio` vs. `plan-cuentas-multicliente` |
+| D-29 | 🟢 **CERRADA (2026-08-31, ronda de cierre real)** — ver §2. `rol_funcional` sin ampliar; tabla nueva de reglas de imputación por cliente (`04`§8) para `tipo_movimiento → cuenta_id`, con la regla operativa, la gobernanza y la disciplina de vigencia ya escritas en §2. Acuerdo real de los tres, `plan-cuentas-multicliente` concedió su posición original | `dba-data` + `contador-dominio` + `plan-cuentas-multicliente` (ronda de cierre) |
 | D-30 | Camino feliz: `asiento_propuesto_renglon` (`propuesto`) ya es la propuesta — sin tabla nueva. Falta columna `evidencia jsonb` en `pendiente_cierre` | `motor-conciliacion-contable` |
 | D-31 | Criterio automático/manual — fórmula exacta de §3, sin score inventado, con excepción dura de la familia socio | `qa-funcional` |
 | D-32 | Corrección de premisa: `pendiente_cierre.motivo_codigo` tiene 2 valores hoy, no 8 (el 8 es `QUE_DECIDE`, dominio distinto de Capa B/C) | `motor-conciliacion-contable` + `qa-funcional` |
@@ -255,7 +299,10 @@ tener plan de cuentas + Capa C corrida sobre su movimiento; el motivo del plan d
 
 ## 7. Qué queda para la próxima convocatoria (de código, no de diseño)
 
-- Cerrar D-29 (la divergencia) antes de escribir cualquier tabla nueva de imputación.
+- **D-29 ya cerrada (§2)** — queda escribir la migración: `dba-data` diseña la tabla nueva de reglas
+  de imputación (`04`§8, clave `(cliente_id, tipo_movimiento[, concepto], vigencia) → cuenta_id`),
+  con la gobernanza (`socio`/`contador`, nunca `administrativo`) y la disciplina de vigencia/no-
+  reescritura-de-historia ya fijadas en §2. No se escribe DDL en esta sesión de diseño.
 - `dba-data`: migración de D-27 (si se decide corregir el gap de FK) y D-28 (ampliar
   `pendiente_cierre.motivo_codigo` + la columna `evidencia jsonb` de D-30).
 - `contador-dominio` + `analista-funcional`: cerrar el vocabulario exacto de los motivos nuevos de

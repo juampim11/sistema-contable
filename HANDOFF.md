@@ -6,6 +6,60 @@
 
 ---
 
+## 2026-08-31 (143) — D-29 CERRADA: ronda de cierre real de la divergencia de `28-diseno-motor-
+clasificacion.md` §2, acuerdo de los tres agentes, sin código ni migración.
+
+**Herramienta:** Claude Code. Modo plan, cero código, cero DDL — continuación directa de la entrada
+142 (misma sesión de re-entrada), que había dejado D-29 sin resolver a propósito con recomendación de
+una ronda de cierre puntual.
+
+### 1. Qué se hizo
+
+Convocatoria real y secuencial (no en paralelo) a `dba-data` → `contador-dominio` →
+`plan-cuentas-multicliente`, cada uno respondiendo habiendo visto la respuesta del anterior — para
+que fuera un cierre real y no una tercera repetición de las mismas dos posturas. Antes de convocar,
+se verificó contra el archivo real de ROKA (multi-banco, 3 cuentas Macro) la duda concreta que la
+Posición B original había dejado abierta, corriendo el parser real
+(`packages/ingesta/src/plan-cuentas/parser.ts`) contra el `.xlsx`, sin CLI intermedia ni Python
+suelto sobre el archivo (bloqueado por el clasificador de permisos; el camino sancionado fue el
+parser propio del proyecto, que ya declara qué vocabulario es libre de imprimir).
+
+### 2. El dato nuevo, y por qué no fue lo que cerró la decisión
+
+ROKA tiene **una sola** cuenta (`4.2.5.200 "Gastos y comisiones bancarias"`) para las 3 cuentas
+Macro — la comisión bancaria NO depende de la cuenta de origen, al menos en este cliente. Eso
+resuelve la duda concreta a favor de la Posición B original, pero `plan-cuentas-multicliente` señaló
+ella misma en su concesión que esto no fue lo decisivo: lo que la hizo ceder fue el argumento
+estructural de `dba-data` y `contador-dominio` — `rol_funcional` es una columna 1:1 (`text not null`),
+y el problema real (`tipo_movimiento`, 31 valores → `cuenta_id`) es una relación N:1 que un enum no
+puede expresar sin "hornear variantes" (el riesgo que `04-imputacion-contable.md` §8 ya advertía) —
+sumado a evidencia real de que Laura resuelve movimiento por movimiento, con memoria de decisiones
+reusada hacia adelante (`HANDOFF.md:5991`), no por rol fijo de la cuenta.
+
+### 3. Decisión final
+
+`rol_funcional` se queda en 4 valores, sin ampliar con conceptos contables. La resolución
+`tipo_movimiento → cuenta_id` va por tabla nueva (retoma `04-imputacion-contable.md` §8), con: una
+regla operativa para el próximo concepto que aparezca (va a `rol_funcional` solo si el conjunto de
+valores lo define el producto y dispara una regla transversal; si no, es dato de cliente → tabla),
+gobernanza de escritura restringida a `socio`/`contador` (nunca `administrativo`, mismo régimen que
+`cuenta`/`cuenta_atributo`), y disciplina de vigencia + no reescritura de historia sobre
+`asiento_propuesto_renglon` ya generado. Detalle completo, con cada afirmación atribuida a su fuente:
+`docs/diseno/28-diseno-motor-clasificacion.md` §2 (reemplazada) y tabla de decisiones §6 (D-29).
+
+### 4. Qué NO se hizo, a propósito
+
+Cero DDL, cero migración, cero tabla escrita — la migración de la tabla de imputación queda para
+`dba-data` en la próxima sesión de código, ya con D-29 cerrada. Tampoco se tocó el vocabulario exacto
+de motivos de `pendiente_cierre` (D-28), que sigue pendiente de `contador-dominio` +
+`analista-funcional`.
+
+### 5. Estado de commit
+
+Este documento + esta entrada van en un solo commit (solo documentación) — sin push.
+
+---
+
 ## 2026-08-31 (142) — Sesión 2b de Capa D, primera convocatoria de diseño: `28-diseno-motor-
 clasificacion.md`, cero código. Divergencia real documentada (D-29), H y J bloqueado, D-26 a D-33.
 
