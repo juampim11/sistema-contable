@@ -6,6 +6,143 @@
 
 ---
 
+## 2026-08-31 (150) — Sesión 3, primer paso: PRIMERA corrida real del motor de clasificación contra
+un cliente real del piloto (Bracci, julio 2026). 518 `asiento_propuesto` creados, revisados línea
+por línea por JP. Un bug de producción encontrado y corregido en el camino, dos migraciones de datos
+reales (esquema + corrección de vigencia), todo commiteado salvo esta entrada. Sin push.
+
+**Herramienta:** Claude Code, sesión interactiva, modo plan de principio a fin (CLAUDE.md §3.2),
+JP presente en cada paso bloqueante — no autónoma.
+
+### 1. Inventario read-only, sin asumir el contexto de reentrada
+
+Confirmado contra el piloto, cliente Bracci (`f84d9ecc-6d54-4009-8fb6-b6fa3f8d8579`): 227
+`cuenta_atributo` (ya sabido), 2 `cuenta_bancaria` sin `cuenta_id` (esa columna no existía
+todavía), 1407 `movimiento_bancario_crudo` reales (may-jul 2026, 2 lotes), 0
+`reconocimiento_movimiento`, 0 `cierre_cliente_periodo` (confirma B.13), y **hallazgo nuevo, más
+grave que lo esperado**: la tabla `regla_imputacion` **no existía** en el piloto — las 5
+migraciones de Sesión 2b (`0030`-`0034`) nunca se habían aplicado ahí, solo a LOCAL.
+
+### 2. Bug real de producción encontrado por el primer corpus grande, corregido y verificado
+
+Al aplicar Capa C (`reconocer:lote --aplicar`) contra el lote de julio 2026 de Bracci (1081
+movimientos), Postgres rechazó el INSERT: `ErrorDeBase{codigo:'ING_CHECK', constraint:
+'reconocimiento_forma_chk'}`. Causa: `aFilaPersistible` (`packages/contabilidad/src/nucleo/
+persistible.ts`, rama `sin_reconocer`) hardcodeaba `via: null` sin mirar el motivo — para
+`concepto_sin_tipo_asignado`/`reversa_incoherente` (25 de los 1081 movimientos reales) el `CHECK`
+exige las 4 columnas de evidencia no-nulas, y `via` quedaba en 3 de 4. Nunca se había disparado:
+los 3 clientes reales de Sesión 2a (H y J N=1, MEB 9, Paoluc 94) nunca ejercitaron ese camino —
+Bracci es el primer corpus real lo bastante grande.
+
+Convocados `backend-dev` (fix: `via: r.evidencia ? r.evidencia.via : null`, prueba de mutación real
+—verde→mutante→rojo→revertido→verde, corrida dos veces por dos agentes distintos, contada en la
+huella de `VERSION_DEL_MOTOR` con `--sin-bump` porque 0 filas reales en LOCAL tenían el hueco— y
+grep dirigido de la función completa sin encontrar otro caso) y `tester` (verificación adversarial:
+confirmó el fix, encontró 2 huecos de cobertura no bloqueantes —combinaciones que el tipo permite y
+`motor.ts` nunca produce hoy, ya cerrados con tests reales de rechazo `23514` contra Postgres).
+Commits `8f10ee4` (fix) y `74cf094` (cobertura de los 2 casos límite).
+
+### 3. Migración `0030`-`0034` aplicada al piloto — CLAUDE.md §1.9 completo
+
+`dba-data` confirmó las 5 seguras (ningún `NOT NULL` nuevo sin default), con un hallazgo real: `0033`
+reescribe `pendiente_cierre_motivo_chk` sin `NOT VALID` — escanea TODO el piloto, no solo Bracci.
+Verificado antes de migrar: `SELECT count(*) FROM pendiente_cierre WHERE motivo_codigo =
+'movimiento_de_socio'` → **0** (la tabla está vacía en todo el piloto). Listado exacto de lo
+pendiente, confirmado contra lo autorizado, aplicado — verificado después por consulta directa
+(tabla `regla_imputacion` existe, columna `cuenta_bancaria.cuenta_id` existe, `CHECK` de
+`pendiente_cierre` con 9 valores exactos, sin `movimiento_de_socio`).
+
+### 4. Tres escrituras reales contra Bracci, cada una con su mecanismo correcto
+
+- **`cuenta_bancaria.cuenta_id`** (mapeo banco→cuenta, pata "banco" de D-29) para las 2 cuentas
+  reales: `f8b4e17d-...`→`1.1.2.100` (Cta Cte), `4ad30c97-...`→`1.1.2.300` (cuenta especial).
+  Identificado por el campo `alias` ya seteado en una fila (evidencia directa) + eliminación válida
+  para la otra (universo de exactamente 2). Vía `conUsuario()` + `escribirConAuditoria` (acuerdo con
+  `security-engineer`: nunca SQL suelto).
+- **`cierre_cliente_periodo` + `cierre_transicion`** (B.13, INSERT mínimo, alcance acotado — no la
+  lógica completa de apertura): julio 2026, `mensual`, `abierto`, `confirmado_por`/`confirmado_en`
+  en `NULL` (no hay confirmación todavía). `cierre_transicion.estado_desde` no tiene valor para "no
+  había cierre antes" — `dba-data` evaluó agregar un 7º valor al vocabulario y lo **descartó**
+  (`CIERRE_ESTADOS` es la misma constante para `cierre_estado`/`estado_desde`/`estado_hasta`,
+  `catalogo.test.ts:1085-1102` — un valor nuevo colaría también donde nunca debería aparecer). Se
+  usó transición reflexiva (`estado_desde=estado_hasta='abierto'`) con `motivo` explícito,
+  documentada en `10-deuda-declarada.md` B.13 (commit `3fdd143`) en vez de quedar implícita.
+  Verificado por consulta que Capa C ya había corrido ANTES del INSERT (la base no lo exige).
+- **`cuenta_atributo.vigente_desde`** — bloqueante nuevo, encontrado por `contador-dominio` al
+  preparar `regla_imputacion`: las 227 filas nacieron con `vigente_desde` = fecha de CARGA del CLI
+  (`2026-08-30`, `alta-plan-cuentas.ts` sin `--vigente-desde`), no una vigencia contable real. El
+  resolver exige `vigenteDesde <= fecha del movimiento` — con esa fecha, NADA de julio 2026 podía
+  resolver automático. `dba-data` confirmó que `app_request` solo tiene grant de columna sobre
+  `(vigente_hasta, activa)` en `cuenta_atributo` — **`conUsuario()` es estructuralmente imposible
+  para esta columna**, a diferencia de las dos escrituras anteriores. Mecanismo: conexión de dueño
+  de esquema (`DATABASE_URL`), script descartable transaccional (mismo patrón que
+  `diag-completar-lote-santander.ts`, HANDOFF 44), nunca commiteado, borrado después. `plan-cuentas-
+  multicliente` fijó la fecha: `2026-05-29` (piso técnico real — el movimiento bancario más antiguo
+  ya ingerido de Bracci), marcada explícita como convencional, no la vigencia contable real (mismo
+  criterio que `padron_socio` en HANDOFF 73) — pendiente pregunta a Laura/JP por la fecha real.
+  Backup fresco antes (`piloto_20260831-202331Z.dump`,
+  SHA-256 `d30818794...bbb352a60`), verificado 227/227 después por una conexión INDEPENDIENTE
+  (`conUsuario`, no la del dueño de esquema).
+
+### 5. `regla_imputacion` real — contraste de `contador-dominio` contra las 14 reglas de Laura
+
+Capa C real (paso 6) dio el desglose real de `tipo_movimiento` de julio 2026: de 1081 movimientos,
+518 `clase='propuesta'` (los únicos que `conciliar:lote` puede leer) repartidos en exactamente 3
+tipos — `impuesto_debitos_creditos` (514), `comision_bancaria` (3), `extraccion_efectivo` (1). Los
+otros 5 tipos que aparecieron (`cobranza_de_cliente` 421, etc., 447 en total) quedaron en
+`decision_humana`, fuera de alcance de este paso. `contador-dominio` contrastó los 3 contra
+`docs/diseno/04-imputacion-contable.md` §3 (las 14 reglas reales de Laura) — match directo para los
+3, sin necesidad de inferir por nombre de cuenta:
+
+| Tipo | n | Cuenta | Confirmado por JP |
+|---|---|---|---|
+| `impuesto_debitos_creditos` | 514 | `1.2.3.130` Ley Deb Cred. Bancario | "porción computable" es cálculo fiscal aparte, no condición de imputación |
+| `comision_bancaria` | 3 | `4.2.5.200` Gastos y comisiones bancarias | sin colisión con haberes (concepto real: `comision_de_extraccion`) |
+| `extraccion_efectivo` | 1 | `1.1.1.100` Efectivo (no `1.1.1.000` Caja, cuenta de agrupación) | confirmado |
+
+3 filas cargadas vía `conUsuario` (grant de insert sin restricción de columna, a diferencia de
+`vigente_desde`), `vigente_desde='2026-06-01'`, `respaldo` citando `04-imputacion-contable.md` +
+esta sesión + `decidido_por` real — nunca nombre ni CUIT (convención explícita de JP para el hueco
+H1/incidente #14, sin resolver de fondo pero con esta regla operativa cerrada para esta carga).
+
+### 6. Capa C real + `conciliar:lote` real — resultado final, verificado por consulta directa
+
+`reconocer:lote --aplicar` sobre julio 2026: **1081 creados** (518 propuesta / 447 decision_humana
+/ 116 sin_reconocer), 0 rechazados — el fix del punto 2 sostuvo contra el corpus real completo.
+
+`conciliar:lote --aplicar` (con backup fresco, `piloto_20260831-203022Z.dump`, SHA-256
+`93947eb6b...771340a`): **518 `asiento_propuesto` creados, 0 `pendiente_cierre`**. Verificado por
+consulta directa (no por el output del comando): 1036 `asiento_propuesto_renglon` (518×2), **0
+asientos con `debe≠haber`**. JP revisó línea por línea 9 renglones reales (los 5 primeros de
+`impuesto_debitos_creditos`, los 3 de `comision_bancaria`, el único de `extraccion_efectivo`) —
+patrón contable correcto en los 9: la cuenta bancaria en `haber` cuando sale plata, la contrapartida
+en `debe` con el mismo importe. **Confirmado por JP como listo, con la salvedad de que sigue siendo
+un mes real solo con 3 de 8 tipos accionables** (los otros 5 tipos, 447 movimientos, siguen sin
+Capa C confirmada — cola de revisión que todavía no existe como pantalla).
+
+### 7. Qué queda, honesto, sin forzar
+
+- **447 movimientos en `decision_humana`** (421 `cobranza_de_cliente` esperando distinguir
+  tercero/socio; 26 esperando confirmar crédito fiscal/hipótesis del léxico/cuenta propia destino) —
+  no tienen cola de revisión construida todavía. Fuera de alcance de esta sesión.
+- **116 `sin_reconocer`** (91 `concepto_no_catalogado`, 19 `concepto_sin_tipo_asignado`, 6
+  `reversa_incoherente`) — volumen real de "salud del léxico" contra Galicia/Bracci, sin analizar
+  todavía.
+- **B.13 sigue sin dueño** — el `INSERT` de esta sesión es el workaround, no la lógica de apertura.
+- **Fecha real de vigencia del plan de cuentas de Bracci** — pregunta abierta a Laura/JP, hoy
+  cubierta por el piso técnico `2026-05-29`.
+- **Deuda nueva, no bloqueante** (`plan-cuentas-multicliente`): falta
+  `knowledge/clientes/CLIENTE-f84d9ecc-.../jurisdicciones-activas.md` para Bracci.
+- **ROKA sigue sin tocar** — Bracci primero, tal como fija `27-roadmap-capa-d.md` §B.5.
+
+### 8. Commits
+
+`8f10ee4`, `74cf094` (fix + cobertura del bug de `via`), `3fdd143` (decisión de vocabulario de
+`estado_desde`) — los tres ya commiteados. Esta entrada de HANDOFF queda para un commit propio,
+pendiente de aprobación de JP. Sin push.
+
+---
+
 ## 2026-08-31 (149) — Verificación pre-push de los 5 commits de Sesión 2b: suite completa real
 encontró una regresión (corregida), orden de migraciones verificado aplicando desde cero.
 

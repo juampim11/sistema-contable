@@ -274,11 +274,27 @@ sin mocks — camino feliz con `debe`/`haber` verificado contra la base, cardina
 nunca se auto-resuelve, dry-run que no escribe nada. El % de automático vs. pendiente sobre un
 corpus real queda para Sesión 3 (necesita datos reales de un cliente, no el fixture sintético).
 
-### Sesión 3 — Primer entregable real para Laura
+### Sesión 3 — Primer entregable real para Laura — 🟡 PARCIAL (primer paso cerrado 2026-08-31)
 
 **Qué se hace:** cerrar el circuito hasta `asiento_propuesto` para un mes real completo de Bracci (el
 caso simple ya elegido), y producir el primer archivo exportable comparable contra la planilla de
 Laura — el entregable más chico que ya sirve, no una pantalla.
+
+> **Estado (2026-08-31, sesión interactiva, primer paso).** El circuito corrió de punta a punta
+> contra julio 2026 de Bracci real: **518 `asiento_propuesto` creados** (1036 renglones, 0 con
+> `debe≠haber`), revisados línea por línea por JP contra los 3 `tipo_movimiento` con
+> `regla_imputacion` cargada (`impuesto_debitos_creditos`, `comision_bancaria`,
+> `extraccion_efectivo` — los únicos en `clase='propuesta'` sobre 1081 movimientos reales; los otros
+> 447 quedaron en `decision_humana`, 116 en `sin_reconocer`). Detalle completo: `HANDOFF.md` (150).
+> Dos bloqueantes reales encontrados y resueltos en el camino, no anticipados: (a) las migraciones
+> `0030`-`0034` nunca se habían aplicado al piloto (solo LOCAL); (b) `cuenta_atributo.vigente_desde`
+> de las 227 cuentas de Bracci tenía la fecha de CARGA del CLI, no vigencia contable real —
+> corregida a `2026-05-29` (piso técnico, marcado convencional). Un bug real de producción
+> encontrado por el primer corpus real grande (`persistible.ts`, `via` hardcodeado en `null`),
+> corregido con prueba de mutación real. **Lo que NO se hizo todavía**: el archivo exportable
+> comparable contra la planilla de Laura (`ux-designer` sin convocar), y los 447+116 movimientos
+> que no llegaron a `asiento_propuesto` — Sesión 3 sigue abierta, esto es su primer paso, no su
+> cierre.
 
 **Por qué esta y no otra antes:** es la primera vez en todo el proyecto que existe algo para mostrarle
 a la contadora que no sea extracción. Antes de esto no hay nada que comparar; después, cada sesión
