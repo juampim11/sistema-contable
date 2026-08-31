@@ -6,6 +6,46 @@
 
 ---
 
+## 2026-08-31 (149) — Verificación pre-push de los 5 commits de Sesión 2b: suite completa real
+encontró una regresión (corregida), orden de migraciones verificado aplicando desde cero.
+
+**Herramienta:** Claude Code, sesión interactiva. JP pidió, antes de aprobar el push de
+`76b09cd..cb603e2` (5 commits), tres confirmaciones sobre el estado ACUMULADO final, no verificado
+commit por commit.
+
+### 1. Regresión real encontrada por la suite completa (nunca corrida entera hasta este punto)
+
+`packages/ingesta/tests/aislamiento-modulo-1.test.ts` — 4 tests rojos. Causa: ese test barre
+dinámicamente TODAS las tablas con `cliente_id` y exige que el pipeline de ingesta bancaria las haya
+llenado, salvo las explícitamente excluidas en `FUERA_DEL_MODULO_1` (mismo mecanismo de "barrido +
+allowlist" que ya usa `DOMINIOS_CERRADOS`). `regla_imputacion` (tabla nueva, `0030`) no estaba en esa
+lista — nadie la agregó en la sesión que la creó, porque este test no se corrió hasta ahora.
+
+**Fix**: agregada a `FUERA_DEL_MODULO_1` con el mismo criterio ya documentado ahí para `cuenta`/
+`cuenta_atributo` — es dato de configuración de Capa D que carga el contador/socio, nunca algo que
+la ingesta bancaria escriba. Ubicada como su propia sección (`Capa D, migración 0030`), separada del
+bloque de "las once de 0027" para no romper el conteo de un comentario existente ("distinta de las
+diez de arriba").
+
+### 2. Verificación final
+
+- `pnpm typecheck`: limpio.
+- Suite completa (`npx vitest run`, foreground, sin gate en background): **108 archivos, 2085
+  tests, 0 rojos, 7 todo** (marcados, no fallas) — corrida DESPUÉS del fix del punto 1.
+- **Orden de migraciones, verificado aplicando de verdad, no leyendo el SQL**: base descartable
+  nueva en el mismo Postgres local (`verificacion_orden_migraciones`), las 34 migraciones aplicadas
+  desde cero en secuencia (`0001` a `0034`), sin un solo error. Chequeo extra: el `CHECK` final de
+  `pendiente_cierre_motivo_chk` en esa base tiene exactamente los 9 valores esperados, sin rastro de
+  `movimiento_de_socio` — confirma que `0033` (el rename) se aplicó correctamente encima de `0031`
+  antes de que `0034` agregara los 2 motivos nuevos. Base descartable borrada al terminar.
+
+### 3. Commit
+
+Un commit para el fix de la entrada 1. Sigue sin push — a la espera de la luz verde de JP para los
+6 commits juntos (`76b09cd..<este commit>`).
+
+---
+
 ## 2026-08-31 (148) — Ítem E, paso 2 CERRADO: servicio de I/O + comando CLI (`conciliar-lote.ts`),
 probado de punta a punta contra LOCAL con tenant sintético. Sesión 2b de Capa D completa (A-E).
 

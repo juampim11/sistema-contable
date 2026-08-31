@@ -220,6 +220,14 @@ const FUERA_DEL_MODULO_1: Readonly<Record<string, string>> = {
     'backfill contra los adaptadores existentes está bloqueado por B.7 de 10-deuda-declarada.md — ' +
     'pero la conexión futura está pendiente y declarada (D-17 de 25-segunda-convocatoria-cierre-' +
     'mensual.md), no descartada. Revisar este motivo el día que esa conexión se implemente.',
+  // --- Capa D, migración 0030 (Ítem E de Sesión 2b, D-29) — llegó después que las once de 0027.
+  regla_imputacion:
+    'Tabla de Capa D (migración 0030, D-29): reglas de imputación por cliente que decide el ' +
+    'contador/socio (tipo_movimiento[, concepto] → cuenta_id) — dato de configuración, misma ' +
+    'categoría que cuenta/cuenta_atributo. La ingesta bancaria nunca la escribe; la carga o el ' +
+    'motor de conciliación (packages/motor-conciliacion) la LEE, corriendo después de que la ' +
+    'ingesta ya persistió el movimiento. Cobertura de aislamiento propia en ' +
+    'packages/data/tests/mutaciones-0030-regla-imputacion.test.ts.',
 };
 
 /** Las tablas que el pipeline de ingesta **tiene que** haber llenado en los dos clientes. */
