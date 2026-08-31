@@ -127,6 +127,25 @@
         "texto-humano.ts": "4daf62486068cc5f",
         "tipos.ts": "7a091c2672ab69c8"
       }
+    },
+    {
+      "version": 2,
+      "aceptada_en": "2026-08-31",
+      "bump": false,
+      "motivo": "fix: sin_reconocer con evidencia (concepto_sin_tipo_asignado/reversa_incoherente) persistia via:null hardcodeado, y reconocimiento_forma_chk (0014) SIEMPRE rechazaba ese INSERT (num_nonnulls=3 de 4). Ninguna fila pudo persistirse nunca con esa combinacion -- verificado 0 filas en local (reconocimiento_movimiento: 1 fila total, 0 de los dos motivos) -- asi que no hay resultado ya persistido que este cambio pueda alterar.",
+      "archivos": {
+        "contrapartida.ts": "9225c9191a65d5cf",
+        "entrada.ts": "2ad45a0406a1a49b",
+        "indice.ts": "c93529e3a0044adb",
+        "lexico.ts": "e3ebbde02837b6c7",
+        "matcher.ts": "0a15006f1992cf32",
+        "motor.ts": "84013b228ebec162",
+        "normalizacion.ts": "17d7ecc738aad461",
+        "persistible.ts": "a9222bf84cfe566d",
+        "reconocimiento.ts": "614150d86ac9fd0a",
+        "texto-humano.ts": "4daf62486068cc5f",
+        "tipos.ts": "7a091c2672ab69c8"
+      }
     }
   ]
 }

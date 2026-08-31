@@ -214,13 +214,17 @@ export function aFilaPersistible(
         concepto: null,
         polaridad: null,
         lado: null,
-        via: null,
-        queDecide: null,
-        motivoCodigo: r.motivo,
         // `evidencia` es OPCIONAL en esta rama y depende del MOTIVO: ausente en `ambiguo`,
         // `concepto_no_catalogado` y `sin_evidencia_de_concepto`; presente en
         // `concepto_sin_tipo_asignado` y `reversa_incoherente`. La ausencia se representa con null,
         // nunca se rellena con un id inventado — `reconocimiento_forma_chk` de 0014 la exige exacta.
+        // `via` vive DENTRO de `evidencia` en esta rama (a diferencia de `propuesta`/
+        // `decision_humana`, que la tienen a nivel raíz): un `via: null` incondicional dejaba la fila
+        // con evidencia a medias (3 de 4 no-nulas) cuando el motivo SÍ trae evidencia, y
+        // `reconocimiento_forma_chk` la rechazaba entera.
+        via: r.evidencia ? r.evidencia.via : null,
+        queDecide: null,
+        motivoCodigo: r.motivo,
         entradaLexicoId: r.evidencia ? idDelLexico(r.evidencia.entradaLexicoId, validos) : null,
         caracteresMatcheados: r.evidencia ? r.evidencia.caracteresMatcheados : null,
         huboCola: r.evidencia ? r.evidencia.huboCola : null,

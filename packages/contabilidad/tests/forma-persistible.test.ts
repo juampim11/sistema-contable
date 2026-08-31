@@ -18,7 +18,7 @@ import { construirIndice, reconocer } from '../src/nucleo/motor.ts';
 import { aFilaPersistible, idsDelLexico, IdDeLexicoDesconocidoError, marcarCapaCCorrida } from '../src/nucleo/persistible.ts';
 import { LEXICOS_POR_BANCO } from '../src/lexico/registro.ts';
 import type { LexicoDeBanco } from '../src/nucleo/lexico.ts';
-import type { EvidenciaDeMovimiento, Reconocimiento } from '../src/nucleo/reconocimiento.ts';
+import type { EvidenciaDelMatch, EvidenciaDeMovimiento, Reconocimiento } from '../src/nucleo/reconocimiento.ts';
 
 const GALICIA = LEXICOS_POR_BANCO['galicia'] as LexicoDeBanco;
 const INDICE = construirIndice(GALICIA);
@@ -196,6 +196,46 @@ describe('aFilaPersistible respeta la forma que el check exige', () => {
         'exacto que esta guarda existe para atajar, reintroducido por el error que lo reporta',
     ).not.toContain('razon_social_del_tercero');
   });
+
+  /**
+   * 🔴 EL MUTANTE REAL: bug encontrado al aplicar Capa C contra el primer corpus grande del
+   * piloto (1081 movimientos, julio 2026) — Postgres rechazó el INSERT con `ING_CHECK` /
+   * `reconocimiento_forma_chk`. La rama `sin_reconocer` hardcodeaba `via: null`
+   * incondicionalmente, pero el check exige las CUATRO columnas de evidencia no-nulas cuando
+   * `motivo_codigo` es `concepto_sin_tipo_asignado` o `reversa_incoherente` (ver el punto 5 de
+   * 0014 y la tabla de `EVIDENCIA_POR_MOTIVO` arriba). El único `via` de esta rama vive DENTRO
+   * de `evidencia.via`, no a nivel raíz — a diferencia de `propuesta`/`decision_humana`.
+   *
+   * Verificado revirtiendo el fix a mano (`via: null` hardcodeado) y confirmando que ESTE test
+   * puntual se pone rojo — no la suite en general.
+   */
+  it.each(['concepto_sin_tipo_asignado', 'reversa_incoherente'] as const)(
+    'un sin_reconocer con evidencia (%s) persiste via desde evidencia.via, nunca null',
+    (motivo) => {
+      const idReal = GALICIA.entradas[0]?.id as string;
+      const evidencia: EvidenciaDelMatch = {
+        entradaLexicoId: idReal,
+        via: 'texto_literal_exacto',
+        caracteresMatcheados: 5,
+        huboCola: false,
+      };
+      const r: Reconocimiento = {
+        clase: 'sin_reconocer',
+        motivo,
+        candidatos: [],
+        evidencia,
+      };
+      const fila = aFilaPersistible(marcarCapaCCorrida(r), VALIDOS);
+
+      expect(fila.via, 'reconocimiento_forma_chk exige via no-nulo para este motivo').not.toBeNull();
+      expect(fila.via).toBe(evidencia.via);
+      // Las otras tres columnas del mismo grupo, para que el mutante no pase "por casualidad"
+      // arreglando solo la que el nombre del test menciona.
+      expect(fila.entradaLexicoId).not.toBeNull();
+      expect(fila.caracteresMatcheados).not.toBeNull();
+      expect(fila.huboCola).not.toBeNull();
+    },
+  );
 
   it('un id legítimo del léxico pasa', () => {
     const idReal = GALICIA.entradas[0]?.id as string;
