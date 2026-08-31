@@ -253,7 +253,15 @@ más, verificado por consulta directa contra el piloto. Detalle completo: `HANDO
 **Commits:** ninguno todavía — código, tests y backfill real aplicados y verificados contra el piloto,
 pero sin commitear (`HANDOFF.md` 141, punto 10).
 
-### Sesión 2b — Primera clasificación (siguiente paso real, NO empezada)
+### Sesión 2b — Primera clasificación (esquema CERRADO e IMPLEMENTADO, código NO empezado)
+
+**Actualización 2026-08-31 (sesión nocturna autónoma):** diseño de D-29 cerrado con acuerdo real de
+`dba-data` + `contador-dominio` + `plan-cuentas-multicliente` (`28-diseno-motor-clasificacion.md`
+§2), y su esquema — más D-27/D-28/D-30 — **implementado y aplicado contra LOCAL** (migraciones
+`0030_regla_imputacion.sql`, `0031_capa_d_vocabulario_motivo.sql`,
+`0032_documento_ingerido_lote_fk.sql`; sin push, sin tocar el piloto). Detalle en `HANDOFF.md` y en
+`28-diseno-motor-clasificacion.md` §6/§7. **Lo que sigue sin empezar es el código del motor en sí**
+(ítem E de la lista de la sesión nocturna, no llegó a arrancar).
 
 **Qué se hace:** con `documento_ingerido` ya poblado por la Sesión 2a, arrancar la lógica de
 asignación de cuenta en sí — la primera versión de `motor-conciliacion-contable` — sobre el caso más

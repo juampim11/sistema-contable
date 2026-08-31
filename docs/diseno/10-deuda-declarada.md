@@ -102,6 +102,24 @@ medir si el mismo choque de `INSERT` ocurre, con el mismo método que ya destap�
 bloquea nada hoy: ninguna de las tres tiene todavía un flujo de reproceso real que la ejercite |
 | **B.10** | 🟠 **2 de las 4 cuentas de socio de ROKA (`69479b8f-...`), asignadas PROVISORIAMENTE — pendiente de confirmación de Laura, HANDOFF (140).** El plan de cuentas real de ROKA tiene 4 códigos ligados a persona (`1.2.4.300`, `1.2.4.400` en Activo; `2.1.9.100`, `2.1.9.200` en Pasivo — 1 código por persona, no pareado Activo+Pasivo como Bracci). De los 4 `padron_socio_id` reales cargados: **2 confirmados por evidencia documental real** (`1.2.4.300`=Gabriela, único alta de ROKA de la tanda de entrada 73; `1.2.4.400`="Cuenta Particular Socio 4"=el familiar NO-socio, resuelto en `privado/02-Consultas-Laura-2026-08-21.md` §1.5 pregunta 8, y verificado por HMAC del CUIT documentado contra `padron_socio.documento_hmac` — nunca por texto ni por orden). **Los otros 2 (`2.1.9.100`, `2.1.9.200`) quedan SIN documento que resuelva cuál de las dos socias restantes es "Socio 1" y cuál "Socio 2"** — decisión explícita de JP para destrabar el piloto: asignados a los 2 `padron_socio_id` restantes (verificados por HMAC que NO son el familiar, o sea que son socias reales) en orden de `created_at` ascendente. Marcados `"confirmado": false` en el JSON de mapeo (fuera del repo, scratchpad de sesión, nunca commiteado) | Ninguno — la carga real (219/219) ya está aplicada al piloto. Cuando Laura conteste cuál socia es "Socio 1"/"Socio 2", volver a esta tarea: si el orden asumido resultó incorrecto, el fix es un `UPDATE` de `cuenta_atributo.padron_socio_id` para esas 2 filas puntuales, con su propio registro de auditoría — no una re-carga completa |
 
+| **B.11** | 🟡 **Riesgo ACEPTADO, documentado (D-27, sesión nocturna autónoma 2026-08-31, `dba-data`):
+NO hay guardia contra reingesta/período parcialmente solapado en `documento_ingerido`/
+`fuente_cierre` ↔ `lote_ingesta` (correspondencia por rango `cliente_id, cuenta_bancaria_id, fecha ∈
+periodo`).** `0032_documento_ingerido_lote_fk.sql` SÍ agregó la FK física
+`documento_ingerido.lote_ingesta_id → lote_ingesta` (gap más grave, ya cerrado: `lote_ingesta.
+archivo_clave` es nullable y sin `unique`, así que el enganche por string previo podía matchear más
+de una fila sin desempate). Lo que sigue SIN guardia es el solape de rango en sí. Motivo de aceptar
+el riesgo, no de ignorarlo: (1) la vía idiomática de Postgres (`EXCLUDE USING gist` sobre
+`daterange`) está bloqueada estructuralmente — `btree_gist` es una extensión no-core que ADR-0000 §6
+prohíbe, ya confirmado por `0009`/`0013` para vigencias MÁS simples; la alternativa sin extensión es
+un trigger procedural con `SELECT ... FOR UPDATE`, pieza de concurrencia no trivial; (2)
+`uq_documento_ingerido_natural` (`0027`) ya bloquea el caso más común (mismo archivo, mismo período
+exacto) — lo que queda sin cubrir es un período PARCIALMENTE solapado, error humano de carga
+administrativa, no un evento del flujo automático; (3) hoy CERO código de aplicación ejercita este
+camino (Capa D de código no arrancó) | Revisar quirúrgicamente cuando arranque la Sesión 2b de
+código sobre Bracci (`27-roadmap-capa-d.md` §B.5) — si el patrón de carga real muestra reingestas
+frecuentes, se sube de prioridad con datos medidos, no con una hipótesis |
+
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
 - **La deuda de seguridad abierta**: `08-plan-de-construccion.md` §6.0 — nueve líneas, de bloqueante de

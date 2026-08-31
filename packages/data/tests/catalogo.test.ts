@@ -35,6 +35,7 @@ import {
   TIPOS_ASIENTO_PROPUESTO,
   ASIENTO_ESTADOS,
   ROLES_FUNCIONALES_CUENTA,
+  CUENTA_RESOLUCIONES,
 } from '../src/cierre/tipos.ts';
 /**
  * ⚠️ Import **relativo a `packages/ingesta`**, y es deliberado.
@@ -1172,6 +1173,22 @@ const DOMINIOS_CERRADOS: DominioCerrado[] = [
     constante: 'ROLES_FUNCIONALES_CUENTA',
     valores: ROLES_FUNCIONALES_CUENTA,
     migracion: '0027',
+  },
+  {
+    check: 'regla_imputacion_tipo_chk',
+    tabla: 'regla_imputacion',
+    columna: 'tipo_movimiento',
+    constante: 'TIPOS_MOVIMIENTO',
+    valores: TIPOS_MOVIMIENTO,
+    migracion: '0030',
+  },
+  {
+    check: 'regla_imputacion_resolucion_chk',
+    tabla: 'regla_imputacion',
+    columna: 'cuenta_resolucion',
+    constante: 'CUENTA_RESOLUCIONES',
+    valores: CUENTA_RESOLUCIONES,
+    migracion: '0030',
   },
 ];
 

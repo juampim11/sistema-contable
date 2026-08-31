@@ -268,6 +268,12 @@ export const CLASIFICACION = {
       abierta_desde: { nivel: 'N2', exportable: true },
       cerrada_en: { nivel: 'N2', exportable: true },
       created_at: MARCA_TIEMPO,
+      cuenta_id: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'D-29, pata "banco": cuenta_bancaria_id → cuenta_id, mapeo fijo por cliente. El uuid no ' +
+          'revela contenido; lo que revela vive en cuenta_atributo, ya clasificado ahí.',
+      },
     },
   },
 
@@ -1044,6 +1050,60 @@ export const CLASIFICACION = {
     },
   },
 
+  regla_imputacion: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      cuenta_id: UUID_INTERNO,
+      tipo_movimiento: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'NO hereda N1 de "vocabulario cerrado": afirma qué tipos de movimiento tienen regla ' +
+          'cargada para ESTE cliente — mismo argumento que ya clasificó cuenta_atributo.rol_funcional ' +
+          'y reconocimiento_contrapartida.admite_matches en N2 pese a ser dominios cerrados ' +
+          '(seguridad-datos-financieros, convocatoria de 0030).',
+      },
+      concepto: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Mismo nombre y mismo nivel que reconocimiento_movimiento.concepto — el registro ' +
+          'clasifica por nombre de columna GLOBALMENTE, no solo por tabla.',
+      },
+      cuenta_resolucion: {
+        nivel: 'N2',
+        exportable: true,
+        nota: '"por_socio"/"por_jurisdiccion" afirman un hecho real del régimen de este cliente ' +
+          '(relación societaria con tratamiento particular, o jurisdicciones múltiples de IIBB, ya ' +
+          'N2). Se clasifica por el peor caso, mismo argumento que tipo_movimiento arriba.',
+      },
+      rol_funcional_objetivo: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Mismo argumento y mismo nivel que cuenta_atributo.rol_funcional: afirma que este ' +
+          'cliente tiene una regla de imputación ligada a un socio puntual.',
+      },
+      vigente_desde: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Mismo criterio que cuenta_atributo.vigente_desde: se clasifica por el peor caso (la ' +
+          'rama por_socio ata la vigencia a una relación societaria).',
+      },
+      vigente_hasta: { nivel: 'N2', exportable: true },
+      respaldo: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Prosa libre escrita por una persona, mismo criterio que cuenta_atributo.respaldo. ' +
+          'RIESGO CONOCIDO, sin mecanismo cerrado (H1, seguridad-datos-financieros, convocatoria de ' +
+          '0030): puede terminar citando un CUIT o un nombre de socio para justificar una regla — ' +
+          'mismo hueco nunca cerrado del incidente #14. Bloqueado para decisión de JP: respaldo ' +
+          'estructurado vs. prosa libre + guardia de escritura.',
+      },
+      decidido_por: { nivel: 'N1', exportable: true, nota: 'Identidad declarada ≠ autenticada, mismo tier que resuelto_por/hecho_por.' },
+      creada_en: MARCA_TIEMPO,
+    },
+  },
+
   documento_ingerido: {
     columnaTenant: 'cliente_id',
     campos: {
@@ -1069,6 +1129,12 @@ export const CLASIFICACION = {
       },
       ingerido_en: MARCA_TIEMPO,
       creado_en: MARCA_TIEMPO,
+      lote_ingesta_id: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'D-27: FK física hacia lote_ingesta. Solo tipo_documento=extracto la puebla hoy — sin ' +
+          'CHECK de equivalencia, ver comentario de la columna en 0032.',
+      },
     },
   },
 
@@ -1193,6 +1259,13 @@ export const CLASIFICACION = {
       resuelto_por: { nivel: 'N1', exportable: true, nota: 'Identidad declarada ≠ autenticada.' },
       resuelto_en: { nivel: 'N1', exportable: true, nota: 'Mismo tier que pendiente_estado.' },
       creado_en: MARCA_TIEMPO,
+      evidencia: {
+        nivel: 'N2',
+        exportable: false,
+        nota: 'D-30. Mismo criterio que expectativa_fuente_cliente.evidencia: por qué Capa D no pudo ' +
+          'resolver la cuenta — códigos y referencias por id, nunca texto libre ni un valor real del ' +
+          'movimiento. Clasificado por el peor caso posible del contenido, no por el caso típico.',
+      },
     },
   },
 

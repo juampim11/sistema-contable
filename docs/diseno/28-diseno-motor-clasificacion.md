@@ -283,10 +283,10 @@ adelante existía antes de esta convocatoria (confirmado por grep sobre `docs/di
 | # | Decisión | Fuente |
 |---|---|---|
 | D-26 | Importe/fecha/descripción no viajan en `Reconocimiento` (por diseño, `04`§3); el servicio de I/O de Capa D los reúne por JOIN `reconocimiento_movimiento.movimiento_id → movimiento_bancario_crudo` | `motor-conciliacion-contable` |
-| D-27 | Gap de esquema, sin FK física, entre `documento_ingerido`/`fuente_cierre` y `lote_ingesta`/`movimiento_bancario_crudo` — se resuelve hoy por rango `(cliente_id, cuenta_bancaria_id, fecha ∈ periodo)`, documentado como supuesto de "sin solape", o con FK nueva — pendiente de convocar `dba-data`. **Candidato a sumarse como ítem nuevo de `10-deuda-declarada.md`, sección B, sin dueño todavía** | `motor-conciliacion-contable` |
-| D-28 | `pendiente_cierre.motivo_codigo` (hoy 2 valores) necesita migración que amplíe su dominio con motivos de Capa D — candidatos: `cuenta_no_configurada`, `cuenta_ambigua`, `tipo_sin_regla_imputacion`, `cliente_sin_plan_de_cuentas`. Vocabulario exacto lo cierra `contador-dominio` + `analista-funcional`; migración es de `dba-data` | `motor-conciliacion-contable` + `qa-funcional` (fusionado) |
+| D-27 | 🟢 **IMPLEMENTADA (0032, sesión nocturna autónoma 2026-08-31)**: FK física `documento_ingerido.lote_ingesta_id → lote_ingesta`. El guardia de solape de rango queda como riesgo ACEPTADO y documentado en `10-deuda-declarada.md` B.11 (`btree_gist` bloqueado por ADR-0000 §6, probabilidad baja, cero código de aplicación ejercita el camino hoy) | `dba-data` (ronda de implementación) |
+| D-28 | 🟢 **CERRADA e IMPLEMENTADA (0031, sesión nocturna autónoma 2026-08-31)**: 5 motivos nuevos en `pendiente_cierre.motivo_codigo` — `cliente_sin_plan_de_cuentas`, `tipo_sin_regla_imputacion`, `cuenta_no_configurada`, `cuenta_ambigua`, `movimiento_de_socio` (este último no estaba en la lista original — cubre el veto duro de D-31 para la familia socio, `N=1`, que ningún candidato original nombraba). Vocabulario completo: `packages/data/src/cierre/tipos.ts`, `MOTIVOS_PENDIENTE_CIERRE`. **Bloqueado, sin resolver**: motivo propio para la pata "banco" sin mapear, enrutamiento de `clase ∈ {sin_reconocer, decision_humana}`, prioridad si fallan las dos patas de D-29 a la vez — documentado en el comentario de `0031`, no inventado | `contador-dominio` + `analista-funcional` (conciliados) |
 | D-29 | 🟢 **CERRADA (2026-08-31, ronda de cierre real)** — ver §2. `rol_funcional` sin ampliar; tabla nueva de reglas de imputación por cliente (`04`§8) para `tipo_movimiento → cuenta_id`, con la regla operativa, la gobernanza y la disciplina de vigencia ya escritas en §2. Acuerdo real de los tres, `plan-cuentas-multicliente` concedió su posición original | `dba-data` + `contador-dominio` + `plan-cuentas-multicliente` (ronda de cierre) |
-| D-30 | Camino feliz: `asiento_propuesto_renglon` (`propuesto`) ya es la propuesta — sin tabla nueva. Falta columna `evidencia jsonb` en `pendiente_cierre` | `motor-conciliacion-contable` |
+| D-30 | 🟢 **IMPLEMENTADA (0031)**: columna `evidencia jsonb` en `pendiente_cierre`, nullable. Camino feliz sin cambios: `asiento_propuesto_renglon` (`propuesto`) ya es la propuesta, sin tabla nueva. Esquema exacto del jsonb queda bloqueado hasta que exista el motor real que lo escriba (Sesión 2b de código) — tiene que distinguir, para `cuenta_ambigua`, "cardinalidad abierta por diseño" de "reglas solapadas por error de carga" | `motor-conciliacion-contable` |
 | D-31 | Criterio automático/manual — fórmula exacta de §3, sin score inventado, con excepción dura de la familia socio | `qa-funcional` |
 | D-32 | Corrección de premisa: `pendiente_cierre.motivo_codigo` tiene 2 valores hoy, no 8 (el 8 es `QUE_DECIDE`, dominio distinto de Capa B/C) | `motor-conciliacion-contable` + `qa-funcional` |
 | D-33 | El % de aceptación de la Sesión 2b se mide sobre el corpus de Bracci, nunca sobre H y J (`N=1` degenerado) | `qa-funcional` |
@@ -299,14 +299,24 @@ tener plan de cuentas + Capa C corrida sobre su movimiento; el motivo del plan d
 
 ## 7. Qué queda para la próxima convocatoria (de código, no de diseño)
 
-- **D-29 ya cerrada (§2)** — queda escribir la migración: `dba-data` diseña la tabla nueva de reglas
-  de imputación (`04`§8, clave `(cliente_id, tipo_movimiento[, concepto], vigencia) → cuenta_id`),
-  con la gobernanza (`socio`/`contador`, nunca `administrativo`) y la disciplina de vigencia/no-
-  reescritura-de-historia ya fijadas en §2. No se escribe DDL en esta sesión de diseño.
-- `dba-data`: migración de D-27 (si se decide corregir el gap de FK) y D-28 (ampliar
-  `pendiente_cierre.motivo_codigo` + la columna `evidencia jsonb` de D-30).
-- `contador-dominio` + `analista-funcional`: cerrar el vocabulario exacto de los motivos nuevos de
-  D-28.
+**Actualización 2026-08-31 (sesión nocturna autónoma):** D-27, D-28, D-29 (esquema) y D-30 quedaron
+**implementadas y aplicadas contra LOCAL** (migraciones `0030`/`0031`/`0032`, `pnpm typecheck` limpio,
+82+20+6+38+58 tests verdes en los archivos tocados). Detalle completo en `HANDOFF.md`. Sin push, sin
+tocar el piloto — pendiente de revisión de JP antes de decidir orden de push. Lo que sigue:
+
+- **El motor en sí (`motor-conciliacion-contable`) todavía no tiene una línea de código** — leer
+  `reconocimiento_movimiento` + `movimiento_bancario_crudo` (JOIN de D-26), resolver `cuenta_id` por
+  las dos patas de `regla_imputacion`/`cuenta_bancaria.cuenta_id`, aplicar D-31, escribir a
+  `asiento_propuesto_renglon` o `pendiente_cierre`. Es la Sesión 2b de código propiamente dicha.
+- **Bloqueado, sin resolver esta noche, documentado en el comentario de `0031` y en HANDOFF** (no
+  inventado): motivo propio para la pata "banco" sin mapear; enrutamiento de
+  `reconocimiento_movimiento.clase ∈ {sin_reconocer, decision_humana}` hacia `pendiente_cierre` o no;
+  prioridad de reporte si fallan las dos patas de D-29 a la vez; mecanismo de `regla_imputacion.
+  respaldo` (estructurado vs. prosa libre + guardia de escritura, H1 de `seguridad-datos-
+  financieros`) — mismo hueco nunca cerrado del incidente #14, heredado, no nuevo de esta tabla.
+- **`'por_jurisdiccion'`/`'por_impuesto'`** de `regla_imputacion.cuenta_resolucion` quedan declaradas
+  en el dominio pero sin columnas de resolución — necesitan su propia convocatoria de negocio antes
+  de ser accionables.
 - Preguntar a JP por qué H y J no tiene plan de cuentas (dato vs. proceso) — no bloquea Bracci.
 - Arrancar Sesión 2b de código sobre Bracci, con la salvedad de D-12 ya incorporada: Bracci es punto
   de partida, ROKA sigue siendo el caso de validación multi-fuente antes de dar el motor por probado.

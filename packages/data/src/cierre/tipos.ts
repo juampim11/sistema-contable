@@ -47,8 +47,33 @@ export const ORIGENES_EXPECTATIVA = [
 ] as const;
 export type OrigenExpectativa = (typeof ORIGENES_EXPECTATIVA)[number];
 
-/** Vocabulario cerrado de `pendiente_cierre.motivo_codigo` — distinto de `QueDecide` (Capa B/C). */
-export const MOTIVOS_PENDIENTE_CIERRE = ['documento_faltante', 'cotizacion_no_disponible'] as const;
+/**
+ * Vocabulario cerrado de `pendiente_cierre.motivo_codigo` — distinto de `QueDecide` (Capa B/C).
+ *
+ * Los 5 valores de Capa D (D-28, cerrado por `contador-dominio` + `analista-funcional`, sesión
+ * nocturna autónoma 2026-08-31, `docs/diseno/28-diseno-motor-clasificacion.md` §6) se agregan a los
+ * 2 originales de `0027`. Distinción deliberada entre los dos primeros — remediación distinta:
+ * `tipo_sin_regla_imputacion` = nadie cargó (o dejó vencer) la regla → hay que CREARLA/renovarla;
+ * `cuenta_no_configurada` = la regla existe y está vigente, pero la cuenta a la que apunta no es
+ * válida/vigente en el plan a esa fecha (dada de baja, reclasificada) → hay que CORREGIR la regla.
+ * `movimiento_de_socio` cubre el caso `N=1` que D-31 (`28`§3) veta duro de auto-resolución (familia
+ * `retiro_de_socio`/`aporte_de_socio`/`cuenta_particular_socio`): no es un dato faltante ni ambiguo,
+ * es un control de diseño deliberado — confundirlo con `cuenta_ambigua` mentiría sobre la causa.
+ *
+ * Bloqueado, sin resolver esta noche (documentado en HANDOFF, no inventado): motivo propio para la
+ * pata "banco" (`cuenta_bancaria.cuenta_id`) sin mapear, cómo se enrutan movimientos con
+ * `reconocimiento_movimiento.clase ∈ {sin_reconocer, decision_humana}`, y la prioridad de reporte si
+ * fallan las dos patas de D-29 a la vez.
+ */
+export const MOTIVOS_PENDIENTE_CIERRE = [
+  'documento_faltante',
+  'cotizacion_no_disponible',
+  'cliente_sin_plan_de_cuentas',
+  'tipo_sin_regla_imputacion',
+  'cuenta_no_configurada',
+  'cuenta_ambigua',
+  'movimiento_de_socio',
+] as const;
 export type MotivoPendienteCierre = (typeof MOTIVOS_PENDIENTE_CIERRE)[number];
 
 export const PENDIENTE_ESTADOS = ['abierto', 'resuelto', 'superseded', 'dispensado'] as const;
@@ -73,6 +98,23 @@ export const ROLES_FUNCIONALES_CUENTA = [
   'retiro_de_socio',
 ] as const;
 export type RolFuncionalCuenta = (typeof ROLES_FUNCIONALES_CUENTA)[number];
+
+/**
+ * `regla_imputacion.cuenta_resolucion` (D-29, `04-imputacion-contable.md` §8 punto 3: "la cuenta no
+ * siempre es una constante"). Solo `'fija'` y `'por_socio'` tienen columnas de resolución hoy
+ * (`cuenta_id` / `rol_funcional_objetivo`) — `'por_jurisdiccion'`/`'por_impuesto'` quedan declaradas
+ * en el dominio para no reabrir el `CHECK` cuando se diseñen, pero BLOQUEADAS sin mecanismo de
+ * resolución: `04`§7 ya dice "no tengo esa fuente cargada" para jurisdicción sin publicar, y
+ * `QUE_DECIDE.elegir_cuenta_de_pasivo_del_impuesto`/`elegir_jurisdiccion_de_la_retencion` confirman
+ * que ambos caminos son manuales hoy. Necesitan su propia convocatoria antes de ser accionables.
+ */
+export const CUENTA_RESOLUCIONES = [
+  'fija',
+  'por_socio',
+  'por_jurisdiccion',
+  'por_impuesto',
+] as const;
+export type CuentaResolucion = (typeof CUENTA_RESOLUCIONES)[number];
 
 export type Cuenta = {
   readonly id: string;

@@ -6,6 +6,127 @@
 
 ---
 
+## 2026-08-31 (144) — Sesión nocturna autónoma: ítems A-D de Sesión 2b CERRADOS e implementados
+contra LOCAL (3 migraciones nuevas). Ítem E (código del motor) NO llegó a arrancar. JP no disponible
+hasta mañana — límites duros respetados: cero piloto, cero push, cero decisión de negocio inventada.
+
+**Herramienta:** Claude Code. Arranca inmediatamente después de la entrada 143 (D-29 cerrada).
+
+### 1. Estado al arrancar, verificado antes de tocar nada
+
+Working tree limpio, `main` sincronizado con `origin/main` en `76b09cd`. `.env` por default apunta a
+Postgres LOCAL (puerto 5442); el piloto corre aparte en 5443 (`sistema-contable-postgres-piloto`,
+contenedor separado, healthy) — no se tocó en toda la sesión, ni en lectura. Migraciones existentes
+hasta `0029_pendiente_cierre_reproceso.sql`.
+
+### 2. Convocatoria real, en dos tandas
+
+**Tanda 1 (paralela)**: `dba-data` (diseño de esquema para A/B/D), `security-engineer` +
+`seguridad-datos-financieros` (auditoría de la tabla de A antes del DDL), `contador-dominio` +
+`analista-funcional` (vocabulario de D-28, sin verse entre sí — conciliado por quien conduce).
+Los 5 agentes coincidieron, de forma independiente y sin bloqueos de negocio reales, en un diseño
+implementable esta misma noche.
+
+**Hallazgo real de la convocatoria, no anticipado**: `contador-dominio` y `analista-funcional`
+encontraron, cada uno por su cuenta, el mismo hueco en el vocabulario original de D-28 (el caso `N=1`
+que D-31 veta duro para la familia socio no tenía `motivo_codigo` — ninguno de los 4 candidatos lo
+cubría). Coincidencia independiente, sin coordinación — mismo patrón de convergencia real que ya se
+vio en el cierre de D-29 con evidencia de Laura.
+
+### 3. Ítem A — tabla `regla_imputacion` (D-29, pata "contrapartida")
+
+Migración `packages/data/migrations/0030_regla_imputacion.sql`. Los siete renglones de ADR-0001§5 +
+FK compuesta tenant-consistente en `cuenta_id` (`security-engineer`, R12) + gobernanza `socio`/
+`contador` únicamente, nunca `administrativo` (condición de cierre de D-29, confirmada por
+`security-engineer`/`seguridad-datos-financieros` como el precedente MÁS estricto de Capa D) +
+`UPDATE` column-grant restringido a `vigente_hasta` + unicidad de vigencia abierta con
+`nulls not distinct` + columna `decidido_por` nueva (hallazgo convergente de `security-engineer` H3
+y `seguridad-datos-financieros`: `cuenta_atributo`, el precedente que D-29 cita, no tiene columna de
+actor — no se propaga el hueco). `tipo_movimiento`/`concepto` son el MISMO dominio cerrado que
+`reconocimiento_movimiento` (`0014`), copiado literal, no redactado a mano.
+
+**Bloqueado, documentado, no inventado**: mecanismo de `regla_imputacion.respaldo` (prosa libre vs.
+estructurado + guardia de escritura — H1 de `seguridad-datos-financieros`, mismo hueco nunca cerrado
+del incidente #14, heredado de `cuenta_atributo.respaldo`); columnas de resolución para
+`'por_jurisdiccion'`/`'por_impuesto'` (declaradas en el dominio, sin mecanismo).
+
+### 4. Ítem B — `cuenta_bancaria.cuenta_id` (D-29, pata "banco")
+
+Columna, no tabla nueva (misma migración `0030`): `cuenta_bancaria` ya tenía los siete renglones y su
+gobernanza YA era la pedida (`cuenta_bancaria_wr for all`, `socio`/`contador`, `0004:146-150`) —
+coincidencia verificada por `dba-data`, no supuesta. Sin `unique` sobre `cuenta_id` — bloqueado,
+necesita confirmación de `contador-dominio` sobre si una cuenta contable puede ser destino de más de
+una cuenta bancaria del mismo cliente.
+
+### 5. Ítem C — D-28 (vocabulario `motivo_codigo`) + D-30 (`evidencia jsonb`)
+
+Migración `packages/data/migrations/0031_capa_d_vocabulario_motivo.sql`. 5 motivos nuevos, no 4:
+`cliente_sin_plan_de_cuentas`, `tipo_sin_regla_imputacion` (nadie cargó/dejó vencer la regla → hay
+que crearla), `cuenta_no_configurada` (la regla existe y está vigente pero la cuenta a la que apunta
+no es válida/vigente → hay que corregir la regla — semántica disjunta de la anterior, remediación
+distinta), `cuenta_ambigua`, `movimiento_de_socio` (el hallazgo nuevo del punto 2). Columna
+`evidencia jsonb` nullable en `pendiente_cierre`, mismo patrón de allowlist que
+`verificacion_heredada`.
+
+**Bloqueado, documentado en el comentario de `0031`, no inventado**: motivo propio para la pata
+"banco" sin mapear; cómo se enrutan movimientos con `reconocimiento_movimiento.clase ∈
+{sin_reconocer, decision_humana}`; prioridad de reporte si fallan las dos patas de D-29 a la vez;
+`cuenta_ambigua` sigue mezclando "cardinalidad abierta por diseño" con "reglas solapadas por error"
+— decisión explícita de no abrir un sexto motivo, la columna `evidencia` es lo que tiene que
+distinguirlas cuando el motor exista.
+
+### 6. Ítem D — D-27 (FK física `documento_ingerido` → `lote_ingesta`)
+
+Migración `packages/data/migrations/0032_documento_ingerido_lote_fk.sql`. `dba-data` encontró un
+agravante real no visto antes: `lote_ingesta.archivo_clave` es nullable y sin `unique` — el enganche
+por string previo podía matchear más de una fila sin desempate determinístico. FK agregada, nullable,
+sin `CHECK` de equivalencia (pendiente verificar `backfillDocumentoIngerido` antes de endurecerlo).
+El guardia contra reingesta/solape de rango queda como **riesgo ACEPTADO y documentado**, con motivo
+exacto, en `docs/diseno/10-deuda-declarada.md` B.11 (nunca en silencio): `btree_gist` bloqueado por
+ADR-0000§6, probabilidad baja, cero código de aplicación ejercita el camino hoy.
+
+### 7. Verificación
+
+`pnpm db:migrate` + `pnpm db:setup` limpio contra LOCAL. `pnpm typecheck` limpio. Tests corridos en
+foreground, uno por uno (nunca el gate completo en background): `catalogo.test.ts` (82/82, incluye la
+verificación automática de que los 2 `CHECK` nuevos de `regla_imputacion` espejan
+`TIPOS_MOVIMIENTO`/`CUENTA_RESOLUCIONES`), `grants-conjunto-cerrado.test.ts` (20/20, actualizado con
+las columnas nuevas de `cuenta_bancaria`/`documento_ingerido`/`pendiente_cierre` y las 3 filas de
+`regla_imputacion`), `mutaciones-0030-regla-imputacion.test.ts` (6/6, nuevo — prueba de mutación de
+`regla_imputacion_cuenta_chk`/`_rol_chk`/`uq_regla_imputacion_vigente`), `aislamiento-0027`/
+`mutaciones-0027`/`mutaciones-0028`/`mutaciones-0029`/`reglas-de-codigo` (38+58, sin regresión).
+
+Documentación actualizada en la misma tarea: `packages/shared/src/seguridad/clasificacion-campos.ts`
+(tabla `regla_imputacion` completa + columnas nuevas de las 3 tablas tocadas, clasificadas
+columna por columna), `docs/diseno/28-diseno-motor-clasificacion.md` §6/§7,
+`docs/diseno/27-roadmap-capa-d.md` (Sesión 2b), `docs/diseno/10-deuda-declarada.md` (B.11).
+
+### 8. Ítem E — NO empezado
+
+El código de `motor-conciliacion-contable` (leer `reconocimiento_movimiento` +
+`movimiento_bancario_crudo`, resolver `cuenta_id`, aplicar D-31, escribir a
+`asiento_propuesto_renglon`/`pendiente_cierre`, probado contra un tenant sintético) no llegó a
+arrancar esta noche — los ítems A-D consumieron toda la convocatoria y la implementación. Queda
+para la próxima sesión (de código, no de diseño ni de esquema).
+
+### 9. Commits
+
+Todo LOCAL, sin push (límite duro de la sesión). Un solo commit para A-D (esquema + tests +
+documentación, cerrados en la misma convocatoria y verificados juntos) — ver `git log`. Los 3
+archivos de migración quedan revertibles por separado si hace falta deshacer solo uno.
+
+### 10. Para JP, mañana
+
+- Revisar y decidir orden de push de los commits de esta noche.
+- Decisiones de negocio bloqueadas (ninguna urgente, ninguna bloquea código): mecanismo de
+  `regla_imputacion.respaldo` (H1); unicidad de `cuenta_bancaria.cuenta_id`; motivo de
+  `pendiente_cierre` para la pata "banco" sin mapear; enrutamiento de movimientos `sin_reconocer`/
+  `decision_humana` hacia Capa D.
+- Sin decidir nada de esto se puede arrancar Sesión 2b de código sobre Bracci — ninguno de los
+  bloqueos toca el camino feliz.
+
+---
+
 ## 2026-08-31 (143) — D-29 CERRADA: ronda de cierre real de la divergencia de `28-diseno-motor-
 clasificacion.md` §2, acuerdo de los tres agentes, sin código ni migración.
 
