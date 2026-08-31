@@ -35,6 +35,7 @@
     "salida:listar": "node packages/ingesta/scripts/listar-salida.ts",
     "recapturar:conceptos": "node apps/cli/src/recapturar-conceptos.ts",
     "backfill:contraparte": "node apps/cli/src/backfill-contraparte.ts",
+    "backfill:documento-ingerido": "node apps/cli/src/backfill-documento-ingerido.ts",
     "alta:socio": "node apps/cli/src/alta-socio.ts",
     "alta:socio:placeholder-demo": "node apps/cli/src/alta-socio-placeholder-demo.ts",
     "resolver:contrapartida": "node apps/cli/src/resolver-contrapartida.ts",
