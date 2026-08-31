@@ -6,6 +6,81 @@
 
 ---
 
+## 2026-08-31 (142) — Sesión 2b de Capa D, primera convocatoria de diseño: `28-diseno-motor-
+clasificacion.md`, cero código. Divergencia real documentada (D-29), H y J bloqueado, D-26 a D-33.
+
+**Herramienta:** Claude Code. Modo plan de principio a fin, tal como pide `CLAUDE.md` §3.2 (cambio de
+esquema/plan de cuentas en juego). Continuación de `27-roadmap-capa-d.md`, Sesión 2b ("primera
+clasificación", hasta acá no empezada).
+
+### 1. Qué se hizo
+
+Primera convocatoria real (no simulada) para diseñar cómo un `movimiento_bancario_crudo` ya
+clasificado por Capa C se traduce en `cuenta_id` + `debe`/`haber` — la pieza central de
+`motor-conciliacion-contable`, todavía sin una línea de código. Precedida por 3 agentes `Explore`
+(solo lectura, estado real del esquema/Capa C/caso H y J) y convocatoria real a los 4 agentes que
+pide la tarea — `contador-dominio`, `motor-conciliacion-contable`, `plan-cuentas-multicliente`,
+`qa-funcional` — cada uno en modo solo-lectura para respetar el modo plan. Resultado:
+`docs/diseno/28-diseno-motor-clasificacion.md`, único archivo nuevo de la sesión.
+
+### 2. Hallazgos que no estaban antes de esta sesión
+
+- **`docs/diseno/04-imputacion-contable.md` §8** ya proponía una "tabla de imputación" por cliente
+  (`cuentaResolucion: fija|por_socio|por_jurisdiccion|por_impuesto`) que **nunca se reconcilió** con
+  el esquema aplicado en `0027` (`cuenta`/`cuenta_atributo`/`rol_funcional`) — nadie lo había notado
+  hasta que `motor-conciliacion-contable` y `contador-dominio` lo trajeron de forma independiente.
+- **Corrección de premisa, de dos agentes sin coordinarse**: `pendiente_cierre.motivo_codigo` tiene
+  hoy 2 valores (`documento_faltante`, `cotizacion_no_disponible`), no 8 — el 8 es `QUE_DECIDE`
+  (Capa B/C), dominio de esquema distinto.
+- **Gap de esquema nuevo**: `documento_ingerido`/`fuente_cierre` no tienen FK física hacia
+  `lote_ingesta`/`movimiento_bancario_crudo` — solo `objeto_almacenamiento` como string. Candidato a
+  sumarse a `10-deuda-declarada.md` sección B, sin dueño todavía (D-27 del documento nuevo).
+
+### 3. Divergencia real, documentada sin forzar consenso (D-29)
+
+`motor-conciliacion-contable` + `contador-dominio` (convergentes, sin coordinarse) proponen retomar
+la tabla de imputación de `04`§8, dejando `rol_funcional` sin extender. `plan-cuentas-multicliente`
+propone en cambio ampliar `ROLES_FUNCIONALES_CUENTA`, reusando la infraestructura de vigencia ya
+construida. Las tres voces coinciden en que los tipos de cardinalidad abierta (proveedor, cliente)
+necesitan evidencia + propuesta del motor de todos modos, ningún mapeo estático los cierra. Queda sin
+resolver a propósito — recomendación (no vinculante) de una ronda de cierre `contador-dominio` +
+`plan-cuentas-multicliente` + `dba-data` antes de escribir cualquier tabla nueva.
+
+### 4. Ejercicio de mano con H y J: BLOQUEADO, unánime entre los 4 agentes
+
+Dos bloqueos independientes, confirmados por triangulación: (1) Capa C todavía no clasificó ese
+movimiento — 0 filas en `reconocimiento_movimiento` en TODO el proyecto, local y piloto, no es
+específico de H y J; (2) H y J no tiene plan de cuentas cargado — `plan-cuentas-multicliente` no pudo
+determinar si es bloqueo de dato (falta el archivo) o de proceso (nadie corrió `alta-plan-cuentas`)
+sin inventar, queda como pregunta directa a JP. Documentado explícito: si el mecanismo existiera hoy,
+el 100% de los movimientos de H y J caerían a `pendiente_cierre` — comportamiento correcto, no falla.
+
+Recomendación para el caso de mano de la próxima sesión de código: **Bracci**, único cliente con plan
+de cuentas cargado y Capa C corrible hoy — con la salvedad explícita de **D-12**
+(`23-arquitectura-cierre-mensual.md`: "el caso de trabajo del diseño = ROKA + H y J, nunca Bracci"),
+agregada a pedido de JP antes de escribir el documento final: Bracci es punto de **partida**, no el
+caso de validación completo — ROKA (multi-fuente) sigue siendo necesario antes de dar el motor por
+probado, mismo orden que ya fija `27-roadmap-capa-d.md` §B.5.
+
+### 5. Decisiones D-26 a D-33 (numeración consolidada, continúa desde D-25 de `23`/`24`/`25`/`26`)
+
+Los 4 agentes propusieron D-26 en paralelo con contenido distinto (numeración propia de cada uno) —
+se resolvió una sola secuencia en el documento final, sin perder ninguna. Detalle completo con la
+tabla de las 8 decisiones (D-26 a D-33) y la constatación de H y J sin número D:
+`docs/diseno/28-diseno-motor-clasificacion.md` §6.
+
+### 6. Qué NO se hizo, a propósito
+
+Cero código, cero migración, cero tabla nueva diseñada en detalle. Es diseño puro — la próxima
+convocatoria (de código) tiene que cerrar D-29 antes de tocar el esquema.
+
+### 7. Estado de commit
+
+Este documento + esta entrada van en un solo commit (documentación de la misma tarea, sin código de
+por medio) — commiteado a `main`, sin push.
+
+---
+
 ## 2026-08-31 (141) — Sesión 2a de Capa D CERRADA: backfill real de `documento_ingerido` con los 3
 lotes reales de Capa 1 (Bancor/Nación/ICBC) — paridad 1:1, 0 filas perdidas, 0 de más.
 
