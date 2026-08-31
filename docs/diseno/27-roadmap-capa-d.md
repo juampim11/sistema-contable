@@ -58,9 +58,10 @@ estado contra el código) y `product-owner` (recomendación de orden de la secci
 
 ### B.1 — Dónde está el esquema, en una frase
 
-**Migraciones `0027` (11 tablas + 1 vista) y `0028` (endurecimiento de grants/trigger) aplicadas a
-LOCAL, nunca al piloto.** Cero código de aplicación escribe o lee ninguna de las 11 tablas todavía,
-con una única excepción parcial: el adaptador de ingesta del plan de cuentas.
+**Migraciones `0027` (11 tablas + 1 vista), `0028` (endurecimiento de grants/trigger) y `0029`
+(reproceso de `pendiente_cierre`, cierra B.8) aplicadas a LOCAL y al PILOTO (2026-08-30, `HANDOFF.md`
+138, verificadas por consulta directa al catálogo).** Cero código de aplicación escribe o lee ninguna
+de las 11 tablas todavía, con una única excepción parcial: el adaptador de ingesta del plan de cuentas.
 
 Las 11 tablas: `cuenta`, `cuenta_atributo`, `documento_ingerido`, `cierre_cliente_periodo`,
 `cierre_transicion`, `expectativa_fuente_cliente`, `fuente_cierre`, `pendiente_cierre`,
@@ -73,15 +74,21 @@ columnas que le revocaron a `app_request`).
 
 `packages/ingesta/src/plan-cuentas/parser.ts` + `packages/data/src/cierre/escrituras.ts::altaPlanDeCuentas`
 + `apps/cli/src/alta-plan-cuentas.ts` — **construido y probado contra el archivo real de Bracci** (227
-cuentas, HANDOFF 129): 227/227 `cuenta_atributo`, árbol resuelto por `SUMARIZA` (nunca por `NIVEL`),
-7 tipos de anomalía detectados sin corregir nada solo. Corrió contra un tenant **sintético**, nunca
-contra el piloto real de Bracci — la carga real está pendiente, con autorización puntual (`CLAUDE.md`
-§1.9).
+cuentas). Primero contra un tenant sintético (HANDOFF 129); **ahora aplicado contra el tenant REAL de
+Bracci en el piloto** (`f84d9ecc-6d54-4009-8fb6-b6fa3f8d8579`, HANDOFF 139, Bloque 4): 227/227
+`cuenta_atributo` sin residuo, árbol resuelto por `SUMARIZA` (nunca por `NIVEL`), las 4 cuentas
+candidatas a socio con el `padron_socio_id` real correcto (mapeo confirmado por JP, D-25 Opción A —
+nunca por matching de texto). Primera carga real de Capa D contra un cliente real del piloto.
 
-**Para ROKA (Bloque 3 de la tarea de HANDOFF 132): sin empezar.** Incluye una ambigüedad sin resolver
-todavía: 4 cuentas candidatas a "cuenta particular de socio" contra `padron_socio`, con el mismo
-criterio D-25 que Bracci (Opción A, mapeo manual, el adaptador aborta si falta una entrada — nunca
-adivina por matching de texto).
+**Para ROKA: aplicado contra el tenant REAL (`69479b8f-9b6a-4d6b-bdb2-bff817c2e750`, HANDOFF 140):
+219/219 `cuenta_atributo` sin residuo, árbol resuelto por `SUMARIZA`.** La ambigüedad de mapeo a socio
+resultó DISTINTA de lo que se suponía por analogía con Bracci — no son 4 cuentas pareadas Activo+Pasivo
+para 2 personas, sino **4 cuentas, 1 por persona** (`1.2.4.300`/`1.2.4.400` en Activo,
+`2.1.9.100`/`2.1.9.200` en Pasivo), contra las 4 personas reales en `padron_socio`. **2 de las 4
+resueltas por evidencia documental real** (Gabriela y el familiar no-socio, este último verificado por
+HMAC del CUIT contra `padron_socio.documento_hmac`, nunca por texto). **Las otras 2 quedaron
+PROVISORIAS** — decisión de JP para destrabar el piloto sin esperar confirmación de Laura sobre cuál
+socia es "Socio 1"/"Socio 2" — ver `10-deuda-declarada.md` B.10.
 
 ### B.3 — Los dos bloqueos concretos antes de escribir motor de verdad
 
@@ -91,9 +98,12 @@ adivina por matching de texto).
      (convocatoria real a `analista-funcional` + `contador-dominio`, sin disenso; detalle completo en
      `10-deuda-declarada.md`). Queda para Bloque 2 el DDL que instrumenta la granularidad (extender
      `fuente_cierre` o tabla hija nueva) — decisión de `dba-data`, no cerrada acá.
-   - **B.8**: `uq_pendiente_cierre_natural` no tiene predicado parcial — una fila de reproceso no puede
-     compartir clave natural con la que reemplaza. No bloquea `0028` (que solo gobierna la fila vieja),
-     pero sí bloquea el flujo real de reproceso de `pendiente_cierre`.
+   - **B.8**: ✅ **CERRADO 2026-08-30 (Bloque 2) — migración `0029` aplicada a LOCAL y al PILOTO,
+     6/6 mutación verde, sin regresión en `0028`/`0027`.** `uq_pendiente_cierre_natural` pasa a índice
+     parcial + `fk_pendiente_cierre_superseded` a `DEFERRABLE`; detalle completo en
+     `10-deuda-declarada.md`. Alcance acotado a `pendiente_cierre` por decisión de JP — el mismo
+     patrón en `documento_ingerido`/`expectativa_fuente_cliente`/`fuente_cierre` queda declarado como
+     **B.9**, sin dueño.
 
    **Esto no bloquea crear las 6 tablas vacías** (ya están, desde `0027`) — bloquea específicamente
    poner las 3 filas reales adentro.
@@ -113,7 +123,9 @@ pieza en sí. Falta, con las preguntas ya identificadas y sin responder:
 |---|---|---|
 | `contador-dominio` + `motor-conciliacion-contable` | Reglas de imputación por concepto/literal → `cuenta_id`, reusando el léxico ya escrito en `packages/contabilidad` (Módulo 2) como insumo, no como reemplazo | Depende de que el plan de cuentas versionado (D-15, `cuenta`/`cuenta_atributo`) tenga al menos un cliente real cargado para probar contra algo — hoy solo hay una corrida sintética |
 | `plan-cuentas-multicliente` | Cómo se resuelve `rol_funcional` → `cuenta_id` cuando el mismo concepto (ej. "aporte de socio") tiene que resolver contra el plan **propio** de cada cliente, no un código universal (R42) | Bloqueado por lo mismo: sin plan de cuentas real cargado, no hay con qué probar la resolución |
-| `arquitecto-software` + `dba-data` | D-18 (trigger de `debe = haber`, con la auditoría de roles que `dba-data` pidió antes de escribirlo) y D-19 (nivel N1/N2 de `cierre_estado`) — las dos únicas divergencias/pendientes reales que dejó `24` §9 | Nunca se hizo la ronda de seguimiento — quedó explícitamente anotada como "para la próxima convocatoria" en `24` §9 y sigue sin correr |
+| ✅ Cerrado (verificado 2026-08-30, Bloque 2) | **D-19** (nivel N1/N2 de `cierre_estado`/`asiento_estado`/`pendiente_estado`) — código YA escrito y en el gate: `clasificacion-campos.ts:1084-1225`, argumento explícito en `25-segunda-convocatoria-cierre-mensual.md:265`. Cobertura verificada completa contra las 11 tablas de `0027`, ninguna columna `*_estado` sin clasificar. Hallazgo menor no bloqueante: la vista `asiento_propuesto_totales` no tiene entrada propia en `CLASIFICACION` (el gate no la exige, `relkind='r'` en `catalogo.test.ts:120-141`, pero es una laguna de documentación) — agregarla cuando se convoque de nuevo a `dba-data`/`seguridad-datos-financieros` | — |
+| ✅ Cerrado (verificado 2026-08-30, Bloque 2) | **D-18.b** (roles simétricos de `asiento_propuesto_renglon`) — decisión Y esquema (RLS) ya implementados: `0027_cierre_mensual.sql:786-876`, ratificado en `25-segunda-convocatoria-cierre-mensual.md:188-220`. `seguridad-datos-financieros` confirmó consistencia contra el precedente de `reconocimiento_contrapartida` | — |
+| `backend-dev`, con `seguridad-datos-financieros` + `dba-data` re-verificando código contra decisión ya tomada | **D-18.a** (mecanismo `debe = haber`: chequeo antes de proponer + recálculo al confirmar) — genuinamente pendiente, pero de IMPLEMENTACIÓN, no de decisión: `0027_cierre_mensual.sql:15-28` ya fija que NO es un trigger (verificado no implementable sin `SECURITY DEFINER`), sino dos puntos de código TypeScript, explícitamente "fuera de alcance" de esa migración. Cero código en `packages/data/src/cierre/` ni en ningún otro paquete todavía (`tipos.ts` es solo tipos) | Bloqueado por lo mismo que el resto del motor: sin `motor-conciliacion-contable` arrancado, no hay dónde escribir el chequeo |
 | `seguridad-datos-financieros` | D-16 (clasificación de `cuenta_atributo.denominacion` con nombre de socio) y D-20 (forma exacta del `CHECK` de `verificacion_heredada`) | Mismo motivo — pendiente desde `24`/`25`, nunca ejecutada como convocatoria de escritura de código (sí como convocatoria de diseño, ya cerrada en `25`) |
 | `contador-dominio` | Confirmar contra Laura las 4 preguntas que siguen abiertas (`24` §7: timing de diferencia de cambio, cuenta puente de Bracci, quién firma el asiento, las 4 de ARCA) | Nunca se mandó la ronda 3 completa — sigue pendiente desde antes de `23` |
 
@@ -167,7 +179,7 @@ documentable es "el mes de H y J se cierra con Nación; BBVA queda pendiente y s
 faltante en el entregable de ese cliente hasta que haya OCR de tabla completa." Incompleto y con
 workaround, no bloqueo.
 
-### Sesión 1 — Desbloquear el motor (sin escribir lógica de negocio todavía)
+### Sesión 1 — Desbloquear el motor (sin escribir lógica de negocio todavía) — ✅ COMPLETA (2026-08-30)
 
 **Qué se hace:** cerrar B.7 (semántica de período para documentos multi-cuenta) y B.8 (índice único
 sin predicado parcial), resolver o registrar explícitamente D-18 y D-19, aplicar las migraciones
@@ -175,8 +187,27 @@ sin predicado parcial), resolver o registrar explícitamente D-18 y D-19, aplica
 frenar ante cualquier exceso), y cargar el plan de cuentas real de Bracci (227 cuentas) en el tenant
 real del piloto — hoy solo está probado contra un tenant sintético.
 
-> **Estado (2026-08-29): Bloque 1 CERRADO** (B.7, ver arriba). Bloques 2, 3 y 4 sin empezar — pendientes
-> de aprobación explícita de JP, uno a la vez, antes de arrancar cada uno.
+> **Estado (2026-08-29): Bloque 1 CERRADO** (B.7, ver arriba). Commit `06ad47b`.
+> **Estado (2026-08-30): SESIÓN CAPA D COMPLETA — los 4 bloques cerrados y verificados, extendida a
+> los DOS clientes de prueba del piloto (Bracci y ROKA), no solo Bracci.** Bloque 2 CERRADO (B.8 +
+> D-18 + D-19 — D-18.a queda pendiente pero de implementación futura del motor, no de decisión, no es
+> deuda de este bloque). Migraciones `0027`/`0028`/`0029` aplicadas al PILOTO (`HANDOFF.md` 138),
+> verificadas por consulta directa al catálogo, una por una. **Bloque 4 CERRADO** (`HANDOFF.md` 139):
+> las 227 cuentas reales de Bracci cargadas en su tenant real del piloto, con el mapeo real de socios
+> confirmado por JP — primera carga real de Capa D contra un cliente real, no sintético. El "Bloque 3"
+> original de esta sección (ver más abajo) se fusionó en la práctica con el trabajo de migraciones al
+> piloto ya cerrado arriba. **Extensión a ROKA CERRADA** (`HANDOFF.md` 140): 219 cuentas reales
+> cargadas en el tenant real de ROKA (`69479b8f-...`) — 2 de las 4 cuentas de socio confirmadas por
+> evidencia documental + verificación por HMAC, 2 provisorias por decisión de JP, pendientes de
+> confirmación de Laura (`10-deuda-declarada.md` B.10, sin bloquear el cierre de esta sesión).
+>
+> **Commits:** solo `06ad47b` (Bloque 1, B.7) está commiteado a `main`. El resto del trabajo de esta
+> sesión (Bloque 2 — migración `0029` + tests; Bloque 4 — carga real de Bracci; extensión ROKA — carga
+> real + `HANDOFF.md` 140 + este documento + `10-deuda-declarada.md` B.10) está aplicado y verificado
+> contra el piloto real, pero **todavía sin commitear** — `git status` al cierre de esta entrada
+> muestra `HANDOFF.md`, `docs/diseno/10-deuda-declarada.md` y este archivo modificados, más
+> `packages/data/migrations/0029_pendiente_cierre_reproceso.sql` y su test de mutación sin trackear.
+> No hay hashes de commit reales para esa parte todavía — no se inventan acá.
 
 **Por qué esta y no otra antes:** es literalmente imposible escribir la lógica de asignación de cuenta
 (la pieza de valor real) mientras el esquema de Capa D solo existe en local y el backfill de

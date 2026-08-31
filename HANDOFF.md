@@ -6,6 +6,333 @@
 
 ---
 
+## 2026-08-30 (140) — ROKA: 219 cuentas reales cargadas en el TENANT REAL del piloto
+(`69479b8f-9b6a-4d6b-bdb2-bff817c2e750`) — 2 de las 4 cuentas de socio CONFIRMADAS por evidencia
+documental + HMAC, 2 PROVISORIAS por decisión de JP, pendientes de confirmación de Laura.
+
+**Herramienta:** Claude Code. Continuación de la tarea de HANDOFF 139 (Bloque 3 original de 132),
+misma disciplina D-25 (Opción A, nunca por matching de texto).
+
+### 1. La ambigüedad NO era la esperada por analogía con Bracci
+
+Dry-run inicial (sin `--mapeo`) contra el archivo real (`Plan de cuentas ROKA REPUESTOS SAS.xlsx`,
+SHA-256 `e97b1df789c6c3937c023cc747146f4e3ce281b1072d1a27ea91675812bff0e7`, mismo directorio que
+Bracci): 219 nodos, 27 anomalías (2 `nivel_vs_sumariza`, 3 `jerarquia_cruzada`, 3
+`recibe_con_hijos`, 9 grupos `denominacion_duplicada`, 1 `denominacion_placeholder` — ninguna
+bloqueante), y solo 4 cuentas candidatas a socio por el detector de producción (prefijo "cuenta
+particular"): `1.2.4.300`, `1.2.4.400` (Activo), `2.1.9.100`, `2.1.9.200` (Pasivo).
+
+JP señaló una inconsistencia real antes de mapear: `padron_socio` de ROKA tiene 4 personas activas
+(confirmado por consulta directa, columnas no sensibles: 1 alta de la tanda de entrada 73 + 3 de la
+tanda de entrada 116), pero el dry-run solo encontró 4 códigos (2 pares Activo+Pasivo — el mismo
+patrón que Bracci, que tiene 2 personas). Si son 4 personas reales, ¿por qué no 8 códigos (4 pares)?
+
+Búsqueda ampliada, sin depender del prefijo exacto del detector: (a) los 2 grupos ya conocidos
+(`1.2.4.000`, `2.1.9.000`) tienen exactamente 2 hijos cada uno, sin hermano escondido; (b) búsqueda
+por palabra clave (`particular`/`socio`/`aporte`/`retiro`) en las 219 filas, las 4 ramas del
+archivo, encontró una sola coincidencia nueva: `4.2.3.110` (nivel 4, `monetaria=NO`, entre ~20
+hermanos igual de `monetaria=NO` en la rama de Resultados) — estructuralmente un gasto genérico, no
+una cuenta de saldo individual. **Confirmado por JP: `4.2.3.110` es "Honorarios..." (categoría de
+gasto), descartado definitivamente.**
+
+**La explicación real, confirmada por JP, era la tercera, no contemplada al principio**: el plan de
+ROKA no pareaa Activo+Pasivo por persona como Bracci — tiene **4 códigos, 1 por persona** (no 2
+pares para 2 personas). No faltaba ninguna cuenta en el archivo.
+
+### 2. Resolución del mapeo — 2 por documento real, 2 provisorias por decisión de JP
+
+- **`1.2.4.300` = Gabriela.** Confirmado por `created_at`: es el único alta de ROKA de la tanda de
+  entrada 73 (2026-08-19). `padron_socio_id = 6b679262-cd9b-4690-8b08-9a18dfa31422`.
+- **`1.2.4.400` ("Cuenta Particular Socio 4") = el familiar NO-socio.** Resuelto por
+  `privado/02-Consultas-Laura-2026-08-21.md` §1.5, pregunta 8 (la ronda de consultas original,
+  previa a las altas de entrada 116) — Laura confirma ahí explícitamente que es un familiar que no
+  es socio de la empresa. **Verificado por HMAC, nunca por texto ni por orden**: se calculó
+  `hmacDocumento('cuit', <CUIT del documento>, clienteROKA)` y se comparó (`hmacIguales`, tiempo
+  constante) contra `padron_socio.documento_hmac` de los 3 `padron_socio_id` de la tanda de entrada
+  116 — coincidencia única: `padron_socio_id = 9b13573d-5ba0-4cd7-a27a-05359ae8b670`. El CUIT nunca
+  se tipeó en un argumento ni se imprimió: se leyó del archivo de Laura y se hasheó en memoria.
+- **`2.1.9.100`/`2.1.9.200` = las 2 socias restantes, SIN documento que diga cuál es "Socio 1" y
+  cuál "Socio 2"** — la tabla de la respuesta 8 lista los 4 CUIT sin ninguna etiqueta posicional.
+  Búsqueda exhaustiva: los dos archivos de Laura, `docs/diseno/04-imputacion-contable.md`,
+  `08-plan-de-construccion.md`, y el repo completo — ningún documento resuelve la posición.
+  **Decisión de JP para destrabar el piloto, explícitamente PROVISORIA**: asignar los 2
+  `padron_socio_id` restantes de la tanda de entrada 116 (`040b2c6b-...`, `b361bd96-...` —
+  verificados por HMAC que NINGUNO es el familiar) a `2.1.9.100`/`2.1.9.200` en orden de
+  `created_at` ascendente, marcados `"confirmado": false` en el JSON de mapeo. Registrado como
+  deuda: `docs/diseno/10-deuda-declarada.md` B.10.
+
+### 3. Backup + carga real
+
+`ENV_FILE=.env.piloto pnpm respaldar:piloto` → `respaldos/piloto_20260830-224419Z.dump` (1.00 MB),
+SHA-256 `266784962cefed355ac2a6661c337e858a4960b1ff25b27c12a54492376abf9c` (posterior al de
+Bracci/`0027`-`0029`, backup propio de esta escritura).
+
+`ENV_FILE=.env.piloto node apps/cli/src/alta-plan-cuentas.ts --cliente 69479b8f-9b6a-4d6b-bdb2-
+bff817c2e750 --usuario 11111111-... --archivo <el .xlsx real> --mapeo <json fuera del repo, 4
+entradas> --confirmar` → **OK — 219 cuenta(s) insertadas.**
+
+### 4. Verificación final, por consulta directa (no por el output del comando)
+
+- `cuenta`: 219, `cuenta_atributo`: 219 para `cliente_id = 69479b8f-...`, sin residuo (0 huérfanos —
+  a diferencia del 228/227 con huérfano que dio el tenant sintético de la sesión de Bracci).
+- Árbol contra `SUMARIZA`: 4 raíces + 215 con padre = 219. Exacto.
+- Las 4 filas de socio, `padron_socio_id` exacto contra el mapeo de abajo (2 confirmadas, 2
+  provisorias):
+
+| Código | `padron_socio_id` | Estado |
+|---|---|---|
+| `1.2.4.300` | `6b679262-cd9b-4690-8b08-9a18dfa31422` | ✅ confirmado (Gabriela, por `created_at`) |
+| `1.2.4.400` | `9b13573d-5ba0-4cd7-a27a-05359ae8b670` | ✅ confirmado (familiar no-socio, por HMAC) |
+| `2.1.9.100` | `040b2c6b-aec2-4917-8826-75cf27f4d627` | ⚠️ PROVISORIO — orden de `created_at`, no de documento |
+| `2.1.9.200` | `b361bd96-7688-4846-b9f8-f0a334952b13` | ⚠️ PROVISORIO — ídem |
+
+### 5. Qué sigue
+
+- [ ] **Cuando Laura conteste cuál socia es "Socio 1" y cuál "Socio 2"**: volver a esta tarea. Si el
+  orden asumido resultó incorrecto, el fix es un `UPDATE` puntual de `cuenta_atributo.padron_socio_id`
+  para esas 2 filas, con su propio registro de auditoría — no una re-carga completa. **No se cierra
+  como definitivo hasta esa confirmación** (`docs/diseno/10-deuda-declarada.md` B.10).
+- [ ] Con Bracci (139) y ROKA (esta entrada) cargados, el mecanismo del adaptador queda probado
+  contra los dos casos reales del piloto — el próximo consumidor real es el motor de asientos (Capa D
+  en implementación), todavía sin código.
+- [ ] Ningún script efímero de diagnóstico quedó en el repo (los tres usados esta tarea — dry-run
+  ampliado, verificación por HMAC, verificación de la carga — se borraron después de usarlos,
+  confirmado con `git status`).
+
+---
+
+## 2026-08-30 (139) — Bloque 4: las 227 cuentas reales de Bracci Repuestos S.A.S. cargadas en el
+TENANT REAL del piloto (`f84d9ecc-6d54-4009-8fb6-b6fa3f8d8579`) — primera carga real de Capa D contra
+un cliente real, no sintético. **Sesión Capa D (Bloques 1-4) completa.**
+
+**Herramienta:** Claude Code. Continuación directa de (138), misma sesión. JP pidió, antes de cargar
+nada, verificar los DOS lados del mapeo de socios contra la última corrida real (HANDOFF 129, síntetica)
+— no asumir que seguían iguales.
+
+### 1. Verificación de los dos lados, ANTES de tocar nada
+
+- **`padron_socio` de Bracci**: consultado solo por columnas no sensibles (`id`, `documento_tipo`,
+  `vigente_desde`/`hasta`, `created_at` — nunca `denominacion`, regla del incidente #14). Exactamente 2
+  filas activas, `created_at` coincide con las dos altas ya documentadas (73 = Carolina, 2026-08-19;
+  116 = Carlos Sebastián, 2026-08-24) — nada tocado desde entonces.
+- **El archivo real** (`privado/.../Plan de cuentas BRACCI REPUESTOS SAS.xlsx`, hash `015ceb9b...`,
+  `mtime` 2026-08-21, anterior a la sesión de 129): dry-run sin `--mapeo` contra el tenant real — 227
+  nodos, 4 cuentas candidatas a socio (coincide con la ambigüedad ya documentada, 2 socios × 2 cuentas
+  Activo+Pasivo). **Discrepancia encontrada y reportada antes de seguir**: `jerarquia_cruzada` dio 5
+  hoy contra "2" que registraba (129). Investigado: el parser no cambió (un solo commit,`e67a256`,
+  nunca tocado después) y el `mtime` del archivo es ANTERIOR a esa sesión — evidencia de que el archivo
+  no cambió después, y que el "2" de (129) fue un subconteo del resumen narrativo, no un dato medido
+  distinto. Sin hash previo registrado en ningún lado del repo para confirmar sin ambigüedad (buscado y
+  no encontrado) — documentado así, sin forzar una certeza que la evidencia no da, y se siguió con las
+  5 anomalías de hoy como las reales. El resto de las categorías (5 `nivel_vs_sumariza`, 3
+  `recibe_con_hijos`, 2 `denominacion_placeholder`, 11 grupos `denominacion_duplicada`) coincidió
+  EXACTO con (129).
+
+### 2. Mapeo código→socio, confirmado por JP (nunca por matching de texto, D-25)
+
+| Código | Rol | `padron_socio_id` |
+|---|---|---|
+| `1.2.4.300` (Activo) | cuenta_particular_socio | `3f86c318-...` (Carolina Andrea Bracci) |
+| `2.1.9.100` (Pasivo) | cuenta_particular_socio | `3f86c318-...` (Carolina Andrea Bracci) |
+| `1.2.4.400` (Activo) | cuenta_particular_socio | `e93e5a82-...` (Carlos Sebastián Bracci) |
+| `2.1.9.200` (Pasivo) | cuenta_particular_socio | `e93e5a82-...` (Carlos Sebastián Bracci) |
+
+Mapeo escrito a un JSON fuera del repo (scratchpad de sesión, nunca en `privado/` ni commiteado) —
+solo códigos y UUID, ningún nombre.
+
+### 3. Backup fresco + carga real
+
+`ENV_FILE=.env.piloto pnpm respaldar:piloto` → `respaldos/piloto_20260830-123553Z.dump` (0.98 MB),
+SHA-256 `723e144902d72c8eddb4bb75e3f49d81858bdc27a22e627bb70c3c7c3d4145d4` (el de 0027/0028/0029, de
+~20 minutos antes, no se reusó — escritura distinta, de datos de cliente real, backup propio).
+
+`ENV_FILE=.env.piloto node apps/cli/src/alta-plan-cuentas.ts --cliente f84d9ecc-... --usuario
+11111111-... --archivo <el .xlsx real> --mapeo <json fuera del repo> --confirmar` → **OK — 227
+cuenta(s) insertadas.**
+
+### 4. Verificación final, por consulta directa (no por el output del comando)
+
+- `cuenta_atributo`: **227/227** para `cliente_id = f84d9ecc-...`, sin residuo (a diferencia del
+  228/227 con huérfano que dio el tenant sintético — acá 0 huérfanos, confirmado por consulta).
+- Árbol contra `SUMARIZA`: **4 raíces + 223 con padre = 227**, exacto igual que (129). 0 referencias de
+  padre sin resolver.
+- Las 4 filas de socio quedaron con el `padron_socio_id` correcto según el mapeo de JP (tabla arriba),
+  confirmado código por código.
+- El tenant sintético (LOCAL) ya no es la única copia de esta información: la carga real y verificada
+  en el piloto es ahora la copia autoritativa; el tenant sintético sigue existiendo solo como fixture
+  de test, sin nada que dependa de él para este cliente.
+
+### 5. Qué sigue
+
+- [ ] Sesión Capa D completa: Bloques 1 (B.7), 2 (B.8+D-18+D-19), 3 (migraciones al piloto — se
+  fusionó con el trabajo de (138)) y 4 (plan de cuentas real de Bracci) — todos cerrados.
+- [ ] ROKA (Bloque 3 original de la tarea previa, HANDOFF 132): sigue sin empezar — incluye la
+  ambigüedad de las 4 cuentas candidatas a socio contra `padron_socio`, misma disciplina D-25.
+  Convocatoria futura, sin arrancar sin aprobación explícita.
+- [ ] B.9 y D-18.a: siguen como quedaron en (137), sin cambios.
+- [ ] La discrepancia de `jerarquia_cruzada` (2→5) queda documentada como probable subconteo de (129),
+  no como evidencia de que el archivo cambió — sin hash previo que lo confirme del todo.
+
+---
+
+## 2026-08-30 (138) — `0027`/`0028`/`0029` aplicadas al PILOTO, una por una, cada una verificada por
+consulta directa al catálogo antes de seguir con la próxima. Capa D con esquema en el piloto real.
+
+**Herramienta:** Claude Code. Continuación directa de (137), misma sesión. Autorización puntual de JP
+(`CLAUDE.md` §1.9): listar lo pendiente, confirmar contra lo autorizado, aplicar de a una con
+verificación intermedia — no `pnpm db:migrate` pelado aplicando las tres de un tirón.
+
+### 1. Listar y confirmar (paso 1 de §1.9)
+
+`ENV_FILE=.env.piloto pnpm db:migrate --estado`: 26 migraciones ya aplicadas (`0001`–`0026`),
+exactamente **3 pendientes** — `0027`, `0028`, `0029` — nada más. JP confirmó que coincide exacto con
+lo autorizado.
+
+### 2. Backup fresco antes de la primera escritura
+
+`ENV_FILE=.env.piloto pnpm respaldar:piloto` → `respaldos/piloto_20260830-042234Z.dump` (0.88 MB),
+SHA-256 `19e7dd93214ae374359c02a167297bf4653c79a26a36eaf427374860e12d3218`.
+
+### 3. Aplicadas de a una, cada una con `0028`/`0029` temporalmente fuera de `packages/data/migrations/`
+mientras corría la anterior (revertido de inmediato después de cada paso — el directorio termina igual
+que empezó, con las tres presentes)
+
+- **`0027`**: aplicada. Verificado por consulta directa (no por el output del comando): las 11 tablas +
+  la vista `asiento_propuesto_totales` existen, `relrowsecurity`/`relforcerowsecurity` en `t` para las
+  11, hash en `_migraciones` (`437a40461e5d293e`) coincide con el hash del archivo local.
+- **`0028`**: aplicada. Verificado: los 3 triggers (`trg_cierre_periodo_inmutable`,
+  `trg_asiento_propuesto_inmutable`, `trg_pendiente_cierre_inmutable`) existen y están habilitados; los
+  grants de `UPDATE` en `cierre_cliente_periodo`/`asiento_propuesto` quedaron acotados exactamente a las
+  columnas que la migración especifica.
+- **`0029`**: aplicada. Verificado: `uq_pendiente_cierre_natural` es índice parcial
+  (`... NULLS NOT DISTINCT WHERE (superseded_by_id IS NULL)`) y `fk_pendiente_cierre_superseded` quedó
+  `DEFERRABLE INITIALLY DEFERRED` — confirmado por `pg_constraint.condeferrable`/`condeferred`, no
+  asumido.
+- `--estado` final contra piloto: **las 29 migraciones, todas `= aplicada`, nada pendiente.**
+
+Ningún paso frenó — los tres cerraron limpio, sin sorpresas contra el esquema real.
+
+### 4. Qué sigue
+
+- [ ] Bloque 4: cargar el plan de cuentas real de Bracci (227 cuentas) en el tenant real del piloto —
+  hoy solo probado contra un tenant sintético (HANDOFF 129). Espera aprobación explícita de JP.
+- [ ] Bloque 3: sin empezar, esperando aprobación explícita de JP.
+- [ ] B.9 y D-18.a: siguen como quedaron en (137), sin cambios.
+
+---
+
+## 2026-08-30 (137) — Sesión Capa D, Bloque 2 CERRADO: migración `0029` aplicada a LOCAL, cierra B.8.
+
+**Herramienta:** Claude Code. Continuación directa de (136), misma sesión. JP resolvió el desacuerdo de
+alcance entre `dba-data`/`arquitecto-software` (acotar `0029` a `pendiente_cierre`, declarar las otras
+3 tablas como B.9 sin dueño) y aprobó el plan formal (`CLAUDE.md` §3.2) con una corrección menor (un
+"9/9" residual del borrador en el criterio de aceptación, no reflejaba el conteo real de 7→6 casos de
+la batería final).
+
+### 1. Qué se aplicó
+
+`packages/data/migrations/0029_pendiente_cierre_reproceso.sql` (nueva): `uq_pendiente_cierre_natural`
+pasa a índice parcial (`... NULLS NOT DISTINCT WHERE superseded_by_id IS NULL`) y
+`fk_pendiente_cierre_superseded` pasa a `DEFERRABLE INITIALLY DEFERRED` — los dos componentes que
+`dba-data` identificó como necesarios (el predicado solo no alcanza: el trigger de `0028` exige que el
+`UPDATE` de la fila vieja apunte, dentro de la misma transacción, a un `id` que la fila nueva todavía
+no tiene si se inserta después). Contrato documentado en la migración para quien escriba el flujo real
+de reproceso: el `id` de la fila nueva lo genera la aplicación, nunca el default de la columna.
+
+### 2. Pruebas — todo en verde, cada paso corrido por separado (nunca `pnpm verificar` en background)
+
+- `packages/data/tests/mutaciones-0029-pendiente-cierre-reproceso.test.ts` (archivo nuevo): **6/6**.
+  3 legítimos (incluido un caso cross-tenant real), 1 ataque de duplicado activo, 2 mutaciones de
+  refutación (una por componente del fix). Una mutación del borrador original (quitar `cliente_id` del
+  índice) se descartó explícitamente, con su motivo documentado en el propio archivo: no es construible
+  como caso que discrimine en este esquema, porque `cierre_id` ya ata cada fila a un único cliente por
+  FK compuesta — incluirla hubiera sido "simular" una mutación, no refutar de verdad (ADR-0002 §B.0).
+- `packages/data/tests/mutaciones-0028-inmutabilidad-post-terminal.test.ts`: **16/16**, sin regresión —
+  el test legítimo de supersesión de `pendiente_cierre` dejó de necesitar el workaround de
+  `referencia_origen` distinto (documentado como "residuo real" de B.8 desde que se escribió) y ahora
+  prueba el caso real con la misma clave natural.
+- `packages/data/tests/mutaciones-0027.test.ts`: **10/10**, sin regresión.
+- `pnpm typecheck`: limpio. `pnpm barrido` (barrido de fuga): limpio (432 archivos, 688 candidatos, 89
+  archivos de material real, cero coincidencias).
+- Migración aplicada a LOCAL únicamente — el piloto sigue sin `0027`/`0028`/`0029`, sin cambios acá.
+
+### 3. Documentación actualizada
+
+`docs/diseno/10-deuda-declarada.md` (B.8 → ✅ CERRADO con los números reales; B.9 nuevo, declarado sin
+dueño) y `docs/diseno/27-roadmap-capa-d.md` (tabla B.4, bullet de B.8, estado de Bloque 2 → CERRADO).
+
+### 4. Qué sigue
+
+- [ ] Bloque 2 completo: B.8 + D-18 + D-19 cerrados. D-18.a (mecanismo `debe=haber`) queda para cuando
+  arranque el motor de asientos — no es deuda de este bloque, es trabajo futuro ya identificado.
+- [ ] B.9 (mismo patrón en `documento_ingerido`/`expectativa_fuente_cliente`/`fuente_cierre`): sin
+  dueño, espera una convocatoria futura con evidencia real, no por parecido de forma.
+- [ ] Migraciones `0027`/`0028`/`0029` al piloto y carga del plan de cuentas real de Bracci: siguen sin
+  empezar — quedan para cuando se convoque ese trabajo explícitamente (`CLAUDE.md` §1.9 aplica ahí).
+- [ ] Bloque 3 y 4 de `27-roadmap-capa-d.md`: sin empezar, esperando aprobación explícita de JP.
+- [ ] Directorio huérfano del worktree `capa-d-sesion1` (`.claude/worktrees/capa-d-sesion1`, ver 136):
+  sigue bloqueado en disco pese a confirmar que ninguna ventana de VS Code lo tenía abierto — pendiente
+  de reintento, sin efecto sobre el repo.
+
+---
+
+## 2026-08-30 (136) — Sesión Capa D, Bloque 2 EN CURSO: D-18/D-19 verificados y cerrados contra código
+real, B.8 con diseño cerrado (sin aplicar) y un hallazgo nuevo del mismo patrón en otras 3 tablas.
+
+**Herramienta:** Claude Code. Continuación de la sesión que cerró Bloque 1 (134). Antes de arrancar:
+worktree `capa-d-sesion1` desbloqueado y borrado del registro de git (`git worktree remove`); el
+directorio físico en disco quedó bloqueado por un handle de VS Code y no se pudo borrar todavía —
+sin efecto sobre el repo (`git worktree list` limpio), pendiente de reintento cuando se confirme que
+ninguna ventana lo tiene abierto.
+
+### 1. Convocatoria real — tres agentes en paralelo, cada uno independiente
+
+- `seguridad-datos-financieros` verificó **D-19** (nivel N1/N2 de `cierre_estado`/`asiento_estado`/
+  `pendiente_estado`) contra `clasificacion-campos.ts:1084-1225`: **CERRADO**, código ya escrito y en
+  el gate, cobertura completa contra las 11 tablas de `0027`. Único hallazgo menor: la vista
+  `asiento_propuesto_totales` no tiene entrada propia en `CLASIFICACION` (no rompe el gate, que solo
+  mira `relkind='r'`, pero es una laguna de documentación — sin dueño todavía).
+- El mismo agente descompuso **D-18** en dos partes que el roadmap tenía mezcladas bajo una sola
+  convocatoria pendiente: **D-18.b** (roles simétricos de `asiento_propuesto_renglon`) **CERRADO**,
+  decisión y RLS ya en `0027_cierre_mensual.sql:786-876`; **D-18.a** (mecanismo `debe = haber`)
+  **genuinamente pendiente, pero de IMPLEMENTACIÓN, no de decisión** — la migración `0027` ya fija que
+  NO es un trigger (no implementable sin `SECURITY DEFINER`) sino dos puntos de código TypeScript,
+  explícitamente fuera de su alcance, y ese código no existe todavía en ningún paquete. Espera a que
+  arranque el motor de asientos (`backend-dev`, con `seguridad-datos-financieros`/`dba-data`
+  re-verificando contra la decisión ya tomada, no rediscutiéndola).
+- `dba-data` + `arquitecto-software`, en paralelo y por separado, revisaron **B.8**
+  (`uq_pendiente_cierre_natural` sin predicado parcial). Coinciden en el diagnóstico y en la solución
+  de fondo (índice parcial, mismo idiom que `uq_recon_vigente` de `0014` y `uq_cierre_periodo_vigente`
+  de la misma `0027`), y `dba-data` encontró que el predicado solo NO alcanza: el trigger de `0028`
+  exige un `UPDATE` de la fila vieja apuntando al `id` de la fila nueva ANTES de que esa fila exista,
+  así que además hace falta `fk_pendiente_cierre_superseded DEFERRABLE INITIALLY DEFERRED` + `id`
+  generado por la aplicación. `arquitecto-software` encontró, sin que estuviera pedido, que el MISMO
+  patrón (unique sin predicado parcial, sin síntoma todavía) se repite en `documento_ingerido`,
+  `expectativa_fuente_cliente` y `fuente_cierre`. **Desacuerdo de alcance entre los dos**:
+  `arquitecto-software` recomienda corregir las 4 tablas en la misma `0029` (coherencia de esquema,
+  mismo criterio que ya generalizó el trigger de `0028` a tres tablas); `dba-data` recomienda acotar
+  `0029` a `pendiente_cierre` (lo único con síntoma real hoy) y declarar las otras tres aparte. **Sin
+  resolver — decide JP.**
+
+### 2. Documentación actualizada, con cita de evidencia
+
+`docs/diseno/10-deuda-declarada.md` (B.8) y `docs/diseno/27-roadmap-capa-d.md` (tabla B.4 + estado de
+Bloque 2) reescritos con el detalle completo de arriba, línea de archivo por afirmación — no hay
+resumen sin evidencia citable.
+
+### 3. Qué sigue
+
+- [ ] JP decide el alcance de `0029` (solo `pendiente_cierre` vs. las 4 tablas).
+- [ ] Con esa decisión, modo plan formal (`CLAUDE.md` §3.2 — es migración de esquema, sin excepción)
+  antes de escribir una sola línea de `0029` o de su test de mutación.
+- [ ] `dba-data` ya especificó los 6 casos mínimos del test de mutación (2 legítimos, 1 ataque de
+  duplicado activo, 3 mutaciones de refutación) — no arrancar el test sin decidir primero el alcance.
+- [ ] Migraciones `0027`/`0028` al piloto (`CLAUDE.md` §1.9) y carga del plan de cuentas real de
+  Bracci: siguen sin empezar dentro de este bloque.
+- [ ] Bloque 3 y 4: sin empezar, esperando aprobación explícita de JP.
+
+---
+
 ## 2026-08-29 (134) — Sesión 1 de Capa D (`27-roadmap-capa-d.md`), Bloque 1 CERRADO: B.7 decidido (período de documento multi-cuenta se declara POR CUENTA, no por archivo) + confirmación empírica del bug de `GIT_INDEX_FILE` (133 §2, ya no hipótesis) con un hallazgo nuevo más grave (`archivosTrackeados()`, código de producción, no solo el test). Sin commit propio: bloqueada por ese mismo bug de infra, esta sesión entrega diffs para que JP los aplique desde su checkout principal.
 
 **Herramienta:** Claude Code, sesión de background con worktree aislado (`worktree-capa-d-sesion1`).
