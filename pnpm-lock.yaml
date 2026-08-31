@@ -48,6 +48,9 @@ importers:
       '@sistema-contable/ingesta':
         specifier: workspace:*
         version: link:../../packages/ingesta
+      '@sistema-contable/motor-conciliacion':
+        specifier: workspace:*
+        version: link:../../packages/motor-conciliacion
       '@sistema-contable/shared':
         specifier: workspace:*
         version: link:../../packages/shared

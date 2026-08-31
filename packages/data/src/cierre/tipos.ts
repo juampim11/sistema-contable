@@ -64,10 +64,20 @@ export type OrigenExpectativa = (typeof ORIGENES_EXPECTATIVA)[number];
  * contexto de D-31, alguien en la cola de revisión lo leería como "falta configurar algo" e
  * intentaría arreglarlo, cuando esto nunca va a auto-resolver, por diseño (contador-dominio).
  *
- * Bloqueado, sin resolver esta noche (documentado en HANDOFF, no inventado): motivo propio para la
- * pata "banco" (`cuenta_bancaria.cuenta_id`) sin mapear, cómo se enrutan movimientos con
- * `reconocimiento_movimiento.clase ∈ {sin_reconocer, decision_humana}`, y la prioridad de reporte si
- * fallan las dos patas de D-29 a la vez.
+ * `via_no_calificada` (`0034`) y `cuenta_bancaria_no_configurada` (`0034`) se agregaron al escribir
+ * el resolver real (Ítem E, paso 1, `packages/motor-conciliacion`): de las 6 `ViaEvidencia`, solo 4
+ * califican para automático (D-31 §3) — `via_no_calificada` es cuando la cuenta resuelve perfecto
+ * pero la vía no alcanza, distinto de `resolucion_manual_obligatoria_socio` (ese veto es permanente,
+ * este puede resolverse solo si mejora la evidencia de Capa C sobre ese movimiento).
+ * `cuenta_bancaria_no_configurada` es la pata "banco" de D-29 sin mapear — motivo propio y no
+ * `cuenta_no_configurada` (que es de la pata contrapartida): son dos tareas de remediación distintas.
+ *
+ * Bloqueado, sin resolver todavía (documentado en HANDOFF, no inventado): cómo se enrutan
+ * movimientos con `reconocimiento_movimiento.clase ∈ {sin_reconocer, decision_humana}`, y la
+ * prioridad de reporte si fallan las dos patas de D-29 a la vez es contrapartida-vs-banco resuelta
+ * (banco primero, `contador-dominio` + JP) pero **no** codificada como un octavo motivo — el
+ * `motivo_codigo` reporta la de mayor prioridad, la `evidencia` de `pendiente_cierre` consigna si la
+ * otra pata también fallaba.
  */
 export const MOTIVOS_PENDIENTE_CIERRE = [
   'documento_faltante',
@@ -77,6 +87,8 @@ export const MOTIVOS_PENDIENTE_CIERRE = [
   'cuenta_no_configurada',
   'cuenta_ambigua',
   'resolucion_manual_obligatoria_socio',
+  'via_no_calificada',
+  'cuenta_bancaria_no_configurada',
 ] as const;
 export type MotivoPendienteCierre = (typeof MOTIVOS_PENDIENTE_CIERRE)[number];
 
@@ -215,6 +227,23 @@ export type FuenteCierre = {
   readonly creadoEn: string;
 };
 
+/**
+ * D-30. Por qué Capa D no pudo resolver la cuenta — códigos y referencias por id, NUNCA texto libre
+ * ni un valor real del movimiento (mismo criterio de allowlist que `VerificacionHeredada`). Espeja
+ * `EvidenciaResolucion` de `packages/motor-conciliacion/src/resolver.ts` — `data` no puede importar
+ * ese paquete (regla espejo, `reglas-de-codigo.test.ts`), así que este tipo está DUPLICADO a
+ * propósito; el servicio de I/O (`apps/`) es quien tiene ambos paquetes a la vista y mapea uno a
+ * otro campo por campo al escribir la fila.
+ */
+export type EvidenciaPendienteCierre = Readonly<{
+  via?: string;
+  reglaContrapartidaAplicada?: Readonly<{ reglaId: string; especificidad: 'concepto_exacto' | 'concepto_general' }>;
+  reglaContrapartidaDescartada?: Readonly<{ reglaId: string }>;
+  candidatosContrapartida?: readonly Readonly<{ reglaId: string; cuentaId: string | null }>[];
+  cuentaBancariaAplicada?: Readonly<{ cuentaId: string }>;
+  contrapartidaTambienFallaba?: boolean;
+}>;
+
 export type PendienteCierre = {
   readonly id: string;
   readonly clienteId: string;
@@ -229,6 +258,8 @@ export type PendienteCierre = {
   readonly resueltoEn: string | null;
   readonly resolucionId: string | null;
   readonly supersededById: string | null;
+  /** D-30 (`0031`), nullable: los 2 motivos originales de `0027` no la necesitan. */
+  readonly evidencia: EvidenciaPendienteCierre | null;
   readonly creadoEn: string;
 };
 
@@ -296,3 +327,25 @@ export type AsientoPropuestoRenglon = {
   readonly valuacionRef: Readonly<Record<string, unknown>> | null;
   readonly creadoEn: string;
 };
+
+/**
+ * Fila de `regla_imputacion` (`0030`, D-29 pata "contrapartida"). `tipoMovimiento`/`concepto` van
+ * como `string`, no como `TipoMovimiento`/`ConceptoCanonico` de `contabilidad` — `data` tiene
+ * prohibido importar ese paquete (regla espejo de `reglas-de-codigo.test.ts`); el `CHECK` de la base
+ * es la validación real de esos dos dominios, no este tipo. Quien necesite el tipo estrecho
+ * (`packages/motor-conciliacion`) lo tipa contra su propia copia, en el servicio de I/O de `apps/`.
+ */
+export type ReglaImputacion = Readonly<{
+  id: string;
+  clienteId: string;
+  tipoMovimiento: string;
+  concepto: string | null;
+  cuentaResolucion: CuentaResolucion;
+  cuentaId: string | null;
+  rolFuncionalObjetivo: RolFuncionalCuenta | null;
+  vigenteDesde: string;
+  vigenteHasta: string | null;
+  respaldo: string;
+  decididoPor: string;
+  creadaEn: string;
+}>;

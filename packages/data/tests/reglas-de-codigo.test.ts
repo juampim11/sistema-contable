@@ -642,6 +642,13 @@ describe('R-F — `clase: \'propuesta\'` solo se construye en nucleo/motor.ts', 
     // degradación de `pendienteDeLaura` en código de PRODUCCIÓN de Capa B/C) no existe acá, es un
     // test del paquete de Capa D, aguas abajo del motor de reconocimiento.
     'packages/motor-conciliacion/tests/',
+    // Servicio de I/O de Capa D (Ítem E, `conciliar-lote.ts`): reconstruye `Reconocimiento` desde
+    // `reconocimiento_movimiento` para pasárselo al resolver de Capa D — la fila ya viene filtrada
+    // por `clase = 'propuesta'` EN EL WHERE de la lectura (una decisión de la base, no de este
+    // archivo), y trae los campos reales de `EvidenciaDelMatch` que `reconocer-lote.ts` ya persistió
+    // la primera vez. Es un RESHAPE de un hecho ya decidido, no una clasificación nueva — mismo
+    // argumento que ya cubre a `aislamiento-modulo-2.test.ts` arriba.
+    'apps/cli/src/conciliar-lote.ts',
   ];
   const PATRON_PROPUESTA = /clase:\s*'propuesta'/;
 

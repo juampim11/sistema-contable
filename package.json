@@ -40,6 +40,7 @@
     "alta:socio:placeholder-demo": "node apps/cli/src/alta-socio-placeholder-demo.ts",
     "resolver:contrapartida": "node apps/cli/src/resolver-contrapartida.ts",
     "reconocer:lote": "node apps/cli/src/reconocer-lote.ts",
+    "conciliar:lote": "node apps/cli/src/conciliar-lote.ts",
     "calibrar:lexico": "node apps/cli/src/calibrar-lexico-metadatos.ts",
     "listar:conceptobanco": "node apps/cli/src/listar-conceptobanco-sin-reconocer.ts",
     "medir:identidad": "node apps/cli/src/medir-identidad-resuelta.ts"

@@ -12,4 +12,5 @@ export * from './tenancy/escrituras.ts';
 export * from './contabilidad/lecturas.ts';
 export * from './contabilidad/escrituras.ts';
 export * from './cierre/tipos.ts';
+export * from './cierre/lecturas.ts';
 export * from './cierre/escrituras.ts';

@@ -12,6 +12,7 @@
     "@sistema-contable/ingesta": "workspace:*",
     "@sistema-contable/almacenamiento": "workspace:*",
     "@sistema-contable/contabilidad": "workspace:*",
+    "@sistema-contable/motor-conciliacion": "workspace:*",
     "zod": "^4.1.13"
   }
 }

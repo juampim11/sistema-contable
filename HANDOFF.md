@@ -6,6 +6,91 @@
 
 ---
 
+## 2026-08-31 (148) — Ítem E, paso 2 CERRADO: servicio de I/O + comando CLI (`conciliar-lote.ts`),
+probado de punta a punta contra LOCAL con tenant sintético. Sesión 2b de Capa D completa (A-E).
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de la entrada 147 (paso 1
+verificado con mutación real).
+
+### 1. Decisión de alcance resuelta con JP antes de escribir código
+
+`cierre_cliente_periodo` no tiene, en ningún código de producción, una función que lo cree o
+encuentre (verificado por grep: solo aparece en tests, vía `INSERT` crudo). JP confirmó: el comando
+recibe `--cierre-id` como argumento y no lo resuelve — construir esa lógica es alcance de Sesión 3
+(`27-roadmap-capa-d.md`). Agregado como **B.13** a `10-deuda-declarada.md`, sin dueño todavía.
+
+### 2. Lo construido
+
+- **Migración `0034`**: los 2 motivos aprobados en la ronda de diseño (`via_no_calificada`,
+  `cuenta_bancaria_no_configurada`) — 9 valores totales en `MOTIVOS_PENDIENTE_CIERRE`.
+- **`packages/data/src/cierre/tipos.ts`**: `ReglaImputacion` (faltaba, la tabla `0030` nunca tuvo su
+  tipo espejo) + `EvidenciaPendienteCierre` (D-30, esquema ahora definido — antes bloqueado hasta que
+  existiera el motor real) + `evidencia` agregado a `PendienteCierre` (faltaba también).
+- **`packages/data/src/cierre/lecturas.ts`** (nuevo): 4 lecturas puras — reconocimientos para
+  imputar (D-26, filtradas a `clase='propuesta'` en el `WHERE`, D-28 fuera de alcance explícito),
+  reglas de imputación vigentes, plan de cuentas completo, mapeo de cuentas bancarias.
+- **`packages/data/src/cierre/escrituras.ts`**: `escribirAsientoAutomatico` +
+  `escribirPendienteDeImputacion`, con centinela de idempotencia explícito (mismo patrón que
+  `backfillDocumentoIngerido`).
+- **`apps/cli/src/conciliar-lote.ts`** (nuevo, `pnpm conciliar:lote`): el único archivo que ve
+  `data`+`contabilidad`+`motor-conciliacion` a la vez, dry-run por defecto, `escribirConAuditoria`
+  por lote — mismo patrón que `reconocer-lote.ts`.
+- **`apps/cli/tests/conciliar-lote.test.ts`** (nuevo): 3 tests de integración REALES contra LOCAL
+  (camino feliz con debe/haber verificado, dry-run sin escritura, cardinalidad abierta sin
+  auto-resolver) — cero mocks, tenant sintético con plan de cuentas ficticio.
+- **`packages/data/tests/sincronia-vocabulario-motor.test.ts`** (nuevo): compara
+  `ROLES_FUNCIONALES_CUENTA`/`CUENTA_RESOLUCIONES` contra sus espejos duplicados en
+  `motor-conciliacion` (que no puede importar `data`).
+
+### 3. Hallazgos reales al escribir, no anticipados en el diseño
+
+- **R-F casi bloquea el comando**: reconstruir `Reconocimiento` desde una fila de
+  `reconocimiento_movimiento` choca con la regla que prohíbe construir `{clase: 'propuesta', ...}`
+  fuera de una allowlist. Resuelto agregando `conciliar-lote.ts` a esa allowlist, con el argumento
+  correcto: la fila ya viene filtrada por `clase='propuesta'` en el `WHERE` de la lectura (decisión
+  de la base, no del archivo), y trae los campos reales de evidencia que `reconocer-lote.ts` ya
+  persistió — es un reshape de un hecho ya decidido, no una clasificación nueva.
+- **Dos columnas `not null` que el diseño no había mapeado** (`movimiento_bancario_crudo.
+  concepto_banco_estrategia`, agregada por `0007`; `.contraparte_captura`, agregada por `0013`) —
+  encontradas por el fixture de integración fallando contra la base real, no por lectura de
+  migraciones.
+- **`entrada_digest`**: `reconocimiento_movimiento` tiene un trigger (`0021`) que exige que la
+  aplicación DECLARE el mismo digest que `movimiento_bancario_crudo` calculó (columna generada) —
+  nunca se copia solo, es el guardia contra la carrera de concurrencia que ya costó el bug de los 64
+  movimientos. El fixture lo lee después de insertar el movimiento y lo pasa explícito.
+- **Bug de concurrencia real, encontrado por un warning de `pg`, no por diseño**: la primera versión
+  de `conciliarLote` disparaba las 4 lecturas iniciales con `Promise.all` sobre el mismo `tx` —
+  un cliente de Postgres no admite queries concurrentes sobre la misma conexión. Corregido a
+  secuencial. El test de integración pasaba igual con el bug (por suerte de timing), así que sin el
+  warning de deprecación de `pg` esto hubiera quedado sin detectar.
+- **Dos comentarios propios volvieron a disparar el falso positivo de la regla espejo** (citar la
+  ruta prohibida literal en prosa) — mismo patrón que la entrada 146, corregido de nuevo.
+- **Corrección de mi propia propuesta original**: `escribirConAuditoria`+`persistirCuenta`-style
+  reporting se simplificó respecto de `reconocer-lote.ts` (sin `porQueDecide`/`digestsPorBanco`,
+  esta primera versión no los necesita) — deliberado, no un olvido.
+
+### 4. Verificación final
+
+`pnpm typecheck` limpio. **821/821 tests, 43 archivos**, corridos juntos en una sola pasada:
+`packages/data/tests/` completo (incluye las dos reglas nuevas de `reglas-de-codigo.test.ts` y el
+test de sincronía), `packages/motor-conciliacion/tests/` (19), `apps/cli/tests/conciliar-lote.test.ts`
+(3, contra Postgres real), `packages/contabilidad/tests/` completo (385) — cero regresión.
+
+### 5. Sesión 2b — CERRADA (A-E)
+
+Los cinco ítems de la lista original (A: tabla de imputación, B: pata banco, C: vocabulario D-28, D:
+FK D-27, E: motor real) están implementados, testeados contra LOCAL y commiteados. Sin push — JP
+decide el orden mañana. Queda para Sesión 3 (`27-roadmap-capa-d.md`): B.13 (ciclo de vida de
+`cierre_cliente_periodo`), correr esto contra el corpus real de Bracci en el piloto, y los bloqueos
+de negocio ya declarados (`regla_imputacion.respaldo`, unicidad de `cuenta_bancaria.cuenta_id`,
+enrutamiento de `sin_reconocer`/`decision_humana`).
+
+### 6. Commit
+
+Un commit para este paso. Sin push.
+
+---
+
 ## 2026-08-31 (147) — Cierre real del paso 1 del Ítem E: prueba de mutación de D-31 + regresión
 explícita del bug de lado/haber, las dos verificadas rompiendo el código de verdad (no solo escritas).
 

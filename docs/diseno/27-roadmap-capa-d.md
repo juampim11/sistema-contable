@@ -253,32 +253,26 @@ más, verificado por consulta directa contra el piloto. Detalle completo: `HANDO
 **Commits:** ninguno todavía — código, tests y backfill real aplicados y verificados contra el piloto,
 pero sin commitear (`HANDOFF.md` 141, punto 10).
 
-### Sesión 2b — Primera clasificación (esquema CERRADO e IMPLEMENTADO, código NO empezado)
+### Sesión 2b — Primera clasificación — 🟢 CERRADA (diseño + esquema + código, A-E)
 
-**Actualización 2026-08-31 (sesión nocturna autónoma):** diseño de D-29 cerrado con acuerdo real de
-`dba-data` + `contador-dominio` + `plan-cuentas-multicliente` (`28-diseno-motor-clasificacion.md`
-§2), y su esquema — más D-27/D-28/D-30 — **implementado y aplicado contra LOCAL** (migraciones
-`0030_regla_imputacion.sql`, `0031_capa_d_vocabulario_motivo.sql`,
-`0032_documento_ingerido_lote_fk.sql`; sin push, sin tocar el piloto). Detalle en `HANDOFF.md` y en
-`28-diseno-motor-clasificacion.md` §6/§7. **Lo que sigue sin empezar es el código del motor en sí**
-(ítem E de la lista de la sesión nocturna, no llegó a arrancar).
+**Actualización 2026-08-31 (sesión interactiva, continuación de la nocturna autónoma):** los cinco
+ítems (A: tabla de imputación, B: pata banco, C: vocabulario D-28, D: FK D-27, E: resolver +
+servicio de I/O + comando CLI) están **implementados, testeados contra LOCAL (821 tests, 43
+archivos) y commiteados** — sin push, sin tocar el piloto. Paquete nuevo
+`packages/motor-conciliacion` (resolver puro), comando `pnpm conciliar:lote`
+(`apps/cli/src/conciliar-lote.ts`). Detalle completo: `HANDOFF.md` (144 a 148) y
+`28-diseno-motor-clasificacion.md` §6/§7.
 
-**Qué se hace:** con `documento_ingerido` ya poblado por la Sesión 2a, arrancar la lógica de
-asignación de cuenta en sí — la primera versión de `motor-conciliacion-contable` — sobre el caso más
-simple disponible con datos reales, generando `pendiente_cierre` para al menos un período real.
+**Qué NO se hizo, a propósito** (queda para Sesión 3, no es un olvido): correr esto contra datos
+reales de Bracci en el piloto — se probó contra un tenant sintético local, mismo criterio que evitó
+tocar clientes reales sin autorización explícita. `cierre_cliente_periodo` no tiene, en ningún
+código de producción, quién lo cree o encuentre (**B.13**, `10-deuda-declarada.md`) — el comando
+recibe `--cierre-id` como argumento, decisión explícita de JP para no ensanchar el alcance.
 
-**Por qué esta y no otra antes:** escribir la lógica de clasificación antes de tener datos reales en
-`documento_ingerido` hubiera sido probarla contra fixtures, que es exactamente lo que ya se evitó en
-otros bloques de este proyecto (nunca datos reales sintetizados para bypasear el problema).
-
-**Convocatoria (pendiente, todavía no realizada):** `motor-conciliacion-contable` + `contador-dominio`
-(reglas de clasificación y criterio de asiento), `plan-cuentas-multicliente` (mapeo cuenta-atributo
-del cliente en cuestión), `qa-funcional` (definir en números qué es "clasificado" vs "pendiente de
-revisión").
-
-**Criterio de aceptación (números):** `pendiente_cierre` generado para al menos 1 período real, con
-el primer número concreto de valor: % de movimientos clasificados automáticamente vs. % que cae a
-revisión manual.
+**Criterio de aceptación real, medido** (no solo "hay código"): 3 tests de integración reales,
+sin mocks — camino feliz con `debe`/`haber` verificado contra la base, cardinalidad abierta que
+nunca se auto-resuelve, dry-run que no escribe nada. El % de automático vs. pendiente sobre un
+corpus real queda para Sesión 3 (necesita datos reales de un cliente, no el fixture sintético).
 
 ### Sesión 3 — Primer entregable real para Laura
 

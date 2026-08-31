@@ -13,7 +13,14 @@
  */
 
 import { logger } from '@sistema-contable/shared/observabilidad';
-import type { CoberturaDocumento, RolFuncionalCuenta, TipoDocumentoCierre } from './tipos.ts';
+import type {
+  CoberturaDocumento,
+  CuentaRef,
+  EvidenciaPendienteCierre,
+  MotivoPendienteCierre,
+  RolFuncionalCuenta,
+  TipoDocumentoCierre,
+} from './tipos.ts';
 import type { ContextoAuditado } from '../db/auditoria.ts';
 import type { Tx } from '../db/conexion.ts';
 import { conErroresTraducidos, ErrorDeBase } from '../db/errores-pg.ts';
@@ -205,6 +212,137 @@ export async function backfillDocumentoIngerido(
       );
       const id = carrera[0]?.id;
       if (id) return { estado: 'ya_backfilleado', documentoIngeridoId: id };
+    }
+    throw error;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Escrituras del resolver de Capa D (`motor-conciliacion-contable`, Ítem E, paso 2)
+// -----------------------------------------------------------------------------
+//
+// Reciben valores YA RESUELTOS por el servicio de I/O de `apps/` (que sí ve los paquetes de Capa
+// B/C y de Capa D a la vez) — nunca un `Reconocimiento` ni un tipo de esos otros paquetes.
+// `cierreId` se recibe como dato: NO existe hoy
+// ningún código de producción que cree/encuentre un `cierre_cliente_periodo` (B.13,
+// `docs/diseno/10-deuda-declarada.md`) — decisión explícita de JP de dejarlo fuera de esta tarea.
+
+export type RenglonParaEscribir = {
+  readonly cuentaId: string;
+  readonly cuentaRef: CuentaRef;
+  readonly lado: 'debe' | 'haber';
+  readonly importe: string;
+};
+
+export type PedidoAsientoAutomatico = {
+  readonly clienteId: string;
+  readonly cierreId: string;
+  readonly fechaImputacion: string;
+  /** Para trazabilidad — no es una FK, va en `referencia_origen` (mismo patrón que `pendiente_cierre`). */
+  readonly movimientoId: string;
+  /** [banco, contrapartida] — mismo orden que devuelve `resolverAsiento()`. */
+  readonly renglones: readonly [RenglonParaEscribir, RenglonParaEscribir];
+};
+
+export type ResultadoAsientoAutomatico = { readonly asientoId: string };
+
+/**
+ * `tipo: 'devengamiento'` — es el reconocimiento inicial de un hecho económico a partir de un
+ * movimiento bancario real, no una cancelación de algo ya devengado, ni un ajuste de cierre, ni una
+ * reimputación de FCI (los otros 3 valores de `TIPOS_ASIENTO_PROPUESTO`).
+ */
+export async function escribirAsientoAutomatico(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoAsientoAutomatico,
+): Promise<ResultadoAsientoAutomatico> {
+  const asiento = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string }>(
+      `insert into asiento_propuesto (cliente_id, cierre_id, tipo, fecha_imputacion)
+       values ($1, $2, 'devengamiento', $3::date)
+       returning id::text as id`,
+      [pedido.clienteId, pedido.cierreId, pedido.fechaImputacion],
+    ),
+  );
+  const asientoId = asiento[0]?.id;
+  if (!asientoId) throw new Error('El alta de asiento_propuesto no devolvió id.'); // H-14
+
+  for (const [orden, renglon] of pedido.renglones.entries()) {
+    await conErroresTraducidos(undefined, () =>
+      tx.consultar(
+        `insert into asiento_propuesto_renglon
+           (cliente_id, asiento_id, orden, cuenta_id, cuenta_ref, debe, haber, fecha_imputacion,
+            referencia_origen)
+         values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::date, $9)`,
+        [
+          pedido.clienteId,
+          asientoId,
+          orden + 1,
+          renglon.cuentaId,
+          JSON.stringify(renglon.cuentaRef),
+          renglon.lado === 'debe' ? renglon.importe : '0',
+          renglon.lado === 'haber' ? renglon.importe : '0',
+          pedido.fechaImputacion,
+          pedido.movimientoId,
+        ],
+      ),
+    );
+  }
+
+  logger.info('motor_conciliacion.asiento_automatico', {
+    cliente_id: pedido.clienteId,
+    cierre_id: pedido.cierreId,
+    asiento_id: asientoId,
+  });
+
+  return { asientoId };
+}
+
+export type PedidoPendienteDeImputacion = {
+  readonly clienteId: string;
+  readonly cierreId: string;
+  readonly movimientoId: string;
+  readonly motivoCodigo: MotivoPendienteCierre;
+  readonly evidencia: EvidenciaPendienteCierre;
+};
+
+export type ResultadoPendienteDeImputacion =
+  | { readonly estado: 'ya_pendiente'; readonly pendienteCierreId: string }
+  | { readonly estado: 'creado'; readonly pendienteCierreId: string };
+
+/**
+ * Centinela de idempotencia EXPLÍCITO antes de insertar — mismo patrón que
+ * `backfillDocumentoIngerido`: `uq_pendiente_cierre_natural` es la red, no el mecanismo primario.
+ * Reprocesar el mismo lote dos veces con el mismo resultado no debe duplicar la cola de revisión.
+ */
+export async function escribirPendienteDeImputacion(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoPendienteDeImputacion,
+): Promise<ResultadoPendienteDeImputacion> {
+  try {
+    const insertado = await conErroresTraducidos(undefined, () =>
+      tx.consultar<{ id: string }>(
+        `insert into pendiente_cierre (cliente_id, cierre_id, referencia_origen, motivo_codigo, evidencia)
+         values ($1, $2, $3, $4, $5::jsonb)
+         returning id::text as id`,
+        [pedido.clienteId, pedido.cierreId, pedido.movimientoId, pedido.motivoCodigo, JSON.stringify(pedido.evidencia)],
+      ),
+    );
+    const id = insertado[0]?.id;
+    if (!id) throw new Error('El alta de pendiente_cierre no devolvió id.'); // H-14
+    return { estado: 'creado', pendienteCierreId: id };
+  } catch (error) {
+    if (error instanceof ErrorDeBase && error.constraint === 'uq_pendiente_cierre_natural') {
+      const carrera = await tx.consultar<{ id: string }>(
+        `select id::text as id
+           from pendiente_cierre
+          where cliente_id = $1 and cierre_id = $2 and fuente_cierre_id is null
+            and referencia_origen = $3 and motivo_codigo = $4`,
+        [pedido.clienteId, pedido.cierreId, pedido.movimientoId, pedido.motivoCodigo],
+      );
+      const id = carrera[0]?.id;
+      if (id) return { estado: 'ya_pendiente', pendienteCierreId: id };
     }
     throw error;
   }

@@ -138,6 +138,23 @@ así que el backfill de las filas existentes, si hace falta, es tarea aparte) | 
 2b de código sobre Bracci — mismo momento en que se revisa B.11 (`27-roadmap-capa-d.md` §B.5),
 convocar `dba-data` para la migración cuando se decida cerrarlo |
 
+| **B.13** | 🟡 **Hueco real, sin dueño todavía (encontrado al escribir el servicio de I/O del
+Ítem E, sesión interactiva 2026-08-31): NO existe, en ningún código de producción, ninguna función
+que cree o encuentre un `cierre_cliente_periodo`.** Verificado por grep: las únicas inserciones a
+esa tabla en todo el repo están en tests (`mutaciones-0027`/`0028`/`0029-*.test.ts`), vía `INSERT`
+crudo armando el escenario a mano — nunca en `packages/data/src/` ni en `apps/`. El comando de
+clasificación de Capa D (`apps/cli/src/conciliar-lote.ts`, Ítem E) recibe `--cierre-id` como
+argumento y **asume que ya existe** — decisión explícita de JP para no ensanchar el alcance de esta
+tarea. Sin esta pieza, el comando no es usable de punta a punta sin fixtures armados a mano (ni en
+un test ni, mucho menos, contra un cliente real): alguien tiene que decidir y escribir, en algún
+momento, con qué criterio se abre/encuentra el `cierre_cliente_periodo` de un período — mensual vs.
+ejercicio, quién lo dispara (¿el primer documento ingerido del mes? ¿un comando explícito del
+contador?), y qué pasa si ya hay uno abierto para ese cliente/período | Es la pieza central de
+"cerrar el circuito completo" que `27-roadmap-capa-d.md` ya reserva para la Sesión 3 (`"cerrar el
+circuito hasta asiento_propuesto para un mes real completo de Bracci"`) — candidato natural a
+resolverse ahí, no antes. Convocatoria sugerida cuando se decida: `contador-dominio` (criterio de
+cuándo se abre un período) + `dba-data` (si hace falta esquema nuevo) |
+
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
 - **La deuda de seguridad abierta**: `08-plan-de-construccion.md` §6.0 — nueve líneas, de bloqueante de
