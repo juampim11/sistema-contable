@@ -149,11 +149,32 @@ tarea. Sin esta pieza, el comando no es usable de punta a punta sin fixtures arm
 un test ni, mucho menos, contra un cliente real): alguien tiene que decidir y escribir, en algún
 momento, con qué criterio se abre/encuentra el `cierre_cliente_periodo` de un período — mensual vs.
 ejercicio, quién lo dispara (¿el primer documento ingerido del mes? ¿un comando explícito del
-contador?), y qué pasa si ya hay uno abierto para ese cliente/período | Es la pieza central de
-"cerrar el circuito completo" que `27-roadmap-capa-d.md` ya reserva para la Sesión 3 (`"cerrar el
-circuito hasta asiento_propuesto para un mes real completo de Bracci"`) — candidato natural a
-resolverse ahí, no antes. Convocatoria sugerida cuando se decida: `contador-dominio` (criterio de
-cuándo se abre un período) + `dba-data` (si hace falta esquema nuevo) |
+contador?), y qué pasa si ya hay uno abierto para ese cliente/período |
+**Addendum (dba-data, sesión interactiva 2026-08-31) — primer `INSERT` real de
+`cierre_cliente_periodo` (julio 2026, Bracci) y limitación de vocabulario encontrada al escribirlo.**
+`cierre_transicion.estado_desde` es `NOT NULL` con `CHECK cierre_transicion_estado_desde_chk`, y ese
+`CHECK` comparte la constante `CIERRE_ESTADOS` (`packages/data/src/cierre/tipos.ts`) con
+`cierre_periodo_estado_chk` (`cierre_cliente_periodo.cierre_estado`) **y** con
+`cierre_transicion_estado_hasta_chk` — los tres mapeados a la MISMA constante en
+`catalogo.test.ts:1085-1102`. La primera fila de transición de un cierre recién creado no tiene un
+"estado previo" real, y ningún valor de `CIERRE_ESTADOS` lo representa. **Se evaluaron dos opciones y
+se decidió NO agregar un 7º valor al vocabulario:** un valor nuevo solo sería legítimo para
+`estado_desde` (nunca para `estado_hasta` ni para `cierre_estado` — no hay lectura en la que un cierre
+o una transición TERMINEN en "sin cierre"), así que ensancharlo forzaría partir `CIERRE_ESTADOS` en dos
+constantes (una para `estado_desde`, otra compartida por `estado_hasta`/`cierre_estado`) — divergencia
+real de tipos entre `estadoDesde`/`estadoHasta` (hoy ambos `CierreEstado` en `tipos.ts:191-192`) para
+un caso que la lógica de apertura real (todavía sin escribir, ver arriba) puede terminar modelando
+distinto. Se optó por la **transición reflexiva** (`estado_desde = estado_hasta = 'abierto'`, `motivo`
+explícito indicando que es la apertura inicial sin estado previo, `hecho_via = 'manual'`) — auditable,
+sin tocar esquema, y sin comprometer una forma de vocabulario antes de que la Sesión 3 diseñe la
+apertura real. Revisar esta decisión cuando se escriba esa lógica: puede que la apertura deje de pasar
+por `cierre_transicion` para su primera fila, lo que volvería el punto discutible acá |
+Es la pieza central de "cerrar el circuito completo" que `27-roadmap-capa-d.md` ya reserva para la
+Sesión 3 (`"cerrar el circuito hasta asiento_propuesto para un mes real completo de Bracci"`) —
+candidato natural a resolverse ahí, no antes. Convocatoria sugerida cuando se decida: `contador-dominio`
+(criterio de cuándo se abre un período) + `dba-data` (si hace falta esquema nuevo). **Addendum:** la
+decisión de vocabulario de `cierre_transicion.estado_desde` (arriba) queda revisitada en esa misma
+convocatoria, no antes |
 
 | **B.14** | 🟡 **Hueco de red de test, sin dueño todavía (encontrado en `apps/cli/src/
 conciliar-lote.ts`, Ítem E paso 2, sesión interactiva 2026-08-31 — revisión de JP corrigió la
