@@ -6,6 +6,47 @@
 
 ---
 
+## 2026-08-31 (147) — Cierre real del paso 1 del Ítem E: prueba de mutación de D-31 + regresión
+explícita del bug de lado/haber, las dos verificadas rompiendo el código de verdad (no solo escritas).
+
+**Herramienta:** Claude Code, sesión interactiva. JP pidió, antes de aprobar seguir al paso 2, tres
+confirmaciones puntuales sobre la entrada 146 — dos de las tres no estaban resueltas del todo.
+
+### 1. Lo que faltaba, honesto
+
+- **Prueba de mutación de D-31**: no existía, enmarcada como tal. Los 17 tests originales cubrían el
+  veto funcionalmente, pero ninguno documentaba código defectuoso + caso legítimo + caso que rompe.
+- **Regresión del bug de lado/haber**: cubierta de rebote por el test de "camino feliz" (que sí
+  hubiera fallado con el bug real), pero no aislada ni nombrada como tal.
+
+### 2. Verificación real de la mutación, no solo el texto
+
+Se aplicó el mutante de verdad sobre `resolver.ts` (`else if (false && estaVetadaPorFamiliaSocio(cuenta))`,
+desactivando el veto) y se corrió el test nuevo dos veces:
+
+1. **Primera corrida, con un bug propio en el test** (no del resolver): el `tipoMovimiento` de la
+   regla no coincidía con el del `reconocimiento` — el test fallaba, pero por la razón equivocada
+   (`tipo_sin_regla_imputacion`, no `automatico`). Corregido antes de confiar en el resultado.
+2. **Segunda corrida, con el mutante**: `resultado.tipo === 'automatico'` — confirmado que el
+   escenario (N=1 candidata perfecta, vía de máxima confianza) rompe exactamente como predecía el
+   comentario del test.
+3. **Revertido el mutante** (`git diff` sobre `resolver.ts` sin salida — idéntico al commit
+   `fcec32a`), test vuelve a verde con el código real.
+
+### 3. Estado final
+
+`packages/motor-conciliacion/tests/resolver.test.ts`: **19/19** (17 + regresión de lado/haber +
+mutación de D-31 verificada rompiendo el código real). `pnpm typecheck` limpio. `git status` limpio
+antes de este commit.
+
+### 4. Sigue el paso 2
+
+Servicio de I/O (`apps/cli/src/conciliar-lote.ts`), migración de `via_no_calificada` +
+`cuenta_bancaria_no_configurada`, tenant sintético, test de sincronía de vocabulario duplicado —
+arranca a continuación de esta entrada, mismo commit del paso 1 ya cerrado por separado.
+
+---
+
 ## 2026-08-31 (146) — Ítem E, paso 1: resolver puro de `motor-conciliacion-contable` (`packages/
 motor-conciliacion`), sin tocar la base. 17 tests en memoria verdes. Servicio de I/O es el paso 2.
 

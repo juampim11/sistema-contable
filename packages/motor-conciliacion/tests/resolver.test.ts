@@ -131,6 +131,40 @@ describe('camino feliz — cardinalidad cerrada, regla fija, vía calificada', (
     expect(contrapartida.lado).toBe('haber');
     expect(banco.lado).toBe('debe');
   });
+
+  /**
+   * REGRESIÓN EXPLÍCITA — bug real encontrado al escribir `resolver.ts` (no en la convocatoria de
+   * agentes): la primera versión asignaba `reconocimiento.lado` directo a BANCO y el opuesto a la
+   * contrapartida — al revés de `04-imputacion-contable.md` §2 (ejemplo regla 8: columna crédito →
+   * la CONTRAPARTIDA que disminuye va al haber, Banco que aumenta va al debe, el opuesto). Con el
+   * bug, este test hubiera fallado: `contrapartida.cuentaId` habría llevado el lado de `banco`, no
+   * el de `reconocimiento.lado`. Aislado a propósito (no depende de la cuenta que use el fixture
+   * por defecto) para que un futuro cambio de fixture no lo enmascare sin querer.
+   */
+  it('regresión: reconocimiento.lado va a la CONTRAPARTIDA, nunca a banco — aunque cambien las cuentas del fixture', () => {
+    const otraContrapartida: CuentaDelPlan = {
+      cuentaId: 'cuenta-otra',
+      codigo: '4.9.9.999',
+      denominacion: 'Cuenta de prueba de regresión',
+      rolFuncional: 'generica',
+      activa: true,
+      vigenteDesde: '2026-01-01',
+      vigenteHasta: null,
+    };
+    const resultado = resolverAsiento(
+      entrada({
+        reconocimiento: propuesta({ lado: 'debe' }),
+        reglasImputacion: [reglaFija({ cuentaId: 'cuenta-otra' })],
+        planDeCuentas: [...PLAN_BASICO, otraContrapartida],
+      }),
+    );
+    expect(resultado.tipo).toBe('automatico');
+    if (resultado.tipo !== 'automatico') return;
+    const contrapartida = resultado.renglones.find((r) => r.cuentaId === 'cuenta-otra');
+    const banco = resultado.renglones.find((r) => r.cuentaId === 'cuenta-banco');
+    expect(contrapartida?.lado, 'la contrapartida tiene que llevar el lado de reconocimiento.lado, no el opuesto').toBe('debe');
+    expect(banco?.lado, 'banco tiene que llevar el opuesto de reconocimiento.lado, nunca el mismo').toBe('haber');
+  });
 });
 
 describe('cardinalidad abierta — predicción falsable del plan: nunca se auto-resuelve', () => {
@@ -176,6 +210,42 @@ describe('familia socio — veto duro de D-31, sin importar candidatas', () => {
       }),
     );
     expect(resultado.tipo).toBe('pendiente');
+    if (resultado.tipo !== 'pendiente') return;
+    expect(resultado.motivoCodigo).toBe('resolucion_manual_obligatoria_socio');
+  });
+
+  /**
+   * PRUEBA DE MUTACIÓN — D-31 (CLAUDE.md §1.8). El veto de familia socio es el único invariante de
+   * negocio de este resolver que NUNCA puede ceder ante "pero si hay una sola candidata perfecta" —
+   * es la diferencia entre "asistido" y "automático a veces".
+   *
+   * Código real: `resolver.ts`, rama `'fija'` — `if (estaVetadaPorFamiliaSocio(cuenta)) return {
+   * tipo: 'pendiente', motivoCodigo: 'resolucion_manual_obligatoria_socio', ... }` (línea ~293).
+   *
+   * Mutación de referencia: BORRAR ese `if` (o invertirlo a `if (!estaVetadaPorFamiliaSocio(cuenta))`
+   * dejando pasar el caso vetado). El escenario de abajo es EL MEJOR CASO POSIBLE para que un motor
+   * automático "quisiera" resolver solo: N=1 candidata exacta (`reglasImputacion` tiene una sola
+   * fila), vía de máxima confianza (`codigo_y_texto_concordantes`), regla `'fija'` bien formada.
+   * Con el código real: `pendiente`/`resolucion_manual_obligatoria_socio` (rojo para el mutante).
+   * Con la mutación (veto borrado o invertido): este mismo escenario devolvería `'automatico'`, y
+   * generaría un `asiento_propuesto_renglon` real imputando un retiro de socio sin que ningún
+   * humano lo haya visto — exactamente lo que D-31 existe para impedir.
+   */
+  it('MUTACIÓN: aun con N=1 candidata perfecta y vía de máxima confianza, el veto de socio NUNCA cede', () => {
+    const resultado = resolverAsiento(
+      entrada({
+        // tipo/concepto por defecto de propuesta() ('comision_bancaria'), coincidiendo con el
+        // tipoMovimiento por defecto de reglaFija() — mismo `tipo` de ambos lados, a propósito: si
+        // no coinciden, la regla no se encuentra por otro motivo y el test no prueba el veto.
+        reconocimiento: propuesta({ via: 'codigo_y_texto_concordantes' }), // la vía de MÁS confianza — no alcanza igual
+        reglasImputacion: [reglaFija({ cuentaId: 'cuenta-retiro-socio' })], // única regla, única candidata
+      }),
+    );
+    expect(
+      resultado.tipo,
+      'con N=1 y la vía más confiable posible, un resolver SIN el veto de D-31 devolvería automatico — ' +
+        'si este test da automatico, el veto se rompió (borrado o invertido)',
+    ).toBe('pendiente');
     if (resultado.tipo !== 'pendiente') return;
     expect(resultado.motivoCodigo).toBe('resolucion_manual_obligatoria_socio');
   });
