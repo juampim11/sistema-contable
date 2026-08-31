@@ -64,6 +64,7 @@
  * Requisito previo: `0028` aplicada a local.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { cerrarConexiones, conUsuario, type Tx } from '../src/db/conexion.ts';
@@ -536,7 +537,15 @@ describe('0028 C — pendiente_cierre: mismo trigger genérico, confirma que el 
     });
   });
 
-  it('legítimo: superseder un pendiente ya resuelto (mismo mecanismo que asiento_propuesto)', async () => {
+  it('legítimo: superseder un pendiente ya resuelto CON LA MISMA CLAVE NATURAL (0029 cierra B.8)', async () => {
+    // Hasta `0029`, esto necesitaba un `referencia_origen` distinto como workaround del test —
+    // `uq_pendiente_cierre_natural` no tenía predicado parcial (B.8, `10-deuda-declarada.md`) y la
+    // fila nueva con la MISMA clave natural que la vieja chocaba contra esa unique. `0029` lo cierra
+    // con un índice parcial (`WHERE superseded_by_id IS NULL`) + `fk_pendiente_cierre_superseded
+    // DEFERRABLE`. El orden real (contrato documentado en `0029`, mismo patrón que
+    // `reconocimiento_movimiento` en `escrituras.ts:194-199`): el `id` de la fila nueva lo genera la
+    // aplicación, el `UPDATE` de la vieja va PRIMERO (la FK diferida permite que apunte, dentro de la
+    // misma transacción, a un `id` que todavía no es una fila), el `INSERT` de la nueva va DESPUÉS.
     await comoSocio(async (ej) => {
       const viejoId = await crearPendienteResuelto(ej, '2028-01-01');
       const cierreDelViejo = await una(
@@ -544,26 +553,27 @@ describe('0028 C — pendiente_cierre: mismo trigger genérico, confirma que el 
         `select cierre_id::text as "cierreId" from pendiente_cierre where cliente_id = $1 and id = $2`,
         [s.clienteA, viejoId],
       );
-      // `referencia_origen` distinta a propósito: `uq_pendiente_cierre_natural` no tiene predicado
-      // parcial (a diferencia de lo que asumía el boceto original, `23` §2.5) — un `pendiente_cierre`
-      // nuevo con la MISMA clave natural que el que reemplaza (mismo cierre_id + motivo_codigo, los
-      // dos con fuente_cierre_id/referencia_origen en null) choca contra esa unique. Residuo real,
-      // ya señalado por `arquitecto-software` (no bloquea el diseño del trigger, que solo gobierna la
-      // fila VIEJA — es de quien implemente el flujo real de reproceso de `pendiente_cierre`).
-      const nuevo = await una(
-        ej,
-        `insert into pendiente_cierre (cliente_id, cierre_id, motivo_codigo, pendiente_estado, referencia_origen)
-         values ($1, $2, 'documento_faltante', 'abierto', 'reproceso-test-legitimo') returning id::text as id`,
-        [s.clienteA, cierreDelViejo['cierreId']],
-      );
+      const nuevoId = randomUUID();
       const superseded = await una(
         ej,
         `update pendiente_cierre set pendiente_estado = 'superseded', superseded_by_id = $3
-         where cliente_id = $1 and id = $2
+         where cliente_id = $1 and id = $2 and superseded_by_id is null
          returning pendiente_estado as "pendienteEstado"`,
-        [s.clienteA, viejoId, nuevo['id']],
+        [s.clienteA, viejoId, nuevoId],
       );
       expect(superseded['pendienteEstado']).toBe('superseded');
+      const nuevo = await una(
+        ej,
+        `insert into pendiente_cierre (id, cliente_id, cierre_id, motivo_codigo, pendiente_estado)
+         values ($1, $2, $3, 'documento_faltante', 'abierto') returning id::text as id`,
+        [nuevoId, s.clienteA, cierreDelViejo['cierreId']],
+      );
+      expect(
+        nuevo['id'],
+        'la fila nueva comparte cierre_id + motivo_codigo (fuente_cierre_id/referencia_origen en null ' +
+          'en ambas) con la vieja ya superseded — misma clave natural completa, sin chocar contra ' +
+          'uq_pendiente_cierre_natural gracias al índice parcial de 0029',
+      ).toBe(nuevoId);
     });
   });
 
