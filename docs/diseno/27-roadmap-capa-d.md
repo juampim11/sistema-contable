@@ -92,21 +92,28 @@ socia es "Socio 1"/"Socio 2" — ver `10-deuda-declarada.md` B.10.
 
 ### B.3 — Los dos bloqueos concretos antes de escribir motor de verdad
 
-1. **Bloque 2 — backfill de `documento_ingerido` con los 3 lotes reales del piloto (Bancor/Nación/ICBC).**
-   Bloqueado por dos hallazgos de `docs/diseno/10-deuda-declarada.md`:
+1. **Bloque 2 — backfill de `documento_ingerido` con los 3 lotes reales del piloto (Bancor/Nación/ICBC).
+   ✅ CERRADO 2026-08-31 (Sesión 2a) — ver `HANDOFF.md` 141.** Estaba bloqueado por dos hallazgos de
+   `docs/diseno/10-deuda-declarada.md`, ambos ya resueltos antes de esta sesión:
    - **B.7**: ✅ **CERRADO 2026-08-29 (Sesión 1, Bloque 1)** — veredicto **por cuenta, no por archivo**
      (convocatoria real a `analista-funcional` + `contador-dominio`, sin disenso; detalle completo en
-     `10-deuda-declarada.md`). Queda para Bloque 2 el DDL que instrumenta la granularidad (extender
-     `fuente_cierre` o tabla hija nueva) — decisión de `dba-data`, no cerrada acá.
+     `10-deuda-declarada.md`). Queda pendiente el DDL que instrumenta la granularidad (extender
+     `fuente_cierre` o tabla hija nueva) para un futuro lote multi-cuenta — decisión de `dba-data`, sin
+     dueño todavía; los 3 lotes de Sesión 2a son mono-cuenta y no lo necesitaron.
    - **B.8**: ✅ **CERRADO 2026-08-30 (Bloque 2) — migración `0029` aplicada a LOCAL y al PILOTO,
      6/6 mutación verde, sin regresión en `0028`/`0027`.** `uq_pendiente_cierre_natural` pasa a índice
      parcial + `fk_pendiente_cierre_superseded` a `DEFERRABLE`; detalle completo en
      `10-deuda-declarada.md`. Alcance acotado a `pendiente_cierre` por decisión de JP — el mismo
      patrón en `documento_ingerido`/`expectativa_fuente_cliente`/`fuente_cierre` queda declarado como
-     **B.9**, sin dueño.
+     **B.9**, sin dueño (confirmado no bloqueante para Sesión 2a por dos agentes independientes,
+     `HANDOFF.md` 141).
 
-   **Esto no bloquea crear las 6 tablas vacías** (ya están, desde `0027`) — bloquea específicamente
-   poner las 3 filas reales adentro.
+   **Resultado real (Sesión 2a):** los 3 lotes reales (Bancor/Contenedores Paoluc S.A.S.,
+   Nación/H y J Servicios y Obras S.A.S., ICBC/MEB Integración y Montaje S.A.S.) tienen su fila en
+   `documento_ingerido` — paridad 1:1, 0 filas perdidas, 0 de más, verificado por consulta directa
+   contra el piloto. `packages/data/src/cierre/escrituras.ts::backfillDocumentoIngerido` +
+   `apps/cli/src/backfill-documento-ingerido.ts`, 14 tests nuevos. Galicia/Macro/Santander (los 3
+   lotes "viejos", multi-cuenta) quedan fuera a propósito — backfill aparte si hace falta.
 
 2. **Commits 3/4 de liquidaciones** (conectar Cabal/Visa a persistencia real) — esperan a que
    `documento_ingerido` tenga al menos un backfill o un flujo de alta nuevo funcionando, para no crear
@@ -226,26 +233,44 @@ migración quedó aplicada solo en local). 227 cuentas de Bracci verificadas por
 real, 0 quedando solo en el tenant sintético como única copia. D-18 y D-19 cerrados o con decisión de
 riesgo aceptado registrada con fecha y motivo — 0 ítems sin dueño.
 
-### Sesión 2 — Backfill real + primera clasificación
+### Sesión 2a — Backfill real — ✅ COMPLETA (2026-08-31)
 
-**Qué se hace:** backfillear `documento_ingerido` con los 3 lotes reales ya ingeridos
-(Bancor/Nación/ICBC), ahora desbloqueado por la sesión 1. Con eso adentro, arrancar la lógica de
+**Qué se hizo:** backfillear `documento_ingerido` con los 3 lotes reales ya ingeridos
+(Bancor/Nación/ICBC), desbloqueado por la sesión 1. Alcance acotado a solo el backfill — la lógica de
+clasificación (lo que el documento original agrupaba en esta misma sesión) se movió a la Sesión 2b,
+sin arrancar todavía.
+
+**Por qué esta y no otra antes:** backfillear sin haber cerrado B.7/B.8 hubiera sido re-trabajo.
+
+**Convocatoria real:** `dba-data` (mapeo de columnas, resolución de `cobertura` sin fuente en Capa 1),
+`seguridad-datos-financieros` + `security-engineer` en paralelo (guard R18, TOCTOU, no loguear
+`objeto_almacenamiento`, `conErroresTraducidos` en el INSERT, centinela de idempotencia).
+
+**Criterio de aceptación (números): CUMPLIDO.** Backfill con paridad 1:1 — 3 filas backfilleadas en
+`documento_ingerido` = 3 lotes ya ingeridos en Capa 1 (Bancor/Nación/ICBC), 0 filas perdidas, 0 de
+más, verificado por consulta directa contra el piloto. Detalle completo: `HANDOFF.md` 141.
+
+**Commits:** ninguno todavía — código, tests y backfill real aplicados y verificados contra el piloto,
+pero sin commitear (`HANDOFF.md` 141, punto 10).
+
+### Sesión 2b — Primera clasificación (siguiente paso real, NO empezada)
+
+**Qué se hace:** con `documento_ingerido` ya poblado por la Sesión 2a, arrancar la lógica de
 asignación de cuenta en sí — la primera versión de `motor-conciliacion-contable` — sobre el caso más
 simple disponible con datos reales, generando `pendiente_cierre` para al menos un período real.
 
-**Por qué esta y no otra antes:** backfillear sin haber cerrado B.7/B.8 hubiera sido re-trabajo.
-Escribir la lógica de clasificación antes de tener datos reales en `documento_ingerido` hubiera sido
-probarla contra fixtures, que es exactamente lo que ya se evitó en otros bloques de este proyecto
-(nunca datos reales sintetizados para bypasear el problema).
+**Por qué esta y no otra antes:** escribir la lógica de clasificación antes de tener datos reales en
+`documento_ingerido` hubiera sido probarla contra fixtures, que es exactamente lo que ya se evitó en
+otros bloques de este proyecto (nunca datos reales sintetizados para bypasear el problema).
 
-**Convocatoria:** `motor-conciliacion-contable` + `contador-dominio` (reglas de clasificación y
-criterio de asiento), `plan-cuentas-multicliente` (mapeo cuenta-atributo del cliente en cuestión),
-`qa-funcional` (definir en números qué es "clasificado" vs "pendiente de revisión").
+**Convocatoria (pendiente, todavía no realizada):** `motor-conciliacion-contable` + `contador-dominio`
+(reglas de clasificación y criterio de asiento), `plan-cuentas-multicliente` (mapeo cuenta-atributo
+del cliente en cuestión), `qa-funcional` (definir en números qué es "clasificado" vs "pendiente de
+revisión").
 
-**Criterio de aceptación (números):** backfill con paridad 1:1 — filas backfilleadas en
-`documento_ingerido` = filas ya ingeridas en Capa 1 para esos 3 lotes, 0 filas perdidas.
-`pendiente_cierre` generado para al menos 1 período real, con el primer número concreto de valor: %
-de movimientos clasificados automáticamente vs. % que cae a revisión manual.
+**Criterio de aceptación (números):** `pendiente_cierre` generado para al menos 1 período real, con
+el primer número concreto de valor: % de movimientos clasificados automáticamente vs. % que cae a
+revisión manual.
 
 ### Sesión 3 — Primer entregable real para Laura
 

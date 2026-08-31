@@ -6,6 +6,114 @@
 
 ---
 
+## 2026-08-31 (141) — Sesión 2a de Capa D CERRADA: backfill real de `documento_ingerido` con los 3
+lotes reales de Capa 1 (Bancor/Nación/ICBC) — paridad 1:1, 0 filas perdidas, 0 de más.
+
+**Herramienta:** Claude Code. Continuación de `27-roadmap-capa-d.md`, Sesión 2 (dividida en 2a/2b tras
+esta tarea — ver actualización al propio roadmap más abajo).
+
+### 1. Modo plan, con un agregado explícito de JP
+
+Aprobado con una condición: la justificación de `cobertura` para Bancor (fijada a mano, "medido, no
+declarado") tenía que quedar comentada en el propio script, no solo acá — así quedó en
+`apps/cli/src/backfill-documento-ingerido.ts`, comentario sobre `COBERTURA_POR_BANCO`.
+
+### 2. Paso 0 — solo lectura, sin backup todavía
+
+Los 3 lotes reales medidos por consulta directa contra el piloto: Bancor/Contenedores Paoluc S.A.S.
+(94 movimientos), ICBC/MEB Integración y Montaje S.A.S. (9), Nación/H y J Servicios y Obras S.A.S. (1
+— confirmado el más chico por medición, no por lo que decía el roadmap). Los 3 mono-cuenta,
+`estado='procesado'`, `archivo_clave` no nulo, `documento_ingerido` vacía para esos 3 `cliente_id` —
+sin colisión posible.
+
+### 3. Convocatoria real ANTES de escribir el script (bloqueante, JP pidió ver el resultado antes de
+autorizar backup/escritura)
+
+- **`dba-data`**: confirmó el mapeo de columnas y resolvió el hallazgo real de que
+  `documento_ingerido.cobertura` NUNCA se persiste en Capa 1 — para ICBC/Nación el valor `'completo'`
+  está declarado en el código del adaptador (`icbc.ts:530`, `nacion.ts:545`); para Bancor no hay
+  declaración en código, así que se fijó a mano con evidencia MEDIDA (mes calendario exacto
+  2026-06-01/2026-06-30 + `lote_ingesta_cuenta.verificacion_estado='cuadra'` para ese lote real).
+- **`seguridad-datos-financieros` + `security-engineer`** (en paralelo, sin disenso): guard R18
+  (`verificarCredencialDeRequest`, abortar si saltea RLS/superusuario/sin contexto aislado), nunca
+  loguear `objeto_almacenamiento` (N1 no exportable), TOCTOU (el `--cliente` filtra junto con
+  `--lote-id` en la MISMA condición SQL, nunca comparado después), `conErroresTraducidos` envolviendo
+  el INSERT (nunca dejar subir el `DETAIL` crudo de Postgres, que en un choque de
+  `uq_documento_ingerido_natural` filtraría la clave de storage real), centinela de idempotencia
+  explícito antes de insertar.
+- **B.9** (`10-deuda-declarada.md`): confirmado por los dos agentes, independiente, como no
+  bloqueante — nunca hay supersesión en este backfill.
+
+### 4. Código escrito
+
+- `packages/data/src/cierre/escrituras.ts`: función nueva `backfillDocumentoIngerido` + tipo
+  `FilaBackfillDocumentoIngerido`, mismo patrón que `altaPlanDeCuentas` ya existente en el archivo.
+- `apps/cli/src/backfill-documento-ingerido.ts`: CLI nuevo, patrón dry-run/`--confirmar` de
+  `alta-plan-cuentas.ts`/`backfill-contraparte.ts`.
+- `package.json`: script nuevo `"backfill:documento-ingerido"`.
+
+### 5. Tests nuevos — 14/14 verdes contra LOCAL
+
+- `packages/data/tests/backfill-documento-ingerido.test.ts` (4): alta feliz, idempotencia, aislamiento
+  cross-cliente, CHECK de la migración `0027` sigue vigente.
+- `apps/cli/tests/backfill-documento-ingerido.test.ts` (10): parseo de args, flujo completo, TOCTOU,
+  guard de mono-cuenta B.7, guard de banco soportado, `archivo_clave` nulo, estado no backfilleable.
+- `pnpm typecheck` y `pnpm barrido` limpios.
+- Hallazgo aparte, sin relación con el piloto: el catálogo `banco` en la base LOCAL de esta sesión
+  estaba vacío (drift de entorno preexistente — `ayuda.ts::sembrar()` trunca `banco` en cada corrida de
+  test, por diseño, y los tests tienen que reponer los códigos que necesitan; mismo patrón que ya usa
+  `backfill-contraparte.test.ts`, no un bug nuevo). Resuelto reponiendo los códigos en el `beforeAll`
+  de los 2 archivos de test nuevos. No afecta al piloto (catálogo completo ahí, verificado).
+
+### 6. Backup fresco antes de la primera escritura real
+
+`ENV_FILE=.env.piloto pnpm respaldar:piloto` → `respaldos/piloto_20260831-021622Z.dump` (1.02 MB).
+
+### 7. Los 3 lotes backfillados, uno por uno — dry-run → verificación contra lo medido →
+`--confirmar` → verificación cruzada por consulta directa
+
+| Cliente | `documento_ingerido.id` | Período | `cobertura` |
+|---|---|---|---|
+| Nación / H y J Servicios y Obras S.A.S. | `3bdbbb3a-960c-4e20-bb06-3207055389d2` | 2026-05-29/2026-06-30 (el ciclo de Nación arranca un día antes del calendario, ya documentado) | `completo` |
+| Bancor / Contenedores Paoluc S.A.S. | `d63c6cdf-503d-4069-bc4a-081dd11ba411` | 2026-06-01/2026-06-30 | `completo` (medido, no declarado) |
+| ICBC / MEB Integración y Montaje S.A.S. | `12c4b829-c947-4383-a940-d91373f89cce` | 2026-06-01/2026-06-30 | `completo` (declarado en adaptador) |
+
+Cada verificación cruzada (`documento_ingerido` vs. `lote_ingesta` + `lote_ingesta_cuenta` de origen)
+confirmó: `objeto_almacenamiento` = `lote_ingesta.archivo_clave` real, `periodo_desde`/`periodo_hasta`
+= `lote_ingesta_cuenta` real, `ingerido_en` = `lote_ingesta.created_at` (histórico, NUNCA `now()`),
+`creado_en` = fecha real del backfill (2026-08-31), `superseded_by_id` = null.
+
+### 8. Paridad final 1:1, confirmada por consulta directa
+
+3 lotes reales (Bancor/Nación/ICBC) = 3 filas en `documento_ingerido`, 0 filas perdidas, 0 de más —
+criterio de aceptación del roadmap (Sesión 2, ahora 2a) cerrado.
+
+### 9. Qué NO se tocó (alcance explícitamente recortado)
+
+Galicia/Macro/Santander (los 3 lotes "viejos" del piloto original, multi-cuenta) quedan fuera a
+propósito — backfill aparte si hace falta. Nada de `motor-conciliacion-contable` ni `pendiente_cierre`
+ni lógica de clasificación: eso es Sesión 2b (ver `27-roadmap-capa-d.md`), con su propia convocatoria
+de diseño, TODAVÍA NO CONVOCADA ni arrancada. El punto pendiente de B.7 ("dónde vive la granularidad
+por cuenta en el esquema para un futuro lote multi-cuenta") sigue sin dueño — no lo tocó esta tarea
+porque los 3 lotes de este alcance son mono-cuenta y no lo necesitaban. `docs/diseno/10-deuda-declarada.md`
+no cambió (B.7/B.8/B.9 sin novedad).
+
+### 10. Qué sigue
+
+- [ ] **Commits: ninguno todavía.** Todo el trabajo (código, tests, backfill real al piloto) está
+  aplicado y verificado, pero sin commitear — no se pidió commitear en esta tarea. `git status` al
+  cierre de esta entrada muestra `package.json` y `packages/data/src/cierre/escrituras.ts`
+  modificados, más `apps/cli/src/backfill-documento-ingerido.ts`,
+  `apps/cli/tests/backfill-documento-ingerido.test.ts` y
+  `packages/data/tests/backfill-documento-ingerido.test.ts` sin trackear. Este `HANDOFF.md` y
+  `docs/diseno/27-roadmap-capa-d.md` quedan modificados también por esta misma entrada.
+- [ ] Sesión 2b — primera clasificación (motor de conciliación, `pendiente_cierre`, primer % de
+  clasificado automático vs. revisión manual): siguiente paso real, sin arrancar, con su propia
+  convocatoria (`motor-conciliacion-contable` + `contador-dominio` + `plan-cuentas-multicliente` +
+  `qa-funcional`, ya identificados en el roadmap).
+
+---
+
 ## 2026-08-30 (140) — ROKA: 219 cuentas reales cargadas en el TENANT REAL del piloto
 (`69479b8f-9b6a-4d6b-bdb2-bff817c2e750`) — 2 de las 4 cuentas de socio CONFIRMADAS por evidencia
 documental + HMAC, 2 PROVISORIAS por decisión de JP, pendientes de confirmación de Laura.
