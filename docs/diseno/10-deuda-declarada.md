@@ -155,6 +155,32 @@ circuito hasta asiento_propuesto para un mes real completo de Bracci"`) — cand
 resolverse ahí, no antes. Convocatoria sugerida cuando se decida: `contador-dominio` (criterio de
 cuándo se abre un período) + `dba-data` (si hace falta esquema nuevo) |
 
+| **B.14** | 🟡 **Hueco de red de test, sin dueño todavía (encontrado en `apps/cli/src/
+conciliar-lote.ts`, Ítem E paso 2, sesión interactiva 2026-08-31 — revisión de JP corrigió la
+caracterización original de "bug de concurrencia" a lo que realmente es).** La primera versión del
+comando disparaba 4 lecturas independientes con `Promise.all` sobre el mismo `tx`/`Client` de `pg`.
+Corregido a secuencial (`HANDOFF.md` 148) porque un `Client` solo ejecuta una consulta a la vez a
+nivel de protocolo y `pg` va a dejar de tolerar el encolado silencioso en la versión 9.0 — pero
+**NO hay, hoy, ningún test que hubiera fallado en rojo con la versión vieja**: con la versión de
+`pg` que corre actualmente, las cuatro lecturas se ejecutan en el mismo orden con o sin
+`Promise.all` (el driver las encola y las corre en orden de invocación), así que un test que
+comparara resultados no puede detectar la diferencia hasta que `pg` se actualice a una versión que
+la rompa en duro. **Si alguien reintroduce `Promise.all` sobre el mismo cliente en este archivo o
+en cualquier otro, nada en la suite lo va a notar hoy.** La única forma real de un test rojo/verde
+sería capturar el warning de deprecación de `pg` (`process.emitWarning`/stderr) y afirmar que no
+aparece — mecanismo que este repo no usa hoy para ningún otro caso, habría que diseñarlo desde cero.
+**Límite de alcance de la verificación que sí se hizo**: un grep dirigido a la palabra literal
+`Promise.all` sobre `packages/data/src`, `apps/cli/src`, `packages/ingesta/src` y
+`packages/contabilidad/src` no encontró otra instancia del mismo patrón sobre un cliente
+compartido (el único otro `Promise.all` en producción cierra dos *pools* distintos, no aplica) —
+pero ese grep **no atrapa la forma equivalente sin la palabra literal** (por ejemplo, `const a =
+fn1(tx); const b = fn2(tx); await a; await b;`, que dispara el mismo encolado sin que el texto lo
+delate). No está descartado que el patrón exista en otro lado del repo con esa forma | Sin dueño
+todavía. Dos caminos posibles cuando se retome: (a) subir la versión de `pg` a 9.0 en un entorno de
+prueba y correr la suite completa — cualquier instancia del patrón, con la palabra `Promise.all` o
+sin ella, va a romper ahí de una — o (b) diseñar un mecanismo de detección de warnings de `pg` como
+nueva regla de `reglas-de-codigo.test.ts` o equivalente, antes de eso |
+
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
 - **La deuda de seguridad abierta**: `08-plan-de-construccion.md` §6.0 — nueve líneas, de bloqueante de

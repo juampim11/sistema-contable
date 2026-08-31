@@ -58,11 +58,25 @@ recibe `--cierre-id` como argumento y no lo resuelve — construir esa lógica e
   aplicación DECLARE el mismo digest que `movimiento_bancario_crudo` calculó (columna generada) —
   nunca se copia solo, es el guardia contra la carrera de concurrencia que ya costó el bug de los 64
   movimientos. El fixture lo lee después de insertar el movimiento y lo pasa explícito.
-- **Bug de concurrencia real, encontrado por un warning de `pg`, no por diseño**: la primera versión
-  de `conciliarLote` disparaba las 4 lecturas iniciales con `Promise.all` sobre el mismo `tx` —
-  un cliente de Postgres no admite queries concurrentes sobre la misma conexión. Corregido a
-  secuencial. El test de integración pasaba igual con el bug (por suerte de timing), así que sin el
-  warning de deprecación de `pg` esto hubiera quedado sin detectar.
+- **Deuda técnica real, encontrada por un warning de `pg`, no por diseño — corregida a secuencial,
+  pero re-caracterizada tras la revisión de JP (la versión original de esta entrada decía "bug de
+  concurrencia real" y estaba sobre-dicha).** La primera versión de `conciliarLote` disparaba las 4
+  lecturas iniciales (`leerReconocimientosParaImputar`, `leerReglasDeImputacionVigentes`,
+  `leerPlanDeCuentasCompleto`, `leerMapeoCuentasBancarias`) con `Promise.all` sobre el mismo `tx`.
+  Un `Client` de `pg` solo puede ejecutar una consulta a la vez a nivel de protocolo — pero HOY
+  encola en silencio las llamadas concurrentes y las ejecuta en el mismo orden en que se invocaron
+  (eso es justamente lo que el warning de deprecación avisa que `pg` 9.0 va a dejar de tolerar). Con
+  las cuatro lecturas independientes y de solo lectura de este caso puntual, **no había datos
+  mezclados ni resultado incorrecto hoy** — el orden de ejecución con `Promise.all` era idéntico al
+  de la versión secuencial. El riesgo real, y la razón correcta del fix, es otro: (a) el código
+  rompería en duro con un upgrade de `pg` a 9.0, sin ningún cambio de lógica; y (b) el manejo de
+  error queda mal definido — si una de las cuatro rechaza, `Promise.all` corta ahí pero las que ya
+  estaban encoladas en el cliente siguen ejecutándose igual, contra una transacción que el código
+  llamador ya trata como fallida. Corregido a secuencial, que sí resuelve ambos puntos — pero **sin
+  ningún test que lo hubiera detectado en rojo con el código viejo** (con la versión de `pg` que
+  corre hoy, un test de resultados no puede fallar con `Promise.all` acá: los cuatro resultados
+  salen iguales). Detalle completo, con la limitación del grep de verificación, en
+  `10-deuda-declarada.md` **B.14**.
 - **Dos comentarios propios volvieron a disparar el falso positivo de la regla espejo** (citar la
   ruta prohibida literal en prosa) — mismo patrón que la entrada 146, corregido de nuevo.
 - **Corrección de mi propia propuesta original**: `escribirConAuditoria`+`persistirCuenta`-style
