@@ -120,6 +120,24 @@ camino (Capa D de código no arrancó) | Revisar quirúrgicamente cuando arranqu
 código sobre Bracci (`27-roadmap-capa-d.md` §B.5) — si el patrón de carga real muestra reingestas
 frecuentes, se sube de prioridad con datos medidos, no con una hipótesis |
 
+| **B.12** | 🟡 **Hueco declarado, sin resolver (sesión nocturna autónoma 2026-08-31, hallazgo
+convergente de `security-engineer` H3 + `seguridad-datos-financieros`, sin coordinarse entre sí):
+`cuenta_atributo` no tiene NINGUNA columna de identidad de quién dio de alta o cambió una fila** —
+a diferencia de TODO el resto de Capa D (`resuelto_por` en `pendiente_cierre`, `hecho_por` en
+`cierre_transicion`, `confirmado_por` en `cierre_cliente_periodo`, `dispensado_por` en
+`pendiente_dispensa`, y ahora `decidido_por` en `regla_imputacion`, agregada esa misma noche
+precisamente para no propagar este hueco a la tabla nueva). Mitigación PARCIAL, no estructural:
+`apps/cli/src/alta-plan-cuentas.ts` envuelve el alta en `escribirConAuditoria`, que deja un registro
+en `acceso_auditoria` con `user_id` — pero es **por invocación** (quién dio de alta el lote de N
+cuentas), no por fila, y nada en el esquema impide un `INSERT`/`UPDATE` directo sobre
+`cuenta_atributo` que se salte ese wrapper: es el mismo patrón que este repo ya catalogó como
+R33/R13 ("un control que depende de que el código lo recuerde no es un control"). Distinto de B.11:
+acá no hay alternativa técnica bloqueada — agregar una columna `decidido_por uuid not null` a
+`cuenta_atributo` es una migración aditiva sin backfill (la tabla tiene datos reales en el piloto,
+así que el backfill de las filas existentes, si hace falta, es tarea aparte) | Diferido a la Sesión
+2b de código sobre Bracci — mismo momento en que se revisa B.11 (`27-roadmap-capa-d.md` §B.5),
+convocar `dba-data` para la migración cuando se decida cerrarlo |
+
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
 - **La deuda de seguridad abierta**: `08-plan-de-construccion.md` §6.0 — nueve líneas, de bloqueante de

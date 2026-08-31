@@ -56,9 +56,13 @@ export type OrigenExpectativa = (typeof ORIGENES_EXPECTATIVA)[number];
  * `tipo_sin_regla_imputacion` = nadie cargó (o dejó vencer) la regla → hay que CREARLA/renovarla;
  * `cuenta_no_configurada` = la regla existe y está vigente, pero la cuenta a la que apunta no es
  * válida/vigente en el plan a esa fecha (dada de baja, reclasificada) → hay que CORREGIR la regla.
- * `movimiento_de_socio` cubre el caso `N=1` que D-31 (`28`§3) veta duro de auto-resolución (familia
- * `retiro_de_socio`/`aporte_de_socio`/`cuenta_particular_socio`): no es un dato faltante ni ambiguo,
- * es un control de diseño deliberado — confundirlo con `cuenta_ambigua` mentiría sobre la causa.
+ * `resolucion_manual_obligatoria_socio` cubre el caso `N=1` que D-31 (`28`§3) veta duro de
+ * auto-resolución (familia `retiro_de_socio`/`aporte_de_socio`/`cuenta_particular_socio`): no es un
+ * dato faltante ni ambiguo, es un control de diseño deliberado — confundirlo con `cuenta_ambigua`
+ * mentiría sobre la causa. Renombrado en `0033` (originalmente `movimiento_de_socio`, 0031): ese
+ * nombre describía una CATEGORÍA de movimiento, no una CAUSA de fallo como los otros 4 — sin el
+ * contexto de D-31, alguien en la cola de revisión lo leería como "falta configurar algo" e
+ * intentaría arreglarlo, cuando esto nunca va a auto-resolver, por diseño (contador-dominio).
  *
  * Bloqueado, sin resolver esta noche (documentado en HANDOFF, no inventado): motivo propio para la
  * pata "banco" (`cuenta_bancaria.cuenta_id`) sin mapear, cómo se enrutan movimientos con
@@ -72,7 +76,7 @@ export const MOTIVOS_PENDIENTE_CIERRE = [
   'tipo_sin_regla_imputacion',
   'cuenta_no_configurada',
   'cuenta_ambigua',
-  'movimiento_de_socio',
+  'resolucion_manual_obligatoria_socio',
 ] as const;
 export type MotivoPendienteCierre = (typeof MOTIVOS_PENDIENTE_CIERRE)[number];
 

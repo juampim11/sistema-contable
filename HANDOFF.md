@@ -6,6 +6,53 @@
 
 ---
 
+## 2026-08-31 (145) — Rename de `motivo_codigo`: `movimiento_de_socio` → `resolucion_manual_
+obligatoria_socio` (D-28). B.12 agregada a `10-deuda-declarada.md` (`decidido_por` falta en
+`cuenta_atributo`, mismo hallazgo que motivó agregarla a `regla_imputacion`).
+
+**Herramienta:** Claude Code, sesión interactiva (JP presente). Continuación de la revisión del
+commit `b3dcca7` de la entrada 144.
+
+### 1. B.12 — hueco de actor en `cuenta_atributo`
+
+JP pidió confirmar si `decidido_por` (agregada a `regla_imputacion` en `0030`, hallazgo convergente
+de `security-engineer` H3 + `seguridad-datos-financieros`) también hacía falta en `cuenta_atributo`,
+el precedente que D-29 citó para la gobernanza. Verificado: `cuenta_atributo` (`0027`) no tiene
+ninguna columna de identidad — mitigación parcial no estructural vía `escribirConAuditoria` en
+`apps/cli/src/alta-plan-cuentas.ts` (por invocación, no por fila, no impide un bypass). Agregada
+como **B.12** en `10-deuda-declarada.md`, diferida a la Sesión 2b de código sobre Bracci, mismo
+momento que B.11.
+
+### 2. Rename de `movimiento_de_socio`
+
+JP objetó, con criterio: el nombre describía una CATEGORÍA de movimiento, no una CAUSA de fallo como
+los otros 4 motivos de D-28. Propuso `resolucion_manual_obligatoria_socio` y pidió que se decidiera
+con criterio propio o se consultara a `contador-dominio`. Se consultó: `contador-dominio` confirmó
+el cambio, con el argumento exacto de JP (sin el contexto de D-31, alguien en la cola lo leería como
+"falta configurar algo" e intentaría arreglar algo que nunca va a auto-resolver por diseño) y tomó
+el nombre propuesto tal cual. `dba-data` confirmó el DDL y verificó que ningún índice/vista/función
+del esquema cita el valor literal fuera del `CHECK` — migración de renombre puro, sin backfill (0
+filas reales con este motivo).
+
+Aplicado: `packages/data/migrations/0033_renombrar_motivo_socio.sql` (nunca se edita `0031` ya
+aplicada), `packages/data/src/cierre/tipos.ts` (`MOTIVOS_PENDIENTE_CIERRE`),
+`docs/diseno/28-diseno-motor-clasificacion.md` (fila D-28). `pnpm db:migrate` + `pnpm typecheck`
+limpios contra LOCAL; `catalogo.test.ts` (82) + `mutaciones-0028`/`mutaciones-0029` (22) verdes,
+104/104.
+
+### 3. Estado de commits
+
+Todo LOCAL, sin push (sigue sin decidirse el orden — JP revisando). Este rename entra en un commit
+separado del de la entrada 144 (paso revertible más chico: un rename de vocabulario no tiene por qué
+viajar con el commit del esquema completo).
+
+### 4. Ítem E
+
+Arranca en MODO PLAN a partir de acá, con revisión de JP en cada paso (ya no es sesión nocturna
+autónoma) — plan presentado en el chat, sin escribir código hasta su aprobación explícita.
+
+---
+
 ## 2026-08-31 (144) — Sesión nocturna autónoma: ítems A-D de Sesión 2b CERRADOS e implementados
 contra LOCAL (3 migraciones nuevas). Ítem E (código del motor) NO llegó a arrancar. JP no disponible
 hasta mañana — límites duros respetados: cero piloto, cero push, cero decisión de negocio inventada.
