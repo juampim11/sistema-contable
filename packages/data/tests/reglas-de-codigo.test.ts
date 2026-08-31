@@ -243,13 +243,41 @@ describe('las dependencias entre paquetes no pueden hacer ciclo', () => {
     const infractores = deData.filter((ruta) => {
       if (rel(ruta).includes('/tests/')) return false; // un test puede armar el escenario completo
       const c = readFileSync(ruta, 'utf8');
-      return /@sistema-contable\/(?:ingesta|almacenamiento|contabilidad|cotizaciones)/.test(c);
+      return /@sistema-contable\/(?:ingesta|almacenamiento|contabilidad|cotizaciones|motor-conciliacion)/.test(
+        c,
+      );
     });
 
     expect(
       infractores.map(rel),
-      'ciclo de paquetes: data no puede depender de ingesta, almacenamiento, contabilidad ni ' +
-        'cotizaciones. Si el comando necesita varias capas, va en apps/.',
+      'ciclo de paquetes: data no puede depender de ingesta, almacenamiento, contabilidad, ' +
+        'cotizaciones ni motor-conciliacion. Si el comando necesita varias capas, va en apps/.',
+    ).toEqual([]);
+  });
+
+  /**
+   * `packages/motor-conciliacion` (Capa D — resolver puro de imputación, Ítem E de Sesión 2b) no
+   * puede importar `packages/data`, `packages/ingesta` ni `packages/almacenamiento` — mismo
+   * argumento que la regla de arriba, en espejo: es un paquete PURO (sin I/O), y sus tipos de
+   * entrada vienen ya cargados en memoria por quien lo llama (`apps/`). Si necesitara importar
+   * `data` para leer algo, dejaría de ser puro y volvería a abrir la puerta al ciclo que esta
+   * familia de tests existe para bloquear. `contabilidad` SÍ está permitido (Capa D lee la salida
+   * de Capa B/C, es la única dependencia entre paquetes que este resolver necesita) — arquitecto-
+   * software, convocatoria de esta tarea.
+   */
+  it('`packages/motor-conciliacion` no importa `packages/data`, `packages/ingesta` ni `packages/almacenamiento`', () => {
+    const deMotor = FUENTES.filter((r) => rel(r).startsWith('packages/motor-conciliacion/'));
+
+    const infractores = deMotor.filter((ruta) => {
+      if (rel(ruta).includes('/tests/')) return false;
+      const c = readFileSync(ruta, 'utf8');
+      return /@sistema-contable\/(?:data|ingesta|almacenamiento)/.test(c);
+    });
+
+    expect(
+      infractores.map(rel),
+      'ciclo de paquetes: motor-conciliacion es un resolver puro, no puede depender de data, ' +
+        'ingesta ni almacenamiento. Si el comando necesita varias capas, va en apps/.',
     ).toEqual([]);
   });
 
@@ -609,6 +637,11 @@ describe('R-F — `clase: \'propuesta\'` solo se construye en nucleo/motor.ts', 
     // para probar `contarPatrones()` sin base — mismo motivo exacto que `resolver-contrapartida.test.ts`
     // arriba.
     'apps/cli/tests/calibrar-lexico-metadatos.test.ts',
+    // Resolver puro de Capa D (Ítem E, motor-conciliacion-contable): construye Reconocimiento
+    // sintéticos para probar `resolverAsiento()` sin base — el riesgo que R-F cubre (saltear la
+    // degradación de `pendienteDeLaura` en código de PRODUCCIÓN de Capa B/C) no existe acá, es un
+    // test del paquete de Capa D, aguas abajo del motor de reconocimiento.
+    'packages/motor-conciliacion/tests/',
   ];
   const PATRON_PROPUESTA = /clase:\s*'propuesta'/;
 

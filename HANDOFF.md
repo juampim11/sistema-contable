@@ -6,6 +6,100 @@
 
 ---
 
+## 2026-08-31 (146) — Ítem E, paso 1: resolver puro de `motor-conciliacion-contable` (`packages/
+motor-conciliacion`), sin tocar la base. 17 tests en memoria verdes. Servicio de I/O es el paso 2.
+
+**Herramienta:** Claude Code, sesión interactiva (JP presente), modo plan de principio a fin.
+
+### 1. Convocatoria y correcciones reales
+
+`arquitecto-software` + `motor-conciliacion-contable` + `contador-dominio`, en paralelo, antes de
+escribir código. Dos correcciones de fondo a mi propuesta original:
+
+- **Arquitectura** (`arquitecto-software`): mi diseño original (`motor-escrituras.ts` dentro de
+  `packages/data`) violaba una regla YA existente y testeada (`packages/data` no puede importar
+  `contabilidad`). Corregido: `packages/motor-conciliacion` (nuevo, puede importar `contabilidad`)
+  para el resolver puro; `packages/data/src/cierre/` sin cambios de forma; el JOIN de D-26 y la
+  orquestación van en `apps/` (pendiente, paso 2 — comando análogo a `apps/cli/src/
+  reconocer-lote.ts`).
+- **Prioridad de reporte si fallan las dos patas** (`contador-dominio`, corrigiendo a
+  `motor-conciliacion-contable`, que no la había visto — corrieron en paralelo): **banco primero**,
+  no contrapartida. Confirmado por JP vía `AskUserQuestion` con la razón exacta: precondición
+  estructural + radio de impacto mayor (bloquea TODOS los `tipo_movimiento` de esa cuenta bancaria).
+
+**Tensión resuelta sin ambigüedad**: la persona de `motor-conciliacion-contable` mencionaba "score"
+(heredado del motor de `trazabilidad-obra-gas`) — descartado a favor de D-31 ("la confianza ES la
+vía"). Evidencia auditable = vía + regla aplicada (con especificidad) + cardinalidad de candidatas,
+nunca un número inventado.
+
+### 2. Dos motivos nuevos, aprobados por JP, todavía SIN migrar
+
+`via_no_calificada` (cuenta resuelve bien, vía no alcanza para automático — 2 de 6 vías no
+califican) y `cuenta_bancaria_no_configurada` (pata banco sin mapear, motivo propio en vez de
+reusar `cuenta_no_configurada`). El resolver puro ya los tipa (`MotivoQueProduceElResolver`,
+`packages/motor-conciliacion/src/resolver.ts`) pero **no** puede persistirlos todavía —
+`MOTIVOS_PENDIENTE_CIERRE` (`packages/data/src/cierre/tipos.ts`) sigue en 7 valores. La migración
+que los agregue (mismo patrón que `0031`/`0033`) es tarea del paso 2 (servicio de I/O), no de este.
+
+### 3. `'por_jurisdiccion'`/`'por_impuesto'` — extensión de alcance encontrada durante el diseño
+
+No solo `'por_socio'` va sin cómputo: como esas dos resoluciones no tienen columnas de mecanismo
+(`0030`), el resolver las trata como "regla no utilizable" → cuentan como 0 candidatas
+(`tipo_sin_regla_imputacion`), nunca como el veto exclusivo de la familia socio
+(`resolucion_manual_obligatoria_socio`).
+
+### 4. Hallazgo honesto, no resuelto acá: `cuenta_ambigua` puede ser inalcanzable con datos reales
+
+Con la unicidad real de `regla_imputacion` (`uq_regla_imputacion_vigente`) + el overlay determinista
+de especificidad, dos reglas genuinamente ambiguas para el mismo `(cliente, tipo, concepto,
+vigencia)` no deberían poder coexistir en la base — la ambigüedad que D-31 originalmente previó
+puede no tener, hoy, ninguna fuente real de datos que la dispare. El resolver la deja implementada
+de forma DEFENSIVA (si el caller le pasa candidatos duplicados, no confía en que ya estén
+pre-filtrados) y el test que la ejercita (`resolver.test.ts`, describe "cuenta_ambigua") arma ese
+escenario a mano — no hay, todavía, un camino real de la base que lo produzca. Queda anotado para
+`qa-funcional`/`contador-dominio`: o se acepta que es un motivo "de fábrica, por si acaso" sin
+fixture real posible hoy, o aparece una fuente futura (la "propuesta del motor" con evidencia de
+Capa C para cardinalidad abierta, todavía sin diseñar) que sí la dispare.
+
+### 5. Dos hallazgos mecánicos del propio barrido de reglas (`reglas-de-codigo.test.ts`)
+
+- Mi primer comentario en `resolver.ts` citaba literal `` `@sistema-contable/data` `` para explicar
+  por qué NO se importa — el barrido de ciclos escanea TEXTO del archivo, no solo imports reales, así
+  que la cita disparaba un falso positivo contra la regla espejo que yo mismo agregué. Reescrito sin
+  la ruta literal.
+- `resolver.test.ts` construye `{ clase: 'propuesta', ... }` a mano para probar el resolver sin base
+  — choca con R-F (`clase:'propuesta'` solo se construye en `nucleo/motor.ts`, para que
+  `pendienteDeLaura` no se salte la degradación escribiéndola a mano en otro lado). Mismo motivo que
+  ya cubre `aislamiento-modulo-2.test.ts`/`resolver-contrapartida.test.ts`: es un test de Capa D, no
+  un camino de producción de Capa B/C — agregado a `PERMITIDOS_PROPUESTA` con esa nota.
+
+### 6. Verificación
+
+`pnpm typecheck` limpio. `packages/motor-conciliacion/tests/resolver.test.ts`: 17/17 (camino feliz,
+cardinalidad abierta sin auto-resolver, veto de familia socio con N=1, `'por_jurisdiccion'` sin
+vetear como socio, vía no calificada, banco sin mapear + prioridad banco-primero, `cuenta_no_
+configurada` vs. `tipo_sin_regla_imputacion` con semántica disjunta, `cliente_sin_plan_de_cuentas`
+evaluado antes que cualquier regla, overlay de especificidad con auditoría de la descartada,
+`cuenta_ambigua` defensivo, `decision_humana`/`sin_reconocer` sin efecto). `reglas-de-codigo.test.ts`
+59/59 (incluida la regla espejo nueva). `packages/contabilidad/tests/` completo: 385/385, sin
+regresión.
+
+### 7. Qué sigue (paso 2, no arrancado)
+
+Servicio de I/O: `apps/cli/src/conciliar-lote.ts` (JOIN de D-26 + llamada a `resolverAsiento` +
+escritura vía funciones nuevas de `packages/data/src/cierre/`, con tipos propios — nunca
+`Reconocimiento` importado ahí). Migración de los 2 motivos nuevos. Tenant sintético + fixtures de
+integración contra LOCAL. Test de sincronía de vocabulario duplicado
+(`RolFuncionalCuentaMotor`/`CuentaResolucionMotor` de `motor-conciliacion` vs. `packages/data/src/
+cierre/tipos.ts`).
+
+### 8. Commit
+
+Un commit para este paso (paquete nuevo + resolver + tests + las dos correcciones del barrido de
+reglas de código). Sin push.
+
+---
+
 ## 2026-08-31 (145) — Rename de `motivo_codigo`: `movimiento_de_socio` → `resolucion_manual_
 obligatoria_socio` (D-28). B.12 agregada a `10-deuda-declarada.md` (`decidido_por` falta en
 `cuenta_atributo`, mismo hallazgo que motivó agregarla a `regla_imputacion`).

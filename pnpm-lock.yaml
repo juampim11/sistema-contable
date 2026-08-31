@@ -138,6 +138,12 @@ importers:
         specifier: ^4.1.13
         version: 4.4.3
 
+  packages/motor-conciliacion:
+    dependencies:
+      '@sistema-contable/contabilidad':
+        specifier: workspace:*
+        version: link:../contabilidad
+
   packages/shared:
     dependencies:
       zod:
