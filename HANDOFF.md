@@ -6,6 +6,145 @@
 
 ---
 
+## 2026-09-01 (157) — ROKA: mapeo `cuenta_bancaria.cuenta_id` de las 3 cuentas Macro, confirmado
+con evidencia directa (no inferencia sola) y aplicado. Los 4 puntos de (156) cerrados.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (156). JP no aceptó la
+inferencia por `tipo_cuenta` sola — pidió el mismo estándar que Bracci (nunca una sola pista) y el
+origen exacto del campo antes de confirmar.
+
+### 1. La segunda evidencia — `moneda` es dato estructural directo, no inferido
+
+`cuenta_bancaria.alias` está NULL en las 3 filas de ROKA (a diferencia de Bracci, sin esa evidencia
+directa disponible). Pero `cuenta_bancaria.moneda` sí es un campo propio de la fila, no derivado:
+`6d4a3c4d-...` tiene `moneda='USD'` directo — **evidencia directa y suficiente** para esa cuenta
+sola (`1.1.2.400` "Banco Macro Cta en Dolares"), sin necesidad de la pista de `tipo_cuenta`.
+
+### 2. La duda real — origen de `tipo_cuenta`, verificado en el código, no supuesto
+
+Para las 2 cuentas ARS, JP pidió confirmar si `tipo_cuenta` (`cuenta_corriente` vs.
+`cuenta_corriente_especial`) lo completa el adapter automáticamente del documento real, o si es
+tipeado a mano. Verificado leyendo el código, no asumido:
+
+- `packages/ingesta/src/adaptadores/macro.ts:1326`, `tipoDeCuentaDelTitulo(titulo)` — el tipo sale
+  del **título de la sección** tal como lo imprime el propio documento Macro (`ESPECIAL` antes que
+  `CORRIENTE` en el regex, porque el título trae las dos palabras).
+- `apps/cli/src/alta-cuenta.ts:446-449`, la misma lógica para el alta manual: `titulo =
+  RE_SECCION_MACRO.exec(lineas[seccion.indiceApertura])`, `tipo: tipoDeCuentaDelTituloMacro(titulo)`
+  — extraído de la línea real del documento. El operador puede pasar `--tipo` para DESAMBIGUAR entre
+  candidatas ya detectadas del documento (nunca para inventar un valor que el documento no trae).
+
+**Es extracción automática del documento real, misma clase de evidencia que el `alias` de
+Bracci** — confirmado en el código, no una segunda inferencia débil.
+
+### 3. Mapeo aplicado
+
+Con las dos evidencias directas (moneda propia + `tipo_cuenta` extraído del documento), JP confirmó
+el mapeo. Backup fresco antes (`piloto_20260901-021220Z.dump`). Aplicado vía `conUsuario()` +
+`escribirConAuditoria` (mismo camino que `cuenta_bancaria.cuenta_id` de Bracci, HANDOFF 150 §4 —
+`cuenta_bancaria_wr for all` cubre la columna sin grant nuevo, confirmado por `dba-data` en esa
+sesión), 3 filas reales en `acceso_auditoria`:
+
+- `94f817b3-...` (ARS, `tipo_cuenta=cuenta_corriente`) → `1.1.2.100` "Banco Macro cta cte"
+- `a61bda31-...` (ARS, `tipo_cuenta=cuenta_corriente_especial`) → `1.1.2.300` "Banco Macro Cta Cte
+  Especial"
+- `6d4a3c4d-...` (USD) → `1.1.2.400` "Banco Macro Cta en Dolares"
+
+Verificado con conexión independiente (join `cuenta_bancaria`↔`cuenta_atributo` por `cuenta_id`):
+las 3, consistentes. Scripts efímeros corridos y borrados, `git status` limpio.
+
+### 4. Los 4 puntos de (156) — todos cerrados
+
+1. Vigencia de `cuenta_atributo`: corregida (`2025-10-20`).
+2. Mapeo banco→cuenta: confirmado con evidencia directa y aplicado (esta entrada).
+3. Socio 1/Socio 2: cerrado como decisión de JP, B.10 cerrada.
+4. `cuenta_bancaria_identificador`: mismo defecto sistémico encontrado y corregido.
+
+### 5. Qué sigue
+
+Capa C sobre los lotes de ROKA — todavía sin correr (0 `reconocimiento_movimiento` para ROKA a la
+fecha de esta entrada). El patrón sistémico de `cuenta_bancaria_identificador` sigue con 3 clientes
+más sin corregir (`13e5316c-...`, `26e90bbb-...`, `b50560ae-...`; sin dueño todavía).
+
+### 6. Sin commit todavía
+
+Pendiente de aprobación de JP.
+
+---
+
+## 2026-09-01 (156) — ROKA: los 4 puntos pedidos, resueltos — vigencia de `cuenta_atributo`
+corregida a `2025-10-20` (piso real de ROKA, NO el mismo valor que Bracci), mapeo Socio 1/Socio 2
+cerrado como decisión de JP (B.10 cerrada), `cuenta_bancaria_identificador` tenía el MISMO defecto
+sistémico ya anticipado (152 §1) y corregido ahora, candidatas de mapeo banco→cuenta listas para
+confirmar JP, sin aplicar todavía. Sin Capa C todavía.
+
+**Herramienta:** Claude Code, sesión interactiva. Bracci cerrado y pusheado (150); primer trabajo
+de la sesión sobre ROKA.
+
+### 1. Piso real de `cuenta_atributo` — NO es `2026-04-30` como Bracci
+
+Confirmado por consulta, no asumido: el corpus ya ingerido de ROKA es **1346 movimientos, `min(fecha)=2025-10-20`, `max(fecha)=2025-11-28`** — datos de **2025**, no de 2026 como Bracci (mismo
+lote que ya fijó el piso de `padron_socio` en HANDOFF, tanda de Macro/ROKA). Las 219 filas de
+`cuenta_atributo` tenían `vigente_desde='2026-08-30'` (fecha de carga del CLI, HANDOFF 140) — **9
+meses después** del movimiento más antiguo real, mucho peor que el desfasaje de Bracci. Corregido a
+`2025-10-20`, mismo mecanismo de dueño de esquema (conteo previo 219/219, `WHERE cliente_id`
+explícito, conteo posterior 219/219, commit). Backup fresco antes
+(`piloto_20260901-015651Z.dump`). Verificado con conexión independiente: 219/219 en `2025-10-20`.
+
+### 2. Candidatas de mapeo banco→cuenta — listas, SIN aplicar, a la espera de confirmación de JP
+
+Búsqueda por `denominacion ilike '%banco%' or '%macro%'` sobre las 219 filas — 3 candidatas reales
+(más 2 cuentas de agrupación, `Caja y Bancos` y `Bancos`, que no son destino):
+
+- `1.1.2.100` "Banco Macro cta cte"
+- `1.1.2.300` "Banco Macro Cta Cte Especial"
+- `1.1.2.400` "Banco Macro Cta en Dolares"
+
+Las 3 `cuenta_bancaria` de ROKA (todas `banco_codigo=macro`, todas `cuenta_id` NULL todavía):
+`94f817b3-...` (ARS), `a61bda31-...` (ARS), `6d4a3c4d-...` (USD). Evidencia indirecta encontrada
+(no aplicada): `cuenta_bancaria_identificador.tipo_cuenta` distingue `94f817b3-...` como
+`cuenta_corriente` (plana) de las otras dos como `cuenta_corriente_especial` — sugiere
+`94f817b3-...`→`1.1.2.100`, y por moneda `6d4a3c4d-...` (USD)→`1.1.2.400`, dejando
+`a61bda31-...`→`1.1.2.300`. **Es una inferencia, no una confirmación** — queda para que JP la
+valide antes de escribir `cuenta_bancaria.cuenta_id`.
+
+### 3. Mapeo Socio 1/Socio 2 — cerrado como decisión de JP, `docs/diseno/10-deuda-declarada.md` B.10
+
+El `padron_socio_id` de cada código YA estaba correctamente asignado (`2.1.9.100`→`040b2c6b-...`=
+María Laura, `2.1.9.200`→`b361bd96-...`=Natalia, identificados por HMAC en la sesión anterior) — lo
+que faltaba era cerrar la decisión, no cambiar el dato. Actualizado `respaldo` de las 2 filas
+(dueño de esquema, mismo script que el punto 1, conteo previo/posterior 2/2) para documentar
+explícito que es **decisión de JP, no confirmación de Laura**, reemplazando la referencia a un
+archivo de scratchpad de otra sesión ya inexistente. B.10 cerrada en `10-deuda-declarada.md` (antes
+🟠, ahora ✅). Verificado con conexión independiente: las 2 filas tienen el `respaldo` nuevo.
+
+### 4. `cuenta_bancaria_identificador` de ROKA — SÍ tenía el mismo defecto sistémico, corregido ahora
+
+Confirmado, no dejado para descubrir a mitad de una ingesta (como pasó con Bracci, entrada 151):
+las 3 filas de ROKA tenían `vigente_desde='2025-11-01'`, posterior al movimiento más antiguo real
+de al menos una cuenta (`94f817b3-...`, con movimientos desde `2025-10-20` — 12 días antes de su
+propia vigencia). ROKA ya estaba en la lista de 5 clientes afectados que `dba-data` encontró en
+HANDOFF 152 §1 (3 de las 8 filas del escaneo eran de ROKA) — este es el primer cliente de esa lista
+que se corrige de fondo, no solo Bracci. Corregidas las 3 a `2025-10-20`, mismo mecanismo
+`conUsuario()` + `escribirConAuditoria` que Bracci (grant completo de `app_request`, 3 filas reales
+en `acceso_auditoria`, 3 correlaciones). Un comando bloqueado por el clasificador de modo automático
+— reintentado con autorización explícita de JP, no rodeado. Verificado con conexión independiente:
+las 3 en `2025-10-20`.
+
+### 5. Qué sigue
+
+- JP confirma (o corrige) el mapeo del punto 2 antes de escribir `cuenta_bancaria.cuenta_id`.
+- Con eso confirmado: Capa C sobre los lotes de ROKA (todavía sin correr — 0
+  `reconocimiento_movimiento` para ROKA a la fecha de esta entrada).
+- El patrón sistémico de `cuenta_bancaria_identificador` (152 §1) sigue con 3 clientes más sin
+  corregir (`13e5316c-...`, `26e90bbb-...`, `b50560ae-...`, 1 fila cada uno; sin dueño todavía).
+
+### 6. Sin commit todavía
+
+Pendiente de aprobación de JP.
+
+---
+
 ## 2026-09-01 (155) — `regla_imputacion.vigente_desde` era el MISMO patrón de fecha de
 conveniencia que las otras dos tablas, confirmado por `contador-dominio` sin motivo contable real
 — corregido a `2026-04-30` (3 filas). **Mayo pasa de 0% a 96%+ automático.**
