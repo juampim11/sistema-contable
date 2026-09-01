@@ -519,6 +519,26 @@ Es el mismo caso que §5 de `08-plan-de-construccion.md` deja para la contadora 
 de pagos, uno de los tipos que las 14 reglas no cubren): **76 movimientos, y hoy el motor no tiene ni la
 etiqueta**.
 
+### 12.3. 🔴 Sumado 2026-09-01: `ING TRANSF:` — un prefijo AUSENTE del corpus de noviembre 2025
+
+El vocabulario de §12 se midió contra el archivo de referencia de noviembre 2025 (1346/1347
+movimientos). Los lotes reales de ROKA-2026 (mayo/junio/julio) trajeron un prefijo **estable en los
+tres meses, ausente de esa referencia**: `ING TRANSF:`, terminado en `:` y autodelimitado —
+mismo patrón que `TRANSF:`/`CREDIN:` (§12), el nombre/CUIT del tercero va después y no entra al
+concepto.
+
+**Medido, 2084 movimientos reales** (mayo 671 + junio 699 + julio 714, `HANDOFF.md` 165-168):
+`contraparte_captura = 'capturado'` en el 100%, **0%** de match contra el padrón de socios de ROKA
+(`resolverContraparte()`, cero `es_socio`/`multiples_socios`/`socio_fuera_de_vigencia` — resultado
+homogéneo, no un split marginal). `contador-dominio` confirmó que es el mismo hecho económico que
+`TPUSH`/`TRANSF` — transferencia recibida de un tercero, entra por `haber` — y que el 0% de socios en
+esta muestra no es motivo para relajar la excepción dura de la familia socio (D-31,
+`28-diseno-motor-clasificacion.md` §3): protege el mes que sí traiga un socio, no describe el pasado.
+
+**Clasificado reusando la entrada existente** (`packages/contabilidad/src/lexico/macro.ts`,
+`macro.transferencia_recibida_de_terceros`) — tercer literal junto a `TPUSH`/`TRANSF`, no una entrada
+nueva.
+
 ---
 
 ## 13. Qué del toolkit sirve

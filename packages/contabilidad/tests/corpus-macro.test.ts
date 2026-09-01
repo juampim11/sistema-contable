@@ -160,3 +160,35 @@ describe('corpus de Macro — EL MOTOR', () => {
     expect(porClase.propuesta + porClase.decision_humana + porClase.sin_reconocer).toBe(1347);
   });
 });
+
+/**
+ * `'ING TRANSF:'` — sumado 2026-09-01, hallazgo ROKA-2026 (`07-formato-macro.md` §12.3). Deliberadamente
+ * SEPARADO de `TABLA_ESPERADA`/`TABLA_INDISTINTOS` de arriba: esas tablas son el corpus CONGELADO de
+ * noviembre 2025, donde este literal está ausente por diseño — sumarlo ahí infla un conteo que existe
+ * para verificar una medición histórica puntual, no el léxico en general.
+ */
+describe('corpus de Macro — ING TRANSF: (hallazgo ROKA-2026)', () => {
+  it('reusa la entrada existente de transferencia_recibida_de_terceros — mismo concepto que TPUSH/TRANSF', () => {
+    const entrada = LEXICO_MACRO.entradas.find((e) => e.id === 'macro.transferencia_recibida_de_terceros');
+    expect(entrada?.literales).toContain('ING TRANSF:');
+    expect(entrada?.concepto).toBe('transferencia_recibida_de_terceros');
+  });
+
+  it('el motor clasifica "ING TRANSF:" como decision_humana / distinguir_tercero_de_socio', () => {
+    const r = reconocerMacro('ING TRANSF:', 'credito');
+    expect(r.clase, `el motor devolvió ${JSON.stringify(r)}`).toBe('decision_humana');
+    if (r.clase === 'decision_humana') {
+      expect(r.concepto).toBe('transferencia_recibida_de_terceros');
+      expect(r.queDecide).toBe('distinguir_tercero_de_socio');
+    }
+  });
+
+  it('anclaje estricto: "ING TRANSF:" en el MEDIO de la glosa no matchea (nunca contains)', () => {
+    const r = reconocerMacro('PREFIJO ING TRANSF: resto', 'credito');
+    expect(r.clase).toBe('sin_reconocer');
+    if (r.clase === 'sin_reconocer') expect(r.motivo).toBe('concepto_no_catalogado');
+  });
+
+  // No-regresión de TPUSH/TRANSF: ya cubierta por `it.each(TABLA_ESPERADA)` arriba (líneas 118-126),
+  // que sigue corriendo sobre esos dos literales sin cambios — no se duplica acá.
+});

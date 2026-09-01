@@ -1,9 +1,14 @@
 /**
- * La matriz de cobertura final — banco × clase, sobre los 104 literales / ~1830 movimientos de los tres
- * bancos del piloto, contra la predicción falsable del plan §7 (`adaptive-herding-pillow.md`).
+ * La matriz de cobertura final — banco × clase, sobre los 105 literales / ~1830 movimientos del corpus
+ * ORIGINAL del piloto (contra la predicción falsable del plan §7, `adaptive-herding-pillow.md`) MÁS la
+ * evidencia real sumada después (2026-09-01: 2084 movimientos de ROKA-2026 para `'ING TRANSF:'`,
+ * `07-formato-macro.md` §12.3 — ausente del corpus original, medida aparte, sobre datos de producción).
  *
  * Se deriva DIRECTAMENTE de `procedencia.porLiteral` de cada léxico — no retipea las tablas de
- * `corpus-{galicia,santander,macro}.test.ts` (esas verifican literal-por-literal; esta agrega).
+ * `corpus-{galicia,santander,macro}.test.ts` (esas verifican literal-por-literal; esta agrega). Por
+ * diseño, agregar evidencia nueva a `procedencia.porLiteral` de una entrada real CAMBIA los totales de
+ * este archivo — no es un test de un corpus congelado (a diferencia de `TABLA_ESPERADA` en
+ * `corpus-macro.test.ts`, que sí representa un documento puntual y no se toca).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -97,14 +102,17 @@ describe('matriz de cobertura del corpus — banco × clase', () => {
     expect(SANTANDER.propuesta + SANTANDER.decision_humana + SANTANDER.sin_reconocer).toBe(158);
   });
 
-  it('Macro: 1347 movimientos (incluido el hueco de 76), ninguno se pierde', () => {
-    expect(MACRO.propuesta + MACRO.decision_humana + MACRO.sin_reconocer).toBe(1347);
+  it('Macro: 3431 movimientos (1347 del corpus original + 2084 de ING TRANSF:/ROKA-2026), ninguno se pierde', () => {
+    // 1347 = corpus de noviembre 2025 (incluido el hueco de 76). +2084 = ROKA-2026, sumado 2026-09-01
+    // (`07-formato-macro.md` §12.3) — evidencia real, no un ajuste de conteo.
+    expect(MACRO.propuesta + MACRO.decision_humana + MACRO.sin_reconocer).toBe(3431);
   });
 
-  it('el total combinado no pierde movimientos: 326 + 158 + 1347 = 1831', () => {
-    // El plan §7 predijo sobre 1830 (326+158+1346) — la discrepancia de +1 es la misma ±1 de
-    // documentación de Macro ya señalada en corpus-macro.test.ts, no un movimiento perdido por el motor.
-    expect(TOTAL.propuesta + TOTAL.decision_humana + TOTAL.sin_reconocer).toBe(1831);
+  it('el total combinado no pierde movimientos: 326 + 158 + 3431 = 3915', () => {
+    // El plan §7 predijo sobre 1830 (326+158+1346) — la discrepancia de +1 sobre el corpus original es
+    // la misma ±1 de documentación de Macro ya señalada en corpus-macro.test.ts. Los +2084 de acá son
+    // ROKA-2026 (`'ING TRANSF:'`), sumados 2026-09-01, no un movimiento perdido por el motor.
+    expect(TOTAL.propuesta + TOTAL.decision_humana + TOTAL.sin_reconocer).toBe(3915);
   });
 
   it('reporta la matriz completa (informativo — no es un assert, es la evidencia para el HANDOFF)', () => {

@@ -1,11 +1,12 @@
 import type { LexicoDeBanco } from '../nucleo/lexico.ts';
 
 /**
- * El léxico de Macro — 35 entradas (27 sin contraparte + 8 con contraparte) / 43 literales anclados
- * (34 literales sin contraparte + 9 anclas con contraparte, `docs/diseno/07-formato-macro.md` §12).
- * El desajuste entre "35 entradas" y "34+9=43 literales" es real: varias entradas fusionan más de un
- * literal como sinónimos (ej. `comision_de_transferencia`, `impuesto_25413_sobre_debitos`), así que
- * hay menos entradas que literales del lado sin contraparte.
+ * El léxico de Macro — 35 entradas (27 sin contraparte + 8 con contraparte) / 44 literales anclados
+ * (34 literales sin contraparte + 10 anclas con contraparte, `docs/diseno/07-formato-macro.md` §12 y
+ * §12.3 — `'ING TRANSF:'`, sumado 2026-09-01, es la décima). El desajuste entre "35 entradas" y
+ * "34+10=44 literales" es real: varias entradas fusionan más de un literal como sinónimos (ej.
+ * `comision_de_transferencia`, `impuesto_25413_sobre_debitos`), así que hay menos entradas que
+ * literales del lado sin contraparte.
  *
  * `elAdaptadorPuedeTruncar: false`: `macro.ts` declara `conceptoCompleto: true` SIEMPRE — el corte es
  * geométrico contra una LISTA CERRADA anclada (`prefijo_anclado`), no un límite de columna. Toda entrada
@@ -270,7 +271,11 @@ export const LEXICO_MACRO: LexicoDeBanco = {
     {
       id: 'macro.transferencia_recibida_de_terceros',
       concepto: 'transferencia_recibida_de_terceros',
-      literales: ['TPUSH', 'TRANSF'],
+      // `'ING TRANSF:'` sumado 2026-09-01 (hallazgo ROKA-2026, §12.3 de `07-formato-macro.md`): mismo
+      // hecho económico que `TPUSH`/`TRANSF` (transferencia recibida de un tercero, confirmado por
+      // `contador-dominio`), etiqueta AUSENTE del corpus de noviembre 2025 que midió `TPUSH`/`TRANSF`
+      // — se reusa la entrada, no se duplica (criterio del propio archivo, línea 25).
+      literales: ['TPUSH', 'TRANSF', 'ING TRANSF:'],
       // 07-formato-macro.md §12.1: "TPUSH (569) + TRANSF (409) = 978 de 1346 = 73% del archivo son
       // transferencias RECIBIDAS de terceros" — el propio documento enmarca la dirección.
       matcheo: { modo: 'prefijo_con_cola' },
@@ -278,6 +283,10 @@ export const LEXICO_MACRO: LexicoDeBanco = {
         porLiteral: [
           { literal: 'TPUSH', movimientos: 569, lado: 'haber' },
           { literal: 'TRANSF', movimientos: 409, lado: 'haber' },
+          // Medido sobre ROKA-2026 (§12.3), no sobre el corpus de noviembre 2025: 2084 movimientos
+          // reales (mayo 671 + junio 699 + julio 714), 100% con contraparte capturada en Módulo 1,
+          // 0% match contra el padrón de socios — verificado con `resolverContraparte()`.
+          { literal: 'ING TRANSF:', movimientos: 2084, lado: 'haber' },
         ] },
     },
     {
