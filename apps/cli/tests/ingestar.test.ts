@@ -362,7 +362,18 @@ describe('el rechazo se asienta con accion = rechazo', () => {
 
 // -----------------------------------------------------------------------------
 describe('idempotencia por cliente', () => {
-  it('el mismo archivo dos veces es un no-op, no un duplicado', async () => {
+  /**
+   * 🔴 Este archivo NUNCA es un PDF válido (`archivoUnico`, ver su comentario), así que las dos corridas
+   * rechazan por `archivo_ilegible`: nada se "corrigió" entre medio. Lo que este test verifica es el
+   * invariante que sí tiene que sostenerse SIEMPRE, se corrija la causa o no — `uq_lote_ingesta_archivo`
+   * (migración 0004, `cliente_id, archivo_hash`) nunca deja crear un segundo lote para el mismo archivo,
+   * así que un reintento no puede sino REUSAR el ancla existente.
+   *
+   * Antes del fix, la segunda corrida devolvía `ya_procesado` sin volver a abrir el archivo — el bug real
+   * (HANDOFF, cliente Bracci del piloto): un lote `con_errores` quedaba indistinguible de uno `procesado`
+   * para este guard, así que ni siquiera un archivo TODAVÍA roto podía dejar rastro de que se reintentó.
+   */
+  it('un archivo rechazado, reintentado sin cambios, vuelve a rechazar sobre el MISMO lote', async () => {
     const { storage } = storageEspia();
     const args = {
       cliente: s.clienteB,
@@ -372,19 +383,113 @@ describe('idempotencia por cliente', () => {
     };
 
     const primera = await ingestar(args, storage);
-    const segunda = await ingestar(args, storage);
-
     expect(primera.estado).toBe('rechazado');
-    expect(segunda.estado, 'creó un segundo lote para el mismo archivo').toBe('ya_procesado');
+    if (primera.estado !== 'rechazado') return;
+
+    const segunda = await ingestar(args, storage);
+    // El punto central del fix: NO es `ya_procesado` — un rechazo no es un éxito silencioso.
+    expect(segunda.estado, 'un lote rechazado se reportó como si ya hubiera terminado con éxito').toBe(
+      'rechazado',
+    );
+    if (segunda.estado !== 'rechazado') return;
+    expect(segunda.loteId, 'el reintento no reusó el ancla del rechazo original').toBe(primera.loteId);
+    expect(segunda.motivoCodigo).toBe(primera.motivoCodigo);
 
     const lotes = await conUsuario(USUARIOS.socio, async (tx) => {
       const f = await tx.consultar<{ n: string }>(
-        'select count(*)::text as n from lote_ingesta where cliente_id = $1',
-        [s.clienteB],
+        `select count(*)::text as n from lote_ingesta
+          where cliente_id = $1
+            and archivo_hash = (select archivo_hash from lote_ingesta where id = $2)`,
+        [s.clienteB, primera.loteId],
       );
       return f[0]?.n;
     });
-    expect(lotes).toBe('1');
+    expect(lotes, 'uq_lote_ingesta_archivo debería impedir un segundo lote para el mismo archivo').toBe(
+      '1',
+    );
+  });
+
+  it('un lote YA PROCESADO con éxito, reintentado, es un no-op real: ya_procesado, sin re-persistir', async () => {
+    const { storage, escrituras } = storageEspia();
+    const cuenta = extractoSintetico({
+      semilla: 611,
+      cantidadMovimientos: 3,
+      saldoInicialCentavos: 2_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: 'banco_cli_noop',
+    });
+
+    const duenio = await clienteDuenio();
+    try {
+      await duenio.query(
+        `insert into banco (codigo, nombre) values ('banco_cli_noop', 'BANCO DE PRUEBA NO-OP')
+         on conflict (codigo) do nothing`,
+      );
+    } finally {
+      await duenio.end();
+    }
+
+    const cbu = '9990000090000000000299';
+    await conUsuario(USUARIOS.socio, async (tx) => {
+      const c = await tx.consultar<{ id: string }>(
+        `insert into cuenta_bancaria (cliente_id, banco_codigo, moneda)
+         values ($1, 'banco_cli_noop', 'ARS') returning id::text as id`,
+        [s.clienteB],
+      );
+      const cuentaBancariaId = c[0]?.id;
+      if (!cuentaBancariaId) throw new Error('no se creó la cuenta de prueba');
+      await tx.consultar(
+        `insert into cuenta_bancaria_identificador
+           (cliente_id, cuenta_bancaria_id, tipo_cuenta, numero, cbu_hmac, cbu_ultimos4, vigente_desde)
+         values ($1, $2, 'cuenta_corriente', $3, $4, $5, '2026-01-01')`,
+        [s.clienteB, cuentaBancariaId, cuenta.cuenta.numero, hmacIdentificador(cbu), ultimos4ParaGuardar(cbu)],
+      );
+    });
+
+    registrarAdaptador({
+      bancoCodigo: 'banco_cli_noop',
+      version: 1,
+      capacidades: CAPACIDADES_SINTETICAS,
+      reconoce: (e) => e.filas.some((f) => textoDeFila(f).includes('MARCA NOOP 2026-08-31')),
+      leer: () => ({
+        cuentas: [cuenta],
+        lineasNoInterpretadas: [],
+        paginasDeclaradas: undefined,
+        destinos: undefined,
+      }),
+    });
+
+    const ruta = join(dirTemporal, 'extracto-noop.pdf');
+    writeFileSync(
+      ruta,
+      pdfMinimoConTexto([
+        'MARCA NOOP 2026-08-31 PARA EL TEST DE IDEMPOTENCIA REAL',
+        'SEGUNDA LINEA SOLO PARA SUPERAR EL UMBRAL DE CARACTERES MINIMOS',
+      ]),
+    );
+    const args = { cliente: s.clienteB, archivo: ruta, banco: 'banco_cli_noop', usuario: USUARIOS.socio };
+
+    const primera = await ingestar(args, storage);
+    expect(primera.estado).toBe('procesado');
+    if (primera.estado !== 'procesado') return;
+
+    const segunda = await ingestar(args, storage);
+    expect(segunda.estado).toBe('ya_procesado');
+    if (segunda.estado !== 'ya_procesado') return;
+    expect(segunda.loteId).toBe(primera.loteId);
+
+    // El no-op no vuelve a leer ni a guardar el objeto: una sola escritura de storage en las dos corridas.
+    expect(escrituras).toHaveLength(1);
+
+    const filas = await conUsuario(USUARIOS.socio, async (tx) => {
+      const f = await tx.consultar<{ n: string }>(
+        `select count(*)::text as n from movimiento_bancario_crudo where lote_ingesta_id = $1`,
+        [primera.loteId],
+      );
+      return f[0]?.n;
+    });
+    expect(filas, 'el reintento de un lote exitoso duplicó filas').toBe('3');
   });
 
   it('el MISMO archivo para OTRO cliente sí crea su lote: la idempotencia es por cliente', async () => {
@@ -399,6 +504,267 @@ describe('idempotencia por cliente', () => {
       return Number(f[0]?.n ?? '0');
     });
     expect(antesA).toBeGreaterThan(0);
+  });
+});
+
+// -----------------------------------------------------------------------------
+/**
+ * Reproducción del bug real de esta tarea: un lote `con_errores` (rechazo) NO puede quedar indistinguible
+ * de uno `procesado` para el guard de idempotencia — la causa del rechazo puede corregirse sin tocar el
+ * archivo, y el reintento tiene que volver a intentar el pipeline, no devolver `ya_procesado` a ciegas.
+ *
+ * Confirmado contra el piloto: cliente Bracci, lote rechazado por `cuenta_no_pertenece_al_cliente` con la
+ * vigencia de la cuenta mal calculada; corregida la vigencia, `pnpm ingesta` con el MISMO archivo seguía
+ * devolviendo `ya_procesado` sin volver a intentar el parseo.
+ */
+describe('reintento de un lote rechazado (con_errores): SÍ reprocesa, no es ya_procesado', () => {
+  let cuentaReintento: ReturnType<typeof extractoSintetico>;
+
+  beforeAll(async () => {
+    cuentaReintento = extractoSintetico({
+      semilla: 621,
+      cantidadMovimientos: 3,
+      saldoInicialCentavos: 3_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: 'banco_cli_reintento',
+    });
+
+    const duenio = await clienteDuenio();
+    try {
+      await duenio.query(
+        `insert into banco (codigo, nombre) values ('banco_cli_reintento', 'BANCO DE PRUEBA REINTENTO')
+         on conflict (codigo) do nothing`,
+      );
+    } finally {
+      await duenio.end();
+    }
+
+    registrarAdaptador({
+      bancoCodigo: 'banco_cli_reintento',
+      version: 1,
+      capacidades: CAPACIDADES_SINTETICAS,
+      reconoce: (e) => e.filas.some((f) => textoDeFila(f).includes('MARCA REINTENTO 2026-08-31')),
+      leer: () => ({
+        cuentas: [cuentaReintento],
+        lineasNoInterpretadas: [],
+        paginasDeclaradas: undefined,
+        destinos: undefined,
+      }),
+    });
+  });
+
+  it(
+    'la cuenta del archivo no está registrada -> se rechaza; se da de alta -> el MISMO archivo, ' +
+      'reintentado, se procesa con éxito sobre el MISMO lote',
+    async () => {
+      const { storage } = storageEspia();
+      const ruta = join(dirTemporal, 'extracto-reintento.pdf');
+      writeFileSync(
+        ruta,
+        pdfMinimoConTexto([
+          'MARCA REINTENTO 2026-08-31 PARA EL TEST DE IDEMPOTENCIA',
+          'SEGUNDA LINEA SOLO PARA SUPERAR EL UMBRAL DE CARACTERES MINIMOS',
+        ]),
+      );
+      const args = {
+        cliente: s.clienteB,
+        archivo: ruta,
+        banco: 'banco_cli_reintento',
+        usuario: USUARIOS.socio,
+      };
+
+      // Primer intento: la cuenta del archivo todavía no está registrada para este cliente. Se rechaza.
+      const primera = await ingestar(args, storage);
+      expect(primera.estado).toBe('rechazado');
+      if (primera.estado !== 'rechazado') return;
+      expect(['cuenta_no_registrada', 'cuenta_no_pertenece_al_cliente']).toContain(primera.motivoCodigo);
+
+      // Se "corrige" la causa del rechazo —dar de alta la cuenta, análogo a corregir la vigencia mal
+      // calculada de Bracci en el piloto— SIN tocar el archivo: el hash es el mismo.
+      const cbu = '9990000090000000000399';
+      await conUsuario(USUARIOS.socio, async (tx) => {
+        const c = await tx.consultar<{ id: string }>(
+          `insert into cuenta_bancaria (cliente_id, banco_codigo, moneda)
+           values ($1, 'banco_cli_reintento', 'ARS') returning id::text as id`,
+          [s.clienteB],
+        );
+        const cuentaBancariaId = c[0]?.id;
+        if (!cuentaBancariaId) throw new Error('no se creó la cuenta de prueba');
+        await tx.consultar(
+          `insert into cuenta_bancaria_identificador
+             (cliente_id, cuenta_bancaria_id, tipo_cuenta, numero, cbu_hmac, cbu_ultimos4, vigente_desde)
+           values ($1, $2, 'cuenta_corriente', $3, $4, $5, '2026-01-01')`,
+          [
+            s.clienteB,
+            cuentaBancariaId,
+            cuentaReintento.cuenta.numero,
+            hmacIdentificador(cbu),
+            ultimos4ParaGuardar(cbu),
+          ],
+        );
+      });
+
+      // Segundo intento, MISMO archivo: antes del fix esto devolvía `ya_procesado` sin volver a intentar
+      // nada. El fix reprocesa sobre el MISMO lote y ahora resuelve.
+      const segunda = await ingestar(args, storage);
+      expect(
+        segunda.estado,
+        'el reintento no reprocesó: devolvió ya_procesado en vez de volver a intentar el pipeline',
+      ).toBe('procesado');
+      if (segunda.estado !== 'procesado') return;
+      expect(segunda.loteId, 'el reintento creó un lote nuevo en vez de reusar el rechazado').toBe(
+        primera.loteId,
+      );
+
+      const lote = await conUsuario(USUARIOS.socio, async (tx) => {
+        const f = await tx.consultar<{
+          n: string;
+          estado: string;
+          motivo_codigo: string | null;
+          motivo_codigo_previo: string | null;
+        }>(
+          `select estado, motivo_codigo, motivo_codigo_previo,
+                  (select count(*)::text from lote_ingesta
+                    where cliente_id = $2
+                      and archivo_hash = (select archivo_hash from lote_ingesta where id = $1)) as n
+             from lote_ingesta where id = $1 and cliente_id = $2`,
+          [segunda.loteId, s.clienteB],
+        );
+        return f[0];
+      });
+      expect(lote?.estado).toBe('procesado');
+      // Nunca hay un SEGUNDO lote para el mismo (cliente, archivo_hash): `uq_lote_ingesta_archivo` lo
+      // impediría, y el fix reusa el ancla en vez de intentar insertar uno nuevo.
+      expect(lote?.n, 'quedó un lote duplicado para el mismo archivo').toBe('1');
+      // El motivo del rechazo original va al HISTORIAL (`motivo_codigo_previo`, migración 0012, mismo
+      // criterio que `completar-lote.ts`) — no queda mintiendo en `motivo_codigo` de un lote `procesado`.
+      expect(lote?.motivo_codigo).toBeNull();
+      expect(lote?.motivo_codigo_previo).toBe(primera.motivoCodigo);
+    },
+  );
+});
+
+// -----------------------------------------------------------------------------
+/**
+ * Hallazgo real de `tester`/`code-reviewer` sobre el fix de arriba: el reintento reusa el lote, pero
+ * el `UPDATE` final de éxito no tocaba `banco_codigo` — si el PRIMER intento se rechazó por
+ * `banco_declarado_no_coincide` (el operador tipeó mal `--banco`), el lote quedaba con el banco
+ * DECLARADO del intento fallido para siempre, aunque el reintento con el `--banco` correcto
+ * procesara con éxito. `banco_codigo` alimenta el filtro y el léxico de `exportar-planilla.ts`: un
+ * lote `procesado` con el banco equivocado no aparece al filtrar por su banco real, y se clasifica
+ * con el léxico de otro banco.
+ */
+describe('reintento con --banco corregido: banco_codigo queda consistente, no el del intento fallido', () => {
+  let cuentaBancoCorregido: ReturnType<typeof extractoSintetico>;
+
+  beforeAll(async () => {
+    cuentaBancoCorregido = extractoSintetico({
+      semilla: 622,
+      cantidadMovimientos: 3,
+      saldoInicialCentavos: 5_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: 'banco_cli_correcto',
+    });
+
+    const duenio = await clienteDuenio();
+    try {
+      await duenio.query(
+        `insert into banco (codigo, nombre) values
+           ('banco_cli_incorrecto', 'BANCO DE PRUEBA DECLARADO MAL'),
+           ('banco_cli_correcto', 'BANCO DE PRUEBA REAL DEL ARCHIVO')
+         on conflict (codigo) do nothing`,
+      );
+    } finally {
+      await duenio.end();
+    }
+
+    // Un solo adaptador registrado, para el banco REAL del contenido — `resolverAdaptador` lo
+    // encuentra por `reconoce()` sin importar qué `--banco` haya declarado el operador, y recién
+    // ahí compara contra lo declarado.
+    registrarAdaptador({
+      bancoCodigo: 'banco_cli_correcto',
+      version: 1,
+      capacidades: CAPACIDADES_SINTETICAS,
+      reconoce: (e) => e.filas.some((f) => textoDeFila(f).includes('MARCA BANCO CORREGIDO 2026-08-31')),
+      leer: () => ({
+        cuentas: [cuentaBancoCorregido],
+        lineasNoInterpretadas: [],
+        paginasDeclaradas: undefined,
+        destinos: undefined,
+      }),
+    });
+
+    await conUsuario(USUARIOS.socio, async (tx) => {
+      const c = await tx.consultar<{ id: string }>(
+        `insert into cuenta_bancaria (cliente_id, banco_codigo, moneda)
+         values ($1, 'banco_cli_correcto', 'ARS') returning id::text as id`,
+        [s.clienteB],
+      );
+      const cuentaBancariaId = c[0]?.id;
+      if (!cuentaBancariaId) throw new Error('no se creó la cuenta de prueba');
+      const cbu = '9990000090000000000622';
+      await tx.consultar(
+        `insert into cuenta_bancaria_identificador
+           (cliente_id, cuenta_bancaria_id, tipo_cuenta, numero, cbu_hmac, cbu_ultimos4, vigente_desde)
+         values ($1, $2, 'cuenta_corriente', $3, $4, $5, '2026-01-01')`,
+        [
+          s.clienteB,
+          cuentaBancariaId,
+          cuentaBancoCorregido.cuenta.numero,
+          hmacIdentificador(cbu),
+          ultimos4ParaGuardar(cbu),
+        ],
+      );
+    });
+  });
+
+  it('el reintento con --banco correcto deja banco_codigo y adaptador_version consistentes', async () => {
+    const { storage } = storageEspia();
+    const ruta = join(dirTemporal, 'extracto-banco-corregido.pdf');
+    writeFileSync(
+      ruta,
+      pdfMinimoConTexto([
+        'MARCA BANCO CORREGIDO 2026-08-31 PARA EL TEST DE BANCO_CODIGO',
+        'SEGUNDA LINEA SOLO PARA SUPERAR EL UMBRAL DE CARACTERES MINIMOS',
+      ]),
+    );
+
+    // Primer intento: el operador declara el banco EQUIVOCADO. El adaptador que reconoce el
+    // contenido es 'banco_cli_correcto', distinto del declarado -> rechaza.
+    const primera = await ingestar(
+      { cliente: s.clienteB, archivo: ruta, banco: 'banco_cli_incorrecto', usuario: USUARIOS.socio },
+      storage,
+    );
+    expect(primera.estado).toBe('rechazado');
+    if (primera.estado !== 'rechazado') return;
+    expect(primera.motivoCodigo).toBe('banco_declarado_no_coincide');
+
+    // Segundo intento, MISMO archivo, ahora con el --banco correcto: reprocesa sobre el MISMO lote.
+    const segunda = await ingestar(
+      { cliente: s.clienteB, archivo: ruta, banco: 'banco_cli_correcto', usuario: USUARIOS.socio },
+      storage,
+    );
+    expect(segunda.estado).toBe('procesado');
+    if (segunda.estado !== 'procesado') return;
+    expect(segunda.loteId).toBe(primera.loteId);
+
+    const lote = await conUsuario(USUARIOS.socio, async (tx) => {
+      const f = await tx.consultar<{ banco_codigo: string; adaptador_version: string; estado: string }>(
+        `select banco_codigo, adaptador_version, estado from lote_ingesta where id = $1 and cliente_id = $2`,
+        [segunda.loteId, s.clienteB],
+      );
+      return f[0];
+    });
+    expect(lote?.estado).toBe('procesado');
+    // El hallazgo: SIN el fix, esto queda en 'banco_cli_incorrecto' (el del intento rechazado) para
+    // siempre, contradiciendo a `adaptador_version`, que sí queda correcto.
+    expect(
+      lote?.banco_codigo,
+      'banco_codigo quedó con el banco DECLARADO del intento fallido, no el que realmente procesó el archivo',
+    ).toBe('banco_cli_correcto');
+    expect(lote?.adaptador_version).toBe('banco_cli_correcto@1');
   });
 });
 

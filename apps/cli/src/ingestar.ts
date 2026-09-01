@@ -50,6 +50,7 @@ import {
   adaptadorSantander,
   aFilas,
   bancosConAdaptador,
+  ESTADOS_LOTE_PERSISTIDO,
   extraerTexto,
   type CapacidadesAdaptador,
   persistirCuenta,
@@ -253,35 +254,84 @@ export async function ingestar(
   });
 
   return conUsuario(args.usuario, async (tx) => {
-    // PASO 3 — idempotencia POR CLIENTE. El mismo archivo dos veces es un no-op, no un duplicado.
-    const yaEsta = await tx.consultar<{ id: string }>(
-      `select id::text as id from lote_ingesta where cliente_id = $1 and archivo_hash = $2`,
+    /**
+     * PASO 3 — idempotencia POR CLIENTE, distinguiendo "ya procesado con éxito" de "rechazado antes".
+     *
+     * 🔴 El bug que esto corrige: la versión anterior devolvía `ya_procesado` ante CUALQUIER fila con
+     * el mismo `(cliente_id, archivo_hash)`, sin mirar `estado`. Un lote `con_errores` (rechazo) queda
+     * con ese mismo hash para siempre, así que reintentar el MISMO archivo después de corregir la causa
+     * del rechazo —la vigencia de una cuenta, por ejemplo— nunca volvía a intentar el parseo: devolvía
+     * `ya_procesado` sin escribir nada. Confirmado contra el piloto (cliente Bracci, lote rechazado por
+     * `cuenta_no_pertenece_al_cliente` con la vigencia ya corregida).
+     *
+     * Solo `ESTADOS_LOTE_PERSISTIDO` (`procesado`, `procesado_con_observaciones`) es un no-op legítimo:
+     * ahí el archivo YA se procesó de verdad y reintentarlo duplicaría filas. `con_errores` es lo
+     * opuesto —el archivo NO se procesó— y tiene que poder reintentarse.
+     *
+     * `recibido` no aparece acá como caso a distinguir: es transitorio y vive DENTRO de esta misma
+     * transacción (se crea en el PASO 4, y todo camino de retorno de más abajo lo transiciona a
+     * `con_errores` o a un estado persistido antes de hacer `return`). Si el proceso muere a mitad de
+     * camino, `conUsuario()` nunca comitea —ni siquiera el insert del PASO 4—, así que un `recibido`
+     * committed y huérfano no es alcanzable desde este CLI (verificado leyendo el resto del archivo:
+     * `packages/data/src/db/conexion.ts` solo comitea en el `return` normal de `fn`, y todo `return`
+     * de acá abajo pasa antes por `rechazar()` o por el UPDATE final).
+     */
+    const existente = await tx.consultar<{ id: string; estado: string; motivo_codigo: string | null }>(
+      `select id::text as id, estado, motivo_codigo from lote_ingesta
+        where cliente_id = $1 and archivo_hash = $2`,
       [args.cliente, archivoHash],
     );
-    const loteExistente = yaEsta[0]?.id;
-    if (loteExistente) {
-      logger.info('ingesta.ya_procesado', { cliente_id: args.cliente, lote_id: loteExistente });
-      return { estado: 'ya_procesado' as const, loteId: loteExistente };
+    const loteExistente = existente[0];
+
+    if (
+      loteExistente &&
+      (ESTADOS_LOTE_PERSISTIDO as readonly string[]).includes(loteExistente.estado)
+    ) {
+      logger.info('ingesta.ya_procesado', { cliente_id: args.cliente, lote_id: loteExistente.id });
+      return { estado: 'ya_procesado' as const, loteId: loteExistente.id };
     }
 
-    // PASO 4 — el lote es el ancla de todo lo que sigue, incluso del rechazo.
-    const creado = await tx.consultar<{ id: string }>(
-      `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por)
-       values ($1, $2, $3, $4, $5, $6, app.current_user_id())
-       returning id::text as id`,
-      // La versión definitiva se escribe al cerrar el lote, con la del adaptador que de verdad lo leyó.
-      [
-        args.cliente,
-        args.banco,
-        `${args.banco}@pendiente`,
-        ORIGEN_DEL_CLI,
-        archivoHash,
-        ESTADO_AL_CREAR,
-      ],
-    );
-    const loteId = creado[0]?.id;
-    if (!loteId) throw new Error('No se pudo crear el lote de ingesta.');
+    let loteId: string;
+    // `motivo_codigo` del intento anterior, para no perderlo si este reintento también termina en éxito
+    // (mismo criterio que `motivo_codigo_previo` de `completar-lote.ts`, migración 0012). `null` en el
+    // camino normal (lote nuevo): no hay intento previo que recordar.
+    let motivoCodigoPrevio: string | null = null;
+
+    if (loteExistente) {
+      /**
+       * Reintento de un lote `con_errores`: se reusa el MISMO `id` como ancla, no se inserta uno nuevo.
+       * `uq_lote_ingesta_archivo (cliente_id, archivo_hash)` (migración 0004) no deja otra opción — un
+       * segundo `insert` con el mismo hash violaría la unicidad. Y es lo correcto: el archivo es el
+       * mismo, así que el lote que lo representa también tiene que serlo.
+       *
+       * Un lote `con_errores` nunca tiene filas en `lote_ingesta_cuenta`: cualquier persistencia parcial
+       * de un intento anterior ya se deshizo con `ROLLBACK TO SAVEPOINT` dentro de `rechazar()` (HANDOFF
+       * 2026-08-11 (40)) antes de comitear ese intento. Este reintento vuelve a correr el pipeline entero
+       * sobre el mismo ancla, con el mismo SAVEPOINT protegiéndolo.
+       */
+      loteId = loteExistente.id;
+      motivoCodigoPrevio = loteExistente.motivo_codigo;
+    } else {
+      // PASO 4 — el lote es el ancla de todo lo que sigue, incluso del rechazo.
+      const creado = await tx.consultar<{ id: string }>(
+        `insert into lote_ingesta
+           (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por)
+         values ($1, $2, $3, $4, $5, $6, app.current_user_id())
+         returning id::text as id`,
+        // La versión definitiva se escribe al cerrar el lote, con la del adaptador que de verdad lo leyó.
+        [
+          args.cliente,
+          args.banco,
+          `${args.banco}@pendiente`,
+          ORIGEN_DEL_CLI,
+          archivoHash,
+          ESTADO_AL_CREAR,
+        ],
+      );
+      const nuevoId = creado[0]?.id;
+      if (!nuevoId) throw new Error('No se pudo crear el lote de ingesta.');
+      loteId = nuevoId;
+    }
 
     /**
      * 🔴 SAVEPOINT — la atomicidad real del lote, HANDOFF 2026-08-11 (40).
@@ -619,7 +669,9 @@ export async function ingestar(
     await tx.consultar(
       `update lote_ingesta
           set estado = $2, archivo_clave = $3, paginas_declaradas = $4, paginas_sin_texto = $5,
-              filas_leidas = $6, filas_aceptadas = $6, adaptador_version = $7
+              filas_leidas = $6, filas_aceptadas = $6, adaptador_version = $7,
+              motivo_codigo = null, motivo_codigo_previo = coalesce($9, motivo_codigo_previo),
+              banco_codigo = $10, procesado_por = app.current_user_id()
         where id = $1 and cliente_id = $8`,
       [
         loteId,
@@ -630,6 +682,23 @@ export async function ingestar(
         persistido.filas,
         `${cual.adaptador.bancoCodigo}@${cual.adaptador.version}`,
         args.cliente,
+        // Solo distinto de null cuando este `procesado` es el reintento de un lote que antes fue
+        // `con_errores`: ahí guarda el motivo del rechazo original, mismo criterio que
+        // `completar-lote.ts` (migración 0012). En el camino normal (lote nuevo) es null y el
+        // `coalesce` deja la columna como ya estaba (también null).
+        motivoCodigoPrevio,
+        // 🔴 `banco_codigo`: en el camino normal (lote nuevo) ya coincide con lo que se insertó en el
+        // PASO 4 (`args.banco`, ver ahí arriba), así que reescribirlo acá es un no-op. Pero en el
+        // REINTENTO de un lote `con_errores`, el `insert` original pudo haberse hecho con un
+        // `--banco` INCORRECTO (esa es la razón más común de un rechazo `banco_declarado_no_coincide`)
+        // — sin esto, un lote `procesado` quedaba con `banco_codigo` del intento fallido y
+        // `adaptador_version` del intento exitoso, CONTRADICIÉNDOSE entre sí. `cual.adaptador.
+        // bancoCodigo` es el banco que el adaptador de verdad detectó y aceptó (siempre igual a
+        // `args.banco` en el camino exitoso, `packages/ingesta/src/adaptadores/registro.ts`), nunca lo
+        // que el operador tipeó la primera vez. `exportar-planilla.ts` usa esta columna para filtrar
+        // por banco y para elegir el léxico de enriquecimiento: con el valor viejo, un lote legítimo
+        // no aparecía al filtrar por su banco real, y se clasificaba con el léxico equivocado.
+        cual.adaptador.bancoCodigo,
       ],
     );
 
