@@ -36,6 +36,7 @@ import { conErroresTraducidos, leerDigestsDeCuentasPropias, type Tx } from '@sis
 import { logger } from '@sistema-contable/shared/observabilidad';
 import { extraerCandidatosDeContraparte } from './contraparte.ts';
 import { contieneIdentificador, depurarGlosa } from './glosa.ts';
+import { VERSION_DEL_EXTRACTOR } from './version-extraccion.ts';
 import type { CuentaConMovimientos, EstadoLotePersistido, Verificacion } from './esquema.ts';
 
 export type PedidoDePersistencia = {
@@ -375,6 +376,12 @@ export async function persistirCuenta(
           columnaOrigen: m.columnaOrigen ?? null,
           candidatosIdentificacion: m.candidatosIdentificacion ?? [],
           referencias: m.referencias ?? [],
+          // Con qué versión del pipeline de extracción (`glosa.ts`/`contraparte.ts`/
+          // `detectores-forma.ts`) se calcularon `identificadores` — es lo que le permite a
+          // `detectar-lotes-desactualizados.ts` encontrar, sin investigación manual, los lotes
+          // ingeridos con una versión anterior de un detector (el caso real: `RE_CUIT` con el bug
+          // de `\b`, corregido en `cb084a0`, 11 días después de que se ingiriera un lote real).
+          versionExtractor: VERSION_DEL_EXTRACTOR,
         }),
       ],
       ),

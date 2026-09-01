@@ -6,6 +6,403 @@
 
 ---
 
+## 2026-09-01 (162) — 🔴 **`0035` APLICADA AL PILOTO** + **`--aplicar` real sobre ROKA**:
+`contrapartidaSinCandidato` bajó de 571 a 2. Bracci×2 y El Prat confirmados `ya_reclasificado` (diff
+vacío). Y un hallazgo nuevo, sin tocar: `detectar:lotes-desactualizados` da **11 lotes**, no los 4
+esperados.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (161), después de un
+reinicio de la laptop a mitad de la tarea anterior.
+
+### 0. El reinicio no dejó nada a medias
+
+Antes de tocar nada: `git status --short` idéntico al snapshot previo al corte (mismos 7 modificados
++ 14 nuevos de (160)/(161)), `git log --oneline origin/main..HEAD` vacío (sin commits locales),
+`pnpm verificar` en verde apenas se levantó Docker de nuevo (115/2133/7todo — el único efecto del
+reinicio fue que Docker Desktop no volvió a arrancar solo), y el dry-run repetido contra el piloto
+dio el mismo `569/0/96` que (158)/(161). **Nada aplicado antes del corte, nada perdido.**
+
+### 1. Migración `0035` — protocolo §1.9 corrido completo
+
+`ENV_FILE=.env.piloto pnpm db:migrate --estado` → **una sola pendiente**, `0035_grant_lote_desactualizado_readonly.sql`, el resto (`0001`-`0034`) ya aplicada. JP confirmó exacto. Aplicada
+(`ENV_FILE=.env.piloto pnpm db:migrate`) y re-verificada por `--estado`: `0035 (ya aplicada)`, nada
+más pendiente.
+
+### 2. Backup fresco, antes de la escritura sobre ROKA
+
+`ENV_FILE=.env.piloto pnpm respaldar:piloto` → `respaldos/piloto_20260901-115106Z.dump` (1.95 MB),
+SHA-256 `93b1e056845e65484fd1c9510d9028c7ee85cee581943da3810ccfb0cced3556`.
+
+### 3. `reclasificar:contraparte --aplicar` sobre ROKA — exacto lo predicho
+
+Lote `ae762fda-8822-459f-a061-31d7ce26c785`: `filasActualizadas=569`, `candidatosNuevosPorClase:
+{cuit: 569}`, `candidatosQueDeberianRemoverse=0`, `sinCambio=777`. Auditoría registrada
+(`accion=escritura recurso=movimiento_bancario_crudo`).
+
+### 4. `reconocer:lote --aplicar` de nuevo sobre el mismo lote — Capa C recogió los candidatos nuevos
+
+`contrapartidaSinCandidato` **571 → 2** (los 2 `ACREDITACION CHEQUE REMESAS` sin identificador en la
+glosa, estructural, ya cerrado en (159) §2 — quedan como esperado). `creados=1346`,
+`digestsPorBanco: {macro: bb1e11b434bb9c3b}` (mismo digest que (158), sin deriva de motor).
+
+### 5. Bracci×2 + El Prat — dry-run, confirman la predicción sin tocar esos clientes
+
+Con los UUID exactos sacados de `detectar:lotes-desactualizados` (no de los fragmentos truncados de
+HANDOFF anteriores):
+
+| Cliente | Lote | Resultado |
+|---|---|---|
+| Bracci (`f84d9ecc-...`) | `63050700-...` (jun, galicia) | `ya_reclasificado` |
+| Bracci (`f84d9ecc-...`) | `23d91533-...` (jul, galicia) | `ya_reclasificado` |
+| El Prat (`80741296-...`) | `95985da8-...` (santander) | `ya_reclasificado` |
+
+Los 4 lotes del plan original (159) quedan cerrados: ROKA con diff real aplicado, los otros tres con
+diff vacío confirmado por consulta real, no por la heurística previa.
+
+### 6. 🔴 Hallazgo nuevo, sin tocar — `detectar:lotes-desactualizados` da 11 lotes, no 4
+
+El mecanismo es GENERAL (compara `versionExtractor` persistido contra `VERSION_DEL_EXTRACTOR` actual,
+`=1`, recién empieza a grabarse con (160)) — no está acotado a la ventana del bug `RE_CUIT`
+(`cb084a0`, 2026-08-23) que motivó el plan original. Devolvió, además de los 4 ya conocidos, **7
+lotes más**: Bancor (`13e5316c-...`, 94 mov.), Nación (`26e90bbb-...`, 1), ICBC (`b50560ae-...`, 9), y
+**4 lotes de Bracci/Galicia nuevos** (`98f87beb`, `2cf77c67`, `ee11d2e7`, `a5c7ccaf`, del 26 al 31 de
+agosto, 328+340+942+929 movimientos) — todos ingeridos DESPUÉS del fix de `RE_CUIT`, así que
+`sin_identificador→capturado` en esos probablemente da 0 (no tienen el bug), pero **no está
+verificado, es una inferencia**. **No se tocó ninguno** — fuera del alcance autorizado hoy (solo
+Bracci×2 + El Prat + ROKA). Queda pendiente decidir con JP si se corre el dry-run sobre los 7
+restantes (probablemente confirmen diff vacío, dado que son posteriores al fix) o si el criterio de
+"lote a reprocesar" necesita acotarse a una ventana de fechas en vez de "cualquier versión
+distinta" — la próxima vez que `VERSION_DEL_EXTRACTOR` suba, TODOS los lotes de hoy van a aparecer
+como desactualizados otra vez, y ese es el comportamiento esperado del mecanismo, no un bug.
+
+### 7. Sin commit todavía
+
+Código de (160)/(161) sigue sin commitear, y ya escribió sobre el piloto real (punto 3 y 4). Recomendado
+commitear antes de seguir tocando algo — pendiente de que JP lo pida explícitamente.
+
+---
+
+## 2026-09-01 (161) — Panel (`dba-data`/`security-engineer`/`seguridad-datos-financieros`) revisó el
+diseño de (160), `code-reviewer`+`tester` revisaron el código, y los **4 dry-runs reales** contra el
+piloto dieron EXACTO lo predicho en (159): ROKA 569/0, Bracci×2 y El Prat vacío. **`--aplicar` sigue
+frenado, a la espera de JP.**
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (160).
+
+### 1. Revisión del panel de diseño — 2 bloqueantes reales, ambos resueltos antes del primer `Write`
+
+- `seguridad-datos-financieros`: aprobado sin bloqueantes.
+- `security-engineer`: bloqueante — el DELETE de candidatos obsoletos (paso original del diseño) es
+  "no es mi llamada, se resuelve con `dba-data`".
+- `dba-data`: confirmó el bloqueante — `movimiento_contraparte_identificador` es append-only por
+  decisión deliberada de `0013` (sin grant ni policy de DELETE, ni el dueño del esquema lo saltea con
+  `force row level security`). **Resuelto: el mecanismo queda SIN DELETE** — el dry-run de ROKA
+  predecía 0 bajas, así que alcanza con `UPDATE`+`INSERT ... ON CONFLICT DO NOTHING`. Si algún día un
+  diff real necesita remover un candidato, es una migración nueva y una convocatoria propia, fuera de
+  esta tarea. Segundo bloqueante encontrado por `dba-data`: faltaba grant para
+  `detectar-lotes-desactualizados.ts` (cross-tenant) — migración `0035` nueva,
+  `security-engineer` confirmó el set exacto de columnas (`id, cliente_id, banco_codigo, estado,
+  created_at` en `lote_ingesta` + `lote_ingesta_id` agregado al grant de `movimiento_bancario_crudo`).
+
+### 2. Implementación — `pnpm verificar` en verde: 115 archivos, 2133 tests, 7 todo preexistentes
+
+Migración `0035`, `VERSION_DEL_EXTRACTOR` (trinquete calcado de `VERSION_DEL_MOTOR`, arranca en 1),
+`reclasificar-contraparte.ts` (Tx1/cálculo puro/Tx2, sin DELETE), `detectar-lotes-desactualizados.ts`
+(cross-tenant, solo lectura), los dos CLI, y `persistir.ts` escribiendo `versionExtractor` en cada
+ingesta nueva. **Migración `0035` aplicada solo en LOCAL** — el piloto no se tocó todavía, ni para
+leer con el mecanismo cross-tenant.
+
+### 3. `code-reviewer` — listo para mergear, 1 hallazgo menor no bloqueante
+
+`pepperObjetivo` se captura una vez en Tx2 pero no se usa para constreñir nada (decorativo) —
+`extraerCandidatosDeContraparte` vuelve a leer `pepperIdActual()` por fila. Sin riesgo real hoy
+(nada rota el valor a mitad de una corrida — verificado, es lectura pura de env var). Mismo patrón
+ya existente sin corregir en `backfill-contraparte.ts`, no es una regresión de esta tarea. Deuda
+menor declarada, no bloqueante.
+
+### 4. `tester` — 1 hallazgo real de concurrencia, no bloqueante para HOY (una corrida, un lote a la vez)
+
+Tx2 no revalida `contraparte_captura` bajo el lock — el `for update` serializa el LOTE, no la
+frescura del cálculo. Si algo más corrige la fila entre la lectura (Tx1) y la escritura (Tx2), la
+corrección se pisa en silencio (probado con test real). Riesgo real solo si algún día corre más de
+un operador en paralelo con `--aplicar` — hoy corro yo, secuencial, un lote a la vez, así que no
+bloquea. Agregó 3 tests nuevos más (rol re-chequeado en Tx2, `capturado_cuenta_propia` x2, glosa
+real completa) — todos verdes, sin bugs nuevos encontrados en esos casos.
+
+### 5. Los 4 dry-runs reales — EXACTO lo predicho en (159), tabla del plan
+
+| Cliente | Lote | `sin_identificador→capturado` | Clase | A remover | Resultado |
+|---|---|---|---|---|---|
+| ROKA | `ae762fda-...` | **569** | `cuit` (100%) | 0 | `sin_cambio=777`, `descartadosPorForma=1` |
+| Bracci | `63050700-...` (jun) | 0 | — | 0 | `ya_reclasificado` |
+| Bracci | `23d91533-...` (jul, YA con Capa C aplicada) | 0 | — | 0 | `ya_reclasificado` |
+| El Prat | `95985da8-...` | 0 | — | 0 | `ya_reclasificado` |
+
+ROKA: `96` movimientos quedan `sin_identificador→sin_identificador` (sin cambio — los
+`ACREDITACION CHEQUE REMESAS` y otros sin dato real en la glosa, estructural, ya cerrado en (159)
+§2), `681` ya estaban `capturado→capturado`. `96+569+681=1346`, cuadra con el total. Ningún candidato
+a remover en los 4 — la rama "DELETE" del diseño nunca se ejercita con datos reales de hoy.
+
+**La rama de alerta del punto 3 del plan (Bracci/El Prat con diff NO vacío) NO se disparó** — el
+mecanismo real confirma la medición heurística previa de `18-cuit-pegado-sin-separador.md` §5. Nada
+que reportar como hallazgo nuevo, nada que frenar.
+
+### 6. Qué falta — todo pendiente de la palabra de JP, nada aplicado
+
+1. `reclasificar:contraparte --aplicar` sobre el lote de ROKA (`ae762fda-...`) — el único con diff
+   real.
+2. `reconocer:lote --aplicar` de nuevo sobre ese mismo lote, para que Capa C recoja los 569
+   candidatos nuevos.
+3. Aparte, sin relación con lo anterior: migración `0035` sigue sin aplicar al piloto (regla dura
+   §1.9 — listar/confirmar/frenar, pendiente de autorización explícita) y
+   `detectar-lotes-desactualizados` sin correr contra el piloto todavía (no bloquea nada de lo de
+   arriba, ya se conocían los 4 lotes por relevamiento manual).
+
+### 7. Sin commit
+
+Nada commiteado todavía — código nuevo sin aplicar en producción/piloto, pendiente de la decisión de
+JP sobre `--aplicar`.
+
+---
+
+## 2026-09-01 (160) — Mecanismo de reproceso de reclasificación de contraparte, implementado
+
+**Herramienta:** Claude Code, sesión interactiva (`backend-dev`). Implementa el diseño **APROBADO**
+por JP y por el panel (`dba-data` + `security-engineer` + `seguridad-datos-financieros`, plan
+`spicy-zooming-unicorn`) que cierra (158)/(159): el bug de `RE_CUIT` (`cb084a0`) dejó lotes ingeridos
+antes del fix con candidatos de contraparte de menos, y hacía falta un mecanismo GENERAL (no un
+script atado a ROKA) para detectarlos y corregirlos, sin repetir la investigación manual la próxima
+vez que `depurarGlosa`/un detector cambien.
+
+### Qué se implementó
+
+1. **Migración `0035_grant_lote_desactualizado_readonly.sql`** — amplía el grant de `0023` (R42):
+   agrega `lote_ingesta_id` al grant de `app_job` sobre `movimiento_bancario_crudo`, y un grant nuevo
+   sobre `lote_ingesta` acotado a `id, cliente_id, banco_codigo, estado, created_at` (nunca
+   `archivo_clave`/`motivo_codigo`/`procesado_por`, set exacto confirmado por el panel). **Aplicada
+   solo en LOCAL** (`pnpm db:migrate` + `pnpm db:setup`) — **nunca corrida contra el piloto**, queda
+   para JP con el runbook de la regla dura §1.9 (listar → confirmar → frenar).
+2. **`VERSION_DEL_EXTRACTOR`** (`packages/ingesta/src/version-extraccion.ts`, arranca en `1`) — mismo
+   mecanismo de trinquete que `VERSION_DEL_MOTOR`, con su script
+   (`packages/ingesta/scripts/version-del-extractor.ts`, `pnpm extractor:version`/`:aceptar`) y su
+   libro commiteado (`packages/ingesta/version-del-extractor.json`). **Desviación de diseño
+   deliberada**: el motor hashea un directorio completo (`nucleo/`); acá los tres archivos del
+   pipeline (`glosa.ts`, `contraparte.ts`, `detectores-forma.ts`) viven en DOS paquetes distintos, así
+   que la huella toma un **mapa nombre→ruta explícito** en vez de `readdirSync` — mismo espíritu,
+   forma distinta porque no hay un directorio común que barrer. `persistir.ts` ahora escribe
+   `versionExtractor` dentro de `fila_origen` en cada ingesta nueva.
+3. **`packages/ingesta/src/reproceso/reclasificar-contraparte.ts`** — Tx1 (`leerInsumosDeReclasificacion`,
+   lectura auditada + estado persistido) → cálculo puro exportado (`calcularReclasificacion`, sin
+   base) → Tx2 (`reclasificarContraparteDeLote`, lock + `UPDATE` de `contraparte_captura` +
+   `INSERT ... ON CONFLICT DO NOTHING`, **sin DELETE** — invariante append-only de `0013`, respetado
+   tal cual). `ROLES_QUE_RECLASIFICAN = ['socio']`, constante propia. CLI en
+   `apps/cli/src/reclasificar-contraparte.ts` (`pnpm reclasificar:contraparte --cliente --usuario
+   --lote-id [--aplicar]`), mismo esqueleto que `backfill:contraparte`.
+4. **`packages/ingesta/src/reproceso/detectar-lotes-desactualizados.ts`** — solo lectura,
+   cross-tenant, vía `conJob('auditoria_seguridad_readonly')` + `registrarUsoSoloLectura` (mismo
+   patrón que el único otro consumidor de ese motivo en el repo). Proyecta solo
+   `clienteId`/`loteId`/`bancoCodigo`/`estado`/conteo — nunca `fila_origen` completo. CLI en
+   `apps/cli/src/detectar-lotes-desactualizados.ts` (`pnpm detectar:lotes-desactualizados`, sin
+   `--aplicar`, puramente informativo).
+
+### Ajustes sobre el plan original, con motivo
+
+- **R32** (`packages/data/tests/reglas-de-codigo.test.ts`): la regla "solo `leerFilasOrigenDeLote`
+  nombra `movimiento_origen_crudo`" no conocía los dos archivos nuevos. Se agregaron a la allowlist
+  con su motivo — `reclasificar-contraparte.ts` porque llama a `leerConAuditoria` (igual que
+  `backfill-contraparte.ts`), `detectar-lotes-desactualizados.ts` porque es la **segunda** excepción
+  estructural del repo (la primera es `0023`): corre bajo `conJob`, cuyo `tx.usuarioId` es siempre
+  `null`, así que no puede invocar `leerConAuditoria`.
+- **`auditoria-seguridad-readonly.test.ts`** y **`grants-conjunto-cerrado.test.ts`** (R41/R42): tenían
+  el conjunto de columnas de `0023` pineado literal — se actualizaron para incluir el grant nuevo de
+  `0035`, con el mismo criterio de "conjunto cerrado, se compara con `toEqual`".
+- Los tests de `reclasificar-contraparte` quedaron en `packages/ingesta/tests/reproceso/` (no
+  directo en `tests/`), para seguir la convención real del repo (`backfill-contraparte.test.ts` vive
+  ahí, no en `tests/` a secas).
+- El cálculo puro se separó en una función exportada (`calcularReclasificacion`) en vez de vivir
+  inline dentro de la Tx2 (que es como lo hace `backfill-contraparte.ts`): así el test de diff puro
+  (`reclasificar-contraparte.test.ts`) no necesita Postgres, cumpliendo el pedido explícito del plan.
+
+### Verificado
+
+`pnpm verificar` en verde: **114 archivos de test, 2127 tests, 7 todo preexistentes** (typecheck +
+barrido de fuga + fixtures + la suite completa). Tests nuevos: 6 del cálculo puro, 13 del gate de
+versión (con rojo real probado), 6 de integración Tx1/Tx2 contra Postgres real, 6 del CLI, 1 smoke de
+`detectar-lotes-desactualizados`. Migración `0035` aplicada y verificada **solo en local** — el
+piloto no se tocó, ni siquiera para leer.
+
+### Pendiente para JP (fuera de esta tarea, por instrucción explícita)
+
+1. Aplicar `0035` al piloto con el runbook de §1.9 (listar → confirmar EXACTO → frenar si aparece
+   algo más).
+2. `ENV_FILE=.env.piloto pnpm detectar:lotes-desactualizados` — confirmar que da los 4 lotes ya
+   conocidos (ROKA + 2 de Bracci + 1 de El Prat).
+3. `ENV_FILE=.env.piloto pnpm reclasificar:contraparte` en dry-run sobre los 4, uno por uno —
+   contrastar contra la predicción de (159): 569/2 en ROKA, diff vacío en los otros tres.
+4. Con ROKA confirmado: `--aplicar`, y después `pnpm reconocer:lote --aplicar` de nuevo sobre ese
+   lote para que Capa C recoja los candidatos nuevos.
+
+## 2026-09-01 (159) — ROKA: causa de `contrapartidaSinCandidato=571` confirmada — es **hipótesis
+(a) real**, ya arreglada en el código (`cb084a0`, 2026-08-23) pero el lote de ROKA se ingirió 11 días
+ANTES (2026-08-12) y nunca se reprocesó. **`--aplicar` sigue frenado** hasta escribir el reproceso.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (158) — JP pidió convocar a
+`motor-conciliacion-contable` + `contador-dominio` antes de tocar `--aplicar`, con evidencia real
+sobre 3-5 movimientos concretos, para decidir entre (a) bug de matcheo, (b) al cliente le faltan
+candidatos reales, (c) problema del documento consolidado de 3 cuentas.
+
+### 1. Convocatoria real — dos `Agent()`, no narrada
+
+`motor-conciliacion-contable` (investigación técnica, con lectura propia del piloto vía
+`conUsuario()` + `leerConAuditoria`/`leerFilasOrigenDeLote` sobre la satélite N2R
+`movimiento_origen_crudo`) y `contador-dominio` (mirada de práctica contable, sin tocar la base) en
+paralelo. Reportes íntegros, sin dígitos crudos de terceros.
+
+### 2. Resultado — hipótesis (a) confirmada, verificada contra el commit real
+
+Los **569 TPUSH** tienen, los 569, un CUIT real de 11 dígitos con prefijo AFIP válido, mal
+clasificado como `documento` (catch-all `RE_CORRIDA_LARGA` 9+) en vez de `cuit`, porque la glosa lo
+trae PEGADO a la palabra "DOC" sin separador (`DOC<cuit>`) — `contraparte.ts:80-88` descarta todo
+`documento` que no sea 7-8 dígitos exactos, así que nunca se persiste como candidato.
+
+**Verificado por mí, no solo por el agente:** `git show cb084a0` — commit real, 2026-08-23,
+`fix(ingesta): CUIT de contraparte pegado sin separador — Macro REFERENCIA + RE_CUIT`. El mensaje
+del commit dice, textual: **"Medido: 569/1346 (42%) en el PDF real de Macro"** — el mismo número
+exacto que dio el dry-run de (158) sobre el lote de ROKA. Es el mismo PDF (o uno idéntico en forma)
+que motivó el fix. La causa técnica: `RE_CUIT` usaba `\b` en los dos extremos; `\b` no separa una
+letra de un dígito contiguo, así que `DOC<cuit>` nunca disparaba el match — regresión de la
+centralización del commit `065fe10` (2026-08-10). Corregido en `cb084a0` con lookaround (prueba de
+mutación real, 10 mutaciones, `ADR-0002 §B.0`). **El código está bien desde el 23/08.**
+
+**El problema es el DATO ya escrito:** el lote de ROKA (`ae762fda-...`) tiene
+`lote_ingesta.created_at = 2026-08-12T19:46:14Z` — **11 días antes** del fix. `persistir.ts` pobló
+`movimiento_contraparte_identificador` UNA vez, en la ingesta, con el `RE_CUIT` roto de ese momento.
+Nunca se reprocesó. **Verificado que `backfill-contraparte.ts` NO sirve para esto:**
+`identificadoresDe()` (línea 147-154) lee el array `identificadores` YA CLASIFICADO desde
+`fila_origen` — no vuelve a correr `depurarGlosa` sobre la glosa original. Correrlo hoy repetiría la
+clasificación vieja, no la arreglaría.
+
+**Hipótesis (c) — refutada**, verificado en `leerCandidatosDeContraparte`
+(`packages/data/src/contabilidad/lecturas.ts:168-200`): filtra únicamente por `cliente_id` +
+`movimiento_id`, sin ninguna noción de `cuenta_bancaria_id`. Los 569 TPUSH caen casi todos en la
+cuenta Cta Cte (`94f817b3-...`) simplemente porque ahí está el 99% del volumen del lote (1335/1346),
+no por confusión de cuenta.
+
+**Hipótesis (b) — cierra los 2 restantes, no los 569.** Los 2 `ACREDITACION CHEQUE REMESAS` sin
+candidato no tienen NINGÚN identificador en la glosa (ni cuit ni documento) — ahí sí Macro no
+publica el dato. Estructural, esperado, se cierra así.
+
+### 3. La lectura de `contador-dominio`, y por qué su condición no se cumplió
+
+Dio una respuesta condicionada: *"si la causa es estructural (no bug): aplicar ahora es correcto".*
+No es el caso — es un bug con fix conocido y no aplicado al dato. Su propio criterio ("`knowledge/`
+vacío, sin fuente cargada" para la pregunta de si Macro no publica CUIT en push — lo marcó
+explícito) queda sin efecto porque la causa real no es "Macro no publica el dato": el dato SÍ está
+en la glosa, el motor viejo no lo vio. También señaló que 467 de los 1038 `distinguir_tercero_de_socio`
+SÍ tienen candidato y aun así van a revisión — explicable por diseño (`resolverContraparte`,
+`padronDeclaradoCompleto: false`: la rama negativa NUNCA se propone sola como tercero, es la posición
+conservadora hasta que exista `padron_manifestacion`, migración `0015`) — no es una anomalía nueva,
+no hace falta investigarlo aparte.
+
+### 4. Decisión — `--aplicar` sigue frenado
+
+No se aplicó nada. Antes de `reconocer:lote --aplicar` sobre este lote hace falta un **reproceso
+nuevo** (no `backfill-contraparte.ts`) que tome `glosaOriginal` de `movimiento_origen_crudo` (N2-R,
+vía lector auditado), corra `depurarGlosa` ACTUAL, compare contra lo persistido, y si cambia la
+clasificación reescriba `identificadores` + `movimiento_contraparte_identificador` (respetando
+INV-13/14) — script que no existe todavía. Es tarea nueva, no un paso más de esta sesión.
+
+### 5. Qué sigue
+
+- Decidir con JP si se escribe el reproceso ahora (nueva convocatoria: `dba-data` +
+  `security-engineer` + `seguridad-datos-financieros`, toca escritura N2/N2-R real) o se posterga.
+- Con el reproceso corrido y verificado: recién ahí, `reconocer:lote --aplicar` sobre
+  `ae762fda-8822-459f-a061-31d7ce26c785`.
+- Revisar si algún OTRO lote de OTRO cliente, ingerido antes del 2026-08-23, tiene el mismo problema
+  — ROKA puede no ser el único caso.
+
+### 6. Sin commit
+
+Nada que commitear — investigación de solo lectura, ninguna fila escrita en el piloto.
+
+---
+
+## 2026-09-01 (158) — ROKA: Capa C, dry-run — **un solo lote** (no 5 como Bracci), desglose real
+medido, **sin aplicar** (JP pidió el desglose antes de tocar `--aplicar`): `contrapartidaSinCandidato`
+sale muy alto (0 en Bracci, 571 acá) y queda a la espera de decisión antes de escribir.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (157) — con el mapeo
+`cuenta_bancaria.cuenta_id` cerrado, primer intento de Capa C sobre ROKA.
+
+### 1. Estructura de lotes — confirmada por consulta, distinta de Bracci
+
+JP anticipó correctamente que ROKA (Macro) trae las 3 cuentas consolidadas en un solo PDF por mes,
+a diferencia de Bracci (Galicia, 2 archivos separados por cuenta). Verificado contra `lote_ingesta` +
+`lote_ingesta_cuenta`: ROKA tiene **un solo `lote_ingesta`** (`ae762fda-8822-459f-a061-31d7ce26c785`,
+banco `macro`, origen `archivo`, `procesado_con_observaciones`, 1346 filas leídas/aceptadas, 0
+rechazadas), con **3 filas en `lote_ingesta_cuenta`** (periodo `2025-11-01`–`2025-11-28` las tres):
+
+| `cuenta_bancaria_id` | Moneda | Filas | Verificación |
+|---|---|---|---|
+| `94f817b3-...` (Cta Cte) | ARS | 1335 | `cuadra` |
+| `a61bda31-...` (Cta Cte Especial) | ARS | 11 | `cuadra` |
+| `6d4a3c4d-...` (USD) | USD | 0 | `no_verificable` (sin movimientos en el período) |
+
+1335 + 11 = 1346, consistente con el total del lote. No hay "5 lotes" que correr como en Bracci: es
+**1 lote, 1 corrida**. `reconocimiento_movimiento` para ROKA: 0 filas antes de esta corrida
+(confirmado por consulta, coincide con lo que decía (157) §5).
+
+Usuario operador: `11111111-1111-1111-1111-111111111111` (rol `socio` en `ESTUDIO PILOTO`, raíz del
+árbol — cubre el subárbol de ROKA).
+
+### 2. Dry-run — desglose real medido
+
+```
+ENV_FILE=.env.piloto pnpm reconocer:lote --cliente 69479b8f-9b6a-4d6b-bdb2-bff817c2e750 \
+  --usuario 11111111-1111-1111-1111-111111111111 \
+  --lote-id ae762fda-8822-459f-a061-31d7ce26c785
+```
+
+| Lote | Cuenta(s) | Mes | Total | `propuesta` | `decision_humana` | `sin_reconocer` | Tiempo real (dry-run) |
+|---|---|---|---|---|---|---|---|
+| `ae762fda` | Cta Cte + Cta Cte Especial + USD (consolidadas) | nov-2025 | 1346 | 94 | 1162 | 90 | 6.533s |
+
+94 + 1162 + 90 = 1346, consistente. `digestsPorBanco` = `{macro: bb1e11b434bb9c3b}` (single-banco,
+sin deriva de motor a verificar contra otra corrida todavía — es la primera vez que corre Capa C
+sobre este cliente). `sinLexico=0`.
+
+Detalle de `decision_humana` (1162): `distinguir_tercero_de_socio` 1038, `confirmar_hipotesis_del_lexico`
+97, `confirmar_computo_de_credito_fiscal` 12, `confirmar_cuenta_propia_destino` 6,
+`elegir_jurisdiccion_de_la_retencion` 6, `elegir_cuenta_de_pasivo_del_impuesto` 3.
+Detalle de `sin_reconocer` (90): `sin_evidencia_de_concepto` 76, `concepto_sin_tipo_asignado` 14.
+
+### 3. Lo que llama la atención, sin diagnosticar todavía — **frenado ahí, no se aplicó nada**
+
+`distinguir_tercero_de_socio` es el **77%** de `decision_humana` (1038/1162), y de esos 1038, **571
+(55%) no tienen NINGÚN candidato** (`contrapartidaSinCandidato=571` — `ev.contraparteCaptura !==
+'capturado'`, contado solo dentro de esa `queDecide`, código en `reconocer-lote.ts:311-313`).
+Comparación verificada, no estimada: en (154), los 5 lotes de Bracci dieron
+**`contrapartidaSinCandidato=0` en los cinco**. ROKA pasa de 0 a 571 en la primera corrida — una
+diferencia real, no ruido de redondeo. Candidatas, sin confirmar todavía:
+ROKA tiene 4 socios en el padrón (contra 2 de Bracci) y Macro consolidado podría traer la glosa
+distinta a Galicia — cualquiera de las dos, o ambas, podría explicarlo, pero es UNA INFERENCIA, no
+una causa verificada. **No se aplicó nada** (`aplicado: false`, `creados: 0`): JP pidió el desglose
+antes de tocar `--aplicar` y este número amerita mirarlo antes de escribir, no después.
+
+### 4. Qué sigue
+
+- Explicar (o descartar) por qué `contrapartidaSinCandidato` es tan alto antes de correr `--aplicar`
+  — candidato natural: `motor-conciliacion-contable` + `contador-dominio` (matriz §3.1, "Clasificar
+  movimientos / proponer asientos").
+- Con eso resuelto (o aceptado como esperable y documentado): `reconocer:lote --aplicar` sobre el
+  mismo `--lote-id`, mismo patrón que Bracci en (154).
+
+### 5. Sin commit
+
+Nada que commitear — solo lectura y un dry-run, ninguna fila escrita en el piloto.
+
+---
+
 ## 2026-09-01 (157) — ROKA: mapeo `cuenta_bancaria.cuenta_id` de las 3 cuentas Macro, confirmado
 con evidencia directa (no inferencia sola) y aplicado. Los 4 puntos de (156) cerrados.
 

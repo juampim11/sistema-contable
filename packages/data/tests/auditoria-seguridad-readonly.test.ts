@@ -1,13 +1,18 @@
 /**
- * `auditoria_seguridad_readonly` — R42 (ADR-0002-seguridad.md), migración `0023`.
+ * `auditoria_seguridad_readonly` — R42 (ADR-0002-seguridad.md), migraciones `0023` y `0035`.
  *
  * Motivo angosto de `MotivoJob` para correr un diagnóstico de seguridad de solo lectura, cross-tenant,
  * contra la base real (piloto), sin abrir una puerta general de acceso. `app_job` (BYPASSRLS) sigue
  * siendo la misma credencial de siempre — lo que cambia es que, con este motivo, `conJob`
  * (`packages/data/src/db/conexion.ts`) fija `set transaction read only` ANTES de correr la transacción.
  *
+ * `0035` amplía el grant original de `0023` para que `detectar-lotes-desactualizados.ts` pueda agrupar
+ * por lote: agrega `lote_ingesta_id` al grant sobre `movimiento_bancario_crudo` y un grant nuevo sobre
+ * `lote_ingesta` (`id`, `cliente_id`, `banco_codigo`, `estado`, `created_at` — nunca
+ * `archivo_clave`/`motivo_codigo`/`procesado_por`).
+ *
  * Dos verificaciones:
- *   a. Que `app_job` tiene EXACTAMENTE las 5 columnas de grant nuevas (2 tablas), cero de más — leído
+ *   a. Que `app_job` tiene EXACTAMENTE las columnas de grant declaradas (3 tablas), cero de más — leído
  *      del catálogo real de Postgres, no inferido del código TypeScript.
  *   b. Prueba de mutación (ADR-0002 §B.0): un intento de escritura DENTRO de
  *      `conJob('auditoria_seguridad_readonly', …)` lo rechaza Postgres con `25006` (transacción de
@@ -32,40 +37,46 @@ afterAll(async () => {
   await db?.end();
 });
 
-describe('R42 — grant angosto de auditoria_seguridad_readonly (0023)', () => {
-  it('app_job tiene exactamente las 5 columnas otorgadas, y ninguna más', async () => {
+describe('R42 — grant angosto de auditoria_seguridad_readonly (0023 + 0035)', () => {
+  it('app_job tiene exactamente las columnas otorgadas, y ninguna más', async () => {
     const { rows } = await db.query<{ tabla: string; columna: string }>(
       `select table_name as tabla, column_name as columna
          from information_schema.column_privileges
         where grantee = 'app_job'
-          and table_name in ('movimiento_origen_crudo', 'movimiento_bancario_crudo')
+          and table_name in ('movimiento_origen_crudo', 'movimiento_bancario_crudo', 'lote_ingesta')
           and privilege_type = 'SELECT'
         order by 1, 2`,
     );
     const enBase = rows.map((f) => `${f.tabla}.${f.columna}`);
-    expect(enBase, 'el grant de app_job sobre las dos tablas divergió de lo declarado en 0023').toEqual([
+    expect(enBase, 'el grant de app_job sobre las tres tablas divergió de lo declarado en 0023/0035').toEqual([
+      'lote_ingesta.banco_codigo',
+      'lote_ingesta.cliente_id',
+      'lote_ingesta.created_at',
+      'lote_ingesta.estado',
+      'lote_ingesta.id',
       'movimiento_bancario_crudo.cliente_id',
       'movimiento_bancario_crudo.descripcion',
       'movimiento_bancario_crudo.id',
+      'movimiento_bancario_crudo.lote_ingesta_id',
       'movimiento_origen_crudo.cliente_id',
       'movimiento_origen_crudo.fila_origen',
       'movimiento_origen_crudo.movimiento_id',
     ]);
   });
 
-  it('app_job no tiene ningún otro privilegio (INSERT/UPDATE/DELETE/TRUNCATE/TRIGGER) sobre las dos tablas', async () => {
+  it('app_job no tiene ningún otro privilegio (INSERT/UPDATE/DELETE/TRUNCATE/TRIGGER) sobre las tres tablas', async () => {
     const { rows } = await db.query<{ tabla: string; privilegio: string }>(
       `select table_name as tabla, privilege_type as privilegio
          from information_schema.column_privileges
         where grantee = 'app_job'
-          and table_name in ('movimiento_origen_crudo', 'movimiento_bancario_crudo')
+          and table_name in ('movimiento_origen_crudo', 'movimiento_bancario_crudo', 'lote_ingesta')
           and privilege_type <> 'SELECT'`,
     );
     expect(rows, 'app_job tiene un privilegio por columna más allá del SELECT declarado').toEqual([]);
 
     // DELETE/TRUNCATE/TRIGGER no son expresables por columna (misma razón que R41 en
     // grants-conjunto-cerrado.test.ts): se verifican aparte, a nivel tabla.
-    for (const tabla of ['movimiento_origen_crudo', 'movimiento_bancario_crudo'] as const) {
+    for (const tabla of ['movimiento_origen_crudo', 'movimiento_bancario_crudo', 'lote_ingesta'] as const) {
       for (const priv of ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'TRIGGER'] as const) {
         const { rows: r } = await db.query<{ puede: boolean }>(
           `select has_table_privilege('app_job', $1, $2) as puede`,
@@ -128,11 +139,14 @@ describe('R42 — grant angosto de auditoria_seguridad_readonly (0023)', () => {
 
   it('caso legítimo: un SELECT de las columnas EFECTIVAMENTE otorgadas no tira error de permisos (42501)', async () => {
     // El test anterior cuenta filas pero no toca ninguna columna del grant declarado en 0023 — este sí
-    // selecciona exactamente `cliente_id, movimiento_id, fila_origen` de `movimiento_origen_crudo` y
-    // `cliente_id, id, descripcion` de `movimiento_bancario_crudo`. No hace falta que la base local
-    // tenga filas: `limit 1` da 0 filas sin error, y eso ya prueba que el permiso está bien otorgado.
+    // selecciona exactamente `cliente_id, movimiento_id, fila_origen` de `movimiento_origen_crudo`,
+    // `cliente_id, id, descripcion, lote_ingesta_id` de `movimiento_bancario_crudo`, y
+    // `id, cliente_id, banco_codigo, estado, created_at` de `lote_ingesta` (0035). No hace falta que
+    // la base local tenga filas: `limit 1` da 0 filas sin error, y eso ya prueba que el permiso está
+    // bien otorgado.
     let errorOrigen: unknown;
     let errorBancario: unknown;
+    let errorLote: unknown;
     try {
       await conJob('auditoria_seguridad_readonly', async (tx) => {
         await tx.consultar(
@@ -144,15 +158,25 @@ describe('R42 — grant angosto de auditoria_seguridad_readonly (0023)', () => {
     }
     try {
       await conJob('auditoria_seguridad_readonly', async (tx) => {
-        await tx.consultar(`select cliente_id, id, descripcion from movimiento_bancario_crudo limit 1`);
+        await tx.consultar(
+          `select cliente_id, id, descripcion, lote_ingesta_id from movimiento_bancario_crudo limit 1`,
+        );
       });
     } catch (error) {
       errorBancario = error;
+    }
+    try {
+      await conJob('auditoria_seguridad_readonly', async (tx) => {
+        await tx.consultar(`select id, cliente_id, banco_codigo, estado, created_at from lote_ingesta limit 1`);
+      });
+    } catch (error) {
+      errorLote = error;
     }
     expect(errorOrigen, 'select de las columnas otorgadas de movimiento_origen_crudo falló').toBeUndefined();
     expect(
       errorBancario,
       'select de las columnas otorgadas de movimiento_bancario_crudo falló',
     ).toBeUndefined();
+    expect(errorLote, 'select de las columnas otorgadas de lote_ingesta (0035) falló').toBeUndefined();
   });
 });

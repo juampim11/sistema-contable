@@ -1,0 +1,51 @@
+-- =============================================================================
+-- 0035_grant_lote_desactualizado_readonly.sql — amplía el grant de `0023` para poder agrupar por lote
+--
+-- Regla verificable: ADR-0002-seguridad.md R42 (mismo motivo angosto que `0023`).
+--
+-- ## Para qué sirve
+--
+-- `packages/ingesta/src/reproceso/detectar-lotes-desactualizados.ts` necesita saber, cross-tenant y
+-- solo lectura, qué lotes de ingesta tienen movimientos cuya `fila_origen.versionExtractor` quedó
+-- atrás de `VERSION_DEL_EXTRACTOR` — el mismo mecanismo de trinquete que `VERSION_DEL_MOTOR`, ahora
+-- para el pipeline de extracción de contraparte (`packages/ingesta/src/glosa.ts`,
+-- `packages/ingesta/src/contraparte.ts`, `packages/shared/src/seguridad/detectores-forma.ts`). El
+-- caso real que lo motiva: `RE_CUIT` tenía el bug de `\b` corregido en `cb084a0`, y el lote de ROKA
+-- se había ingerido 11 días antes del fix — sin este script, encontrar los lotes viejos es una
+-- investigación manual por cliente.
+--
+-- `0023` ya le dio a `app_job` `movimiento_origen_crudo(cliente_id, movimiento_id, fila_origen)` y
+-- `movimiento_bancario_crudo(cliente_id, id, descripcion)` — lo que falta es poder AGRUPAR por lote:
+-- `movimiento_bancario_crudo` no tenía `lote_ingesta_id` en el grant, y `lote_ingesta` no tenía grant
+-- ninguno. Sin las dos cosas, el script no puede proyectar `lote_id`/`banco_codigo`/`estado` por
+-- movimiento desactualizado.
+--
+-- ## Por qué acotado por COLUMNA, y no por tabla entera — mismo argumento que `0023`
+--
+-- El diagnóstico necesita agrupar y describir el lote, no todo lo que `lote_ingesta` guarda:
+--   - `id`, `cliente_id`: la clave del lote, para el join y el aislamiento por cliente.
+--   - `banco_codigo`, `estado`: lo que el reporte proyecta para que alguien decida qué reprocesar
+--     primero (un lote `con_errores` no tiene sentido reclasificar).
+--   - `created_at`: para poder ordenar los lotes desactualizados por antigüedad en el reporte.
+--
+-- Nunca `archivo_clave` (la clave de ObjectStorage del PDF/Excel original — el diagnóstico no
+-- necesita el archivo, solo el metadato de agrupación), nunca `motivo_codigo` (el detalle de un
+-- rechazo, que no aporta a "¿está desactualizado?"), nunca `procesado_por` (identidad de quién
+-- corrió la ingesta — no es lo que este diagnóstico cross-tenant necesita ver). Confirmado por
+-- `security-engineer` en la revisión del panel de este mismo diseño (2026-09-01, ver
+-- `docs/diseno/18-cuit-pegado-sin-separador.md` y el plan de reproceso de contraparte).
+--
+-- `movimiento_bancario_crudo.lote_ingesta_id` es la columna que faltaba en el grant de `0023`: sin
+-- ella, un `movimiento_origen_crudo` desactualizado no se puede atribuir a NINGÚN lote.
+--
+-- ## Por qué SOLO `select`, sin `insert`/`update`/`delete` — mismo argumento que `0023`
+--
+-- Este script, igual que el de `0023`, corre con `conJob('auditoria_seguridad_readonly', fn)`: la
+-- transacción queda en `set transaction read only` antes de que `fn` corra, y el grant en sí (cero
+-- privilegios de escritura sobre estas columnas) es la capa que no tiene excepción conocida.
+--
+-- SE APLICA CON EL DUEÑO DEL ESQUEMA. NUNCA EDITAR UNA VEZ APLICADA.
+-- =============================================================================
+
+grant select (lote_ingesta_id) on movimiento_bancario_crudo to app_job;
+grant select (id, cliente_id, banco_codigo, estado, created_at) on lote_ingesta to app_job;

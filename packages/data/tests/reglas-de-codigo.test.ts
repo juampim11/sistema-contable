@@ -476,6 +476,16 @@ describe('R32 — el lector auditado es el ÚNICO camino a `movimiento_origen_cr
     // de la tabla auditada, no un bypass (migración 0013).
     'packages/ingesta/src/reproceso/backfill-contraparte.ts',
     'apps/cli/src/backfill-contraparte.ts',
+    // Mismo criterio que la entrada de arriba: llama a `leerFilasOrigenDeLote` a través de
+    // `leerConAuditoria`, y el `recurso: 'movimiento_origen_crudo'` es el nombre de la tabla
+    // auditada, no un bypass (reproceso de reclasificación, plan `spicy-zooming-unicorn`).
+    'packages/ingesta/src/reproceso/reclasificar-contraparte.ts',
+    // Mismo caso ESTRUCTURAL que `packages/data/src/db/auditoria-solo-lectura.ts` (línea de arriba):
+    // corre bajo `conJob('auditoria_seguridad_readonly')`, cuyo `tx.usuarioId` es SIEMPRE `null` — no
+    // puede invocar `leerConAuditoria` (exige identidad). Es la SEGUNDA excepción de este tipo en el
+    // repo (la primera es `0023`/R42), con el mismo grant angosto por columna (`0035`) y el mismo
+    // `set transaction read only` de contención. Nunca lee `fila_origen` completo, solo agrupa.
+    'packages/ingesta/src/reproceso/detectar-lotes-desactualizados.ts',
     'packages/data/tests/',
     'packages/ingesta/tests/',
     'apps/cli/tests/',

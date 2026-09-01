@@ -196,6 +196,11 @@ const GRANTS_POR_COLUMNA: readonly {
   { tabla: 'cuenta_bancaria_identificador', rol: 'app_request', privilegio: 'INSERT', columnas: ['cbu_hmac', 'cbu_ultimos4', 'cliente_id', 'created_at', 'cuenta_bancaria_id', 'id', 'numero', 'pepper_id', 'tipo_cuenta', 'vigente_desde', 'vigente_hasta'] },
   { tabla: 'cuenta_bancaria_identificador', rol: 'app_request', privilegio: 'SELECT', columnas: ['cbu_hmac', 'cbu_ultimos4', 'cliente_id', 'created_at', 'cuenta_bancaria_id', 'id', 'numero', 'pepper_id', 'tipo_cuenta', 'vigente_desde', 'vigente_hasta'] },
   { tabla: 'cuenta_bancaria_identificador', rol: 'app_request', privilegio: 'UPDATE', columnas: ['cbu_hmac', 'cbu_ultimos4', 'cliente_id', 'created_at', 'cuenta_bancaria_id', 'id', 'numero', 'pepper_id', 'tipo_cuenta', 'vigente_desde', 'vigente_hasta'] },
+  // `auditoria_seguridad_readonly` (0035, R42 — amplía 0023): agrupar por lote los movimientos
+  // desactualizados (`detectar-lotes-desactualizados.ts`). Nunca `archivo_clave`/`motivo_codigo`/
+  // `procesado_por` — el diagnóstico no necesita el archivo ni el detalle de un rechazo ni quién
+  // corrió la ingesta, sólo agrupar y describir el lote.
+  { tabla: 'lote_ingesta', rol: 'app_job', privilegio: 'SELECT', columnas: ['banco_codigo', 'cliente_id', 'created_at', 'estado', 'id'] },
   { tabla: 'lote_ingesta', rol: 'app_request', privilegio: 'INSERT', columnas: ['adaptador_version', 'archivo_clave', 'archivo_hash', 'banco_codigo', 'cliente_id', 'created_at', 'estado', 'filas_aceptadas', 'filas_leidas', 'filas_rechazadas', 'id', 'motivo_codigo', 'motivo_codigo_previo', 'origen', 'paginas_declaradas', 'paginas_sin_texto', 'procesado_por'] },
   { tabla: 'lote_ingesta', rol: 'app_request', privilegio: 'SELECT', columnas: ['adaptador_version', 'archivo_clave', 'archivo_hash', 'banco_codigo', 'cliente_id', 'created_at', 'estado', 'filas_aceptadas', 'filas_leidas', 'filas_rechazadas', 'id', 'motivo_codigo', 'motivo_codigo_previo', 'origen', 'paginas_declaradas', 'paginas_sin_texto', 'procesado_por'] },
   { tabla: 'lote_ingesta', rol: 'app_request', privilegio: 'UPDATE', columnas: ['adaptador_version', 'archivo_clave', 'archivo_hash', 'banco_codigo', 'cliente_id', 'created_at', 'estado', 'filas_aceptadas', 'filas_leidas', 'filas_rechazadas', 'id', 'motivo_codigo', 'motivo_codigo_previo', 'origen', 'paginas_declaradas', 'paginas_sin_texto', 'procesado_por'] },
@@ -226,7 +231,9 @@ const GRANTS_POR_COLUMNA: readonly {
   // Sólo las tres columnas que hacen falta para verificar aislamiento e integridad, nunca importe ni
   // saldo. La contención de escritura NO es el grant —`app_job` sigue siendo BYPASSRLS— sino
   // `set transaction read only` en `conJob` para ese motivo, que rechaza cualquier DML con `25006`.
-  { tabla: 'movimiento_bancario_crudo', rol: 'app_job', privilegio: 'SELECT', columnas: ['cliente_id', 'descripcion', 'id'] },
+  // `lote_ingesta_id` (0035, R42): la columna que faltaba para poder agrupar por lote — sin ella,
+  // un movimiento desactualizado no se puede atribuir a NINGÚN lote.
+  { tabla: 'movimiento_bancario_crudo', rol: 'app_job', privilegio: 'SELECT', columnas: ['cliente_id', 'descripcion', 'id', 'lote_ingesta_id'] },
   { tabla: 'movimiento_bancario_crudo', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'concepto_banco', 'concepto_banco_estrategia', 'concepto_codigo', 'concepto_completo', 'contraparte_captura', 'created_at', 'cuenta_bancaria_id', 'descripcion', 'entrada_digest', 'fecha', 'fecha_valor', 'fila_hash', 'fila_numero', 'id', 'importe', 'lote_ingesta_id', 'moneda', 'pagina_pdf', 'referencia_externa', 'saldo', 'saldo_es_acreedor'] },
   { tabla: 'movimiento_bancario_crudo', rol: 'app_request', privilegio: 'SELECT', columnas: ['cliente_id', 'concepto_banco', 'concepto_banco_estrategia', 'concepto_codigo', 'concepto_completo', 'contraparte_captura', 'created_at', 'cuenta_bancaria_id', 'descripcion', 'entrada_digest', 'fecha', 'fecha_valor', 'fila_hash', 'fila_numero', 'id', 'importe', 'lote_ingesta_id', 'moneda', 'pagina_pdf', 'referencia_externa', 'saldo', 'saldo_es_acreedor'] },
   { tabla: 'movimiento_bancario_crudo', rol: 'app_request', privilegio: 'UPDATE', columnas: ['cliente_id', 'concepto_banco', 'concepto_banco_estrategia', 'concepto_codigo', 'concepto_completo', 'contraparte_captura', 'created_at', 'cuenta_bancaria_id', 'descripcion', 'entrada_digest', 'fecha', 'fecha_valor', 'fila_hash', 'fila_numero', 'id', 'importe', 'lote_ingesta_id', 'moneda', 'pagina_pdf', 'referencia_externa', 'saldo', 'saldo_es_acreedor'] },

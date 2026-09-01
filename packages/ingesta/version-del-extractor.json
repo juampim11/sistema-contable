@@ -1,0 +1,17 @@
+{
+  "_comentario": "Trinquete de VERSION_DEL_EXTRACTOR. Cada entrada es una huella de packages/ingesta/src/glosa.ts, packages/ingesta/src/contraparte.ts y packages/shared/src/seguridad/detectores-forma.ts (sha256 normalizado a LF, 16 hex), APENDADA nunca reescrita. El gate vive en packages/ingesta/tests/version-del-extractor.test.ts. Se apenda con pnpm extractor:version:aceptar; una entrada con \"bump\": false declara que ese cambio de codigo NO puede alterar ningun resultado persistido, y su \"motivo\" es lo que revisa una persona en el diff del PR.",
+  "algoritmo": "sha256-lf-16",
+  "entradas": [
+    {
+      "version": 1,
+      "aceptada_en": "2026-09-01",
+      "bump": false,
+      "motivo": "linea de base del trinquete: primera huella de glosa.ts, contraparte.ts y detectores-forma.ts commiteada, VERSION_DEL_EXTRACTOR=1, posterior al fix de RE_CUIT (cb084a0)",
+      "archivos": {
+        "contraparte.ts": "b05f30e66add0c61",
+        "detectores-forma.ts": "5685814b2236a080",
+        "glosa.ts": "9f0538ce3bf21bed"
+      }
+    }
+  ]
+}

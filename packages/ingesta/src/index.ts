@@ -8,6 +8,7 @@ export * from './seed/extracto-sintetico.ts';
 export * from './resolver-cuenta.ts';
 export * from './glosa.ts';
 export * from './contraparte.ts';
+export * from './version-extraccion.ts';
 export * from './contraparte-adaptadores.ts';
 export * from './seed/texto-extracto-sintetico.ts';
 export * from './adaptadores/contrato.ts';
@@ -17,6 +18,8 @@ export * from './persistir.ts';
 export * from './planilla/exportar-planilla.ts';
 export * from './reproceso/recapturar-conceptos.ts';
 export * from './reproceso/backfill-contraparte.ts';
+export * from './reproceso/reclasificar-contraparte.ts';
+export * from './reproceso/detectar-lotes-desactualizados.ts';
 export * from './plan-cuentas/parser.ts';
 /**
  * 🔴 **Los adaptadores se re-exportan por NOMBRE, nunca con `export *`.**
