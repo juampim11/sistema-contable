@@ -6,6 +6,51 @@
 
 ---
 
+## 2026-09-01 (168) — 🔒 CIERRE de la tarea de reproceso de `concepto_banco` (decisión explícita de
+JP). El léxico de Módulo 2 para `"ING TRANSF:"` queda como tarea NUEVA y APARTE, sin arrancar.
+
+**Herramienta:** Claude Code, sesión interactiva. Cierre directo de (166)/(167).
+
+### La distinción exacta, para que quede escrita sin ambigüedad
+
+**Son dos catálogos distintos, con dueños distintos, y completar uno no completa el otro:**
+
+- **Módulo 1 — extracción** (`packages/ingesta/src/adaptadores/macro.ts`, `PREFIJOS_CON_CONTRAPARTE`):
+  separa el `concepto_banco` de la glosa cruda del banco. El fix de `'ING TRANSF:'` (29f9da3) resolvió
+  esto, y el reproceso (166/167) lo aplicó sobre lo ya ingerido. **CERRADO.**
+- **Módulo 2 — clasificación** (`packages/contabilidad`, el léxico que mapea un `concepto_banco` a un
+  concepto canónico): todavía no tiene ninguna regla para la etiqueta `"ING TRANSF:"` — confirmado por
+  grep, cero ocurrencias en todo el paquete. **NO tocado por esta tarea, sigue abierto.**
+
+**Resultado medido, no estimado:** `671 (mayo) + 699 (junio) + 714 (julio) = 2084` movimientos de ROKA
+quedan con concepto **identificado pero sin clasificar** — visible y contado en
+`porMotivo.concepto_no_catalogado` de `reconocer:lote`, **no perdido, no invisible, no un dato que
+desapareció**. Es la diferencia exacta entre "el banco no publica esto" (`sin_evidencia_de_concepto`,
+92/1567 en mayo, el residuo genuino) y "el banco lo publica y el sistema todavía no sabe qué es"
+(`concepto_no_catalogado`, 671/1567 en mayo).
+
+### Estado final de esta tarea
+
+- ✅ Mecanismo de reproceso construido, verificado por mutación, gate verde (commit `eecef0d`).
+- ✅ Aplicado sobre los 3 lotes reales de ROKA: 671/699/714 exacto, verificado por consulta directa
+  (commit del código en `eecef0d`; la corrida sobre el piloto no genera commit — es escritura real
+  sobre datos, no código).
+- ✅ `docs/diseno/10-deuda-declarada.md` actualizado: la entrada vieja (que declaraba el reproceso como
+  pendiente) se reescribió para reflejar que Módulo 1 está cerrado y declarar el hueco NUEVO de
+  Módulo 2 con los mismos números de este párrafo.
+- ⏸️ Junio y julio **no se corrieron contra Capa C** — iban a mostrar el mismo patrón sin agregar
+  información (mismo hallazgo que mayo), y JP pidió frenar antes de repetirlo tres veces.
+- 🆕 **Tarea nueva, sin arrancar**: agregar la regla de léxico de Módulo 2 para `"ING TRANSF:"`.
+  Convocatoria propia (`contador-dominio` como mínimo, para decidir qué concepto canónico corresponde
+  a una transferencia entrante con ese rótulo) — se arma en un chat nuevo cuando se retome.
+
+### Commits de esta tarea completa (166-168)
+
+`eecef0d` (código + tests de `recapturar-conceptos.ts`), `fe0c4b4` (HANDOFF 166), `86e62cc` (HANDOFF
+167). Este cierre (168) y el ajuste de `10-deuda-declarada.md` van en el commit inmediato siguiente.
+
+---
+
 ## 2026-09-01 (167) — Reproceso aplicado a los 3 lotes de ROKA (Pasos 2-3 cerrados, exacto). Paso 4
 (Capa C) frenado tras mayo: `sin_reconocer` NO bajó — nuevo hallazgo, `concepto_no_catalogado` en
 Módulo 2 para la etiqueta `"ING TRANSF:"`, 671 filas. No es un bug del reproceso.
