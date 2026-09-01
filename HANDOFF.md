@@ -6,6 +6,76 @@
 
 ---
 
+## 2026-09-01 (167) — Reproceso aplicado a los 3 lotes de ROKA (Pasos 2-3 cerrados, exacto). Paso 4
+(Capa C) frenado tras mayo: `sin_reconocer` NO bajó — nuevo hallazgo, `concepto_no_catalogado` en
+Módulo 2 para la etiqueta `"ING TRANSF:"`, 671 filas. No es un bug del reproceso.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (166).
+
+### Pasos 1-3 — backup, dry-run, aplicar, verificación: los tres lotes exactos
+
+Backup fresco `respaldos/piloto_20260901-181826Z.dump` (3.35 MB, SHA-256
+`a8a4cef67345e32e036cb14c4b82c0cd998bae7b0e1abf3259cca3827d40a141`). `--estado` de migraciones: las 35
+aplicadas, nada pendiente. Dry-run sobre los 3 lotes: compuertas 100% limpias
+(`hashNoReproduce=prefijoInv14Falla=filaNumeroDiverge=identificadorEncontrado=0`,
+`totalReleido=totalPersistido` exacto en los tres) — confirma que storage tiene el mismo PDF que validó
+(165), fila por fila por hash.
+
+`--aplicar` sobre los 3 lotes (el tercero, julio, requirió autorización explícita de JP tras ser
+bloqueado por el clasificador de auto-mode en el primer intento — mismo mecanismo, reintentado y
+aplicado limpio):
+
+| Lote | Predicho | `filasActualizadas` real | `no_publicado` antes→después | `prefijo_anclado` antes→después |
+|---|---|---|---|---|
+| mayo `9e568972` | 671 | **671** | 763→92 | 804→**1475** |
+| junio `38a7cf41` | 699 | **699** | 797→98 | 956→**1655** |
+| julio `5d4d2a92` | 714 | **714** | 807→93 | 982→**1696** |
+
+Verificado por consulta directa (no por el output del comando): `prefijo_anclado` subió exactamente lo
+aplicado en cada lote — ninguna fila ya capturada fue tocada. Chequeo de coherencia
+(`concepto_banco is null ⟺ estrategia in ('no_capturado','no_publicado')`) da 0 incoherentes en los
+tres. Conteos totales por lote (1567/1753/1789) intactos.
+
+### Paso 4 — Capa C sobre mayo: `sin_reconocer` se mantuvo en 771/1567 (49%), NO bajó a ~5-6%
+
+`ENV_FILE=.env.piloto pnpm reconocer:lote --aplicar` sobre mayo (`9e568972`): `propuesta=93`,
+`decision_humana=703`, `sin_reconocer=771` — prácticamente el mismo `sin_reconocer` de ANTES del
+reproceso (era 771/1567 también en el dry-run original de (165)). Desglose de `porMotivo`:
+
+- `sin_evidencia_de_concepto: 92` — el residuo genuino (coincide exacto con el `no_publicado` que sigue
+  quedando tras el fix, esperado).
+- **`concepto_no_catalogado: 671`** — exactamente las 671 filas que el reproceso acaba de recuperar.
+
+**Causa, confirmada por consulta directa y por lectura de código, no supuesta:** las 671 filas tienen
+`concepto_banco = "ING TRANSF:"` (verificado, un solo valor, 671 filas exactas). `motor.ts:58` marca
+`concepto_no_catalogado` cuando `reconocerPorTexto` no encuentra la etiqueta en el índice del léxico —
+y `"ING TRANSF:"` tiene **cero** ocurrencias en todo `packages/contabilidad/` (grep confirmado). El fix
+de `macro.ts` (29f9da3) agregó la etiqueta al vocabulario de **extracción** (Módulo 1: separar el
+concepto de la glosa), pero nadie agregó la regla de **clasificación** correspondiente en el léxico de
+Módulo 2 (qué concepto canónico es una transferencia entrante con ese rótulo) — son dos catálogos
+distintos, y el primero no implica el segundo.
+
+**No es un bug de `recapturar-conceptos.ts` ni del reproceso de esta tarea.** El mecanismo hizo
+exactamente lo que tenía que hacer: recuperar el concepto real que el banco publica. Que Capa C todavía
+no sepa clasificar ese concepto es el próximo hueco, en Módulo 2, no en Módulo 1.
+
+**Frenado acá, sin correr junio/julio todavía**: van a mostrar el mismo patrón (mismo `"ING TRANSF:"`,
+mismo hueco de léxico) — correrlos no agrega información nueva y el pedido de JP fue "reportá antes de
+seguir". Decisión pendiente de JP: agregar la entrada al léxico de Módulo 2 (`contador-dominio` +
+`plan-cuentas-multicliente`/el registro de léxico correspondiente) antes de re-correr Capa C sobre los
+3 lotes, o cerrar esta tarea acá (el reproceso de `concepto_banco` es correcto y está aplicado; el
+hueco de clasificación es tarea aparte).
+
+### Qué sigue
+
+1. Decidir con JP: ¿se agrega la regla de léxico para `"ING TRANSF:"` ahora (nueva convocatoria:
+   `contador-dominio`) o se documenta como deuda y se cierra esta tarea?
+2. Si se agrega la regla: re-correr `reconocer:lote --aplicar` sobre los 3 lotes recién ahí.
+3. Si se posterga: esta tarea (reproceso de `concepto_banco`) queda cerrada — lo pendiente pasa a
+   `docs/diseno/10-deuda-declarada.md` como hueco de léxico de Módulo 2 para Macro.
+
+---
+
 ## 2026-09-01 (166) — Mecanismo de reproceso de `concepto_banco` ampliado (Paso 1 del plan de reproceso
 cerrado): `recapturar-conceptos.ts` ahora cubre `no_publicado`, no solo `no_capturado`. Commiteado y
 verificado. **Sin aplicar todavía sobre ROKA** — paso 2 del plan, pendiente de confirmación.
