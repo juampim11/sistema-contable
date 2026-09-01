@@ -883,6 +883,95 @@ describe('§12 e INV-14 — el concepto sale de una lista CERRADA y anclada', ()
 });
 
 // -----------------------------------------------------------------------------
+/**
+ * 🔴 Regresión medida sobre ROKA-2026 (mayo/junio/julio, ingeridos en el piloto): un prefijo NUEVO,
+ * ausente de la referencia de noviembre 2025 que valida `pnpm probar`, estable en los tres meses (misma
+ * variante, mismo hash de texto) y responsable de ~700 movimientos por mes sin concepto. El banco imprime
+ * `ING TRANSF:<token>-<CUIT>`, mismo patrón que `TRANSF:`/`CREDIN:`: se autodelimita por el `:` y no
+ * necesita el espacio de `anclaDePrefijo`.
+ *
+ * Usa `documento({ movimientosExtraBancaria: [...] })` — una llamada aparte, no el `leido` compartido —
+ * así que no mueve un solo índice de los tests de arriba.
+ */
+describe('regresión — `ING TRANSF:` (ROKA-2026), sin pisar el resto del vocabulario', () => {
+  // CUIT íntegramente inventado, con forma de CUIT (11 dígitos) pero sin correspondencia real.
+  const CUIT_SINTETICO = '30712345671';
+
+  const leidoConExtras = leerMacro(
+    documento({
+      movimientosExtraBancaria: [
+        // Caso legítimo: el prefijo nuevo, con el tercero después del `:`.
+        {
+          fecha: '03/11/25',
+          glosa: [{ texto: `ING TRANSF:NOMBRESINTETICO-${CUIT_SINTETICO}`, x: X.glosa }],
+          credito: '50,00',
+          saldo: '1.550,00',
+        },
+        // El hueco viejo declarado (§12, PAGO<########>-LIQ COMER): sigue sin capturar, sin regresión.
+        {
+          fecha: '03/11/25',
+          glosa: [{ texto: 'PAGO12345678-LIQ COMER PROCESADORASINTETICA', x: X.glosa }],
+          debito: '10,00',
+          saldo: '1.540,00',
+        },
+        // Adversarial: `TRANSF:` aparece, pero NO al inicio de la glosa normalizada.
+        {
+          fecha: '03/11/25',
+          glosa: [{ texto: 'PAGO RECIBIDO POR TRANSF: DESTINO VARIOS', x: X.glosa }],
+          debito: '5,00',
+          saldo: '1.535,00',
+        },
+        // Adversarial: `ING` es el inicio de otra palabra (`INGRESO`), no el prefijo `ING ` seguido de
+        // `TRANSF:`. El ancla es un prefijo exacto, nunca "empieza con ING" + "contiene TRANSF".
+        {
+          fecha: '03/11/25',
+          glosa: [{ texto: 'INGRESO TRANSFERENCIA DE FONDOS SINTETICA', x: X.glosa }],
+          credito: '5,00',
+          saldo: '1.540,00',
+        },
+      ],
+    }),
+  );
+  const [, , ctaBancariaConExtras] = leidoConExtras.cuentas;
+  const ingTransf = () => ctaBancariaConExtras?.movimientos[6];
+  const huecoViejo = () => ctaBancariaConExtras?.movimientos[7];
+  const transfEnElMedio = () => ctaBancariaConExtras?.movimientos[8];
+  const ingComoOtraPalabra = () => ctaBancariaConExtras?.movimientos[9];
+
+  it('`ING TRANSF:` captura el prefijo y deja el tercero fuera del concepto', () => {
+    expect(ingTransf()?.descripcion).toBe(`ING TRANSF:NOMBRESINTETICO-${CUIT_SINTETICO}`);
+    expect(ingTransf()?.conceptoBanco).toBe('ING TRANSF:');
+    expect(ingTransf()?.conceptoBancoEstrategia).toBe('prefijo_anclado');
+    expect(ingTransf()?.conceptoCompleto).toBe(true);
+  });
+
+  it('el hueco declarado (`PAGO<########>-LIQ COMER`) sigue sin concepto: agregar `ING TRANSF:` no lo tapa', () => {
+    expect(huecoViejo()?.descripcion).toBe('PAGO12345678-LIQ COMER PROCESADORASINTETICA');
+    expect(huecoViejo()?.conceptoBanco).toBeUndefined();
+    expect(huecoViejo()?.conceptoBancoEstrategia).toBeUndefined();
+  });
+
+  it('`TRANSF:` en medio de la glosa (no al inicio) no captura concepto: el ancla sigue siendo prefijo, nunca `contains`', () => {
+    expect(transfEnElMedio()?.descripcion).toBe('PAGO RECIBIDO POR TRANSF: DESTINO VARIOS');
+    expect(transfEnElMedio()?.conceptoBanco).toBeUndefined();
+  });
+
+  it('`ING` como inicio de otra palabra (`INGRESO`) no matchea `ING TRANSF:` por accidente', () => {
+    expect(ingComoOtraPalabra()?.descripcion).toBe('INGRESO TRANSFERENCIA DE FONDOS SINTETICA');
+    expect(ingComoOtraPalabra()?.conceptoBanco).toBeUndefined();
+  });
+
+  it('el vocabulario de `leido` (documento por defecto) sigue intacto: `TPUSH`, `CREDIN:` y `TRANSF:` no cambian', () => {
+    // Mismos índices que en el describe de §12: la lista nueva no reordenó ni pisó ninguna etiqueta
+    // existente (el desempate de `VOCABULARIO` es por longitud de ancla, y `ING TRANSF:` no la comparte
+    // con ninguna otra).
+    expect(ctaBancaria?.movimientos[2]?.conceptoBanco).toBe('TPUSH');
+    expect(ctaBancaria?.movimientos[4]?.conceptoBanco).toBe('CREDIN:');
+    expect(ctaBancaria?.movimientos[5]?.conceptoBanco).toBe('TRANSF:');
+  });
+});
+
+// -----------------------------------------------------------------------------
 describe('§4 y §9 — el signo lo dice la columna, y el saldo solo se lee de un movimiento', () => {
   it('el débito sale negativo y el crédito positivo, sin signo en el token', () => {
     const b1 = ctaBancaria?.movimientos[0];

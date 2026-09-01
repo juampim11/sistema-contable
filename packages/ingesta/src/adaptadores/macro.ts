@@ -497,6 +497,13 @@ const PREFIJOS_CON_CONTRAPARTE: readonly string[] = [
   'TRANSF',
   'TRANSF:',
   'CREDIN:',
+  /**
+   * 🔴 Medido sobre ROKA-2026 (mayo/junio/julio, no en la referencia de noviembre 2025): una variante
+   * NUEVA, estable en los tres meses, ausente del archivo que validó el vocabulario original. Mismo
+   * patrón que `TRANSF:`/`CREDIN:` — termina en `:` y se autodelimita, el CUIT/nombre del tercero va
+   * después y no entra en el concepto.
+   */
+  'ING TRANSF:',
   'TRF MO CCDO DIST T -',
   'CCERR',
   'TEF DATANET PR',

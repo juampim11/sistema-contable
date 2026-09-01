@@ -6,6 +6,222 @@
 
 ---
 
+## 2026-09-01 (165) — ROKA-2026 (Capa D): 3 meses reales ingeridos y verificados (Paso 2 cerrado),
+Paso 3 (vigencia) sin corrección necesaria, Paso 4 (Capa C dry-run) reveló `sin_reconocer` 45-49% —
+investigado a fondo, causa real: **un prefijo NUEVO de Macro (`ING TRANSF:`) ausente del fixture de
+referencia**, no una falla del léxico. Fix aplicado (`backend-dev`), gate completo verde
+(115/2138/7todo), commiteado. **Pendiente, declarado en `10-deuda-declarada.md`**: el fix no
+retroactivo — hace falta un reproceso nuevo de `concepto_banco` (análogo a
+`reclasificar-contraparte.ts`) antes de que Capa C vea el beneficio real sobre estos 3 lotes.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (164).
+
+### 1. Paso 2 cerrado — julio ingerido y verificado
+
+`pnpm ingesta` sobre `2026-07 CTA CTE- ESP Y DOLAR.pdf` (backup fresco `piloto_20260901-141342Z.dump`
+antes): lote `5d4d2a92-...`, `estado: "procesado"`, 1789 filas (1779 Cta Cte + 10 Cta Cte Especial +
+0 USD), verificado por consulta directa — coincide exacto. `lineas_no_interpretadas=12`, mismo
+patrón de página final informativa que junio (14) — no investigado aparte, mismo diagnóstico.
+
+Resumen de los 3 lotes: mayo `9e568972-...` (1567), junio `38a7cf41-...` (1753, residuo de 14
+líneas investigado en la entrada anterior — página 59 final, prosa legal, `cuadra` en ambas
+cuentas, deuda documentada), julio `5d4d2a92-...` (1789). El lote `ae762fda` (nov-2025) no se tocó.
+
+### 2. Paso 3 — vigencia de `cuenta_bancaria_identificador`: sin corrección necesaria
+
+Verificado por consulta directa: siguen existiendo exactamente 3 filas para ROKA (las mismas de la
+corrección de (156)/§4, `created_at` de agosto), `vigente_desde='2025-10-20'` intacto en las 3. Los
+3 lotes nuevos NO crearon filas nuevas — la resolución de cuenta por CBU reutiliza la fila ya
+existente cuando la cuenta ya está identificada. El defecto sistémico solo aparece al CREAR una
+fila nueva; estas 3 cuentas ya estaban identificadas desde nov-2025. Nada que corregir.
+
+### 3. Paso 4 — Capa C dry-run: `contrapartidaSinCandidato` casi cero, pero `sin_reconocer` 45-49%
+
+| Mes | Total | `sin_reconocer` | `contrapartidaSinCandidato` |
+|---|---|---|---|
+| Mayo | 1567 | 771 (49%) | 4 |
+| Junio | 1753 | 804 (46%) | 3 |
+| Julio | 1789 | 825 (46%) | 1 |
+
+`contrapartidaSinCandidato` bajó a casi cero (vs. los 571 de nov-2025 antes de la reclasificación) —
+esperable, estos 3 meses se ingirieron con el pipeline ya corregido post-`cb084a0`. Pero
+`sin_reconocer` disparó una investigación nueva (JP pidió evidencia real, no solo el número).
+
+### 4. Investigación de `sin_reconocer` — causa real medida, no la esperada
+
+`sin_evidencia_de_concepto` (`motor.ts:49`) dispara cuando `conceptoBanco === undefined` — el
+adaptador de Macro corta `conceptoBanco` con una **lista cerrada de prefijos anclados**, construida
+y medida contra el archivo de referencia de noviembre 2025 (`macro.ts:451-486`). Medido, forma
+únicamente (nunca contenido real, `formaParaLog` + hash anónimo del prefijo):
+
+- Nov-2025 (referencia): 76/1346 sin concepto (5.6%) — el 100% es el hueco YA declarado
+  (`PAGO<N dígitos>-LIQ COMER`, INV-13 enmascara los dígitos, imposible anclar por prefijo estático).
+- Mayo/junio/julio 2026 (conteo REAL, no muestra): 763/797/807 sin concepto (45-49%). De eso, 77/84/84
+  siguen siendo el hueco viejo (intacto). El resto — **671/699/714, el 88-90% del hueco** — es UNA
+  sola variante nueva (mismo hash en los tres meses), ausente en la referencia. Estable en julio
+  también: no es un caso puntual de un mes, es un cambio permanente del formato de Macro desde 2026.
+- El texto literal del prefijo (terminología del banco, no dato de un tercero — mismo criterio que
+  `TPUSH`/`TRANSF:`/`CREDIN:` ya committeados): **`"ING TRANSF"`**, seguido de `:` y el tercero.
+
+### 5. Fix — convocado `backend-dev`, verificado por mí antes de commitear
+
+`packages/ingesta/src/adaptadores/macro.ts`: agregado `'ING TRANSF:'` a `PREFIJOS_CON_CONTRAPARTE`.
+5 tests nuevos en `macro.test.ts` (caso legítimo con CUIT sintético, el hueco viejo sin regresión, 2
+adversariales de anclaje estricto — nunca `contains` —, no-regresión del resto del vocabulario). Sin
+tocar `anclaDePrefijo` ni el criterio de desempate. Verificado independientemente (no solo lo que
+reportó el agente): `macro.test.ts` 83/83, `packages/ingesta` completo 911/911 (corrida propia del
+agente), y **gate completo `pnpm verificar` en foreground, 115 archivos / 2138 tests / 7 todo, exit
+0** — dos intentos previos se cortaron por contención de recursos (procesos node huérfanos de un
+`pnpm verificar` anterior que el timeout del Bash tool no mató del todo; limpiados con
+`Stop-Process`), sin relación con el cambio de código, confirmado corriendo los tests de OCR
+afectados en aislamiento (2/2 verdes) antes del tercer intento, que sí cerró completo.
+
+**Reconteo post-fix, medido localmente (nunca vía `reconocer:lote` contra el piloto — ver punto 6)**:
+mayo 92/1567 (5.9%), junio 98/1753 (5.6%), julio 93/1789 (5.2%) — mismo rango que la referencia. El
+residuo que queda coincide EXACTO con "hueco viejo + otro residual heterogéneo ya medido" en los
+tres meses (92=77+15, 98=84+14, 93=84+9) — nada nuevo sin explicar.
+
+### 6. 🔴 El fix no es retroactivo — declarado en `10-deuda-declarada.md`, no resuelto
+
+`reconocer:lote` lee `concepto_banco` de la columna YA PERSISTIDA (`leerEvidenciaDeMovimientos`,
+`packages/data/src/contabilidad/lecturas.ts:313`), escrita una sola vez al ingerir. Los 3 lotes de
+ROKA-2026 siguen con el `concepto_banco` viejo — un dry-run de `reconocer:lote` contra el piloto hoy
+daría los MISMOS números de antes del fix. Hace falta un reproceso nuevo (mismo patrón que
+`reclasificar-contraparte.ts`, pero para `concepto_banco`) — **no construido, por instrucción
+explícita de JP**, tarea nueva con su propia convocatoria.
+
+**Evaluado y descartado: re-ingerir desde cero (borrar + reingerir) NO es viable.** De las 5 tablas
+que escribe la ingesta, 4 son append-only por diseño deliberado, sin grant de DELETE para
+`app_request` — confirmado grant por grant contra las migraciones reales: `lote_ingesta` (el ancla)
+solo `select/insert/update`, `movimiento_origen_crudo`/`anexo_extracto`/
+`movimiento_contraparte_identificador` solo `select/insert`. Ni siquiera se puede borrar el
+`lote_ingesta` mismo. Mismo invariante ya confirmado en (160)/(161) para
+`movimiento_contraparte_identificador` — acá se extiende a las otras tres tablas. Documentado en
+`10-deuda-declarada.md` §C.
+
+Confirmado por consulta directa que nada más depende hoy de los 3 lotes (`reconocimiento_movimiento
+=0`, `documento_ingerido=0`, `cierre_cliente_periodo=0` en todo ROKA) — el reproceso nuevo, cuando se
+escriba, no tiene que lidiar con datos derivados existentes.
+
+### 7. Commit
+
+`packages/ingesta/src/adaptadores/macro.ts` + `packages/ingesta/tests/macro.test.ts`, gate completo
+verde, JP aprobó explícitamente ("Aprobado el fix del vocabulario — la evidencia es sólida").
+
+### 8. Qué sigue
+
+1. Decidir con JP si se escribe el reproceso de `concepto_banco` ahora (nueva convocatoria: `dba-data`
+   + `security-engineer` + `seguridad-datos-financieros`, toca escritura N2/N2-R real) o se posterga.
+2. Con el reproceso corrido: recién ahí, `conciliar:lote` dry-run sobre los 3 meses tiene sentido
+   correrlo — antes daría el mismo `sin_reconocer` alto de siempre.
+3. `cierre_cliente_periodo` para mayo/junio/julio de ROKA: sigue sin crear (Paso 4 segunda mitad,
+   bloqueado desde antes de esta entrada, sin cambios).
+4. FCI-Macro: adaptador sin escribir, fuera de esta tarea (confirmado, sigue así).
+
+---
+
+## 2026-09-01 (164) — 🔴 Corrección de alcance: `ae762fda` (nov-2025) era la prueba técnica del
+adaptador, **no el material real de Capa D**. Ingesta real de ROKA-2026 en curso: mayo y junio
+ingeridos y verificados, julio en curso. Hallazgo de residuo en junio investigado y cerrado como
+deuda documentada, sin riesgo de pérdida de dato.
+
+**Herramienta:** Claude Code, sesión interactiva (chat nuevo, re-entrada con contexto completo de
+158-163 + `27-roadmap-capa-d.md`). JP corrigió: el material real para el balance son los 3 PDF de
+banco de 2026 (may/jun/jul) que Laura mandó junto con Bracci, más el FCI — no el lote de noviembre.
+
+### Paso 1 — Inventario read-only
+
+Confirmado: `lote_ingesta` de ROKA en el piloto tenía **un solo lote** (el de nov-2025,
+`ae762fda`) — ningún PDF de 2026 ni FCI ingerido todavía. `privado/piloto_capa_d/ROKA/` tiene los
+3 PDF de banco 2026 (nombres exactos: `2026-05/06/07 CTA CTE- ESP Y DOLAR.pdf`, 52/59/60 páginas,
+mismo generador Adobe LiveCycle que el de nov-2025, texto real no escaneado) + duplicados en
+`.xls`/`.xlsx` en `Bco Macro cta cte/` (descartados por decisión previa, `05-laura-negocio-y-
+roadmap.md`) + 3 PDF de FCI + 1 xlsx extra de FCI julio. **Sin adaptador FCI-Macro todavía**
+(`fci-galicia/` y `fci-santander/` existen, `fci-macro` no) — fuera de esta tarea, por instrucción
+explícita de JP.
+
+### Paso 2 — Ingesta real, uno por uno, con frenado real cuando correspondió
+
+**Mayo 2026** (`pnpm ingesta`, backup fresco `piloto_20260901-135944Z.dump` antes): `estado:
+"procesado"`, lote `9e568972-...`, 1567 filas (1556 Cta Cte + 11 Cta Cte Especial + 0 USD),
+`lineasNoInterpretadas=0`. Verificado por consulta directa contra `movimiento_bancario_crudo`:
+1567 coincide exacto. Mismas 3 `cuenta_bancaria_id` que nov-2025 (`94f817b3`/`a61bda31`/`6d4a3c4d`)
+— confirma que son las mismas cuentas, no altas nuevas.
+
+**Junio 2026** (backup fresco `piloto_20260901-140139Z.dump` antes): `estado: "procesado"`, lote
+`38a7cf41-...`, 1753 filas (1745 + 8 + 0 USD). Verificado por consulta directa: coincide exacto.
+**Frenado ahí**: `lineasNoInterpretadas=14` (mayo dio 0) — señal nueva, no vista antes contra este
+cliente.
+
+### Investigación del residuo de junio — solo forma, nunca contenido real
+
+Corrida `adaptadorMacro.leer()` (la misma función que usa `ingestar.ts`) contra el fixture de
+referencia (`privado/extractos/.../Macro/11-2025 cta cte especial.pdf`, el que valida `pnpm
+probar`), mayo y junio, en un script temporal (no commiteado, borrado después). Resultado:
+
+- Las 14 líneas son **homogéneas**: mismo `codigo: 'linea_fuera_de_zona'`, índices consecutivos
+  (3717-3730), **todas en la página 59 — la última página del documento** (59 páginas en total).
+- La forma (`formaParaLog`, dígitos→`#`, mayúsculas→`A`) es de **prosa con importes y porcentajes
+  incrustados** (`"Aaaaa aa aaaaaaa aaa aaa. ... $#####. ..."`), no la geometría de una fila de
+  movimiento — nunca se clasificó como columna de importe.
+- **Hipótesis USD descartada**: la cuenta USD dio **0 movimientos en los tres documentos** (nov-
+  2025, mayo, junio) — no hay variación ahí.
+- **La diferencia real**: nov-2025 (45 páginas) y mayo (52 páginas) NO tienen esta página final.
+  Junio trae una página 59 adicional con un párrafo informativo/legal que los otros dos documentos
+  no traen — un agregado del banco a partir de esa emisión, no una falla de columnas.
+- Ambas cuentas con movimiento verificaron `cuadra` en junio (ya lo mostraba el log de ingesta) —
+  sin indicio de pérdida de dato. `EST_LINEA_NO_INTERPRETADA` es severidad `observación` desde la
+  contingencia global del 2026-08-11 (`10-deuda-declarada.md` §2.1), documentada, no un bug nuevo.
+
+**Decisión (JP + evidencia): (a) — deuda documentada, sin bloquear.** El formato real de Macro es
+más variado de lo que midió el fixture de nov-2025 (una página de contenido informativo que a
+veces se agrega al final). No amerita tocar el adaptador antes de seguir — se sigue con julio.
+
+### Julio 2026 — [continúa en la próxima entrada / mismo bloque, según corresponda al cerrar la sesión]
+
+### Sin commit todavía
+
+Nada commiteado — solo escritura real sobre el piloto (2 lotes nuevos de ROKA), sin cambio de
+código.
+
+---
+
+## 2026-09-01 (163) — Los 7 lotes adicionales de (162) §6: **los 7 dan `ya_reclasificado`, diff
+vacío**. Hallazgo cerrado, sin escribir nada.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (162) — dry-run
+(`ENV_FILE=.env.piloto pnpm reclasificar:contraparte`, sin `--aplicar`) sobre los 7 lotes que
+`detectar:lotes-desactualizados` había marcado fuera del alcance de ROKA.
+
+| Cliente | Lote | Banco | Resultado |
+|---|---|---|---|
+| (Bancor, `13e5316c-...`) | `3aa66e17-...` | bancor | `ya_reclasificado` |
+| (Nación, `26e90bbb-...`) | `e50a9b4a-...` | nacion | `ya_reclasificado` |
+| (ICBC, `b50560ae-...`) | `d6dcf4c5-...` | icbc | `ya_reclasificado` |
+| Bracci (`f84d9ecc-...`) | `98f87beb-...` | galicia | `ya_reclasificado` |
+| Bracci (`f84d9ecc-...`) | `2cf77c67-...` | galicia | `ya_reclasificado` |
+| Bracci (`f84d9ecc-...`) | `ee11d2e7-...` | galicia | `ya_reclasificado` |
+| Bracci (`f84d9ecc-...`) | `a5c7ccaf-...` | galicia | `ya_reclasificado` |
+
+Confirma la inferencia de (162) §6: los 7 fueron ingeridos DESPUÉS del fix de `RE_CUIT` (`cb084a0`,
+2026-08-23), así que el cálculo puro no encuentra ningún candidato nuevo — `aEscribir=[]` en los
+siete. Sin excepciones, nada que frenar. `avisarSiLasLecturasSonAnomalas` disparó su `WARN` de
+volumen (5→11 lecturas/hora) en 5 de las 7 corridas — esperable por la cantidad de dry-runs
+seguidos de la sesión, no bloqueante, no escribe nada.
+
+Con esto, el universo completo de `detectar:lotes-desactualizados` (11 lotes) queda cerrado: 1 con
+diff real (ROKA, aplicado en (162)), 10 con diff vacío confirmado por consulta directa. El criterio
+de "cualquier versión distinta" del mecanismo general sigue siendo el correcto — no hace falta
+acotarlo a una ventana de fechas, la próxima vez que `VERSION_DEL_EXTRACTOR` suba el mismo dry-run
+sin `--aplicar` va a decir en minutos qué lotes tienen diff real y cuáles no, sin investigación
+manual.
+
+### Sin commit
+
+Nada que commitear — 7 dry-runs de solo lectura, ninguna fila escrita en el piloto.
+
+---
+
 ## 2026-09-01 (162) — 🔴 **`0035` APLICADA AL PILOTO** + **`--aplicar` real sobre ROKA**:
 `contrapartidaSinCandidato` bajó de 571 a 2. Bracci×2 y El Prat confirmados `ya_reclasificado` (diff
 vacío). Y un hallazgo nuevo, sin tocar: `detectar:lotes-desactualizados` da **11 lotes**, no los 4
