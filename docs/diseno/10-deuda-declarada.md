@@ -326,36 +326,27 @@ nueva regla de `reglas-de-codigo.test.ts` o equivalente, antes de eso |
     `GIT_COMMON_DIR` del `env` en los tres call sites (`repoSintetico()` ×2 y `archivosTrackeados()` ×1),
     y agregar un caso de prueba que reproduzca el escenario del hook (`GIT_INDEX_FILE` seteado) para que
     la regresión, si vuelve, se detecte sin depender de commitear desde un worktree real.
-- ✅🟡 **CERRADO el hueco de Módulo 1 (extracción); ABIERTO un hueco NUEVO de Módulo 2 (clasificación) —
-  son catálogos distintos, y completar uno no completa el otro.** Historia completa: el fix del
-  vocabulario de Macro (2026-09-01, `'ING TRANSF:'`, `packages/ingesta/src/adaptadores/macro.ts`,
+- ✅ **CERRADO — Módulo 1 (extracción) y Módulo 2 (clasificación), los dos.** Historia completa: el fix
+  del vocabulario de Macro (`'ING TRANSF:'`, `packages/ingesta/src/adaptadores/macro.ts`,
   `PREFIJOS_CON_CONTRAPARTE`) corregía el CÓDIGO de extracción, no lo ya ingerido — los 3 lotes reales
   de ROKA-2026 (mayo `9e568972`/junio `38a7cf41`/julio `5d4d2a92`, HANDOFF 164) seguían con
-  `concepto_banco` calculado con el vocabulario viejo, 671/699/714 movimientos por mes (~45-49%) sin
-  `conceptoBanco`, invisibles para Capa C. **Se construyó el reproceso** (HANDOFF 166: se amplió
-  `recapturar-conceptos.ts`, que ya cubría lotes pre-`0007`, para tratar `no_publicado` como pendiente
+  `concepto_banco` calculado con el vocabulario viejo, 671/699/714 movimientos por mes sin
+  `conceptoBanco`, invisibles para Capa C. **Reproceso de extracción** (HANDOFF 166-167): se amplió
+  `recapturar-conceptos.ts` (que ya cubría lotes pre-`0007`) para tratar `no_publicado` como pendiente
   también — convocatoria real de `dba-data` + `security-engineer` + `seguridad-datos-financieros`,
-  hallazgo bloqueante de `security-engineer` verificado por mutación) **y se aplicó sobre los 3 lotes**
-  (HANDOFF 167): `recapturar:conceptos --aplicar` dio exactamente 671/699/714 filas actualizadas —
-  predicho y confirmado por consulta directa, ninguna fila ya capturada tocada. **Módulo 1 (extracción
-  del concepto desde la glosa) está resuelto y aplicado.**
-  🟡 **Lo que quedó al descubierto al re-correr Capa C**: `reconocer:lote --aplicar` sobre mayo
-  mantuvo `sin_reconocer` en 771/1567 (49%, sin bajar) — pero por una causa DISTINTA a la original.
-  `porMotivo` desglosa `sin_evidencia_de_concepto: 92` (el residuo genuino, esperado, mismo rango que
-  la referencia) + **`concepto_no_catalogado: 671`** (exactamente las filas que el reproceso acaba de
-  recuperar). Confirmado por consulta directa: las 671 filas tienen `concepto_banco = "ING TRANSF:"`
-  — un solo valor. Confirmado por grep: esa etiqueta tiene **cero** ocurrencias en todo
-  `packages/contabilidad/`. **El léxico de CLASIFICACIÓN de Módulo 2 (`packages/contabilidad`, qué
-  concepto canónico es una transferencia entrante con ese rótulo) nunca tuvo una regla para
-  `"ING TRANSF:"`** — el vocabulario de EXTRACCIÓN de Módulo 1 (`macro.ts`, separar el concepto de la
-  glosa) y el léxico de CLASIFICACIÓN de Módulo 2 son dos catálogos distintos con dueños distintos;
-  agregar la etiqueta al primero no agrega la regla al segundo. **671 (mayo) + 699 (junio) + 714
-  (julio) = 2084 movimientos de ROKA quedan con concepto IDENTIFICADO pero SIN CLASIFICAR — visible y
-  medido en `porMotivo.concepto_no_catalogado`, no perdido.** Junio y julio no se corrieron contra
-  Capa C todavía (decisión de JP, HANDOFF 167: van a mostrar el mismo patrón, correrlos no agrega
-  información). **Tarea cerrada acá por decisión explícita de JP** (2026-09-01): el reproceso de
-  `concepto_banco` es correcto y queda aplicado; el léxico de `"ING TRANSF:"` en Módulo 2 es tarea
-  APARTE, nueva, con su propia convocatoria de `contador-dominio`, a armar en otra sesión.
+  hallazgo bloqueante de `security-engineer` verificado por mutación — y se aplicó sobre los 3 lotes:
+  671/699/714 filas actualizadas exacto, verificado por consulta directa.
+  Al re-correr Capa C apareció un SEGUNDO hueco, distinto: las 671+699+714=2084 filas tenían concepto
+  IDENTIFICADO pero caían en `concepto_no_catalogado` — el léxico de CLASIFICACIÓN de Módulo 2
+  (`packages/contabilidad`) nunca tuvo una regla para `"ING TRANSF:"`. **Cerrado en (169)**: medí con
+  `resolverContraparte()` sobre los 2084 movimientos reales (100% capturado en Módulo 1, 0% match
+  contra el padrón de socios, homogéneo), convoqué a `contador-dominio` (Agent real) que confirmó
+  reusar `macro.transferencia_recibida_de_terceros` (mismo hecho económico que `TPUSH`/`TRANSF`,
+  `queDecide: 'distinguir_tercero_de_socio'`, D-31 sin excepción pese al 0% de socios en la muestra —
+  protege el mes que sí traiga uno). Implementado con mutación verificada, revisado por
+  `code-reviewer`, commit `1cabfe0`. **Capa C re-corrida sobre los 3 lotes: 671/699/714 (2084 total)
+  pasaron 100% a `distinguir_tercero_de_socio`, verificado por consulta directa en los tres, sin
+  discrepancias entre lotes.** `concepto_no_catalogado` para `"ING TRANSF:"` queda en 0 en los tres.
 - El resto de las secciones de este documento.
 
 ---

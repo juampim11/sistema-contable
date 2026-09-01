@@ -6,6 +6,88 @@
 
 ---
 
+## 2026-09-01 (169) — 🔒 CIERRE de la tarea de léxico de Módulo 2 para `"ING TRANSF:"`. Los 2084
+movimientos de ROKA (671/699/714) pasan de `concepto_no_catalogado` a `distinguir_tercero_de_socio`,
+100% verificado por consulta directa, sin excepciones ni discrepancias en ninguno de los 3 lotes.
+
+**Herramienta:** Claude Code, sesión interactiva. Cierre directo de (168), en chat nuevo con MODO PLAN.
+
+### 1. Medición previa a cualquier decisión
+
+Corrí `resolverContraparte()` (la misma función pura de `resolver-contrapartida.ts`) directo sobre los
+2084 movimientos `concepto_banco = 'ING TRANSF:'`, contra el padrón real de ROKA (4 personas),
+`padronDeclaradoCompleto=false`. Resultado: 100% `contraparte_captura='capturado'` (Módulo 1), **0%**
+match contra el padrón — `{ sin_match_padron_incompleto: 2084 }`, cero `es_socio`/`multiples_socios`/
+`socio_fuera_de_vigencia`. Homogéneo, no un split marginal. Nunca imprimí denominación ni `socioId`.
+
+### 2. Convocatoria — `contador-dominio`, Agent real
+
+Confirmó: mismo hecho económico que `TPUSH`/`TRANSF` (`transferencia_recibida_de_terceros`, `tipo:
+'cobranza_de_cliente'`, `ladoEsperado: 'haber'`); reusar la entrada existente es correcto ("se reusan,
+no se duplican"); el 0% de socios en la muestra NO es motivo para relajar D-31 —protege el mes que sí
+traiga uno, no describe el pasado.
+
+### 3. Implementación — `packages/contabilidad/src/lexico/macro.ts`
+
+`'ING TRANSF:'` sumado como TERCER literal a `macro.transferencia_recibida_de_terceros` (junto a
+`TPUSH`/`TRANSF`), con su evidencia en `procedencia.porLiteral` (2084, medido). Nueva subsección
+`07-formato-macro.md` §12.3, citando el literal como exige `PROP-6`. 4 tests nuevos en
+`corpus-macro.test.ts`, deliberadamente separados de `TABLA_ESPERADA` (tabla congelada del corpus de
+noviembre 2025, donde el literal está ausente por diseño). `cobertura-del-corpus.test.ts` actualizado
+(1347→3431 Macro, 1831→3915 total) con comentario explicando la composición (corpus original + ROKA).
+
+**Mutación verificada de verdad**: moví el literal a una entrada nueva con concepto equivocado
+(`acreditacion_cheque_remesas`, auto-resuelve), confirmé que los dos tests clave revientan, restauré.
+
+**`code-reviewer` convocado sobre el diff**: sin bugs bloqueantes. 2 correcciones triviales aplicadas
+(conteo del header de `macro.ts` desactualizado — 43→44 literales; artefacto de doble backtick en la
+cita de `07-formato-macro.md`, satisfacía `PROP-6` mecánicamente pero rendía mal en Markdown) y 1 test
+redundante removido. Sugirió separar `cobertura-del-corpus.test.ts` en dos funciones de agregación
+(corpus congelado vs. evidencia sumada después) para no tener que retocar la reconciliación original
+con cada cliente/banco nuevo — **no bloqueante, no implementado** (toca el tipo de `procedencia` de
+los 3 bancos, fuera del alcance aprobado). Queda como deuda de diseño para la próxima vez que esto se
+repita.
+
+`pnpm typecheck` limpio, `npx vitest run packages/contabilidad` → 390/390, `pnpm barrido` limpio.
+**Commit `1cabfe0`.**
+
+### 4. Capa C re-corrida sobre los 3 lotes — resultado real, verificado lote por lote
+
+Backup fresco antes: `respaldos/piloto_20260901-213854Z.dump` (3.42 MB), SHA-256
+`8595870fdb98b7f0e3cc09d86292e972a4ac0c0e219de1b4ceadbaf2b09290b7`.
+
+| Lote | `concepto_no_catalogado` antes | Verificado por consulta directa: `ING TRANSF:` → `distinguir_tercero_de_socio` |
+|---|---|---|
+| mayo `9e568972` | 671 | **671/671 (100%)** |
+| junio `38a7cf41` | 699 | **699/699 (100%)** |
+| julio `5d4d2a92` | 714 | **714/714 (100%)** |
+
+Dry-run antes de cada `--aplicar`, comparado contra el número esperado, coincidencia exacta en los
+tres antes de aplicar. `porMotivo` de los tres, post-aplicar, ya NO tiene `concepto_no_catalogado` —
+solo `sin_evidencia_de_concepto` (el residuo genuino: 92/98/93, mismo rango que la referencia) y
+`concepto_sin_tipo_asignado` (8/7/18, sin relación con este cambio). Ningún movimiento de `ING
+TRANSF:` quedó como `propuesta` (auto-resuelto) — los tres dieron 100% `decision_humana` con
+`que_decide='distinguir_tercero_de_socio'`, exactamente lo esperado con `padronDeclaradoCompleto`
+nunca puesto en `true`.
+
+**Sin la discrepancia que JP pidió vigilar explícitamente** (que uno de los tres lotes se comportara
+distinto a los otros dos, como pasó con las 14 líneas de junio en la tarea de ingesta): los tres
+dieron el mismo patrón, mismos porcentajes de estructura, sin ningún residuo inesperado en ninguno.
+
+Mayo: `supersedidos: 1567` (reemplaza la cadena de un `reconocer:lote` anterior a este léxico,
+corrido en una sesión previa). Junio y julio: `creados` sin precedente (primera corrida de Capa C
+sobre esos dos lotes). Los tres con `motor_digest = e59180d55e1ce847` (mismo léxico, los tres).
+
+### 5. Qué queda, explícitamente fuera de esta tarea
+
+- `cierre_cliente_periodo`/`conciliar:lote` sobre ROKA: siguen sin arrancar (restricción explícita).
+- Bracci y cualquier otro cliente: no tocados.
+- La deuda de diseño de `cobertura-del-corpus.test.ts` (punto 3 arriba).
+- `sin_evidencia_de_concepto` (92-93 por lote) y `concepto_sin_tipo_asignado` (7-18 por lote): residuos
+  preexistentes, sin relación con esta tarea, no investigados acá.
+
+---
+
 ## 2026-09-01 (168) — 🔒 CIERRE de la tarea de reproceso de `concepto_banco` (decisión explícita de
 JP). El léxico de Módulo 2 para `"ING TRANSF:"` queda como tarea NUEVA y APARTE, sin arrancar.
 
