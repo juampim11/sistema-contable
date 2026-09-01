@@ -4,9 +4,23 @@
  * `descripcion`/`fila_hash`. Plan `adaptive-herding-pillow`, primer consumidor real de
  * `lote_ingesta.adaptador_version` para "reproceso dirigido" (`0004_ingesta.sql`).
  *
- * Motivo: la migración `0007_concepto_banco.sql` agregó esas columnas DESPUÉS de que algunos lotes ya
- * estuvieran persistidos — la propia `ALTER TABLE` los backfilleó con `NULL`/`'no_capturado'`. Sin esto,
- * un lote viejo se queda sin el insumo de las reglas de clasificación para siempre.
+ * Motivo original: la migración `0007_concepto_banco.sql` agregó esas columnas DESPUÉS de que algunos
+ * lotes ya estuvieran persistidos — la propia `ALTER TABLE` los backfilleó con `NULL`/`'no_capturado'`.
+ * Sin esto, un lote viejo se queda sin el insumo de las reglas de clasificación para siempre.
+ *
+ * ## Segundo motivo, sumado 2026-09-01 (hallazgo ROKA): vocabulario incompleto, no solo columna vieja
+ *
+ * Un lote POSTERIOR a `0007` también puede quedar con `concepto_banco` ausente: el adaptador corrió con
+ * el vocabulario que tenía en ese momento, no reconoció un prefijo, y persistió la fila como
+ * `concepto_banco_estrategia = 'no_publicado'` — un hecho correcto en su momento, que deja de serlo
+ * cuando el vocabulario del adaptador se corrige (caso real: `macro.ts` agregó el prefijo `'ING
+ * TRANSF:'`, ausente hasta entonces, y dejó 45-49% de tres lotes reales de 2026 sin concepto).
+ * `mov_crudo_concepto_coherencia_chk` (`0007_concepto_banco.sql`) ya representa `'no_capturado'` y
+ * `'no_publicado'` con el mismo hecho observable — `concepto_banco is null` —, así que esta herramienta
+ * trata ambas estrategias como "pendiente de recálculo" por igual: el recálculo mismo decide, fila por
+ * fila, si el resultado sigue siendo `no_publicado` o si el vocabulario nuevo lo reconoce. Las filas que
+ * YA tienen concepto (`prefijo_anclado`/`columna_propia`/`segmento_de_glosa`) siguen fuera de alcance —
+ * nunca se recalculan ni se tocan.
  *
  * ## Por qué es una herramienta aparte de `completar-lote.ts`, no una extensión
  *
@@ -106,13 +120,22 @@ export type ResultadoRecaptura =
     }
   | { readonly estado: 'abortado'; readonly motivoCodigo: MotivoAbortoRecaptura };
 
+/** `conceptoBancoEstrategia` es lo que decide, en el loop de abajo, si una fila ya capturada
+ *  (`prefijo_anclado`/`columna_propia`/`segmento_de_glosa`) queda fuera de alcance de esta recaptura. */
 type FilaPersistida = {
   readonly id: string;
   readonly cuentaBancariaId: string;
   readonly filaNumero: number;
   readonly filaHash: string;
   readonly descripcion: string;
+  readonly conceptoBancoEstrategia: string;
 };
+
+/** Estrategias "pendiente de recálculo" — EXACTAMENTE el lado `null` de
+ *  `mov_crudo_concepto_coherencia_chk` (`0007_concepto_banco.sql`: `(concepto_banco is null) =
+ *  (concepto_banco_estrategia in ('no_capturado','no_publicado'))`). Cualquier otra estrategia de
+ *  `ESTRATEGIAS_CONCEPTO` (`../esquema.ts`) significa "ya capturado" y queda fuera de alcance. */
+const ESTRATEGIAS_PENDIENTES = new Set<string>(['no_capturado', 'no_publicado']);
 
 export async function recapturarConceptosDeLote(
   tx: Tx,
@@ -152,9 +175,13 @@ export async function recapturarConceptosDeLote(
     return { estado: 'abortado', motivoCodigo: 'sin_movimientos' };
   }
 
-  // Idempotencia: si NINGUNA fila está en 'no_capturado', ya se backfilleó — no-op limpio.
+  // Idempotencia (paso 1, barato): si NINGUNA fila tiene `concepto_banco` NULL, no hay nada pendiente de
+  // recálculo. `concepto_banco is null` es la MISMA condición que sostiene
+  // `mov_crudo_concepto_coherencia_chk` (`0007_concepto_banco.sql`) — cubre `'no_capturado'` y
+  // `'no_publicado'` sin enumerar la unión a mano, y sigue siendo correcta si el catálogo de estrategias
+  // crece.
   const centinela = await tx.consultar<{ pendientes: number; total: number }>(
-    `select count(*) filter (where concepto_banco_estrategia = 'no_capturado')::int as pendientes,
+    `select count(*) filter (where concepto_banco is null)::int as pendientes,
             count(*)::int as total
        from movimiento_bancario_crudo
       where cliente_id = $1 and lote_ingesta_id = $2`,
@@ -164,11 +191,13 @@ export async function recapturarConceptosDeLote(
   if (pendientes === 0) {
     return { estado: 'ya_backfilleado', loteId: pedido.loteId };
   }
-  // `0 < pendientes < total` es estructuralmente imposible bajo todo-o-nada — si aparece, alguien
-  // escribió por otra puerta. Las compuertas NO lo detectan (matchean por fila_hash, no por estrategia
-  // persistida), así que el dry-run puede reportar 'listo' igual: el hallazgo recién sale a la luz en
-  // `--aplicar`, cuando la fila ya capturada no matchea el WHERE del UPDATE y dispara B1 (throw, nunca
-  // escritura parcial — seguro, pero no es el mismo 'sucio' prolijo de las demás compuertas).
+  // `0 < pendientes < total` YA NO es un caso imposible — es el caso NORMAL de un lote real: un banco
+  // publica concepto en algunas filas y no en otras, así que "pendiente" (`no_capturado`/`no_publicado`)
+  // y "ya capturado" (`prefijo_anclado`/`columna_propia`/`segmento_de_glosa`) conviven en el mismo lote
+  // por diseño. Lo que sostiene que esto sea seguro es el guard "ya capturada, fuera de alcance" más
+  // abajo: una fila ya capturada nunca llega a `aEscribir`, así que el `WHERE` del UPDATE final (que
+  // sigue exigiendo `concepto_banco is null`) nunca la ve — sin ese guard, sí terminaría en `aEscribir`
+  // y el UPDATE la dejaría afuera, disparando el `throw` de "todo o nada" con un lote real y mixto.
 
   // Resolver cada cuenta del documento y traer sus filas persistidas.
   const porCuentaReleida = new Map<string, SalidaDeAdaptador['cuentas'][number]>();
@@ -194,9 +223,10 @@ export async function recapturarConceptosDeLote(
     fila_numero: number;
     fila_hash: string;
     descripcion: string;
+    concepto_banco_estrategia: string;
   }>(
     `select id::text as id, cuenta_bancaria_id::text as cuenta_bancaria_id,
-            fila_numero::int as fila_numero, fila_hash, descripcion
+            fila_numero::int as fila_numero, fila_hash, descripcion, concepto_banco_estrategia
        from movimiento_bancario_crudo
       where cliente_id = $1 and lote_ingesta_id = $2
       order by cuenta_bancaria_id, fila_numero`,
@@ -238,6 +268,7 @@ export async function recapturarConceptosDeLote(
       filaNumero: p.fila_numero,
       filaHash: p.fila_hash,
       descripcion: p.descripcion,
+      conceptoBancoEstrategia: p.concepto_banco_estrategia,
     });
     persistidasPorCuenta.set(p.cuenta_bancaria_id, arr);
   }
@@ -257,9 +288,23 @@ export async function recapturarConceptosDeLote(
       }
       matcheadas.add(persistida.id);
 
-      // D — cross-check de orden/conteo de lectura.
+      // D — cross-check de orden/conteo de lectura. Corre para TODA fila matcheada, capturada o no: es
+      // la biyección del documento entero, no algo específico de recapturar concepto — degradarla para
+      // las filas ya capturadas dejaría de proteger contra un documento reordenado o mal leído.
       if (persistida.filaNumero !== m.filaNumero) {
         conteo.filaNumeroDiverge += 1;
+      }
+
+      // Fuera de alcance: esta fila YA tiene concepto capturado (`prefijo_anclado`/`columna_propia`/
+      // `segmento_de_glosa` — cualquier estrategia fuera de `ESTRATEGIAS_PENDIENTES`). El cross-check de
+      // arriba (hash + fila_numero) ya corrió; lo único que se salta acá es recalcular/reescribir un
+      // concepto que nadie pidió tocar. Sin este guard, esta fila terminaría en `aEscribir` y el UPDATE
+      // final (que sigue exigiendo `concepto_banco is null`) no podría escribirla — el `throw` de "todo
+      // o nada" con un lote real y mixto (el caso normal bajo el alcance ampliado), no de laboratorio.
+      // Tiene que ir DESPUÉS de `matcheadas.add` (si no, la compuerta de biyección de abajo cuenta esta
+      // fila como no-matcheada) y ANTES de recalcular nada (INV-14/identificador no tienen sujeto acá).
+      if (!ESTRATEGIAS_PENDIENTES.has(persistida.conceptoBancoEstrategia)) {
+        continue;
       }
 
       // C — informativo: ¿la depuración de la glosa cruda cambió para este archivo?
@@ -290,6 +335,20 @@ export async function recapturarConceptosDeLote(
       // porque compara contra ese mismo valor viejo.
       if (contieneIdentificador(persistida.descripcion)) {
         conteo.identificadorEncontrado += 1;
+        continue;
+      }
+
+      // Cuándo escribir, ahora que `no_capturado` Y `no_publicado` comparten este loop:
+      // - `no_capturado` es TRANSITORIO — "ningún adaptador lo emite" (0007) — y tiene que reemplazarse
+      //   SIEMPRE por un valor terminal, aunque el recálculo siga sin encontrar concepto (relabel a
+      //   `no_publicado`, que sí es definitivo). Sin esto, una fila legacy sin concepto real quedaría
+      //   mal etiquetada para siempre — la misma ambigüedad que 0007 agregó esta columna para eliminar.
+      // - `no_publicado` YA ES terminal: si el recálculo confirma que sigue sin concepto, escribir el
+      //   mismo valor no cambia nada, y el centinela (`concepto_banco is null`) la seguiría contando como
+      //   pendiente en cada corrida futura, para siempre. Se escribe solo si el recálculo encontró algo.
+      const eraTransitoria = persistida.conceptoBancoEstrategia === 'no_capturado';
+      const encontroConceptoNuevo = conceptoBanco !== null;
+      if (!eraTransitoria && !encontroConceptoNuevo) {
         continue;
       }
 
@@ -324,6 +383,15 @@ export async function recapturarConceptosDeLote(
     return { estado: 'sucio', compuertas };
   }
 
+  // Idempotencia (paso 2, exacto): compuertas limpias, pero ninguna fila pendiente cambió — el caso
+  // esperado de un lote `no_publicado` que sigue sin concepto tras el recálculo. Sin esto, el centinela
+  // barato de arriba (`concepto_banco is null`) seguiría viendo `pendientes > 0` en la próxima corrida
+  // para siempre, y cada `--aplicar` reescribiría los mismos valores sin converger nunca. Simétrico en
+  // dry-run: si nada cambiaría, decirlo es más honesto que `'listo'`.
+  if (aEscribir.length === 0) {
+    return { estado: 'ya_backfilleado', loteId: pedido.loteId };
+  }
+
   if (!pedido.aplicar) {
     return { estado: 'listo', compuertas };
   }
@@ -346,6 +414,15 @@ export async function recapturarConceptosDeLote(
       const estrategias = aEscribir.map((f) => f.conceptoBancoEstrategia);
       const paginas = aEscribir.map((f) => f.paginaPdf);
 
+      // `concepto_banco is null` por sí solo ya implica `concepto_banco_estrategia in ('no_capturado',
+      // 'no_publicado')` — es literalmente lo que dice `mov_crudo_concepto_coherencia_chk`
+      // (`0007_concepto_banco.sql`) — así que no hace falta repetir la unión acá. `pagina_pdf is null`
+      // SE SACÓ a propósito: una fila `no_publicado` real (post-0007, el adaptador corrió y sí conoce la
+      // página aunque no haya encontrado concepto) ya tiene `pagina_pdf` poblado desde la ingesta
+      // original — exigir NULL acá excluiría justo las filas que este cambio existe para alcanzar. El
+      // guard "ya capturada, fuera de alcance" de más arriba ya garantiza que `aEscribir` solo trae
+      // filas con `concepto_banco` persistido NULL; `concepto_banco is null` acá es defensa en
+      // profundidad (protege contra un TOCTOU dentro de esta misma transacción), no el único filtro.
       const actualizadas = await tx.consultar<{ id: string }>(
         `update movimiento_bancario_crudo m
             set concepto_banco = v.concepto_banco,
@@ -358,8 +435,6 @@ export async function recapturarConceptosDeLote(
             and m.cliente_id = $6
             and m.lote_ingesta_id = $7
             and m.concepto_banco is null
-            and m.concepto_banco_estrategia = 'no_capturado'
-            and m.pagina_pdf is null
           returning m.id::text as id`,
         [ids, conceptos, completos, estrategias, paginas, pedido.clienteId, pedido.loteId],
       );

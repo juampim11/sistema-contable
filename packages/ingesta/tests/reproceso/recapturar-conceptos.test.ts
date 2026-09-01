@@ -6,6 +6,11 @@
  * real tras la ALTER TABLE de la migración 0007) se recaptura limpio cuando el releído reproduce el
  * `fila_hash` de lo persistido — y aborta sin escribir nada cuando no lo reproduce.
  *
+ * El bloque `describe('recapturarConceptosDeLote — no_publicado ampliado')` al final del archivo cubre
+ * el segundo motivo (hallazgo ROKA, 2026-09-01): un lote POSTERIOR a 0007 con ALGUNAS filas
+ * `concepto_banco_estrategia = 'no_publicado'` — el caso normal de un lote real, mixto con filas ya
+ * capturadas, no el 100% NULL del resto de este archivo.
+ *
  * Requisito previo: pnpm db:up && pnpm db:migrate && pnpm db:setup
  */
 
@@ -117,6 +122,66 @@ async function crearLotePre0007(
               pagina_pdf = null
         where lote_ingesta_id = $1`,
       [loteId],
+    );
+
+    return loteId;
+  });
+}
+
+/**
+ * Persiste una cuenta con ALGUNAS filas SIN concepto (`concepto_banco_estrategia = 'no_publicado'`,
+ * `concepto_banco` NULL) — el caso real post-`0007`, distinto de `crearLotePre0007`: acá la columna
+ * existía y el adaptador SÍ corrió, pero el vocabulario de esa época no reconoció esas filas (caso
+ * real: ROKA/Macro, `HANDOFF` 165). No hace falta el `UPDATE` crudo de `crearLotePre0007` — alcanza con
+ * despublicar el concepto de la cuenta ANTES de persistir; `persistir.ts` ya cae en `'no_publicado'`
+ * apenas `conceptoBanco` viene `undefined` en el movimiento (`m.conceptoBancoEstrategia ??
+ * 'no_publicado'`).
+ */
+async function crearLoteConNoPublicado(
+  clienteId: string,
+  bancoCodigo: string,
+  cuentaBancariaId: string,
+  cuenta: CuentaConMovimientos,
+  indicesSinConcepto: readonly number[],
+): Promise<string> {
+  const sinConcepto = new Set(indicesSinConcepto);
+  const cuentaDespublicada: CuentaConMovimientos = {
+    ...cuenta,
+    movimientos: cuenta.movimientos.map((m, i) => {
+      if (!sinConcepto.has(i)) return m;
+      const { conceptoBanco, conceptoCompleto, conceptoBancoEstrategia, ...resto } = m;
+      return resto as typeof m;
+    }),
+  };
+
+  return conUsuario(USUARIOS.socio, async (tx) => {
+    const creado = await tx.consultar<{ id: string }>(
+      `insert into lote_ingesta
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, archivo_clave, estado, procesado_por)
+       values ($1, $2, $3, 'archivo', $4, $5, 'recibido', app.current_user_id())
+       returning id::text as id`,
+      [clienteId, bancoCodigo, `${bancoCodigo}@1`, randomUUID(), `cliente/${clienteId}/extracto/${randomUUID()}.pdf`],
+    );
+    const loteId = creado[0]?.id;
+    if (!loteId) throw new Error('no se creó el lote');
+
+    const verificacion = verificarAritmetica(cuentaDespublicada, {
+      capacidades: CAPACIDADES_SINTETICAS as never,
+      movimientosEnElLote: cuentaDespublicada.movimientos.length,
+    });
+    const persistido = await persistirCuenta(tx, {
+      clienteId,
+      loteId,
+      cuentaBancariaId,
+      cuenta: cuentaDespublicada,
+      verificacion,
+      movimientosEnElLote: cuentaDespublicada.movimientos.length,
+    });
+    if (!persistido.persistido) throw new Error(`fixture inválido: ${persistido.motivoCodigo}`);
+
+    await tx.consultar(
+      `update lote_ingesta set estado = 'procesado', filas_leidas = $2, filas_aceptadas = $2 where id = $1`,
+      [loteId, cuentaDespublicada.movimientos.length],
     );
 
     return loteId;
@@ -445,5 +510,200 @@ describe('recapturarConceptosDeLote — aislamiento y abortos', () => {
       ),
     );
     expect(r).toEqual({ estado: 'abortado', motivoCodigo: 'rol_insuficiente' });
+  });
+});
+
+/**
+ * Ampliación 2026-09-01 (hallazgo ROKA): un lote POSTERIOR a `0007`, cuyo adaptador en su momento no
+ * reconoció el concepto de ALGUNAS filas (`concepto_banco_estrategia = 'no_publicado'`) mientras que
+ * otras ya estaban capturadas — el caso normal de un lote real, no el `crearLotePre0007` de arriba
+ * (100% NULL). Ver el docblock de `recapturar-conceptos.ts` (`## Segundo motivo...`).
+ */
+describe('recapturarConceptosDeLote — no_publicado ampliado', () => {
+  async function snapshot(loteId: string): Promise<
+    ReadonlyMap<string, { concepto: string | null; completo: boolean | null; estrategia: string; pagina: number | null }>
+  > {
+    return conUsuario(USUARIOS.socio, async (tx) => {
+      const filas = await tx.consultar<{
+        id: string;
+        concepto_banco: string | null;
+        concepto_completo: boolean | null;
+        concepto_banco_estrategia: string;
+        pagina_pdf: number | null;
+      }>(
+        `select id::text as id, concepto_banco, concepto_completo, concepto_banco_estrategia, pagina_pdf
+           from movimiento_bancario_crudo where lote_ingesta_id = $1 order by fila_numero`,
+        [loteId],
+      );
+      return new Map(
+        filas.map((f) => [
+          f.id,
+          { concepto: f.concepto_banco, completo: f.concepto_completo, estrategia: f.concepto_banco_estrategia, pagina: f.pagina_pdf },
+        ]),
+      );
+    });
+  }
+
+  it('lote MIXTO: recaptura solo las 3 no_publicado, las 5 ya capturadas quedan bit a bit intactas', async () => {
+    const banco = 'reco_mixto';
+    await registrarBanco(banco);
+    const cuenta = extractoSintetico({
+      semilla: 3010,
+      cantidadMovimientos: 8,
+      saldoInicialCentavos: 15_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: banco,
+    });
+    const cuentaBancariaId = await registrarCuentaDelCliente(s.clienteA, banco, cuenta);
+    const indicesSinConcepto = [1, 3, 5];
+    const loteId = await crearLoteConNoPublicado(s.clienteA, banco, cuentaBancariaId, cuenta, indicesSinConcepto);
+    const archivoHash = await conUsuario(USUARIOS.socio, async (tx) => {
+      const f = await tx.consultar<{ archivo_hash: string }>(`select archivo_hash from lote_ingesta where id = $1`, [loteId]);
+      return f[0]?.archivo_hash ?? '';
+    });
+
+    const antes = await snapshot(loteId);
+
+    // El releído trae el vocabulario NUEVO — reconoce TODAS las filas, incluidas las 3 despublicadas.
+    const aplicado = await conUsuario(USUARIOS.socio, (tx) =>
+      recapturarConceptosDeLote(
+        tx,
+        { clienteId: s.clienteA, loteId, archivoHashEsperado: archivoHash, bancoCodigo: banco, adaptadorVersion: 1, aplicar: true },
+        comoSalidaDeAdaptador(cuenta),
+      ),
+    );
+    expect(aplicado.estado).toBe('aplicado');
+    // MUTACIÓN QUE ESTO MATA: sacar el guard "ya capturada, fuera de alcance" hace que las 5 filas ya
+    // capturadas también entren a `aEscribir`, y el UPDATE (que sigue exigiendo `concepto_banco is
+    // null`) no puede escribirlas — `throw`, este `expect` nunca llega a evaluarse limpio.
+    if (aplicado.estado === 'aplicado') {
+      expect(aplicado.filasActualizadas).toBe(3);
+    }
+
+    const despues = await snapshot(loteId);
+    let tocadas = 0;
+    for (const [id, valorAntes] of antes) {
+      const valorDespues = despues.get(id);
+      if (JSON.stringify(valorAntes) !== JSON.stringify(valorDespues)) tocadas += 1;
+    }
+    expect(tocadas).toBe(3);
+
+    // Las 3 despublicadas ahora tienen concepto; las 5 originales no cambiaron.
+    let conConceptoNuevo = 0;
+    for (const [, v] of despues) {
+      if (v.concepto !== null) conConceptoNuevo += 1;
+    }
+    expect(conConceptoNuevo).toBe(8);
+  });
+
+  it('lote ENTERAMENTE no_publicado que el vocabulario nuevo sí reconoce: recaptura las 4', async () => {
+    const banco = 'reco_todo_no_publicado';
+    await registrarBanco(banco);
+    const cuenta = extractoSintetico({
+      semilla: 3011,
+      cantidadMovimientos: 4,
+      saldoInicialCentavos: 8_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: banco,
+    });
+    const cuentaBancariaId = await registrarCuentaDelCliente(s.clienteA, banco, cuenta);
+    const loteId = await crearLoteConNoPublicado(s.clienteA, banco, cuentaBancariaId, cuenta, [0, 1, 2, 3]);
+    const archivoHash = await conUsuario(USUARIOS.socio, async (tx) => {
+      const f = await tx.consultar<{ archivo_hash: string }>(`select archivo_hash from lote_ingesta where id = $1`, [loteId]);
+      return f[0]?.archivo_hash ?? '';
+    });
+
+    const aplicado = await conUsuario(USUARIOS.socio, (tx) =>
+      recapturarConceptosDeLote(
+        tx,
+        { clienteId: s.clienteA, loteId, archivoHashEsperado: archivoHash, bancoCodigo: banco, adaptadorVersion: 1, aplicar: true },
+        comoSalidaDeAdaptador(cuenta),
+      ),
+    );
+    expect(aplicado.estado).toBe('aplicado');
+    // MUTACIÓN QUE ESTO MATA: revertir el centinela a `concepto_banco_estrategia = 'no_capturado'` hace
+    // que este lote (0 filas en `no_capturado`, las 4 en `no_publicado`) reporte `'ya_backfilleado'`
+    // desde el arranque, sin escribir nada — el bug real que motivó todo este cambio.
+    if (aplicado.estado === 'aplicado') {
+      expect(aplicado.filasActualizadas).toBe(4);
+    }
+  });
+
+  it('no_publicado que SIGUE sin concepto: ya_backfilleado sin escribir, sin segunda corrida', async () => {
+    const banco = 'reco_sigue_sin_concepto';
+    await registrarBanco(banco);
+    const cuenta = extractoSintetico({
+      semilla: 3012,
+      cantidadMovimientos: 3,
+      saldoInicialCentavos: 3_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: banco,
+    });
+    const cuentaBancariaId = await registrarCuentaDelCliente(s.clienteA, banco, cuenta);
+    const loteId = await crearLoteConNoPublicado(s.clienteA, banco, cuentaBancariaId, cuenta, [0, 1, 2]);
+    const archivoHash = await conUsuario(USUARIOS.socio, async (tx) => {
+      const f = await tx.consultar<{ archivo_hash: string }>(`select archivo_hash from lote_ingesta where id = $1`, [loteId]);
+      return f[0]?.archivo_hash ?? '';
+    });
+
+    // El releído usa la MISMA versión despublicada: el vocabulario "nuevo" tampoco reconoce estas filas.
+    const cuentaSigueDespublicada: CuentaConMovimientos = {
+      ...cuenta,
+      movimientos: cuenta.movimientos.map((m) => {
+        const { conceptoBanco, conceptoCompleto, conceptoBancoEstrategia, ...resto } = m;
+        return resto as typeof m;
+      }),
+    };
+
+    const antesEscritura = await contarAuditoria(loteId, 'escritura');
+    const r = await conUsuario(USUARIOS.socio, (tx) =>
+      recapturarConceptosDeLote(
+        tx,
+        { clienteId: s.clienteA, loteId, archivoHashEsperado: archivoHash, bancoCodigo: banco, adaptadorVersion: 1, aplicar: true },
+        comoSalidaDeAdaptador(cuentaSigueDespublicada),
+      ),
+    );
+    expect(r).toEqual({ estado: 'ya_backfilleado', loteId });
+    expect(await contarAuditoria(loteId, 'escritura')).toBe(antesEscritura);
+  });
+
+  it('idempotencia: primera corrida "aplicado", segunda "ya_backfilleado" (centinela barato)', async () => {
+    const banco = 'reco_mixto_idempotente';
+    await registrarBanco(banco);
+    const cuenta = extractoSintetico({
+      semilla: 3013,
+      cantidadMovimientos: 5,
+      saldoInicialCentavos: 5_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: banco,
+    });
+    const cuentaBancariaId = await registrarCuentaDelCliente(s.clienteA, banco, cuenta);
+    const loteId = await crearLoteConNoPublicado(s.clienteA, banco, cuentaBancariaId, cuenta, [2]);
+    const archivoHash = await conUsuario(USUARIOS.socio, async (tx) => {
+      const f = await tx.consultar<{ archivo_hash: string }>(`select archivo_hash from lote_ingesta where id = $1`, [loteId]);
+      return f[0]?.archivo_hash ?? '';
+    });
+
+    const primera = await conUsuario(USUARIOS.socio, (tx) =>
+      recapturarConceptosDeLote(
+        tx,
+        { clienteId: s.clienteA, loteId, archivoHashEsperado: archivoHash, bancoCodigo: banco, adaptadorVersion: 1, aplicar: true },
+        comoSalidaDeAdaptador(cuenta),
+      ),
+    );
+    expect(primera.estado).toBe('aplicado');
+
+    const segunda = await conUsuario(USUARIOS.socio, (tx) =>
+      recapturarConceptosDeLote(
+        tx,
+        { clienteId: s.clienteA, loteId, archivoHashEsperado: archivoHash, bancoCodigo: banco, adaptadorVersion: 1, aplicar: true },
+        comoSalidaDeAdaptador(cuenta),
+      ),
+    );
+    expect(segunda).toEqual({ estado: 'ya_backfilleado', loteId });
   });
 });
