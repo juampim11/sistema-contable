@@ -6,6 +6,103 @@
 
 ---
 
+## 2026-09-01 (166) — Mecanismo de reproceso de `concepto_banco` ampliado (Paso 1 del plan de reproceso
+cerrado): `recapturar-conceptos.ts` ahora cubre `no_publicado`, no solo `no_capturado`. Commiteado y
+verificado. **Sin aplicar todavía sobre ROKA** — paso 2 del plan, pendiente de confirmación.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (165).
+
+### 1. Paso 1 — no hacía falta un mecanismo nuevo (ni `VERSION_DEL_EXTRACTOR`)
+
+`VERSION_DEL_EXTRACTOR` hashea solo `glosa.ts`/`contraparte.ts`/`detectores-forma.ts` — ningún adaptador
+de banco entra ahí, confirmado contra `version-del-extractor.json`. Pero ya existía
+`packages/ingesta/src/reproceso/recapturar-conceptos.ts` (+ `apps/cli/src/recapturar-conceptos.ts`,
+`pnpm recapturar:conceptos`), construido para backfillear lotes **pre-`0007`**
+(`concepto_banco_estrategia='no_capturado'`). Confirmado por consulta directa contra el piloto: los 3
+lotes de ROKA (mayo `9e568972`, junio `38a7cf41`, julio `5d4d2a92`) tienen **0 filas en `no_capturado`**
+— todas en `no_publicado` (763/797/807) o `prefijo_anclado` (804/956/982) — así que el centinela existente
+devolvía `'ya_backfilleado'` sin tocar nada: un falso no-op sobre exactamente los 3 lotes que motivaron la
+tarea. Decisión (JP): ampliar el mecanismo existente, no construir uno nuevo.
+
+### 2. Diseño — un agente Plan encontró 2 hallazgos bloqueantes antes de tocar código
+
+`concepto_banco_estrategia='no_capturado'` (columna `0007_concepto_banco.sql`, "ningún adaptador lo
+emite") y `'no_publicado'` (el adaptador corrió, no encontró nada) NO son sinónimos, pero
+`mov_crudo_concepto_coherencia_chk` ya las trata como el mismo hecho observable
+(`concepto_banco is null`) — confirmado también por `mutaciones-0021.test.ts`, que ya las colapsa al
+mismo digest a propósito. Un agente `Plan` diseñó el detalle y encontró que un cambio superficial al
+`WHERE` no alcanzaba: (a) sacar `pagina_pdf is null` del `WHERE` era necesario porque una fila
+`no_publicado` REAL ya tiene `pagina_pdf` poblado (el adaptador conoce la página aunque no reconozca el
+concepto); (b) el loop necesitaba un guard nuevo para sacar del cómputo las filas YA capturadas, porque
+un lote real es MIXTO (`no_publicado` y `prefijo_anclado` en el mismo lote) — sin el guard, el `UPDATE`
+(que sigue exigiendo `concepto_banco is null`) no puede escribirlas y dispara el `throw` de todo-o-nada.
+
+### 3. Convocatoria real (CLAUDE.md §3.1) — 3 agentes, 3 `Agent()` reales, antes de la primera línea
+
+- **`dba-data`**: aprobó `concepto_banco is null` como condición (la misma que sostiene el check de la
+  base); simplificó la idempotencia; confirmó que el `for update` sobre `lote_ingesta` sigue alcanzando.
+- **`security-engineer`**: **hallazgo bloqueante real** — el guard "ya capturada" tiene que ir DESPUÉS de
+  `matcheadas.add(persistida.id)`, si no la compuerta de biyección cuenta esas filas como no-matcheadas y
+  el lote mixto (el caso normal bajo el alcance ampliado) reporta `'sucio'` sistemáticamente.
+- **`seguridad-datos-financieros`**: confirmó que INV-14 no se reabre (las 4 compuertas siguen corriendo
+  sin excepción) y que `avisarSiLasLecturasSonAnomalas` no hace falta acá (este archivo no lee N2-R). Dejó
+  4 puntos de protocolo para el paso de aplicar sobre ROKA (§5 abajo) y una pregunta ya respondida por
+  (165): nada aguas abajo consume estos 3 lotes todavía (`reconocimiento_movimiento=0` confirmado).
+
+### 4. Implementación — verificada por mutación, no solo por lectura
+
+`packages/ingesta/src/reproceso/recapturar-conceptos.ts`: centinela → `concepto_banco is null`; guard
+`ESTRATEGIAS_PENDIENTES` después de la compuerta D (fila_numero, que sigue corriendo para toda fila
+matcheada) y antes de C/INV-14/identificador; idempotencia que distingue `no_capturado` (transitorio,
+SIEMPRE se relabela aunque el recálculo dé null, porque "ningún adaptador lo emite" y dejarlo sin tocar
+reintroduce la ambigüedad que 0007 vino a resolver) de `no_publicado` (terminal, solo se reescribe si
+aparece concepto nuevo — si no, el centinela nunca convergería); `WHERE` del UPDATE sin
+`concepto_banco_estrategia='no_capturado'` ni `pagina_pdf is null`. **Verificación por mutación real**:
+saqué el guard con `if (false && ...)`, corrí el test nuevo, confirmé que revienta con el `throw` exacto
+que predijo `security-engineer` (`el UPDATE afectó 3 de 8 filas esperadas`), restauré el código.
+
+4 tests nuevos en `packages/ingesta/tests/reproceso/recapturar-conceptos.test.ts` (fixture
+`crearLoteConNoPublicado`, sin `UPDATE` crudo — usa `persistirCuenta` real): lote mixto (3/8 recapturadas,
+las otras 5 bit a bit intactas por snapshot), lote 100% `no_publicado` recuperado entero, `no_publicado`
+que sigue sin concepto → `ya_backfilleado` sin escribir, idempotencia de dos corridas. Los 7 tests
+existentes (`no_capturado` puro) no se tocaron y siguen verdes.
+
+### 5. Gate — verde, pero el monorepo completo no cerró por 4 tests de OCR ajenos (documentado, no bug)
+
+`pnpm typecheck` (limpio), `pnpm barrido` (67s, 0 fugas), `pnpm fixtures:verificar` (83s, 7/7) — los tres
+en foreground, completos. `pnpm test` del **monorepo completo nunca terminó**: cada intento (4 intentos,
+2 en background explícito + el auto-backgrounding del harness a los 600s) murió antes del resumen final,
+pero **el proceso seguía vivo y sin fallas** cada vez que lo revisé — el reporte "killed" del harness no
+reflejaba el estado real del proceso. Causa real, medida: `liquidaciones-visa-credito.test.ts` (309s),
+`liquidaciones-visa-debito.test.ts` (261s) y `liquidaciones-cabal-debito.test.ts` (54s) son OCR contra
+páginas escaneadas reales — juntos empujan cualquier corrida del monorepo completo más allá de lo que este
+entorno tolera para un proceso en background. **Sin relación con este cambio.** Cobertura real obtenida:
+`npx vitest run packages/ingesta apps/cli` (excluyendo esos 3 archivos + `liquidaciones-visa-debito-
+reintento.test.ts`, también OCR) corrió **completo en foreground, 101s: 55 archivos / 1115 tests + 7
+todo, exit 0** — cubre el radio de impacto real (confirmado por grep: ningún otro paquete importa este
+mecanismo, solo lo mencionan en comentarios). Más varias corridas parciales del monorepo completo, todas
+sin un solo test rojo antes de cortarse.
+
+### 6. Commit
+
+`eecef0d` — `feat(ingesta): amplia recapturar-conceptos.ts a lotes con vocabulario desactualizado`. Paso
+revertible más chico #1 del plan (código + tests, sin tocar el piloto). JP aprobó el diseño completo
+antes de implementar ("Aprobado en su totalidad").
+
+### 7. Qué sigue — pendiente de confirmación de JP antes de tocar el piloto
+
+1. Backup fresco de `piloto` (con su SHA-256 registrado, punto que agregó `seguridad-datos-financieros`).
+2. Dry-run de `recapturar:conceptos` sobre los 3 lotes de ROKA — comparar contra 671/699/714
+   `filasActualizadas` esperadas (lo medido localmente en (165)). Si no coincide: frenar e investigar.
+3. `--aplicar` los 3 lotes si el dry-run coincide. Verificar por consulta directa (no por el output del
+   comando) que `concepto_banco` cambió en las filas esperadas y que las ya capturadas quedaron intactas.
+4. Re-correr `reconocer:lote --aplicar` (Capa C) sobre los 3 lotes — confirmar `sin_reconocer` en el rango
+   ~5-6%.
+5. `--estado` de migraciones en piloto (costo cero, punto de `seguridad-datos-financieros`) antes de tocar
+   nada, aunque esta tarea no tenga DDL.
+
+---
+
 ## 2026-09-01 (165) — ROKA-2026 (Capa D): 3 meses reales ingeridos y verificados (Paso 2 cerrado),
 Paso 3 (vigencia) sin corrección necesaria, Paso 4 (Capa C dry-run) reveló `sin_reconocer` 45-49% —
 investigado a fondo, causa real: **un prefijo NUEVO de Macro (`ING TRANSF:`) ausente del fixture de
