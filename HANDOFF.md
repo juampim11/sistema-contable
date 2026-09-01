@@ -6,6 +6,483 @@
 
 ---
 
+## 2026-09-01 (155) — `regla_imputacion.vigente_desde` era el MISMO patrón de fecha de
+conveniencia que las otras dos tablas, confirmado por `contador-dominio` sin motivo contable real
+— corregido a `2026-04-30` (3 filas). **Mayo pasa de 0% a 96%+ automático.**
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (154). El dry-run de
+`conciliar:lote` sobre mayo dio 0 automáticos / 100% pendientes (`tipo_sin_regla_imputacion`) — JP
+frenó antes de aplicar y pidió la misma pregunta que ya se hizo dos veces hoy: ¿hay motivo contable
+real, o es otra fecha de conveniencia?
+
+### 1. Convocatoria — `contador-dominio`
+
+Preguntas concretas: ¿cambió el tratamiento de Ley 25.413 entre mayo y julio? ¿cambió la cuenta
+destino de alguna de las 3 reglas? Respuesta, con evidencia:
+
+- **`knowledge/nacional/` está vacío** (`sources_status: esqueleto-sin-contenido`) — "no tengo esa
+  fuente cargada" para cualquier afirmación normativa sobre Ley 25.413, correcto según CLAUDE.md
+  §1.6, sin inventar.
+- **Sin evidencia de cambio de cuenta destino**: las 3 cuentas (`1.2.3.130`, `4.2.5.200`,
+  `1.1.1.100`) son las mismas citadas de forma constante en `04-imputacion-contable.md`,
+  `28-diseno-motor-clasificacion.md` y (150) §5, y el plan de cuentas de Bracci es una única carga
+  sin versiones — sin rastro de un cambio a mitad de año.
+- **Conclusión: mismo patrón, sin motivo real.** `2026-06-01` se fijó porque era el mes anterior al
+  período que se estaba procesando en ese momento (julio) — la misma lógica de "fecha de cuándo se
+  cargó el dato" que ya produjo el defecto en `cuenta_atributo`/`cuenta_bancaria_identificador`.
+  Recomendó `2026-04-30`, mismo valor que las otras dos tablas, por el mismo piso técnico
+  (movimiento más antiguo ya ingerido). Convencional, no vigencia contable real de cuándo el
+  criterio empezó a aplicarse en la práctica del estudio — misma salvedad de siempre, pendiente
+  pregunta a Laura/JP. Cerró con "Validar con profesional matriculado".
+
+### 2. Fix aplicado — mismo mecanismo que (152), sin re-convocar seguridad (3ª repetición del
+mismo patrón ya vetado dos veces hoy)
+
+`app_request` solo tiene grant de `UPDATE` sobre `vigente_hasta` en `regla_imputacion`
+(`0030_regla_imputacion.sql:210-211`), no sobre `vigente_desde` — dueño de esquema, mismos
+controles obligatorios ya exigidos por `security-engineer` en (152): `WHERE cliente_id` explícito,
+conteo antes (3, aborta si no) y después (3, rollback si no), sin loguear `DETAIL` crudo.
+
+Backup fresco antes (`piloto_20260901-011744Z.dump`). Ejecutado: 3/3 filas `2026-06-01→2026-04-30`.
+Verificación con conexión independiente: las 3 confirman `2026-04-30`. `registrarAcceso()` de
+compensación registrado (misma razón que (152): la vía de esquema no pasa por `acceso_auditoria`).
+Script efímero, corrido y borrado — `git status` limpio.
+
+### 3. Dry-run de mayo, repetido — antes vs. después
+
+| Lote | Cuenta | Antes (regla `2026-06-01`) | Después (regla `2026-04-30`) |
+|---|---|---|---|
+| `98f87beb` (Cta Cte) | mayo | 0/76 automático | **71/76** automático |
+| `ee11d2e7` (cta especial) | mayo | 0/450 automático | **450/450** automático |
+
+Nada aplicado todavía — dry-run solamente, a la espera de aprobación de JP para los 5 lotes juntos.
+
+### 4. Estado final de los 5 dry-runs (julio Cta Cte + mayo × 2 + junio × 2)
+
+| Lote | Cuenta | Mes | Total | Automáticos | Pendientes |
+|---|---|---|---|---|---|
+| `2cf77c67` | Cta Cte | jul | 80 | 75 | 5 |
+| `98f87beb` | Cta Cte | may | 76 | 71 | 5 |
+| `ee11d2e7` | cta especial | may | 450 | 450 | 0 |
+| `63050700` | Cta Cte | jun | 73 | 69 | 4 |
+| `a5c7ccaf` | cta especial | jun | 443 | 443 | 0 |
+| **Total** | | | **1122** | **1108** | **14** |
+
+### 5. Barrido: ¿queda otra tabla con `vigente_desde` sin revisar? — `padron_socio`, pendiente,
+no descartada
+
+JP preguntó, antes de aplicar `conciliar:lote`, si quedaba alguna otra tabla con el mismo patrón.
+Grep de las 6 migraciones con `vigente_desde`: `cuenta_bancaria_identificador` (0004, corregida
+152), `cuenta_atributo` (0027, corregida 150+152), `regla_imputacion` (0030, corregida esta
+entrada) — las 3 ya tocadas hoy — y **`padron_socio`** (0013), sin tocar.
+
+Verificado por consulta (solo columnas no sensibles): Carolina y Carlos Sebastián tienen
+`vigente_desde` **idéntico** (`2025-10-20`), pese a cargarse en fechas distintas (`created_at`
+2026-08-19 y 2026-08-24) — **no** es el patrón "fecha de cuándo se cargó cada fila" de las otras 3.
+Es un caso YA documentado con su propio 🔴 desde el momento de la carga (HANDOFF, tabla de
+"Vigencia desde" de los 3 clientes de esa tanda): `2025-10-20` es **convencional a propósito** — el
+movimiento más antiguo de TODO el piloto de esa tanda (viene de un lote de Macro/ROKA), aplicado
+como piso ÚNICO y COMPARTIDO a Bracci + El Prat + ROKA, no calculado por cliente.
+
+**No bloquea nada de Bracci hoy**: el movimiento más antiguo real de Bracci es `2026-05-04`, muy
+posterior — la vigencia es demasiado permisiva, no demasiado restrictiva (al revés que los 3 casos
+corregidos hoy, que bloqueaban). El motor sí la usa en memoria para resolver movimiento-de-socio
+(`packages/data/src/contabilidad/lecturas.ts:85-86`).
+
+**Queda PENDIENTE DE VERIFICAR, no descartada** — con una diferencia real respecto a las 3 de hoy:
+es un piso compartido entre 3 clientes, así que revisarlo bien requiere mirar Bracci + El Prat +
+ROKA juntos, no un fix aislado de Bracci. Sin tocar en esta sesión, a pedido explícito de JP
+("no hace falta resolverlo ahora... solo quiero saber si queda pendiente").
+
+### 6. `conciliar:lote` aplicado — los 5 lotes, panorama comparativo de los 3 meses completo
+
+Con el fix de vigencia aplicado, los 5 `--aplicar` de `conciliar:lote` corrieron idénticos a sus
+dry-runs (ninguna sorpresa):
+
+| Lote | Cuenta | Mes | Automáticos | Pendientes | Tiempo real |
+|---|---|---|---|---|---|
+| `2cf77c67` | Cta Cte | jul | 75 | 5 | 5.299s |
+| `98f87beb` | Cta Cte | may | 71 | 5 | 6.449s |
+| `ee11d2e7` | cta especial | may | 450 | 0 | 15.697s |
+| `63050700` | Cta Cte | jun | 69 | 4 | 5.074s |
+| `a5c7ccaf` | cta especial | jun | 443 | 0 | 15.814s |
+
+Verificado por consulta directa (no por el output): `asiento_propuesto` **1626 total** (518 de julio
+ya existentes + 1108 nuevos), `asiento_propuesto_renglon` **3252** (exacto 2×), **0 asientos con
+debe≠haber**, `pendiente_cierre` **14** (5+5+4, coincide con `tipo_sin_regla_imputacion` de los 3
+lotes de Cta Cte — los 5 tipos de julio que no tienen regla siguen sin cambiar).
+
+**Panorama comparativo de los 3 meses reales de Bracci, para armar el entregable de Laura:**
+
+| Mes | Total movimientos | `propuesta` (Capa C) | Automáticos (`asiento_propuesto`) | Revisión humana (`decision_humana`) | Sin reconocer |
+|---|---|---|---|---|---|
+| Mayo | 1270 | 526 | 521 | 615 | 129 |
+| Junio | 1255 | 516 | 512 | 601 | 138 |
+| Julio | 1421 | 598 | 593 | 655 | 168 |
+| **Total** | **3946** | **1642** | **1626** | **1871** | **435** |
+
+(Verificación cruzada: automáticos + pendientes de `regla_imputacion` = `propuesta` en los 3 meses
+— `521+5=526`, `512+4=516`, `593+5=598`. `1626+3252/2` confirma 1 renglón debe + 1 haber por
+asiento. Todo consistente.)
+
+### 7. Sin commit todavía
+
+Pendiente de aprobación de JP, junto con (151)-(154).
+
+---
+
+## 2026-08-31 (154) — Capa C aplicada sobre los 5 lotes pendientes de Bracci (2865 movimientos) +
+alta de `cierre_cliente_periodo` para mayo y junio (mismo mecanismo de (150)/B.13) + dry-run de
+`conciliar:lote` sobre los 5 — mayo salió 0% automático por vigencia de `regla_imputacion`,
+investigado en (155).
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (153) — fix de
+idempotencia verde, las 6 combinaciones ya en `movimiento_bancario_crudo`.
+
+### 1. Capa C — 5 lotes, dry-run primero, `--aplicar` después, exacto igual
+
+| Lote | Cuenta | Mes | Total | `propuesta` | `decision_humana` | `sin_reconocer` | Tiempo real (`--aplicar`) |
+|---|---|---|---|---|---|---|---|
+| `2cf77c67` | Cta Cte | jul | 340 | 80 | 208 | 52 | 14.548s |
+| `63050700` | Cta Cte | jun | 326 | 73 | 213 | 40 | 12.532s |
+| `98f87beb` | Cta Cte | may | 328 | 76 | 211 | 41 | 12.407s |
+| `ee11d2e7` | cta especial | may | 942 | 450 | 404 | 88 | 28.943s |
+| `a5c7ccaf` | cta especial | jun | 929 | 443 | 388 | 98 | 31.343s |
+| **Total** | | | **2865** | **1122** | **1424** | **319** | |
+
+`digestsPorBanco` da el mismo digest (`e0b8254a46bc2e7a`) en los 5, igual al de julio/cuenta
+especial ya conocido — sin deriva de motor, `sinLexico=0` y `contrapartidaSinCandidato=0` en los 5.
+El resultado real de `--aplicar` coincidió exacto con el dry-run en los 5 casos.
+
+Se incluyó **Cta Cte junio** (`63050700-...`, 326 movimientos, ingerido desde el 2026-08-12) aunque
+no estaba nombrado explícito en el pedido — confirmado por consulta que nunca había tenido Capa C
+corrida (0 `reconocimiento_movimiento`), mismo criterio de "panorama completo de los 3 meses".
+
+### 2. `cierre_cliente_periodo` — mayo y junio, mismo mecanismo de B.13
+
+Cta Cte julio va contra el **mismo cierre ya existente de julio** (`c98dffdd-...`, el de los 518
+asientos de la cuenta especial) — confirmado que `conciliar:lote` opera por `--lote-id`, nunca
+supersede nada, solo suma asientos nuevos al mismo `cierre_id`. Mayo y junio SÍ necesitaban INSERT
+nuevo (`--cierre-id` no se auto-resuelve, B.13): `conUsuario()` + `cierre_transicion` en la misma
+tx, transición reflexiva `abierto→abierto`, `confirmado_por`/`confirmado_en` en NULL — mismo
+mecanismo exacto de (150) §4. Creados: mayo `1ab6945b-...`, junio `00d8db74-...`.
+
+### 3. Dry-run de `conciliar:lote` — 5 lotes, resultado que motivó (155)
+
+Mayo dio **0% automático** en las 2 cuentas (526 movimientos, `tipo_sin_regla_imputacion`) —
+`regla_imputacion.vigente_desde='2026-06-01'` no cubría mayo. Investigado y corregido en (155), sin
+aplicar nada de `conciliar:lote` todavía.
+
+---
+
+## 2026-08-31 (153) — Bug real de producción #2 de la sesión: el guard de idempotencia de
+`pnpm ingesta` confundía "rechazado" con "ya procesado" — un lote `con_errores` bloqueaba el
+reintento del mismo archivo PARA SIEMPRE, aunque se corrigiera la causa del rechazo. Corregido con
+el mismo rigor que el bug de `via` en (150): panel de 3 (`backend-dev`, `tester`, `code-reviewer`),
+2 rondas (la primera encontró un segundo defecto real, `banco_codigo` stale). **Las 6 combinaciones
+de Bracci (2 cuentas × 3 meses) completas en `movimiento_bancario_crudo`, verificado.**
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (151)/(152) — el reintento
+de la ingesta de mayo (cuenta especial), ya con la vigencia corregida, devolvió `ya_procesado` sin
+insertar nada. JP pidió fix de raíz, no parche puntual sobre la fila.
+
+### 1. El bug
+
+`apps/cli/src/ingestar.ts`, guard de idempotencia (PASO 3): buscaba cualquier `lote_ingesta` con
+`(cliente_id, archivo_hash)` igual, sin mirar `estado`. Un lote `con_errores` (rechazo) queda con
+ese mismo hash para siempre — el reintento del mismo archivo, aunque se corrija la causa del
+rechazo, devuelve `ya_procesado` sin volver a intentar el parseo. Confirmado en el piloto real:
+lote `ee11d2e7-...` de Bracci (cuenta especial, mayo), rechazado por el defecto de vigencia de
+(152), bloqueaba su propio reintento después de corregida esa vigencia.
+
+### 2. El fix — ronda 1 (`backend-dev`)
+
+Diagnóstico previo (pedido explícito de JP, no asumido): `recibido` (estado transitorio) no puede
+quedar huérfano desde este CLI — todo el pipeline corre en una sola transacción de `conUsuario()`
+que solo comitea en el `return` final, y todo camino de `return` pasa antes por `rechazar()`
+(→`con_errores`) o por el `UPDATE` de cierre (→`procesado`/`procesado_con_observaciones`). Por eso
+el fix solo necesita distinguir `ESTADOS_LOTE_PERSISTIDO` (no reintentar) de todo lo demás
+(reintentar). Grep dirigido sobre el resto de `apps/cli/src/`: **ningún otro CLI tiene el mismo
+defecto** — `completar-lote.ts`, `recapturar-conceptos.ts`, `backfill-contraparte.ts` y
+`backfill-documento-ingerido.ts` ya distinguían `estado` explícito.
+
+El fix: un lote `con_errores` reusa el mismo `id` como ancla (`uq_lote_ingesta_archivo` no permite
+un segundo insert) y reprocesa el pipeline completo, limpiando `motivo_codigo` y guardando el
+original en `motivo_codigo_previo` si el reintento tiene éxito (mismo patrón que `completar-lote.ts`,
+migración 0012). Mutación real: verde → `git checkout` del archivo (mutante = código viejo) → 2
+tests nuevos en rojo exacto → restaurado → verde. Un test preexistente que **codificaba el bug como
+comportamiento esperado** (esperaba `ya_procesado` en la segunda corrida de un rechazo) se reescribió
+para verificar el invariante correcto.
+
+### 3. `tester` + `code-reviewer` en paralelo — encontraron el MISMO segundo defecto, independiente
+
+Los dos, sin coordinarse, dieron con el mismo hallazgo real en el caso que `backend-dev` había
+dejado señalado fuera de su alcance: reintento con `--banco` **distinto** al del intento rechazado.
+`lote_ingesta.banco_codigo` nunca se actualizaba en el `UPDATE` de cierre — un lote podía terminar
+`procesado` con `banco_codigo` del intento fallido y `adaptador_version` del intento exitoso,
+**contradiciéndose entre sí**. Impacto real, no cosmético: `packages/ingesta/src/planilla/
+exportar-planilla.ts` usa `banco_codigo` para filtrar lotes por banco y para elegir el léxico de
+enriquecimiento — un lote mal etiquetado no aparecía al filtrar por su banco real, y se clasificaba
+con el léxico equivocado. `tester` lo reprodujo de punta a punta contra LOCAL (no hipotético).
+
+`code-reviewer` señaló además, menor: `procesado_por` tampoco se actualizaba en un reintento hecho
+por un usuario distinto. Y confirmó, no bloqueante: sin `FOR UPDATE` en el `select` del reintento,
+dos corridas concurrentes sobre el mismo lote `con_errores` abren una ventana nueva (antes no
+existía porque el reintento estaba bloqueado del todo) — sin corrupción (`uq_lote_cuenta_natural`
+protege), pero el perdedor de la carrera recibe un crash genérico en vez de un mensaje claro; deuda
+ya conocida (`ingestar.ts` líneas 365-368, `10-deuda-declarada.md` §1.1), no nueva.
+
+### 4. Ronda 2 (`backend-dev`) — ajuste puntual, mutación real de nuevo
+
+`banco_codigo = cual.adaptador.bancoCodigo` (el banco que el adaptador REALMENTE detectó, nunca lo
+que el operador tipeó la primera vez) agregado al `UPDATE` de cierre. `procesado_por` decidido y
+resuelto ahora (no diferido): mismo patrón simple, sin necesitar un `_previo` como `motivo_codigo`
+(no hay ambigüedad de intento fallido que preservar — documenta quién cerró el lote con éxito, y el
+reintento es un cierre nuevo). Mutación real sobre el ajuste puntual: verde → comentado el
+fragmento del `UPDATE` → rojo exacto (`expected 'banco_cli_incorrecto' to be 'banco_cli_correcto'`)
+→ restaurado → verde.
+
+**Verificación final:** `pnpm typecheck` limpio. `apps/cli/tests/*`: **201/201**. `packages/ingesta/
+tests/*`: **874/874** (7 todo, sin fallos, sin regresión). Ningún dato real del piloto tocado
+durante el desarrollo del fix — todo contra LOCAL, incluida la fila `ee11d2e7-...` de Bracci, que
+se resolvió recién al reintentar la ingesta real DESPUÉS del fix verde.
+
+### 5. Reintento real — las 6 combinaciones de Bracci, completas
+
+Con el fix aplicado (sin commitear todavía), reintento real contra el piloto:
+
+- **cuenta especial, mayo** (sobre el lote rechazado `ee11d2e7-...`, reusado por mecanismo — **nunca
+  tocado a mano**, tal como pidió JP): ✅ `procesado`, **942 filas**, **19.925s real**.
+- **cuenta especial, junio** (lote nuevo `a5c7ccaf-...`): ✅ `procesado`, **929 filas**, **21.532s
+  real**.
+
+Verificado por consulta directa (conteo por cuenta y mes, no por el output del comando):
+
+| Cuenta | Mayo | Junio | Julio |
+|---|---|---|---|
+| Cta Cte (`f8b4e17d-...`) | 328 | 326 | 340 |
+| cuenta especial (`4ad30c97-...`) | 942 | 929 | 1081 |
+
+**6/6 combinaciones completas.** Total: 3946 movimientos reales de Bracci en `movimiento_bancario_
+crudo`, ninguno todavía con Capa C corrida (0 `reconocimiento_movimiento` fuera de los 1081 de la
+cuenta especial de julio, ya conocidos de (150)).
+
+### 6. Qué sigue
+
+1. Capa C + `conciliar:lote` sobre Cta Cte julio (mismo cierre existente, sin supersesión — (151)),
+   después mayo y junio completos (los 2 cuentas cada uno).
+2. Sin commitear todavía: `apps/cli/src/ingestar.ts` + `apps/cli/tests/ingestar.test.ts` (el fix de
+   esta entrada), pendiente de aprobación de JP junto con (151)/(152).
+3. El patrón sistémico de `cuenta_bancaria_identificador` en otros 4 clientes ((152) §1) sigue sin
+   dueño.
+
+---
+
+## 2026-08-31 (152) — Corrección de vigencia aplicada (Bracci, `2026-04-30`, 2 tablas) + hallazgo
+que se documenta con su peso real: **el defecto de `vigente_desde` = fecha de carga NO es un caso
+aislado de Bracci — está en 8 de 10 filas de `cuenta_bancaria_identificador` de TODO el piloto, en
+5 de los 6 clientes reales.** Panel de 4 convocados (`dba-data`, `plan-cuentas-multicliente`,
+`security-engineer`, `seguridad-datos-financieros`) antes de tocar la base.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (151). JP aprobó el plan
+con dos condiciones: documentar el hallazgo sistémico con su peso real, y confirmar explícito que
+`2026-04-30` era el mismo valor para las DOS tablas antes de aplicar (lo era: `plan-cuentas-
+multicliente` lo recomendó igual para ambas, no `2026-05-29` como en (150)).
+
+### 1. 🔴 Hallazgo con peso real: patrón sistémico en el mecanismo de alta, no un caso aislado
+
+`dba-data` escaneó `cuenta_bancaria_identificador` en **todo el piloto** (los 6 clientes, no solo
+Bracci): **10 filas totales, 8 con el mismo defecto** (`vigente_desde` = `periodo_desde` del
+PRIMER `lote_ingesta` de esa cuenta, no una vigencia real), en **5 de los 6 clientes reales**:
+
+| `cliente_id` | Filas afectadas |
+|---|---|
+| `13e5316c-4506-4dbc-bc71-5c3b9010fd8a` | 1 |
+| `f84d9ecc-6d54-4009-8fb6-b6fa3f8d8579` (Bracci — corregida esta entrada) | 2 |
+| `26e90bbb-991c-4d3b-9ab8-799aaea1a8e3` | 1 |
+| `b50560ae-27f7-4619-826c-d719bf526983` | 1 |
+| `69479b8f-9b6a-4d6b-bdb2-bff817c2e750` (ROKA) | 3 |
+
+**2 filas de un 6º cliente (`80741296-8cbf-4a4f-bcf1-8e8cb1c57584`) NO encajan el patrón** —
+`dba-data` investigó el porqué (esas filas se crearon ANTES que el lote que las referencia, indicio
+de alta manual con fecha explícita) y no las trató como el mismo bug sin evidencia.
+
+**Por qué esto no es "otra línea de deuda más":** no es un dato mal cargado una vez — es que **el
+código de alta de `cuenta_bancaria_identificador` no tiene ningún camino que registre una vigencia
+real**; todo alta hereda el `periodoDesde` del primer extracto que se procesa, siempre, para
+cualquier cliente. Corregir las filas de Bracci (esta entrada) no corrige el mecanismo: el próximo
+cliente que se dé de alta va a nacer con el mismo defecto. `seguridad-datos-financieros` confirmó
+que el modo de falla es disponibilidad (rechaza extractos legítimos con `cuenta_no_pertenece_al_
+cliente`), NUNCA una fuga cross-tenant (`resolverCuentaDelExtracto` acota siempre por `cliente_id`,
+verificado línea por línea) — así que no es urgente por secreto fiscal, pero sí merece su propia
+convocatoria de fix de raíz (probablemente `backend-dev` + `dba-data`, en el alta de cuenta
+bancaria, `packages/data/src/ingesta/escrituras.ts`), no una corrección fila por fila cada vez que
+alguien tropieza con un extracto viejo. **Sin dueño todavía** — queda declarado, no resuelto.
+
+### 2. El fix aplicado a Bracci — panel de 4 antes de tocar la base
+
+Convocados en paralelo: `dba-data` (mecanismo + el escaneo del punto 1), `plan-cuentas-multicliente`
+(valor: confirmó `2026-04-30` para las DOS tablas — el piso subió porque mayo trajo movimientos
+reales desde el 30/04, más viejos que el `2026-05-29` fijado en (150)), y en una segunda ronda
+`security-engineer` + `seguridad-datos-financieros` (revisión del mecanismo antes de aplicar,
+"aprobado con ajustes" los dos). Ajustes exigidos, todos incorporados antes de ejecutar:
+
+- Identidad real (no sintética) para `conUsuario()`: `11111111-...`, `socio` en el nodo raíz.
+- Script de dueño de esquema (única vía para `cuenta_atributo`, sin grant en `app_request`):
+  `WHERE cliente_id` explícito en cada sentencia, conteo ANTES (debía dar 227, abortar si no) y
+  DESPUÉS (`ROLLBACK` si no daba 227), `try/catch` sin loguear el `DETAIL` crudo de Postgres.
+- Verificación con conexión INDEPENDIENTE después de cada escritura.
+- Como la vía de dueño de esquema no puede pasar por `acceso_auditoria` (exige `tx.usuarioId`, que
+  esa conexión no tiene — límite arquitectónico ya declarado en ADR-0002, no un hallazgo nuevo),
+  `registrarAcceso()` de compensación vía `conUsuario()` inmediatamente después, para dejar un
+  rastro consultable por el sistema y no solo esta entrada.
+- `motivo`/`respaldo`: nunca nombre ni CUIT, solo `cliente_id` + justificación técnica + esta
+  referencia de HANDOFF (convención de JP, hueco H1/incidente #14).
+
+Backup fresco antes (`piloto_20260831-230715Z.dump`). Ejecutado:
+
+1. `cuenta_bancaria_identificador` (2 filas Bracci, grant completo de `app_request`, vía
+   `conUsuario()` + `escribirConAuditoria`, con fila real en `acceso_auditoria`, 2 correlaciones):
+   Cta Cte `2026-05-29→2026-04-30`, cuenta especial `2026-06-30→2026-04-30`.
+2. `cuenta_atributo` (227 filas Bracci, reabre (150) §4, dueño de esquema): conteo previo 227/227
+   (abortaba si no), `UPDATE` con `WHERE cliente_id` explícito, conteo posterior 227/227 — commit.
+   `2026-05-29→2026-04-30`.
+3. Verificación independiente (`conUsuario()`, conexión nueva): las 2 filas de identificador y las
+   227 de `cuenta_atributo`, las tres consultas dan `2026-04-30` exacto — confirmado, no supuesto.
+4. `registrarAcceso()` de compensación para el punto 2 — fila real en `acceso_auditoria`.
+
+Los 4 scripts efímeros usados, corridos y borrados — confirmado con `git status` (solo queda este
+archivo modificado).
+
+### 3. Qué sigue
+
+- Reintentar las 2 ingestas pendientes de Bracci (cuenta especial, mayo y junio) — ya deberían
+  resolver con el piso corregido.
+- Con las 6 combinaciones completas: Capa C + `conciliar:lote` sobre Cta Cte julio (mismo cierre ya
+  existente, sin supersesión, confirmado en (151)), después mayo y junio completos.
+- **Convocatoria de fix de raíz para el punto 1**, sin dueño todavía — no confundir con esta
+  corrección puntual de Bracci.
+
+### 4. Sin commit todavía
+
+Pendiente de aprobación de JP, junto con (151).
+
+---
+
+## 2026-08-31 (151) — Sesión 3, corrección de alcance: **julio (150) estaba cerrado sobre datos
+INCOMPLETOS de Bracci** — faltaban 4 de 6 lotes reales (2 cuentas × 3 meses). 2 de los 4 ya
+ingeridos, 1 rechazado por el MISMO defecto de vigencia que (150) §4 ya había encontrado en otra
+tabla, 1 sin intentar a propósito. Sin Capa C ni `conciliar:lote` corridos todavía — parados hasta
+resolver esto, como pidió JP.
+
+**Herramienta:** Claude Code, sesión interactiva, JP presente en cada paso bloqueante.
+
+### 1. Por qué esta entrada existe: (150) describía un resultado sobre datos incompletos
+
+JP pidió extender el circuito de (150) a mayo y junio. El inventario read-only (mismo mecanismo que
+(150) §1) reveló que la premisa era incorrecta: **no hay 3 meses × 2 cuentas = 6 lotes con 4
+pendientes de Capa C** — hay **6 combinaciones posibles (2 cuentas Galicia de Bracci × 3 meses con
+archivo real en `privado/piloto_capa_d/Bracci/`) y solo 2 estaban ingeridas**: Cta Cte de junio
+(326 mov.) y cuenta especial de julio (1081 mov., el corpus que (150) procesó). **`(150)` corrió
+Capa C y `conciliar:lote` sobre julio, pero julio en la base tenía UNA sola de las DOS cuentas de
+Bracci.** Los 518 `asiento_propuesto` que JP revisó línea por línea son reales y el patrón contable
+que confirmó es correcto — pero el mes, como conjunto, estaba incompleto: le faltaba toda la Cta
+Cte de julio (340 movimientos más, todavía sin clasificar a la fecha de esta entrada). **No se
+esconde ni se minimiza: `(150)` fue la primera corrida real y encontró un bug de producción real
+—eso sigue siendo cierto—, pero su alcance de "julio cerrado" no lo estaba.**
+
+### 2. Las 6 combinaciones, confirmadas por archivo en disco + consulta directa a la base
+
+| Cuenta | Mayo (05-2026) | Junio (06-2026) | Julio (07-2026) |
+|---|---|---|---|
+| Cta Cte (`f8b4e17d-...` → `1.1.2.100`) | archivo existía, NO ingerido | ✅ ya ingerido (326, lote `63050700-...`, 2026-08-12) | archivo existía, NO ingerido |
+| cuenta especial (`4ad30c97-...` → `1.1.2.300`) | archivo existía, NO ingerido | archivo existía, NO ingerido | ✅ ya ingerido (1081, lote `23d91533-...`, 2026-08-21 — es el corpus de (150)) |
+
+### 3. Las 4 ingestas de Módulo 1 — 2 completadas, 1 rechazada (hallazgo real), 1 no intentada a propósito
+
+Backup fresco antes de empezar el lote de 4 (`piloto_20260831-220651Z.dump`). Mismo adapter Galicia
+ya probado, `pnpm probar` (dry-run, sin tocar base) corrido primero contra los 4 PDF — los 4
+`VEREDICTO DEL LOTE: cuadra`, sin anomalías de aritmética (el warning repetido `Math.sumPrecise is
+not a function` es de `unpdf`/`pdfjs`, en extracción de texto — no toca nuestra aritmética de
+importes, confirmado por grep: no hay ninguna referencia a `sumPrecise` en código propio, solo en
+`node_modules/.pnpm/unpdf@.../pdfjs.mjs`; ya estaba presente en las corridas de (150), no es nuevo).
+
+1. **Cta Cte, mayo** (`05-2026.pdf`): ✅ `procesado`, lote `98f87beb-...`, **328 filas**. **30.505s
+   real** (medido por el propio comando, no estimado).
+2. **Cta Cte, julio** (`07-2026.pdf`): ✅ `procesado`, lote `2cf77c67-...`, **340 filas**. **25.028s
+   real.** Sin colisión de hash en el límite del período (el extracto de junio ya ingerido termina
+   `2026-06-30` y este de julio empieza `2026-06-30` — mismo día en las dos carátulas, pero
+   `hashFila` incluye saldo+glosa+ordinal y no colisionó: son movimientos distintos del mismo día,
+   no el mismo movimiento duplicado).
+3. **cuenta especial, mayo** (`05-2026 cta cte especial.pdf`): 🔴 **RECHAZADO**,
+   `motivo_codigo=cuenta_no_pertenece_al_cliente`, lote `ee11d2e7-...` (queda como ancla del
+   rechazo, `estado=con_errores`, `filas_leidas=0`). **10.125s real.** Verificado que no dejó
+   residuo: `0` filas en `movimiento_bancario_crudo` para ese lote.
+4. **cuenta especial, junio**: **NO INTENTADA a propósito** — ver punto 5, el mismo defecto
+   probablemente también la afecta y seguir sin resolverlo primero hubiera sido forzar.
+
+### 4. La causa del rechazo — MISMO defecto de vigencia que (150) §4, en OTRA tabla
+
+`resolverCuentaDelExtracto` (INV-6, `packages/ingesta/src/resolver-cuenta.ts`) resuelve la cuenta
+buscando el identificador (CBU/número) de la carátula contra `cuenta_bancaria_identificador`,
+acotado a `vigente_desde <= alFecha <= vigente_hasta` — `alFecha` es el `periodoHasta` del
+extracto (fin del período declarado), a propósito (§ comentario del archivo: "un extracto de hace
+ocho meses resuelve con el identificador vigente ENTONCES"). Consultado por columnas no sensibles
+(nunca `numero` ni `cbu_hmac`):
+
+| `cuenta_bancaria_id` | `vigente_desde` | Cuándo se cargó (`created_at`) |
+|---|---|---|
+| cuenta especial (`4ad30c97-...`) | **`2026-06-30`** | 2026-08-21 (al ingerir julio, el PRIMER lote de esta cuenta) |
+| Cta Cte (`f8b4e17d-...`) | `2026-05-29` | 2026-08-12 (al ingerir junio, el PRIMER lote de esta cuenta) |
+
+**El `vigente_desde` de cada identificador quedó en el `periodoDesde`/`periodoHasta` del PRIMER
+extracto que se ingirió de esa cuenta, no en la vigencia real del CBU.** Para la cuenta especial,
+el primer lote ingerido fue julio (`periodoDesde=2026-06-30`) — así que su identificador "nace"
+vigente recién el 2026-06-30, y el extracto de mayo (`periodoHasta=2026-05-29`) queda ANTES de esa
+fecha → cero candidatas → `cuenta_no_pertenece_al_cliente`. La Cta Cte tuvo la misma suerte que no:
+su primer lote fue junio (`periodoDesde≈2026-05-29`) y el `periodoHasta` de mayo es EXACTAMENTE
+`2026-05-29` — pasó por el pelo, con `<=` inclusivo, no porque la vigencia esté bien.
+
+Es el **mismo patrón exacto** que `cuenta_atributo.vigente_desde` en (150) §4 (fecha de CARGA del
+CLI en vez de vigencia contable real) — pero en una tabla distinta (`cuenta_bancaria_identificador`,
+migración `0004`/`0006`), nunca tocada por la corrección anterior. **No se corrigió en esta sesión:
+es una decisión de qué fecha es la vigencia real de cada CBU (¿desde que existe la cuenta? ¿desde
+el movimiento más antiguo real disponible?), y (150) ya estableció que ese tipo de decisión la toma
+`dba-data` + el dueño del dato, no se resuelve corriendo la fecha hacia atrás sin criterio.**
+
+### 5. Por qué se frenó ahí, sin intentar la 4ª ingesta ni tocar Capa C
+
+Aunque la 4ª ingesta (cuenta especial, junio) probablemente hubiera pasado el mismo chequeo por el
+mismo motivo que Cta Cte-mayo (`periodoHasta=2026-06-30` empata exacto con `vigente_desde=
+2026-06-30`), forzarla hubiera sido cargar más datos sobre una vigencia que ya se sabe mal —
+exactamente lo que JP pidió no hacer ("no fuerces ni ignores, reportá explícito"). Capa C y
+`conciliar:lote` siguen sin correr sobre ningún lote de esta tanda.
+
+### 6. Estado real de `movimiento_bancario_crudo` de Bracci, ahora
+
+| Cuenta | Mayo | Junio | Julio |
+|---|---|---|---|
+| Cta Cte | ✅ 328 | ✅ 326 (preexistente) | ✅ 340 |
+| cuenta especial | ❌ pendiente (vigencia) | ❌ no intentada | ✅ 1081 (preexistente, es el corpus de (150)) |
+
+### 7. Qué falta, en orden, antes de tocar Capa C de nuevo
+
+1. Decidir la vigencia real de `cuenta_bancaria_identificador` para las 2 cuentas (convocar
+   `dba-data`, mismo criterio que (150) §4 para `cuenta_atributo`).
+2. Reintentar cuenta especial mayo y junio con la vigencia corregida.
+3. Definir el mecanismo de RE-CIERRE de julio (JP preguntó explícitamente: ¿supersesión de los 518
+   `asiento_propuesto` existentes, D-6 de `23-arquitectura-cierre-mensual.md`, o hace falta anular
+   primero? — sin responder todavía en esta entrada, es el próximo paso).
+4. Recién con julio completo (2 cuentas) re-cerrado, seguir con junio y mayo completos.
+
+### 8. Sin commit todavía
+
+Esta entrada y el hallazgo quedan para que JP decida el orden del punto 7 antes de seguir. Ningún
+script de diagnóstico quedó en el repo (los 4 usados esta tarea, borrados, confirmado con `git
+status`).
+
+---
+
 ## 2026-08-31 (150) — Sesión 3, primer paso: PRIMERA corrida real del motor de clasificación contra
 un cliente real del piloto (Bracci, julio 2026). 518 `asiento_propuesto` creados, revisados línea
 por línea por JP. Un bug de producción encontrado y corregido en el camino, dos migraciones de datos
