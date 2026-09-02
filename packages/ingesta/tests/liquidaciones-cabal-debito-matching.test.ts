@@ -97,7 +97,7 @@ describe('arancel / iva_21_sobre_arancel — sin filtro pipe/corchete, riesgo de
   it('un bloque real produce arancel Y iva_21_sobre_arancel como renglones DISTINTOS', async () => {
     const y0 = 0;
     const palabras = [
-      ...filaVentaTotal(y0, '1.000,00'),
+      ...filaVentaTotal(y0, '1.847,90'),
       ...filaArancel(y0 + PASO_FILA, '1,00', '10,00'),
       ...filaIvaSobreArancel(y0 + PASO_FILA * 2, '21,00', '2,10'),
       ...filaRetencion(y0 + PASO_FILA * 3, '3,50', '35,00'),
@@ -132,7 +132,7 @@ describe('arancel / iva_21_sobre_arancel — sin filtro pipe/corchete, riesgo de
     const y0 = 0;
     const palabras = [
       ...filaEncabezadoDeColumna(y0), // ruido: sin importe, antes del total real
-      ...filaVentaTotal(y0 + PASO_FILA, '1.000,00'),
+      ...filaVentaTotal(y0 + PASO_FILA, '1.847,90'),
       ...filaArancel(y0 + PASO_FILA * 2, '1,00', '10,00'),
       ...filaIvaSobreArancel(y0 + PASO_FILA * 3, '21,00', '2,10'),
       ...filaEncabezadoDeColumna(y0 + PASO_FILA * 4), // ruido: sin importe, DESPUÉS del total real

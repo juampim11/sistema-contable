@@ -224,7 +224,7 @@ function documento(opciones: Opciones = {}): readonly FilaGeometrica[] {
     texto(`Saldos consolidados por moneda al 28/11/2025 Hoja Nro.: ${hoja}`);
     linea([
       { texto: 'Saldo Cuentas en PESOS', x: 20.2 },
-      enBordeDerecho(opciones.consolidadoPesos ?? '3.000,00', BORDE.saldo),
+      enBordeDerecho(opciones.consolidadoPesos ?? '3.569,10', BORDE.saldo),
     ]);
     // 🔴 El mismo literal con **dos espaciados distintos en el mismo archivo** (§9): en una página sale
     // entero y en otra partido, con lo que `textoDeFila` deja un espacio de más adentro de `EE.UU.`.
@@ -378,15 +378,15 @@ function documento(opciones: Opciones = {}): readonly FilaGeometrica[] {
   texto('- - - - - - - - - - - -');
 
   encabezadoDeCuenta('CUENTA CORRIENTE ESPECIAL EN PESOS', NRO_ESPECIAL, '2850000-1-0000000000001-1');
-  saldoUltimo('1.000,00');
+  saldoUltimo('1.284,55');
   movimiento({
     fecha: '03/11/25',
     glosa: [{ texto: GLOSA_REPETIDA, x: X.glosa }],
     referencia: '0',
     credito: '500,00',
-    saldo: '1.500,00',
+    saldo: '1.784,55',
   });
-  saldoFinal('1.500,00');
+  saldoFinal('1.784,55');
   anexo(TOTAL_COBRADO.espaciado, '12,00');
   // 🔴 El `D. 409/2018` que **cruza el corte de página**: la etiqueta acá, su `(S.E.U.O.) <IMP>` en la p2
   // y **después** del encabezado de cuenta repetido. Es el único elemento del documento que se parte.
@@ -413,7 +413,7 @@ function documento(opciones: Opciones = {}): readonly FilaGeometrica[] {
     { texto: 'Tasa Nom. Anual: 1,00 Tasa Efec. Anual:', x: 20.2 },
     enBordeDerecho('2,00', BORDE.saldo),
   ]);
-  saldoUltimo('9.000,00');
+  saldoUltimo('9.472,20');
 
   // Fuera del período declarado (§6) y con la glosa en **cuatro** fragmentos (§7).
   movimiento({
@@ -426,7 +426,7 @@ function documento(opciones: Opciones = {}): readonly FilaGeometrica[] {
     ],
     referencia: '9876543',
     debito: '500,00',
-    saldo: '8.500,00',
+    saldo: '8.972,20',
   });
   // Glosa que **desborda** hacia `REFERENCIA` (borde derecho 297.6) y, como las 113 medidas, sin referencia.
   movimiento({
@@ -435,15 +435,15 @@ function documento(opciones: Opciones = {}): readonly FilaGeometrica[] {
       { texto: 'GLOSA QUE', x: X.glosa },
       { texto: 'DESBORDA A LA REFERENCIA', x: 240.0, ancho: 57.6 },
     ],
-    debito: '9.000,00',
-    saldo: '-500,00',
+    debito: '9.187,65',
+    saldo: '-215,45',
   });
   movimiento({
     fecha: '03/11/25',
     glosa: [{ texto: 'TPUSH NOMBRE SINTETICO DE UN TERCERO', x: X.glosa }],
     referencia: '12',
     credito: '1.500,00',
-    saldo: '1.000,00',
+    saldo: '1.284,55',
   });
   // 🔴 Idéntico al único movimiento de la cuenta especial: misma fecha, mismo importe, **mismo saldo** y
   // misma glosa. Es el par que colapsa si la cuenta no entra en el material del hash (§10).
@@ -452,7 +452,7 @@ function documento(opciones: Opciones = {}): readonly FilaGeometrica[] {
     glosa: [{ texto: GLOSA_REPETIDA, x: X.glosa }],
     referencia: '0',
     credito: '500,00',
-    saldo: '1.500,00',
+    saldo: '1.784,55',
   });
   /**
    * 🔴 **Las dos etiquetas que el vocabulario tenía y no podía capturar.** El banco imprime
@@ -463,19 +463,19 @@ function documento(opciones: Opciones = {}): readonly FilaGeometrica[] {
     fecha: '03/11/25',
     glosa: [{ texto: 'CREDIN:TOKENSINTETICO-34', x: X.glosa }],
     credito: '100,00',
-    saldo: '1.600,00',
+    saldo: '1.884,55',
   });
   movimiento({
     fecha: '03/11/25',
     glosa: [{ texto: 'TRANSF:OTROTOKEN-12', x: X.glosa }],
     debito: '100,00',
-    saldo: '1.500,00',
+    saldo: '1.784,55',
   });
   // Ver `Opciones.movimientosExtraBancaria`: por defecto no agrega nada y el fixture es idéntico al de
   // siempre. `SALDO FINAL` queda con el literal fijo de arriba a propósito — estos tests aislados no
   // ejercitan `verificarAritmetica`, solo los campos del movimiento agregado.
   for (const extra of opciones.movimientosExtraBancaria ?? []) movimiento(extra);
-  if (opciones.sinSaldoFinalDeLaBancaria !== true) saldoFinal('1.500,00');
+  if (opciones.sinSaldoFinalDeLaBancaria !== true) saldoFinal('1.784,55');
   // 🔴 La SEGUNDA grafía del mismo literal (§9, trampa 1): con igualdad exacta se capturan 2 de 3.
   anexo(TOTAL_COBRADO.pegado, '34,00');
   // Y el tercero: inline, con `DEL PERIODO AL <F4>` y **sin fecha de inicio**.
@@ -561,11 +561,11 @@ describe('§14.2 — la sectorización: el encabezado repetido NO crea una cuent
    * equivocada.
    */
   it('la cola del anexo de la p2 no se le cuelga a la cuenta nueva ni le corre los saldos', () => {
-    expect(ctaEspecial?.cuenta.saldoInicialDeclarado).toBe('1000.00');
-    expect(ctaEspecial?.cuenta.saldoFinalDeclarado).toBe('1500.00');
+    expect(ctaEspecial?.cuenta.saldoInicialDeclarado).toBe('1284.55');
+    expect(ctaEspecial?.cuenta.saldoFinalDeclarado).toBe('1784.55');
     // Y la cuenta que empieza DESPUÉS arranca con su propio saldo, no con el `3,00` de la cola del anexo.
-    expect(ctaBancaria?.cuenta.saldoInicialDeclarado).toBe('9000.00');
-    expect(ctaBancaria?.cuenta.saldoFinalDeclarado).toBe('1500.00');
+    expect(ctaBancaria?.cuenta.saldoInicialDeclarado).toBe('9472.20');
+    expect(ctaBancaria?.cuenta.saldoFinalDeclarado).toBe('1784.55');
   });
 
   /**
@@ -984,7 +984,7 @@ describe('§4 y §9 — el signo lo dice la columna, y el saldo solo se lee de u
 
   /** §4: el menos va **ADELANTE** en el saldo — al revés del primer banco del roster. */
   it('lee el saldo negativo con el menos adelante y lo marca acreedor', () => {
-    expect(ctaBancaria?.movimientos[1]).toMatchObject({ saldo: '-500.00', saldoEsAcreedor: true });
+    expect(ctaBancaria?.movimientos[1]).toMatchObject({ saldo: '-215.45', saldoEsAcreedor: true });
     expect(ctaBancaria?.movimientos[0]?.saldoEsAcreedor).toBe(false);
   });
 
@@ -997,9 +997,9 @@ describe('§4 y §9 — el signo lo dice la columna, y el saldo solo se lee de u
   it('ningún importe de fuera de la tabla entra como movimiento ni como saldo', () => {
     const movimientos = leido.cuentas.flatMap((c) => c.movimientos);
     expect(movimientos).toHaveLength(7);
-    // `(S.E.U.O.) 3,00`, `Tasa Efec. Anual 2,00`, el consolidado `3.000,00` y el anexo `12,00`/`34,00`.
+    // `(S.E.U.O.) 3,00`, `Tasa Efec. Anual 2,00`, el consolidado `3.569,10` y el anexo `12,00`/`34,00`.
     const saldos = movimientos.map((m) => m.saldo);
-    for (const intruso of ['3.00', '2.00', '3000.00', '12.00', '34.00']) {
+    for (const intruso of ['3.00', '2.00', '3569.10', '12.00', '34.00']) {
       expect(saldos).not.toContain(intruso);
     }
   });
@@ -1250,7 +1250,7 @@ describe('§9 — el anexo: los SEIS renglones, y qué declara cada uno', () => 
 describe('§14.4-bis — el consolidado por moneda: el único control que ve una mezcla', () => {
   it('lee las dos monedas, y el literal con el espaciado partido también', () => {
     expect(leido.consolidadosPorMoneda).toEqual([
-      { moneda: 'ARS', importe: '3000.00', paginaPdf: 1 },
+      { moneda: 'ARS', importe: '3569.10', paginaPdf: 1 },
       { moneda: 'USD', importe: '0.00', paginaPdf: 1 },
     ]);
   });

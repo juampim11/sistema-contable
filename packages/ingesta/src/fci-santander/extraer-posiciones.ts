@@ -145,7 +145,7 @@ function aTextoCanonico(texto: string): string {
 }
 
 /** Cantidad de decimales de un campo con forma numérica AR (despegando el prefijo de moneda ANTES de
- *  testear, no solo antes de convertir — bug real atrapado por un test propio: `"$ 1.000,00"` no
+ *  testear, no solo antes de convertir — bug real atrapado por un test propio: `"$ 1.847,90"` no
  *  matchea `RE_NUMERO_AR` directo), o `null` si el campo no tiene esa forma. */
 function decimalesDeCampoNumerico(campo: string): number | null {
   const m = RE_NUMERO_AR.exec(sinPrefijoDeMoneda(normalizarTokenNumerico(campo)).trim());

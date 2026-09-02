@@ -114,7 +114,7 @@ describe('comoSaldoDeLinea', () => {
   });
 
   it('despega el prefijo de moneda ($) antes de convertir a decimal canónico', () => {
-    expect(comoSaldoDeLinea('SALDO INICIAL  $ 1.000,00')).toEqual({ tipo: 'inicial', importe: '1000.00' });
+    expect(comoSaldoDeLinea('SALDO INICIAL  $ 1.847,90')).toEqual({ tipo: 'inicial', importe: '1847.90' });
   });
 
   it('una línea SALDO sin ningún campo de 2 decimales devuelve null (no se inventa el importe)', () => {

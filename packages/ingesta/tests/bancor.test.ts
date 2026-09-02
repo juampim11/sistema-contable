@@ -500,7 +500,7 @@ describe('leerBancor — fail-closed: hallazgos de code-reviewer/tester sobre el
 function agregarBloqueDeTotales(h: ReturnType<typeof hoja>): void {
   const filas: readonly [string, string][] = [
     ['Total Impuesto al Valor Agregado', '$1.234,56'],
-    ['Total Imp.Ley de Competitividad', '$2.500,00'],
+    ['Total Imp.Ley de Competitividad', '$2.847,90'],
     ['Total Imp.L.Competitiv. Credito Compensable', '$0.00'],
     ['Total SIRCREB', '$0.00'],
     ['Total SIRCREB CBA', '$300,00'],

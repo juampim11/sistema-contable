@@ -32,7 +32,7 @@ function palabra(texto: string, x: number, y: number, confianza = 95): PalabraOc
 const PASO_FILA = 45;
 
 function filaVentaContado(y: number): PalabraOcr[] {
-  return [palabra('VENTA', 100, y), palabra('CONTADO', 260, y), palabra('1.000,00', 900, y)];
+  return [palabra('VENTA', 100, y), palabra('CONTADO', 260, y), palabra('1.847,90', 900, y)];
 }
 
 function filaVentaCuota(y: number): PalabraOcr[] {

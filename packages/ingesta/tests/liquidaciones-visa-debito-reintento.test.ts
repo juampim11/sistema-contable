@@ -48,7 +48,7 @@ function filaVentas(y: number): PalabraOcr[] {
     palabra('VENTAS', 100, y),
     palabra('C/DESCUENTO', 260, y),
     palabra('CONTADO', 430, y),
-    palabra('1.000,00', 900, y),
+    palabra('1.847,90', 900, y),
   ];
 }
 
