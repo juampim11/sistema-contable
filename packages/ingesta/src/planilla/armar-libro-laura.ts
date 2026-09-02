@@ -383,11 +383,28 @@ function armarHojaAsientos(libro: ExcelJS.Workbook, datos: ResultadoRelevamiento
   hoja.getCell('A1').value = `Relevamiento para Laura — Asientos automáticos · Generado ${generadoEn}`;
   hoja.getCell('A1').font = { bold: true };
   hoja.mergeCells(1, 1, 1, 11);
-  hoja.getRow(2).font = { bold: true };
-  hoja.getRow(2).alignment = { vertical: 'middle', wrapText: true };
-  hoja.views = [{ state: 'frozen', ySplit: 2 }];
 
-  let filaActual = 3;
+  // Fila de aclaración fija, arriba de los encabezados (JP, ajuste post-entrega): esta hoja muestra
+  // UN ejemplo por tipo, no el listado completo — "Cantidad" es el total de los 3 meses juntos, no
+  // solo del ejemplo mostrado. Sin esto, alguien podría leer la hoja como si tuviera que revisar
+  // caso por caso.
+  hoja.spliceRows(2, 0, []);
+  hoja.getCell('A2').value =
+    'Esta hoja muestra, para cada tipo de movimiento, UN EJEMPLO representativo de cómo el sistema ' +
+    'arma el asiento — no la lista completa de casos. La columna "Cantidad" es el total de veces ' +
+    'que ese tipo de movimiento aparece SUMANDO los tres meses juntos (mayo, junio y julio 2026), ' +
+    'no solo en la fecha del ejemplo. Si el criterio contable del ejemplo te parece correcto, se ' +
+    'aplica igual a todos los casos de ese mismo tipo — no hace falta que revises caso por caso.';
+  hoja.getCell('A2').font = { italic: true };
+  hoja.getCell('A2').alignment = { wrapText: true, vertical: 'middle' };
+  hoja.mergeCells(2, 1, 2, 11);
+  hoja.getRow(2).height = 45;
+
+  hoja.getRow(3).font = { bold: true };
+  hoja.getRow(3).alignment = { vertical: 'middle', wrapText: true };
+  hoja.views = [{ state: 'frozen', ySplit: 3 }];
+
+  let filaActual = 4;
   let totalReversas = 0;
   let numeroDeAsiento = 0;
   const anclasParaFormatoCondicional: string[] = [];
@@ -494,7 +511,10 @@ function armarHojaAsientos(libro: ExcelJS.Workbook, datos: ResultadoRelevamiento
           type: 'expression',
           // Resalta la celda de "cuenta alternativa" de la fila ancla de cada asiento cuando la
           // respuesta es "NO" y todavía no completó esa columna — nunca bloqueante, solo visual.
-          formulae: [`AND($${colRespuesta}3="NO",$${colAlternativa}3="")`],
+          // La fila del literal (4) tiene que coincidir con la primera fila de datos real (`filaActual`
+          // arranca en 4 más arriba) — es la que Excel usa como ancla para desplazar el resto de los
+          // `ref` no contiguos por offset relativo.
+          formulae: [`AND($${colRespuesta}4="NO",$${colAlternativa}4="")`],
           priority: 1,
           style: { fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } } },
         },

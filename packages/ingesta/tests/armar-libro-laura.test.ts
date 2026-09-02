@@ -188,10 +188,15 @@ describe('armarLibroLaura', () => {
     const hoja = libro.getWorksheet('Asientos automáticos');
     if (!hoja) throw new Error('falta la hoja');
 
-    // Fila 3 = Debe (sin sangría), fila 4 = Haber (con sangría), fila 5 = blanco de separación.
-    const filaDebe = hoja.getRow(3);
-    const filaHaber = hoja.getRow(4);
-    const filaBlanco = hoja.getRow(5);
+    // Nota fija de aclaración (JP, ajuste post-entrega): un ejemplo por tipo, "Cantidad" es el
+    // total de los 3 meses, no solo el ejemplo — nunca "revisá caso por caso".
+    expect(String(hoja.getCell('A2').value)).toContain('UN EJEMPLO representativo');
+    expect(String(hoja.getCell('A2').value)).toContain('SUMANDO los tres meses juntos');
+
+    // Fila 1 = título, fila 2 = nota fija de aclaración, fila 3 = encabezados, datos desde fila 4.
+    const filaDebe = hoja.getRow(4);
+    const filaHaber = hoja.getRow(5);
+    const filaBlanco = hoja.getRow(6);
 
     expect(filaDebe.getCell(6).value).toBe('4.2.5.200 · Gastos y comisiones bancarias');
     expect(filaDebe.getCell(6).alignment?.indent ?? 0).toBe(0);
