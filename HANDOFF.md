@@ -6,6 +6,26 @@
 
 ---
 
+## 2026-09-02 (173) — 🟡 Sesión 3 — nota fija de aclaración en Hoja 3 ("un ejemplo por tipo,
+`Cantidad` suma los 3 meses"). Los 2 archivos regenerados, revisión final de JP pendiente.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (172), mismo chat.
+
+Fila 2 nueva de `Asientos automáticos` (arriba de los encabezados, `wrapText`, altura ampliada):
+aclara explícito que la hoja muestra UN ejemplo representativo por tipo, no la lista completa de
+casos, y que "Cantidad" suma los 3 meses juntos (mayo/junio/julio 2026) — para que quede claro que
+no hace falta revisar caso por caso si el criterio del ejemplo parece correcto. Versión resumida de
+la misma idea agregada al párrafo de esa hoja en el instructivo. Encabezados pasan a fila 3, datos
+desde fila 4 — ajustada también la fórmula de formato condicional que dependía de un número de fila
+literal (commit `499507f`, 28/28 tests verdes, barrido limpio).
+
+Los 3 archivos regenerados con los 3 ajustes de esta sesión (formato de asiento clásico, razón
+social real, nota fija): `relevamiento-bracci-roka.xlsx` (30.905 bytes), `instructivo.docx`,
+`whatsapp.txt` — en `privado/piloto_capa_d/entregas-laura/`, fuera de `git`. Sigue sin enviarse
+nada — JP los revisa antes de mandárselos a Laura.
+
+---
+
 ## 2026-09-02 (172) — 🟡 Sesión 3 — dos ajustes post-entrega del paquete de Laura (formato de
 asiento clásico en Hoja 3 + razón social real, no el placeholder de `tenant_node.nombre`). Sigue
 sin enviarse nada.
