@@ -6,6 +6,139 @@
 
 ---
 
+## 2026-09-02 (174) — 🟡 Adapter de extracción "Visa Corporativa" (tarjeta de Bracci) construido,
+probado y enchufado al registro real. Cierra la premisa falsa de la tarea original — no había ningún
+adapter, ni era una liquidación de tarjeta. **Persistencia sigue sin arrancar**: 1 bloqueante cerrado
+hoy (moneda mezclada), 1 declarado como deuda B.17 (identidad de cuenta, necesita migración propia).
+
+**Herramienta:** Claude Code, sesión interactiva. Chat nuevo, re-entrada con contexto del cierre de
+Bracci/ROKA banco (HANDOFF 170) + `27-roadmap-capa-d.md`. Modo plan formal (CLAUDE.md §3.2), 6
+convocatorias reales antes/durante la implementación (`arquitecto-software`, `contador-dominio`,
+`seguridad-datos-financieros`, `security-engineer`, `dba-data` — algunos más de una vez), `backend-dev`
+para implementar, `code-reviewer` + `tester` en paralelo antes de cerrar.
+
+### 1. La premisa de la tarea era incorrecta — confirmado con medición, no con supuesto
+
+El pedido original asumía "conectar el 4º formato de liquidación de tarjeta (ya construido y medido) a
+persistencia". Un dry-run de solo lectura contra los 3 PDF reales de Bracci
+(`privado/piloto_capa_d/Bracci/Tarjeta corporativa/`, mayo/junio/julio 2026) refutó las dos mitades:
+
+- **Ningún adapter de `liquidaciones/formatos/` (Cabal débito, Visa crédito, Visa débito) reconoce el
+  documento** — confirma lo que `docs/diseno/27-roadmap-capa-d.md` y `HANDOFF.md` (133) ya decían
+  ("Sin empezar"): nunca se construyó, ni en este ni en ningún commit del historial (`git log --all`
+  sin resultados sobre "corporativ"/"bracci tarjeta").
+- **El documento no es una liquidación a comercio**: 0/11 vocabulario de liquidación (LIQUIDACION,
+  COMERCIO, ARANCEL, etc.), 7/7 vocabulario de resumen de cuenta de tarjetahabiente (CONSUMOS, PAGO
+  MINIMO, SALDO ANTERIOR/ACTUAL, FECHA DE CIERRE/VENCIMIENTO, ADICIONAL). Es el resumen que recibe
+  Bracci como tarjetahabiente, no una liquidación que recibiría como comercio (eso es lo que hacen los
+  3 formatos ya construidos, contra documentos de ROKA).
+
+### 2. Arquitectura resuelta por convocatoria real, antes de cualquier código
+
+`arquitecto-software`: reusar el contrato de **adaptador bancario** (`cuenta_bancaria` con
+`tipo_cuenta='tarjeta_corporativa'`, ya existente desde `0006_ajustes_cuenta.sql`), no una tabla
+paralela de liquidaciones — el dominio ya lo anticipaba (léxico `pago_tarjeta_corporativa_visa`,
+motivo pendiente `completar_con_liquidacion_de_la_tarjeta`). `contador-dominio`: capturar línea por
+línea en Capa D (sin RT de FACPCE cargada, sin cita normativa), dejando la agregación por período a
+Módulo 2. `seguridad-datos-financieros`: si `numero` resulta un PAN, N2-R con `enmascarar:'ultimos4'`
+(nunca N3, nunca un `pan_hmac` por analogía con `cbu_hmac` — entropía de 4 dígitos). Plan formal de 5
+puntos (CLAUDE.md §3.2), aprobado por JP con un pedido explícito de secuencia: la prueba de mutación
+del guard de PAN, hecha y documentada ANTES del intento adversarial de `tester` (memoria nueva:
+`prueba-mutacion-antes-de-tester.md`).
+
+### 3. Implementación — `security-engineer` diseña el guard de PAN, `backend-dev` lo implementa
+
+`security-engineer` siguió el dato hasta el final en los 3 caminos posibles del pipeline (glosa,
+`lineasNoInterpretadas`, carátula por etiqueta) y encontró que **2 de 3 ya estaban cerrados
+gratis** (`depurarGlosa` + `formaParaLog`); solo la carátula necesitaba guard nuevo. Diseño cerrado:
+`RE_PAN` (13-19 dígitos, `detectores-forma.ts`) + `luhnEsValido` (checksum puro, `validador-
+documento.ts`) + `sinPan()` local al adapter — Luhn decide el MOTIVO del log, nunca si se trunca
+(falla cerrado: un PAN real mal leído por OCR puede fallar Luhn y seguir siendo sensible). Hallazgo
+adyacente encontrado en el camino, fuera de alcance, reportado no resuelto: `referenciaExterna`/
+`referencias[].valor` se persisten sin `depurarGlosa` en los 8 adaptadores existentes.
+
+`backend-dev` implementó el adapter (`packages/ingesta/src/adaptadores/visa-corporativa.ts`), el
+guard con su prueba de mutación (6 mutaciones + 3 casos legítimos, todas confirmadas rojo y
+revertidas, documentadas en el propio test), y agregó la entrada `pan` al redactor compartido
+(`redactar.ts`, N2R — corregido de un N3 inicial que `code-reviewer` detectó inconsistente con
+`niveles.ts`).
+
+### 4. `code-reviewer` + `tester` en paralelo — encontraron, de forma independiente, el mismo
+bloqueante real: el adapter nunca quedó enchufado a ningún punto de entrada operativo
+(`packages/ingesta/src/index.ts`, `apps/cli/src/ingestar.ts`/`completar-lote.ts`/
+`recapturar-conceptos.ts`, `packages/ingesta/scripts/probar-adaptador.ts`) — pasaba los 17 tests
+porque llamaban las funciones directo, sin pasar por el registro. Corregido por `backend-dev`,
+verificado contra el registro real (no contra las funciones sueltas): `RESOLUCION: encontrado` en los
+3 meses (antes: `sin_adaptador`). `code-reviewer` marcó 2 ajustes menores más, los dos aplicados:
+clasificación N2R (arriba) y medición explícita de `leerCuitTitular` contra los 3 documentos reales
+(1 candidato sin colisión en las primeras 10 filas, en los 3 meses — límite documentado: es medición
+por forma, se rompería en silencio si un documento futuro imprime el CUIT del emisor antes).
+
+### 5. Corriendo contra el REGISTRO real (no contra tests aislados) aparecieron 2 bloqueantes nuevos,
+genuinos, fuera del alcance del adapter — ninguno se resolvió sin convocatoria
+
+**Bloqueante 2 (moneda mezclada) — CERRADO hoy.** Con ARS y USD mezclados en una sola `CuentaDetectada`,
+el lote daba `EST_MONEDA_MEZCLADA` (V12, `01-modulo-1-ingesta-bancaria.md:313`) siempre que hubiera un
+consumo en dólares. `arquitecto-software` confirmó que V12 no es relajable — `cuenta_bancaria.moneda`
+es `char(3) not null` en el esquema físico, la restricción ya está en la base — y recomendó partir el
+documento en 2 `CuentaDetectada` (mismo patrón que `macro.ts`). `contador-dominio` confirmó que la
+partición en captura no contamina "un asiento por resumen" (Módulo 2), siempre que cada línea siga
+llevando su moneda de origen. `backend-dev` implementó la partición — `multiCuenta: true`, sin tocar
+`invariantes.ts` ni ninguna migración. Verificado contra el registro real: `EST_MONEDA_MEZCLADA`
+desaparece de los 3 meses, `cuentas detectadas=2` en los tres, hashes únicos sin colisión entre
+monedas.
+
+**Bloqueante 1 (identidad de cuenta) — declarado como deuda B.17, NO cerrado.** El documento no
+publica `numero` ni `cbu` en ninguna página legible → INV-6 rechaza el lote. `dba-data` +
+`arquitecto-software` (convocatoria real, en paralelo) diseñaron la resolución: el CUIT del titular
+(ya extraído por el adapter) como tercer camino de resolución en `resolver-cuenta.ts`, con su propio
+DDL (`cuit_titular_hmac`/`cuit_titular_ultimos4` en `cuenta_bancaria_identificador`, `numero` a
+nullable, 2 checks). **Hallazgo real cruzando los dos dictámenes, no previsto por ninguno solo**: el
+índice único que propuso `dba-data` no incluía `moneda` — con el documento partido por moneda (punto
+anterior), el mismo titular colisionaría consigo mismo entre su posición ARS y su posición USD. Índice
+corregido a 4 columnas (`cliente_id, pepper_id, cuit_titular_hmac, moneda`) antes de que se escriba la
+migración. Documentado completo en `docs/diseno/10-deuda-declarada.md` **B.17**, con la convocatoria
+completa que exige (`dba-data` + `security-engineer` + `seguridad-datos-financieros`, modo plan formal)
+cuando se retome — **sin esta migración, la tarjeta corporativa de Bracci no se puede ingestar de
+punta a punta**, aunque el adapter de extracción esté cerrado.
+
+### 6. Resultado final — movimientos capturados, por mes y moneda (real, medido contra el registro)
+
+| Mes | ARS | USD |
+|---|---|---|
+| Mayo 2026 | 4 | 1 |
+| Junio 2026 | 7 | 3 |
+| Julio 2026 | 4 | 5 |
+
+Muy por debajo de la predicción falsable original del plan (>100/mes) — la causa, investigada y
+verificada de forma independiente (conteo estructural de filas con forma de fecha por página, 0 en
+páginas 3-6 en los 3 meses): el listado de consumos vive entero en la página 1 (con desborde a la 2),
+no en las páginas 2-4 como se había supuesto al planificar — esas páginas son términos/condiciones y
+tabla de tasas. El veredicto de verificación aritmética da `no_verificable` (no `cuadra`/`no_cuadra`):
+el documento no publica saldo ni total contra el cual verificar — resultado correcto, no un error.
+
+### 7. Qué queda, explícitamente fuera de esta tarea
+
+- **B.17** (identidad de cuenta) — sin dueño, migración propia con convocatoria completa.
+- **Persistencia real** (Pasos 2-4 de la tarea original: migración de lotes, carga a `documento_
+  ingerido`, Capa C + `conciliar:lote` sobre la tarjeta) — no arrancó, bloqueada por B.17.
+- El cruce contra un total de página/período para validar la partición fila-por-fila del signo
+  (`contador-dominio` lo señaló como pendiente, no implementado en esta versión).
+- Cómo cancela Bracci el resumen (ARS o USD) — dato de negocio que `contador-dominio` necesita para el
+  criterio de diferencia de cambio en Módulo 2, no preguntado todavía.
+- El bug de OCR de la página 6 (ya documentado antes de esta tarea, sigue sin tocar — no lo necesita
+  este adapter, que solo procesa texto nativo).
+- El hallazgo de `referenciaExterna` sin `depurarGlosa` en los 8 adaptadores existentes (fuera de
+  alcance, reportado).
+
+### 8. Commits
+
+`pnpm typecheck` limpio, 17 tests nuevos verdes (guard de PAN + adapter contra los 3 documentos
+reales) más los 3 de `luhnEsValido`, barrido de fuga limpio. Backup: no aplica (sin escritura a base
+en esta tarea, solo código de extracción). Commits de esta entrada, sin push.
+
+---
+
 ## 2026-09-02 (173) — 🟡 Sesión 3 — nota fija de aclaración en Hoja 3 ("un ejemplo por tipo,
 `Cantidad` suma los 3 meses"). Los 2 archivos regenerados, revisión final de JP pendiente.
 
