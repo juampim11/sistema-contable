@@ -202,6 +202,27 @@ prueba y correr la suite completa — cualquier instancia del patrón, con la pa
 sin ella, va a romper ahí de una — o (b) diseñar un mecanismo de detección de warnings de `pg` como
 nueva regla de `reglas-de-codigo.test.ts` o equivalente, antes de eso |
 
+| **B.15** | 🟡 **Hallazgo adyacente, sin dueño todavía (`contador-dominio`, convocatoria de la
+tarea de ROKA banco — cierre_cliente_periodo + conciliar:lote, sesión interactiva 2026-09-01) —
+NO investigado ni corregido en esta tarea, a propósito.** Al confirmar la regla de `impuesto_debitos_
+creditos` para ROKA (`4.2.3.310` "Impuesto al Débito Bancario", cuenta de gasto), `contador-dominio`
+señaló que `docs/diseno/04-imputacion-contable.md` §3 (fila #1 del catálogo) describe la naturaleza
+esperada de ese tipo de movimiento como **"resultado, deudor"** — que es la familia `4.x` (gasto) de
+la cuenta de ROKA, no la familia de la cuenta ya confirmada y en uso para Bracci
+(`1.2.3.130` "Ley Deb Cred. Bancario", código de familia `1.2.x`, que sugiere activo/crédito fiscal,
+no gasto). Es decir: la cuenta de ROKA calza mejor con la naturaleza que el propio diseño declaró
+para este tipo que la cuenta ya confirmada de Bracci en HANDOFF 150 §5. **El lado del asiento
+(debe/haber) no está en duda** — `regla_imputacion` no guarda "lado" (`0030_regla_imputacion.sql`);
+lo deriva Capa E de `columnaOrigen` (`04-imputacion-contable.md` §2/§8), nunca de la naturaleza de la
+cuenta destino, así que este hallazgo no afecta ningún asiento ya generado para Bracci. Lo que sí
+queda abierto: si `1.2.3.130` es la cuenta correcta para Bracci (activo/crédito fiscal por la
+porción computable como pago a cuenta, tema fiscal — `fiscal-nacional-iva-ganancias`, sin fuente
+cargada en `knowledge/` hoy) o si debería haber sido una cuenta de gasto como la de ROKA. **No se
+toca Bracci en esta tarea** (regla de este repo: hallazgo adyacente se reporta, no se corrige de
+paso) | Convocatoria sugerida cuando se retome: `contador-dominio` + `fiscal-nacional-iva-ganancias`
+(para la porción computable) sobre el caso puntual de Bracci — sin bloquear ningún cierre ya
+aplicado, los asientos existentes de Bracci no se re-abren sin decisión explícita |
+
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
 - **La deuda de seguridad abierta**: `08-plan-de-construccion.md` §6.0 — nueve líneas, de bloqueante de
