@@ -40,6 +40,12 @@ describe('paridad estructural: redactar.ts y glosa.ts importan el MISMO catálog
       'cbu',
       'cuenta_con_separadores',
       'cuit',
+      // `pan` (número de tarjeta, 13-19 dígitos) — agregado por `visa-corporativa.ts`
+      // (`security-engineer`, valor de triage). Rompe este pineo A PROPÓSITO: es la señal de que
+      // hay que decidir si la clase nueva va también en `glosa.ts` (identificador) o queda propia
+      // del redactor. Acá queda propia: no tiene contraparte en `PATRONES` de `glosa.ts` — el
+      // camino de glosa bancaria ya está cerrado por `RE_CORRIDA_LARGA` sin tocar nada.
+      'pan',
       'documento',
       'jwt',
       'dsn_con_credencial',

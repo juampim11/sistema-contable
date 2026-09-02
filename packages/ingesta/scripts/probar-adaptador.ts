@@ -34,6 +34,7 @@ import { adaptadorSantander } from '../src/adaptadores/santander.ts';
 import { adaptadorBancor } from '../src/adaptadores/bancor.ts';
 import { adaptadorNacion } from '../src/adaptadores/nacion.ts';
 import { adaptadorIcbc } from '../src/adaptadores/icbc.ts';
+import { adaptadorVisaCorporativa } from '../src/adaptadores/visa-corporativa.ts';
 import { registrarAdaptador, resolverAdaptador } from '../src/adaptadores/registro.ts';
 import {
   verificarAritmetica,
@@ -54,6 +55,7 @@ registrarAdaptador(adaptadorSantander);
 registrarAdaptador(adaptadorBancor);
 registrarAdaptador(adaptadorNacion);
 registrarAdaptador(adaptadorIcbc);
+registrarAdaptador(adaptadorVisaCorporativa);
 
 const SALTO = String.fromCharCode(10);
 const p = (t: string): void => {

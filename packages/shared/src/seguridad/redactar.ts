@@ -14,7 +14,7 @@
  */
 
 import { CLAVES_SENSIBLES_EXTERNAS, COLUMNAS_SENSIBLES } from './clasificacion-campos.ts';
-import { RE_CBU, RE_CORRIDA_LARGA, RE_CUIT, RE_DNI } from './detectores-forma.ts';
+import { RE_CBU, RE_CORRIDA_LARGA, RE_CUIT, RE_DNI, RE_PAN } from './detectores-forma.ts';
 
 export const MARCA = '[REDACTADO]';
 
@@ -78,6 +78,19 @@ export const DETECTORES: readonly { nombre: string; patron: RegExp; motivo: stri
     // cualquier corrida de 11 dígitos sin validar prefijo — acá se unificó hacia la versión estricta).
     patron: RE_CUIT,
     motivo: 'CUIT/CUIL — N2R.',
+  },
+  {
+    nombre: 'pan',
+    // Forma centralizada en `detectores-forma.ts` (visa-corporativa.ts, `sinPan`). Valor de triage,
+    // no de protección: el camino de glosa bancaria ya está cerrado por `RE_CORRIDA_LARGA` sin tocar
+    // nada — esta entrada tapa un PAN (13-19 dígitos) si llegara a aparecer en un texto libre que
+    // pase por el redactor (un mensaje de error, por ejemplo), antes de que el catch-all lo capture
+    // con una etiqueta menos específica.
+    patron: RE_PAN,
+    // N2R, no N3 (`niveles.ts:14-16`): un PAN es un identificador directo que habilita fraude —
+    // mismo nivel que CBU/CUIT. N3 es para lo que habilita ACTUAR en nombre del cliente (clave
+    // fiscal, clave privada, DSN), que no es el caso de un número de tarjeta.
+    motivo: 'Número de tarjeta (PAN, 13-19 dígitos) — N2R.',
   },
   {
     nombre: 'documento',

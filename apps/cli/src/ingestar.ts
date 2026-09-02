@@ -48,6 +48,7 @@ import {
   adaptadorMacro,
   adaptadorNacion,
   adaptadorSantander,
+  adaptadorVisaCorporativa,
   aFilas,
   bancosConAdaptador,
   ESTADOS_LOTE_PERSISTIDO,
@@ -83,6 +84,7 @@ registrarAdaptador(adaptadorSantander);
 registrarAdaptador(adaptadorBancor);
 registrarAdaptador(adaptadorNacion);
 registrarAdaptador(adaptadorIcbc);
+registrarAdaptador(adaptadorVisaCorporativa);
 
 /**
  * La configuración se carga acá y no se asume heredada del shell.

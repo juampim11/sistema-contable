@@ -34,3 +34,35 @@ export function verificadorCuitEsValido(valor: string): boolean {
   if (d.length !== 11) return false;
   return Number(d[10]) === verificadorCuitReal(d.slice(0, 10));
 }
+
+/**
+ * Checksum de Luhn — el dígito verificador estándar de un PAN (ISO/IEC 7812).
+ *
+ * Recorre de derecha a izquierda, duplica cada segundo dígito (restando 9 si el resultado supera 9)
+ * y suma todo: válido si el total es múltiplo de 10.
+ *
+ * ## Por qué existe, y qué NO decide
+ *
+ * En `visa-corporativa.ts` (`sinPan`), Luhn decide el **motivo** que se deja registrado
+ * (`pan_confirmado_luhn` vs `pan_shape_sin_luhn`) — **nunca** si un candidato con forma de PAN se
+ * trunca: eso pasa siempre que la forma matchee (falla cerrado, un PAN real mal leído por OCR puede
+ * fallar Luhn y seguir siendo un PAN real). Acá es solo el checksum puro, sin esa decisión encima.
+ *
+ * Falla cerrado ante cualquier forma inesperada (vacío, no numérico): nunca asume válido.
+ */
+export function luhnEsValido(valor: string): boolean {
+  const d = valor.replace(/\D/g, '');
+  if (d.length === 0 || d.length !== valor.length) return false;
+  let suma = 0;
+  let duplicar = false;
+  for (let i = d.length - 1; i >= 0; i -= 1) {
+    let digito = Number(d[i]);
+    if (duplicar) {
+      digito *= 2;
+      if (digito > 9) digito -= 9;
+    }
+    suma += digito;
+    duplicar = !duplicar;
+  }
+  return suma % 10 === 0;
+}

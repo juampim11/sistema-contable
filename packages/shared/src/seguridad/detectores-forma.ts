@@ -126,6 +126,22 @@ export const RE_CBU = new RegExp(`\\b${digitosConSeparador(22)}\\b`, 'g');
 export const RE_CUIT = /(?<!\d)(20|23|24|25|26|27|30|33|34)-?\d{8}-?\d(?!\d)/g;
 
 /**
+ * PAN (número de tarjeta de crédito/débito): 13 a 19 dígitos corridos, sin separadores — el rango
+ * real de largo de PAN según ISO/IEC 7812 (13 para algunas Visa viejas, hasta 19 para algunas
+ * tarjetas locales). `\b` a los dos lados, igual criterio que `RE_CBU`: una corrida más larga o más
+ * corta no se recorta a un PAN plausible.
+ *
+ * **No colisiona con `RE_CBU`** (22 dígitos exactos, fuera del rango 13-19) **ni con `RE_CUIT`/
+ * `RE_DNI`** (11 y 7-8 dígitos): sus lookarounds excluyen dígito adyacente a los DOS lados, así que
+ * una ventana de 11 u 8 dígitos dentro de una corrida de 13 a 19 siempre tiene un dígito vecino de
+ * al menos un lado — el lookaround de `RE_CUIT`/`RE_DNI` la descarta ahí. Y como acá el orden de
+ * aplicación en `visa-corporativa.ts` no depende de este archivo (`sinPan` corre sobre un candidato
+ * ya aislado, no sobre texto libre), no hace falta un orden de prioridad entre los cuatro: cada uno
+ * se usa donde corresponde a su propio consumidor.
+ */
+export const RE_PAN = /\b\d{13,19}\b/g;
+
+/**
  * Documento (DNI): 7 u 8 dígitos PEGADOS, sin separadores internos — ver el comentario de arriba sobre por
  * qué (colisiona con el importe canónico). Es el más ambiguo de los cuatro —un número de operación también
  * tiene esta forma— así que en los dos consumidores va INMEDIATAMENTE ANTES del catch-all, nunca antes de

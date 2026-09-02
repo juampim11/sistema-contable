@@ -63,6 +63,7 @@ import {
   adaptadorGalicia,
   adaptadorMacro,
   adaptadorSantander,
+  adaptadorVisaCorporativa,
   aFilas,
   extraerTexto,
   type CuentaConMovimientos,
@@ -84,6 +85,7 @@ import { cargarEnv } from '../../../tools/cargar-env.ts';
 registrarAdaptador(adaptadorGalicia);
 registrarAdaptador(adaptadorMacro);
 registrarAdaptador(adaptadorSantander);
+registrarAdaptador(adaptadorVisaCorporativa);
 
 cargarEnv();
 

@@ -42,6 +42,7 @@ import {
   adaptadorGalicia,
   adaptadorMacro,
   adaptadorSantander,
+  adaptadorVisaCorporativa,
   aFilas,
   extraerTexto,
   recapturarConceptosDeLote,
@@ -61,6 +62,7 @@ import { cargarEnv } from '../../../tools/cargar-env.ts';
 registrarAdaptador(adaptadorGalicia);
 registrarAdaptador(adaptadorMacro);
 registrarAdaptador(adaptadorSantander);
+registrarAdaptador(adaptadorVisaCorporativa);
 
 cargarEnv();
 

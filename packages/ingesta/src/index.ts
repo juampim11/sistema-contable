@@ -79,3 +79,10 @@ export {
   reconoceICBC,
   type SalidaIcbc,
 } from './adaptadores/icbc.ts';
+export {
+  adaptadorVisaCorporativa,
+  CAPACIDADES_VISA_CORPORATIVA,
+  leerVisaCorporativa,
+  reconoceVisaCorporativa,
+  type SalidaVisaCorporativa,
+} from './adaptadores/visa-corporativa.ts';

@@ -239,6 +239,63 @@ tipos) cuando se retome | Sin dueño todavía. Los 20 movimientos siguen en `pen
 (`cierre_id` de mayo `b9cbf5b8-...`, junio `9f0a627b-...`, julio `9569464e-...`, ver `HANDOFF.md`),
 visibles y contados — no perdidos, no invisibles |
 
+| **B.17** | 🟡 **Bloqueante real de identidad de cuenta, sin dueño todavía (encontrado corriendo el
+adapter de tarjeta corporativa de Bracci contra el registro real, sesión interactiva 2026-09-02):
+INV-6 rechaza el lote porque el documento no publica `numero` ni `cbu` en ninguna página legible, en
+los 3 meses reales.** `dba-data` + `arquitecto-software` (convocatoria real, misma sesión) diseñaron
+la resolución: usar el **CUIT del titular** (`CuentaDetectada.titularDocumento`, ya extraído y medido
+por el adapter — 1 candidato sin colisión en las primeras 10 filas, en los 3 meses) como **tercer
+camino de resolución**, paralelo a `numeroDeclarado`/`cbuDeclarado` en `resolver-cuenta.ts` — nunca
+sobrecargando la columna `numero` (rompería su semántica de "número de producto", 1:1 con la cuenta).
+DDL propuesto por `dba-data`, **corregido acá** con el hallazgo cruzado que sigue abajo: nueva columna
+`cuit_titular_hmac bytea` (N1, `hmacIdentificador()` con pepper global — mismo régimen que `cbu_hmac`,
+porque el CUIT del titular es del propio cliente, no de un tercero) + `cuit_titular_ultimos4 char(4)`
+(N2 enmascarado) en `cuenta_bancaria_identificador`; `numero` pasa a `nullable` (hoy `NOT NULL`,
+bloquea el alta aunque se resuelva INV-6); dos `check`: `cuenta_ident_algun_ancla_chk` (al menos un
+ancla presente) y `cuenta_ident_cuit_titular_solo_tarjeta_chk` (acotado a
+`tipo_cuenta='tarjeta_corporativa'`).
+
+**El hallazgo cruzado — por qué el índice único NO es el que propuso `dba-data` en su dictamen
+original.** `arquitecto-software`, en paralelo y sobre el Bloqueante 2 (ver `27-roadmap-capa-d.md` y
+el propio adapter — la solución ahí es partir el documento en 2 `CuentaDetectada` por moneda, ARS y
+USD, mismo patrón que Macro), señaló que si un titular tiene una tarjeta con posiciones en dos
+monedas, la resolución por CUIT **tiene que incluir la moneda** o el mismo titular colisiona consigo
+mismo. El índice único que `dba-data` propuso en su dictamen — `(cliente_id, pepper_id,
+cuit_titular_hmac)`, **sin `moneda`** — no incorporaba todavía ese cruce (los dos dictámenes se
+escribieron en paralelo, sin verse entre sí). Corregido acá, antes de que se escriba la migración:
+
+```
+create unique index uq_cuenta_ident_cuit_titular_vigente
+  on cuenta_bancaria_identificador (cliente_id, pepper_id, cuit_titular_hmac, moneda)
+  where cuit_titular_hmac is not null and vigente_hasta is null;
+```
+
+Y la tercera rama de `resolverCuentaDelExtracto` (`packages/ingesta/src/resolver-cuenta.ts`) tiene que
+filtrar también por `moneda` (la que ya declara cada `CuentaDetectada`), no solo por
+`cliente_id`/`cuit_titular_hmac` — de lo contrario un cliente con tarjeta multi-moneda cae en
+`cuenta_ambigua` **siempre**, que es peor que "no se resolvió": es un control que parece funcionar y
+en realidad nunca resuelve nada para ese caso. **Esta corrección surgió de cruzar los dos dictámenes
+en la misma sesión, no fue prevista por `dba-data` solo** — se deja así de explícito para que quien
+retome esto entienda por qué el índice tiene 4 columnas y no 3, sin tener que reconstruir el
+razonamiento.
+
+Con la evidencia de hoy (Bracci: una sola tarjeta corporativa, confirmada), el caso de "dos tarjetas
+distintas con el mismo titular" queda declarado como límite conocido y no resuelto — mismo criterio de
+"no inventar la regla sin caso real" que ya usa este archivo en otros puntos. El propio índice único
+lo protege: si aparece, el ALTA de la segunda tarjeta revienta explícito (`23505`), nunca mezcla en
+silencio movimientos de dos tarjetas distintas en una sola cuenta.
+
+Sin esta migración, **la tarjeta corporativa de Bracci no se puede ingestar de punta a punta hoy** —
+el adapter de extracción está construido, probado y enchufado al registro real, pero el lote se
+rechaza en INV-6 antes de persistir nada | Sin dueño todavía. Cuando se retome: convocatoria COMPLETA
+de `CLAUDE.md` §3.1 (`dba-data` + `security-engineer` + `seguridad-datos-financieros`, los tres
+obligatorios por ser esquema/RLS sobre datos de un cliente real) y modo plan formal de §3.2(a) antes
+del primer `Write` — `dba-data` ya lo dejó explícito: "no hay margen de 'no aplica'". El wiring de
+aplicación que falta, además del DDL: `PedidoDeResolucion.cuitTitularDeclarado` en
+`resolver-cuenta.ts`, pasar `cuentaLeida.cuenta.titularDocumento` desde `ingestar.ts` cuando
+`numero`/`cbu` faltan y `tipoCuenta==='tarjeta_corporativa'`, y el flujo de alta
+(`apps/cli/src/alta-cuenta.ts`, hoy asume `numero`+`cbu` siempre presentes) |
+
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
 - **La deuda de seguridad abierta**: `08-plan-de-construccion.md` §6.0 — nueve líneas, de bloqueante de
