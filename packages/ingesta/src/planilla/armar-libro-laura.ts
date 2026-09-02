@@ -32,6 +32,7 @@ import type {
   FilaAsientoAutomatico,
   FilaContraparte,
   FilaTipoSinCuenta,
+  RenglonAsientoEjemplo,
   ResultadoDeCliente,
   ResultadoRelevamiento,
 } from './relevamiento-laura.ts';
@@ -341,9 +342,27 @@ function armarHojaTiposSinCuenta(libro: ExcelJS.Workbook, datos: ResultadoReleva
 // -----------------------------------------------------------------------------
 // Hoja 3 — Asientos automáticos
 // -----------------------------------------------------------------------------
+//
+// Formato de asiento de libro diario clásico, no tabla plana (JP, ajuste post-entrega): por cada
+// (cliente, tipo) van DOS filas — la del Debe arriba, sin sangría, y la del Haber abajo, con
+// sangría — más una fila en blanco de separación antes del próximo asiento. "Debe" y "Haber" son
+// columnas propias (nunca una columna "Importe" con el lado como texto al lado).
 
-const COL_RESPUESTA = 8;
-const COL_CUENTA_ALTERNATIVA = 9;
+const COL_DEBE = 7;
+const COL_HABER = 8;
+const COL_RESPUESTA = 9;
+const COL_CUENTA_ALTERNATIVA = 10;
+const COL_COMENTARIOS = 11;
+
+/** Contador secuencial de la hoja (1, 2, 3...), NUNCA un fragmento de `asientoIdEjemplo` (un uuid) —
+ *  se probó y un recorte de 8 caracteres hex puede caer, por azar, en una secuencia que
+ *  `contieneIdentificador()` lee con forma de documento (todos dígitos) y aborta la escritura
+ *  (INV-13, fail-closed — funcionó como corresponde, encontrado corriendo la corrida real, no en la
+ *  convocatoria). Un número de orden simple no tiene ese riesgo estructural: nunca tiene forma de
+ *  CUIT/CBU/documento, sea cual sea el valor. */
+function referenciaDeAsiento(numeroDeOrden: number): string {
+  return `Asiento ${numeroDeOrden}`;
+}
 
 function armarHojaAsientos(libro: ExcelJS.Workbook, datos: ResultadoRelevamiento, generadoEn: string): void {
   const hoja = libro.addWorksheet('Asientos automáticos');
@@ -352,82 +371,130 @@ function armarHojaAsientos(libro: ExcelJS.Workbook, datos: ResultadoRelevamiento
     { header: 'Tipo', key: 'tipo', width: 30 },
     { header: 'Cantidad (incluye reversas)', key: 'cantidad', width: 14 },
     { header: 'Fecha', key: 'fecha', width: 12, style: { numFmt: FMT_FECHA } },
-    { header: 'Debe/Haber', key: 'lado', width: 12 },
-    { header: 'Cuenta', key: 'cuentaTexto', width: 40 },
-    { header: 'Importe', key: 'importe', width: 16, style: { numFmt: FMT_MONEDA } },
-    { header: '¿Está bien así? (✔/✗/comentario)', key: 'respuesta', width: 30 },
-    { header: 'Si es ✗: cuenta que hubieras usado', key: 'cuentaAlternativa', width: 32 },
+    { header: 'Referencia', key: 'referencia', width: 16 },
+    { header: 'Cuenta', key: 'cuentaTexto', width: 42 },
+    { header: 'Debe', key: 'debe', width: 16, style: { numFmt: FMT_MONEDA } },
+    { header: 'Haber', key: 'haber', width: 16, style: { numFmt: FMT_MONEDA } },
+    { header: '¿Está bien así?', key: 'respuesta', width: 16 },
+    { header: 'Si es NO: cuenta que hubieras usado', key: 'cuentaAlternativa', width: 32 },
     { header: 'Comentarios', key: 'comentarios', width: 28 },
   ];
   hoja.spliceRows(1, 0, []);
   hoja.getCell('A1').value = `Relevamiento para Laura — Asientos automáticos · Generado ${generadoEn}`;
   hoja.getCell('A1').font = { bold: true };
-  hoja.mergeCells(1, 1, 1, 10);
+  hoja.mergeCells(1, 1, 1, 11);
   hoja.getRow(2).font = { bold: true };
   hoja.getRow(2).alignment = { vertical: 'middle', wrapText: true };
   hoja.views = [{ state: 'frozen', ySplit: 2 }];
 
   let filaActual = 3;
   let totalReversas = 0;
+  let numeroDeAsiento = 0;
   const anclasParaFormatoCondicional: string[] = [];
 
   const escribirEntrada = (cliente: ResultadoDeCliente, f: FilaAsientoAutomatico): void => {
     totalReversas += f.cantidadReversas;
-    const filaAncla = filaActual;
-    const renglonesOrdenados = [...f.renglones].sort((a, b) => a.orden - b.orden);
+    numeroDeAsiento += 1;
 
-    renglonesOrdenados.forEach((r, indice) => {
-      const filaExcel = hoja.getRow(filaActual);
+    const renglonesOrdenados = [...f.renglones].sort((a, b) => a.orden - b.orden);
+    const porLado = new Map<'debe' | 'haber', RenglonAsientoEjemplo>();
+    for (const r of renglonesOrdenados) {
       const debeNumero = importeComoNumero(r.debe);
       const haberNumero = importeComoNumero(r.haber);
       if (debeNumero === null || haberNumero === null) {
         throw new ImporteFueraDeRangoError(cliente.razonSocial, f.tipo);
       }
-      const esDebe = debeNumero > 0;
-      const cuentaTexto =
-        r.cuentaCodigo !== null && r.cuentaDenominacion !== null ? `${r.cuentaCodigo} · ${r.cuentaDenominacion}` : '(sin cita de cuenta)';
+      // Exactamente uno de los dos es no-cero por renglón (resolver.ts) — nunca los dos a la vez.
+      porLado.set(debeNumero > 0 ? 'debe' : 'haber', r);
+    }
+    const renglonDebe = porLado.get('debe');
+    const renglonHaber = porLado.get('haber');
+    if (!renglonDebe || !renglonHaber) {
+      throw new ImporteFueraDeRangoError(cliente.razonSocial, f.tipo);
+    }
 
-      if (indice === 0) {
-        filaExcel.getCell(1).value = cliente.razonSocial;
-        filaExcel.getCell(2).value = textoTipoCriollo(f.tipo);
-        filaExcel.getCell(3).value = f.cantidadTotal;
-        const serial = fechaIsoASerial(f.fechaImputacion);
-        filaExcel.getCell(4).value = serial;
-        filaExcel.getCell(4).numFmt = FMT_FECHA;
-      }
-      filaExcel.getCell(5).value = esDebe ? 'Debe' : 'Haber';
-      filaExcel.getCell(6).value = cuentaTexto;
-      filaExcel.getCell(7).value = esDebe ? debeNumero : haberNumero;
-      filaExcel.getCell(7).numFmt = FMT_MONEDA;
-      filaActual += 1;
-    });
+    const filaAncla = filaActual;
+
+    // Fila del Debe — SIN sangría.
+    const filaDebe = hoja.getRow(filaActual);
+    filaDebe.getCell(1).value = cliente.razonSocial;
+    filaDebe.getCell(2).value = textoTipoCriollo(f.tipo);
+    filaDebe.getCell(3).value = f.cantidadTotal;
+    const serial = fechaIsoASerial(f.fechaImputacion);
+    filaDebe.getCell(4).value = serial;
+    filaDebe.getCell(4).numFmt = FMT_FECHA;
+    filaDebe.getCell(5).value = referenciaDeAsiento(numeroDeAsiento);
+    filaDebe.getCell(6).value =
+      renglonDebe.cuentaCodigo !== null && renglonDebe.cuentaDenominacion !== null
+        ? `${renglonDebe.cuentaCodigo} · ${renglonDebe.cuentaDenominacion}`
+        : '(sin cita de cuenta)';
+    filaDebe.getCell(6).alignment = { indent: 0 };
+    filaDebe.getCell(COL_DEBE).value = importeComoNumero(renglonDebe.debe);
+    filaDebe.getCell(COL_DEBE).numFmt = FMT_MONEDA;
+    filaActual += 1;
+
+    // Fila del Haber — CON sangría (Excel "aumentar sangría", `alignment.indent`), un nivel.
+    const filaHaber = hoja.getRow(filaActual);
+    filaHaber.getCell(6).value =
+      renglonHaber.cuentaCodigo !== null && renglonHaber.cuentaDenominacion !== null
+        ? `${renglonHaber.cuentaCodigo} · ${renglonHaber.cuentaDenominacion}`
+        : '(sin cita de cuenta)';
+    filaHaber.getCell(6).alignment = { indent: 1 };
+    filaHaber.getCell(COL_HABER).value = importeComoNumero(renglonHaber.haber);
+    filaHaber.getCell(COL_HABER).numFmt = FMT_MONEDA;
+    filaActual += 1;
 
     const filaFin = filaActual - 1;
-    if (filaFin > filaAncla) {
-      hoja.mergeCells(filaAncla, 1, filaFin, 1);
-      hoja.mergeCells(filaAncla, 2, filaFin, 2);
-      hoja.mergeCells(filaAncla, 3, filaFin, 3);
-      hoja.mergeCells(filaAncla, 4, filaFin, 4);
-      hoja.mergeCells(filaAncla, COL_RESPUESTA, filaFin, COL_RESPUESTA);
-      hoja.mergeCells(filaAncla, COL_CUENTA_ALTERNATIVA, filaFin, COL_CUENTA_ALTERNATIVA);
-      hoja.mergeCells(filaAncla, 10, filaFin, 10);
-    }
-    anclasParaFormatoCondicional.push(`I${filaAncla}:I${filaFin}`);
+    hoja.mergeCells(filaAncla, 1, filaFin, 1);
+    hoja.mergeCells(filaAncla, 2, filaFin, 2);
+    hoja.mergeCells(filaAncla, 3, filaFin, 3);
+    hoja.mergeCells(filaAncla, 4, filaFin, 4);
+    hoja.mergeCells(filaAncla, 5, filaFin, 5);
+    hoja.mergeCells(filaAncla, COL_RESPUESTA, filaFin, COL_RESPUESTA);
+    hoja.mergeCells(filaAncla, COL_CUENTA_ALTERNATIVA, filaFin, COL_CUENTA_ALTERNATIVA);
+    hoja.mergeCells(filaAncla, COL_COMENTARIOS, filaFin, COL_COMENTARIOS);
+
+    // Desplegable simple OK/NO (JP, ajuste post-entrega) — reemplaza el "✔/✗/comentario" de texto
+    // libre. Lista inline (dos valores fijos): no hace falta la hoja oculta de `Listas` para esto.
+    const celdaRespuesta = hoja.getCell(filaAncla, COL_RESPUESTA);
+    celdaRespuesta.protection = { locked: false };
+    celdaRespuesta.dataValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: ['"OK,NO"'],
+      showErrorMessage: true,
+      errorStyle: 'error',
+      errorTitle: 'Opción inválida',
+      error: 'Elegí "OK" o "NO" de la lista desplegable.',
+      showInputMessage: true,
+      promptTitle: '¿Está bien así?',
+      prompt: 'Elegí OK si el asiento es correcto, o NO si hay que corregirlo.',
+    };
+    hoja.getCell(filaAncla, COL_CUENTA_ALTERNATIVA).protection = { locked: false };
+    // Comentarios SIEMPRE editable y visible, haya elegido OK o NO (JP: por si quiere aclarar algo
+    // igual habiendo puesto OK) — no depende de la respuesta.
+    hoja.getCell(filaAncla, COL_COMENTARIOS).protection = { locked: false };
+
+    // Fila en blanco de separación entre asientos — nunca mergeada, nunca con datos.
+    filaActual += 1;
+
+    anclasParaFormatoCondicional.push(`${hoja.getColumn(COL_CUENTA_ALTERNATIVA).letter}${filaAncla}`);
   };
 
   for (const f of datos.bracci.asientosAutomaticos) escribirEntrada(datos.bracci, f);
   for (const f of datos.roka.asientosAutomaticos) escribirEntrada(datos.roka, f);
 
   if (anclasParaFormatoCondicional.length > 0) {
+    const colRespuesta = hoja.getColumn(COL_RESPUESTA).letter;
+    const colAlternativa = hoja.getColumn(COL_CUENTA_ALTERNATIVA).letter;
     hoja.addConditionalFormatting({
       ref: anclasParaFormatoCondicional.join(' '),
       rules: [
         {
           type: 'expression',
-          // `$H` es la columna "¿Está bien así?" (8), `$I` es "Si es ✗: cuenta que hubieras usado" (9)
-          // — la fila la resuelve Excel por cada celda del `ref`, referida a la fila ANCLA de cada
-          // grupo (las celdas están mergeadas, así que solo la fila ancla tiene valor real).
-          formulae: ['AND(ISNUMBER(SEARCH("✗",$H3)),$I3="")'],
+          // Resalta la celda de "cuenta alternativa" de la fila ancla de cada asiento cuando la
+          // respuesta es "NO" y todavía no completó esa columna — nunca bloqueante, solo visual.
+          formulae: [`AND($${colRespuesta}3="NO",$${colAlternativa}3="")`],
           priority: 1,
           style: { fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } } },
         },
@@ -442,7 +509,7 @@ function armarHojaAsientos(libro: ExcelJS.Workbook, datos: ResultadoRelevamiento
       ? ` En total, ${totalReversas} de los asientos contados arriba son reversas/anulaciones.`
       : '');
   hoja.getCell(`A${filaNota}`).font = { italic: true };
-  hoja.mergeCells(filaNota, 1, filaNota, 10);
+  hoja.mergeCells(filaNota, 1, filaNota, 11);
 }
 
 // -----------------------------------------------------------------------------

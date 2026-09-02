@@ -162,4 +162,55 @@ describe('armarLibroLaura', () => {
     // que el libro devuelto también pasa la aserción de forma independiente.
     expect(() => verificarSinIdentificadores(libro)).not.toThrow();
   });
+
+  it('Hoja 3: formato de asiento clásico — Debe sin sangría, Haber con sangría, columnas propias, fila en blanco entre asientos, desplegable OK/NO', async () => {
+    const datos = resultadoSintetico({
+      bracci: {
+        asientosAutomaticos: [
+          {
+            clienteId: 'cliente-1',
+            tipo: 'comision_bancaria',
+            cantidadTotal: 3,
+            cantidadReversas: 1,
+            asientoIdEjemplo: 'a1b2c3d4-0000-0000-0000-000000000000',
+            importeEjemplo: '1234.56',
+            fechaImputacion: '2026-01-15',
+            renglones: [
+              { orden: 1, cuentaCodigo: '4.2.5.200', cuentaDenominacion: 'Gastos y comisiones bancarias', debe: '1234.56', haber: '0.00' },
+              { orden: 2, cuentaCodigo: '1.1.2.100', cuentaDenominacion: 'Banco cta cte', debe: '0.00', haber: '1234.56' },
+            ],
+          },
+        ],
+      },
+    });
+
+    const libro = await armarLibroLaura(datos, OPCIONES_BASE);
+    const hoja = libro.getWorksheet('Asientos automáticos');
+    if (!hoja) throw new Error('falta la hoja');
+
+    // Fila 3 = Debe (sin sangría), fila 4 = Haber (con sangría), fila 5 = blanco de separación.
+    const filaDebe = hoja.getRow(3);
+    const filaHaber = hoja.getRow(4);
+    const filaBlanco = hoja.getRow(5);
+
+    expect(filaDebe.getCell(6).value).toBe('4.2.5.200 · Gastos y comisiones bancarias');
+    expect(filaDebe.getCell(6).alignment?.indent ?? 0).toBe(0);
+    expect(filaDebe.getCell(7).value).toBe(1234.56); // columna "Debe"
+    expect(filaDebe.getCell(8).value).toBeFalsy(); // columna "Haber", vacía en la fila del Debe
+
+    expect(filaHaber.getCell(6).value).toBe('1.1.2.100 · Banco cta cte');
+    expect(filaHaber.getCell(6).alignment?.indent).toBe(1);
+    expect(filaHaber.getCell(7).value).toBeFalsy(); // columna "Debe", vacía en la fila del Haber
+    expect(filaHaber.getCell(8).value).toBe(1234.56); // columna "Haber"
+
+    expect(filaBlanco.getCell(6).value).toBeFalsy();
+    expect(filaBlanco.getCell(1).value).toBeFalsy();
+
+    // Desplegable OK/NO en la fila ancla (Debe), no en la del Haber.
+    expect(filaDebe.getCell(9).dataValidation?.formulae).toEqual(['"OK,NO"']);
+    expect(filaHaber.getCell(9).dataValidation).toBeUndefined();
+
+    // Cantidad (incluye reversas) en la fila ancla.
+    expect(filaDebe.getCell(3).value).toBe(3);
+  });
 });
