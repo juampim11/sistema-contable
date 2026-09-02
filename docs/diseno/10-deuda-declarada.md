@@ -223,6 +223,22 @@ paso) | Convocatoria sugerida cuando se retome: `contador-dominio` + `fiscal-nac
 (para la porción computable) sobre el caso puntual de Bracci — sin bloquear ningún cierre ya
 aplicado, los asientos existentes de Bracci no se re-abren sin decisión explícita |
 
+| **B.16** | 🟡 **Hueco real, sin dueño todavía (encontrado en el dry-run de `conciliar:lote` sobre
+ROKA, sesión interactiva 2026-09-01): `regla_imputacion` de ROKA no cubre `pago_de_haberes`.** Las 3
+reglas cargadas para ROKA (`comision_bancaria`→`4.2.5.200`, `extraccion_efectivo`→`1.1.1.100`,
+`impuesto_debitos_creditos`→`4.2.3.310`, confirmadas por `contador-dominio`) cubren el 100% de esos 3
+tipos en los 3 lotes reales (mayo/junio/julio 2026), pero un **4° tipo real, `pago_de_haberes`**, que
+Bracci nunca tuvo en su clase `propuesta`, aparece en los 3 meses de ROKA: **8 movimientos en mayo, 7
+en junio, 5 en julio (20 en total)**. Sin regla, cayeron en `pendiente_cierre` con motivo
+`tipo_sin_regla_imputacion` al aplicar `conciliar:lote` — no es un bug, es exactamente el
+comportamiento esperado del motor ante un tipo sin regla decidida (mismo criterio que los 5 tipos de
+Bracci sin regla, HANDOFF 150 §7). **Decisión explícita de JP: no se resuelve en esta tarea** — queda
+para su propia convocatoria de `contador-dominio` (qué cuenta de gasto de ROKA corresponde a pago de
+haberes/sueldos, y si el lado sigue el mismo criterio `inverso`/`fijo` ya usado para los otros 3
+tipos) cuando se retome | Sin dueño todavía. Los 20 movimientos siguen en `pendiente_cierre`
+(`cierre_id` de mayo `b9cbf5b8-...`, junio `9f0a627b-...`, julio `9569464e-...`, ver `HANDOFF.md`),
+visibles y contados — no perdidos, no invisibles |
+
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
 - **La deuda de seguridad abierta**: `08-plan-de-construccion.md` §6.0 — nueve líneas, de bloqueante de

@@ -6,6 +6,111 @@
 
 ---
 
+## 2026-09-02 (170) — 🔒 CIERRE de ROKA banco de punta a punta: `regla_imputacion` + los 3
+`cierre_cliente_periodo` (mayo/junio/julio 2026) dados de alta, `conciliar:lote --aplicar` corrido
+sobre los 3, **267 asientos reales generados, 534 renglones, 0 desbalanceados**, verificado por
+consulta directa e independiente en cada mes. Mismo mecanismo exacto ya usado con Bracci (HANDOFF
+150/152/154), con modo plan formal previo por CLAUDE.md §3.2.
+
+**Herramienta:** Claude Code, sesión interactiva. Chat nuevo, re-entrada con contexto de HANDOFF
+169 + `27-roadmap-capa-d.md`.
+
+### 1. Hallazgo no anticipado por el pedido original — `regla_imputacion` de ROKA estaba vacía
+
+Antes de tocar nada: verificado por consulta directa que `cierre_cliente_periodo` de ROKA seguía en
+0 (esperado) pero **`regla_imputacion` también estaba en 0** — a diferencia de Bracci, ROKA nunca
+tuvo reglas de imputación cargadas. Sin esto, `conciliar:lote` iba a dar 0% automático en los 3
+lotes. Activó modo plan formal (CLAUDE.md §3.2 (b)/(c)) antes del primer `INSERT`.
+
+### 2. Convocatoria real — 3 agentes, antes del primer `INSERT`
+
+- **`contador-dominio`**: confirmó las 3 reglas para ROKA con cuenta propia del plan de ROKA (no
+  copiada de Bracci): `comision_bancaria`→`4.2.5.200`, `extraccion_efectivo`→`1.1.1.100`,
+  `impuesto_debitos_creditos`→`4.2.3.310` "Impuesto al Débito Bancario" — código de familia `4.x`
+  (gasto), distinto al `1.2.3.130` de Bracci. Confirmó, citando `04-imputacion-contable.md` §2/§8,
+  que el lado (debe/haber) lo deriva Capa E de `columnaOrigen`, nunca de la naturaleza de la cuenta
+  destino — no cambia por ser gasto en vez de activo/crédito fiscal. Dejó un **hallazgo adyacente
+  sobre Bracci** (la cuenta `1.2.3.130` calzaría peor con la naturaleza "resultado, deudor" que el
+  propio catálogo describe para este tipo que la cuenta de ROKA) — **no se toca Bracci**, queda
+  declarado en `10-deuda-declarada.md` **B.15**.
+- **`dba-data`**: sin bloqueantes — mismo grant, mismo mecanismo, `0035` ya aplicada, nada pendiente.
+- **`seguridad-datos-financieros`**: sin bloqueantes de aislamiento/secreto fiscal. Marcó dos deudas
+  ya conocidas para re-chequear (vigencia de `cuenta_bancaria_identificador` y `padron_socio`
+  compartido) — verificado por consulta directa: la primera **ya estaba corregida** (2025-10-20, las
+  3 filas de ROKA, confirmado hoy); la segunda no aplica (`conciliar:lote` solo lee clase `propuesta`,
+  sin movimientos de socio en juego).
+
+Verificación propia adicional antes de escribir: las 3 cuentas candidatas (`4.2.3.310`, `4.2.5.200`,
+`1.1.1.100`) son **hoja imputable** (sin hijos en `cuenta_atributo`), y los 3 lotes arrancan en
+`2026-04-23` — muy posterior al piso `2025-10-20` propuesto para `vigente_desde`.
+
+### 3. Alta de `regla_imputacion` — bloqueado por el clasificador de auto-mode, autorización explícita de JP
+
+Backup fresco antes (`piloto_20260901-221755Z.dump`, SHA-256
+`34a169e024e126be425ecf1ba6491631d1cffd8555afce02e3c675fdacbf04b8`). Primer intento bloqueado por el
+clasificador — reintentado con autorización explícita de JP, mismo patrón que julio de Bracci
+(HANDOFF 167). 3 filas creadas (`comision_bancaria`, `extraccion_efectivo`,
+`impuesto_debitos_creditos`, las 3 `cuenta_resolucion='fija'`, `vigente_desde='2025-10-20'`),
+verificadas por consulta independiente.
+
+### 4. Alta de `cierre_cliente_periodo` — mismo mecanismo B.13 de Bracci
+
+3 filas nuevas (mayo `b9cbf5b8-...`, junio `9f0a627b-...`, julio `9569464e-...`), `mensual`,
+`abierto`, `confirmado_por`/`confirmado_en` en `NULL`, transición reflexiva `abierto→abierto` con
+`cierre_transicion`, misma transacción — mecanismo idéntico a HANDOFF 150 §4 / 154 §2.
+
+### 5. Dry-run de `conciliar:lote` — 3 lotes, resultado completo antes de aplicar nada
+
+| Mes | Lote | Total (`propuesta`) | Automáticos | Pendientes |
+|---|---|---|---|---|
+| Mayo | `9e568972` | 93 | 85 (91%) | 8 |
+| Junio | `38a7cf41` | 97 | 90 (93%) | 7 |
+| Julio | `5d4d2a92` | 97 | 92 (95%) | 5 |
+| **Total** | | **287** | **267** | **20** |
+
+Investigado antes de reportar (no solo el número): el 100% de los pendientes es un **4° tipo real
+que Bracci nunca tuvo, `pago_de_haberes`** (8/7/5, exacto igual a los pendientes) — las 3 reglas
+cargadas cubren `comision_bancaria`/`impuesto_debitos_creditos`/`extraccion_efectivo` al 100% cada
+una en los 3 meses. No es un bug: es un tipo sin regla decidida todavía, mismo criterio que los 5
+tipos de Bracci sin regla. JP confirmó: se documenta como pendiente (declarado en
+`10-deuda-declarada.md` **B.16**, con los 20 movimientos y los 3 `cierre_id`), no se resuelve acá.
+
+### 6. `--aplicar` los 3, backup fresco antes de cada uno, verificado por consulta directa
+
+| Mes | Backup (SHA-256 abreviado) | `asiento_propuesto` | `asiento_propuesto_renglon` | Desbalanceados | `pendiente_cierre` |
+|---|---|---|---|---|---|
+| Mayo | `piloto_20260902-003911Z` (`3480d62d…`) | 85 | 170 | **0** | 8 |
+| Junio | `piloto_20260902-004002Z` (`e1a4bc0c…`) | 90 | 180 | **0** | 7 |
+| Julio | `piloto_20260902-004043Z` (`43964cf1…`) | 92 | 184 | **0** | 5 |
+| **Total** | | **267** | **534** | **0** | **20** |
+
+Los 3 `--aplicar` coincidieron exacto con sus dry-runs (sin sorpresas). Verificación por consulta
+directa con conexión independiente (no por el output del comando) en cada mes:
+`asiento_propuesto_renglon` = automáticos × 2 exacto, `count(*) filter (where debe<>haber) = 0` en
+los 3, `pendiente_cierre` coincide con lo esperado. **ROKA banco cerrado de punta a punta para los 3
+meses de esta tanda**, con la misma cobertura parcial (solo clase `propuesta`) que Bracci — los
+`decision_humana`/`sin_reconocer` de cada mes siguen sin cola de revisión (B.3, sin cambios).
+
+### 7. Qué queda, explícitamente fuera de esta tarea
+
+- **`pago_de_haberes`** (20 movimientos, 3 meses) — `10-deuda-declarada.md` B.16, sin dueño, propia
+  convocatoria de `contador-dominio` cuando se retome.
+- **Hallazgo adyacente sobre Bracci** (`1.2.3.130` vs. naturaleza "resultado, deudor" del catálogo) —
+  `10-deuda-declarada.md` B.15, sin dueño, no se toca Bracci.
+- El lote `ae762fda` (nov-2025, prueba técnica del adaptador) sigue sin cierre — fuera de alcance,
+  decidido en (164).
+- FCI-Macro y tarjeta de ROKA: sin adaptador, no tocados (restricción explícita de esta tarea).
+- Los `decision_humana`/`sin_reconocer` de los 3 meses (1374/1551/1581 y 100/105/111
+  respectivamente) siguen sin cola de revisión construida — mismo hueco B.3 ya declarado.
+
+### 8. Commits
+
+`28432c6` (declaración de B.15, doc). B.16 y esta entrada de HANDOFF van en el commit inmediato
+siguiente. Sin código de producción tocado en esta tarea — solo datos reales del piloto (los
+`INSERT` de arriba) y docs.
+
+---
+
 ## 2026-09-01 (169) — 🔒 CIERRE de la tarea de léxico de Módulo 2 para `"ING TRANSF:"`. Los 2084
 movimientos de ROKA (671/699/714) pasan de `concepto_no_catalogado` a `distinguir_tercero_de_socio`,
 100% verificado por consulta directa, sin excepciones ni discrepancias en ninguno de los 3 lotes.
