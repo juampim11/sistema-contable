@@ -6,6 +6,105 @@
 
 ---
 
+## 2026-09-02 (171) — 🟡 Sesión 3 de `27-roadmap-capa-d.md` — primer entregable real para Laura
+armado y entregado a JP para revisión (Excel de 3 hojas + instructivo + WhatsApp). **No se envía
+nada todavía** — queda para que JP lo revise y decida cuándo/cómo mandarlo. La respuesta de Laura
+sigue pendiente, así que la Sesión 3 no cierra del todo hasta ahí.
+
+**Herramienta:** Claude Code, sesión interactiva. Chat nuevo, re-entrada con contexto de 169-170 +
+`27-roadmap-capa-d.md`. Modo plan formal previo (CLAUDE.md §3.2), 6 agentes convocados de verdad
+antes de escribir código (`motor-conciliacion-contable`, `contador-dominio`, `qa-funcional`,
+`ux-designer`, `seguridad-datos-financieros`, `security-engineer`), `backend-dev` para implementar,
+`code-reviewer` antes de cerrar.
+
+### 1. Hallazgos reales de la convocatoria, antes de tocar código
+
+- **`motor-conciliacion-contable`**: las 3 consultas que había propuesto tenían errores de diseño
+  reales — agrupar por texto crudo (`descripcion`) en vez de por `identificador_hmac` (que además
+  blinda estructuralmente contra mezclar Bracci/ROKA, por el pepper derivado por cliente);
+  `asiento_propuesto.tipo` NO es el tipo de movimiento (son 4 valores de flujo contable, siempre
+  `'devengamiento'` acá) — el tipo real vive en `reconocimiento_movimiento.tipo`, vía
+  `referencia_origen`; "sin cuenta asignada" mezclaba 7 motivos distintos del resolver, de los
+  cuales `resolucion_manual_obligatoria_socio` es un control deliberado (D-31), no un hueco.
+- **`contador-dominio`**: confirmó los 3 tipos con regla ya aplicada, pidió una columna extra en
+  Hoja 3 para medir el % del roadmap ("cuenta que hubieras usado" si ✗), corrigió la redacción de
+  `pago_de_haberes` (aclarar "neto, sin cargas sociales") y de `retiro_de_socio` (no ofrecer
+  opciones tipo distribución/honorarios — ya resuelto como "cuenta particular del socio"; lo que
+  falta es a qué socio corresponde cada uno).
+- **`qa-funcional`**: reconstruyó los números cruzando HANDOFF (bloqueado de conectarse al piloto
+  esa sesión) — confirmados después por consulta directa mía: Bracci 1626 automáticos/3252
+  renglones/14 pendientes, ROKA 267/534/20.
+- **`seguridad-datos-financieros`**: 4 condiciones bloqueantes — motivo nuevo en vocabulario cerrado
+  (ninguno de los 4 existentes encajaba), INV-5 (Bracci/ROKA nunca en la misma consulta ni fila sin
+  columna de cliente explícita), `contieneIdentificador()` fail-closed (aborta la escritura, no
+  checklist manual), nunca HMAC/hex crudo en ninguna celda. Ruta de entrega:
+  `privado/piloto_capa_d/entregas-laura/`.
+- **`security-engineer`**: sin bloqueante, marcó riesgo de que la ruta de entrega caiga bajo
+  OneDrive/Dropbox local (no aplica acá, `privado/` no está sincronizado), y que cualquier CLI nuevo
+  lleve el mismo guard R18 que `exportar-excel.ts`.
+- **`ux-designer`**: bloques separados por cliente (no intercalados) con banner + freeze panes,
+  validación de datos por lista con 2 rangos distintos, 3 riesgos concretos de segunda iteración ya
+  mitigados en el diseño final (aclaración de "Otro" con ejemplo, "A qué cuenta va" pidiendo el
+  vocabulario propio de Laura, resaltado condicional si ✗ sin comentario).
+
+### 2. Dos correcciones reales encontradas corriendo las consultas de verdad, no solo diseñándolas
+
+- **`retiro_de_socio` de Bracci (14 movimientos) pasó de Hoja 2 a Hoja 1**: verificado por consulta
+  directa que el mapeo socio↔cuenta particular de Bracci está confirmado y firme (respaldo cita el
+  archivo real del plan de cuentas, sin marca de "provisorio" a diferencia de B.10 de ROKA) — y que
+  los 14 movimientos comparten el MISMO `identificador_hmac` (una sola contraparte real, no 14
+  casos distintos). Decisión de JP.
+- **Hoja 1 "Contrapartes" — problema real de escala, no anticipado por el pedido original**: con la
+  agrupación correcta (por `identificador_hmac`), salen **4077 contrapartes distintas** (856 Bracci
+  + 3211 ROKA), la mayoría (620 Bracci + 2461 ROKA) apareciendo una sola vez — una cola larga real,
+  no ruido. "Una fila por contraparte" tal como estaba pedido daba un Excel de 4000+ filas,
+  exactamente lo opuesto a "una sola iteración sin abrumarla". Decisión de JP: corte ≥3 apariciones
+  (400 filas, 2030 movimientos cubiertos), con una fila resumen del resto al final de cada bloque de
+  cliente.
+
+### 3. Implementación
+
+`backend-dev` construyó: `packages/ingesta/src/planilla/relevamiento-laura.ts` (lectura auditada,
+dos pasadas separadas por INV-5, las 4 consultas SQL validadas), `packages/ingesta/src/planilla/
+armar-libro-laura.ts` (ExcelJS: banners, validación de datos con listas nombradas, hoja protegida,
+`verificarSinIdentificadores` fail-closed), `apps/cli/src/exportar-relevamiento-laura.ts` (CLI,
+guard R18, escritura atómica `wx`), motivo nuevo `'relevamiento_criterio_contable'` agregado a
+`MOTIVOS_EXPORT`. Las listas de nombres de socios (dato real) se pasan por `--listas <ruta-json>` en
+vez de vivir hardcodeadas en código versionado — decisión propia del agente, no en el plan original,
+señalada explícita y confirmada correcta por `code-reviewer`.
+
+`code-reviewer` encontró 1 hallazgo real no bloqueante (Hoja 3 caía a `0` en vez de fail-closed si
+un importe no entraba en un `double` — corregido a `ImporteFueraDeRangoError`, mismo criterio que
+`armar-libro.ts::validar()`) y 1 menor (mínimo de la lista de contraparte, `.min(1)`→`.min(2)`,
+corregido). `pnpm typecheck` limpio, 27/27 tests nuevos verdes, barrido de fuga limpio. Commit
+`9554c87`.
+
+### 4. Corrida real — verificada, sin abrir el contenido a ojo en el chat
+
+`ENV_FILE=.env.piloto pnpm exportar:relevamiento-laura` sobre Bracci+ROKA: `archivo_bytes=30162`,
+2 filas de auditoría (una por cliente, correlaciones `8d14df3d-...`/`e5a1b2d6-...`). Verificado por
+estructura del `.xlsx` (ExcelJS, sin volcar contenido real): 4 hojas (`Listas` en `veryHidden`,
+`Contrapartes` protegida con 401 validaciones de datos, `Tipos sin cuenta`, `Asientos automáticos`),
+freeze panes en fila 2, conteos de fila consistentes con lo esperado (407/3/16).
+
+### 5. Los 3 archivos — en `privado/piloto_capa_d/entregas-laura/`, fuera de `git`
+
+`relevamiento-bracci-roka.xlsx`, `instructivo.docx` (Markdown → `pandoc`, instalado local, sin red),
+`whatsapp.txt`. Los escribí yo directamente (nunca un agente — `privado/` prohibido para todo
+agente, CLAUDE.md §3.1). Confirmado con `git check-ignore` que los 5 archivos de la carpeta (más
+`listas-contraparte.json`, con los nombres reales de socios, y `instructivo.md`, la fuente) quedan
+cubiertos por el ancla `/privado/` del `.gitignore` — nada se commiteó.
+
+### 6. Qué sigue
+
+- JP revisa los 3 archivos antes de mandárselos a Laura — no se envió nada.
+- Con la respuesta de Laura: cargar `regla_imputacion` para `pago_de_haberes` (ROKA) y confirmar
+  socio de `retiro_de_socio` (Bracci), más las decisiones de la Hoja 1, de vuelta al sistema.
+  Convocatoria propia cuando llegue esa respuesta.
+- Las 3081 contrapartes con 1-2 apariciones (bajo el corte) quedan para una segunda vuelta.
+
+---
+
 ## 2026-09-02 (170) — 🔒 CIERRE de ROKA banco de punta a punta: `regla_imputacion` + los 3
 `cierre_cliente_periodo` (mayo/junio/julio 2026) dados de alta, `conciliar:lote --aplicar` corrido
 sobre los 3, **267 asientos reales generados, 534 renglones, 0 desbalanceados**, verificado por
