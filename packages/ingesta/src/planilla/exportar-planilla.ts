@@ -70,6 +70,9 @@ export const MOTIVOS_EXPORT = [
   'revision_mensual',
   'pedido_del_cliente',
   'soporte_incidente',
+  // Relevamiento agregado de criterio contable para Laura (contadora del estudio) — dos clientes del
+  // piloto, agregado y sin datos crudos de terceros. Ver `relevamiento-laura.ts`.
+  'relevamiento_criterio_contable',
 ] as const;
 export type MotivoExport = (typeof MOTIVOS_EXPORT)[number];
 

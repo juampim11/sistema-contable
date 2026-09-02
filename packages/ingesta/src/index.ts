@@ -16,6 +16,8 @@ export * from './adaptadores/registro.ts';
 export * from './adaptadores/toolkit.ts';
 export * from './persistir.ts';
 export * from './planilla/exportar-planilla.ts';
+export * from './planilla/relevamiento-laura.ts';
+export * from './planilla/armar-libro-laura.ts';
 export * from './reproceso/recapturar-conceptos.ts';
 export * from './reproceso/backfill-contraparte.ts';
 export * from './reproceso/reclasificar-contraparte.ts';
