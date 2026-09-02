@@ -6,6 +6,61 @@
 
 ---
 
+## 2026-09-02 (172) — 🟡 Sesión 3 — dos ajustes post-entrega del paquete de Laura (formato de
+asiento clásico en Hoja 3 + razón social real, no el placeholder de `tenant_node.nombre`). Sigue
+sin enviarse nada.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (171), mismo chat.
+
+### 1. Hoja 3 — formato de asiento de libro diario, no tabla plana
+
+JP pidió reemplazar la tabla plana (Debe/Haber como texto al lado del importe) por el formato
+clásico: Debe arriba sin sangría, Haber abajo con sangría (`alignment.indent`), cada uno en su
+propia columna, fila en blanco entre asientos. La columna de validación pasó de "✔/✗/comentario" a
+un desplegable simple OK/NO, con comentario siempre visible (no solo si NO).
+
+**Hallazgo real corriendo contra el piloto, no en tests**: la primera versión de la nueva columna
+"Referencia" usaba un fragmento del `asientoIdEjemplo` (uuid) — `contieneIdentificador()` (INV-13,
+fail-closed) abortó la escritura porque esos 8 caracteres hex tenían, por azar, forma de documento.
+Corregido a un número de orden secuencial simple (nunca puede tener esa forma). Es exactamente la
+defensa en profundidad funcionando como corresponde — encontrado por la corrida real, no anticipado
+en la convocatoria. Commit `abca6bf`, 28/28 tests verdes (test nuevo cubre indentación, columnas
+separadas, fila en blanco, desplegable), barrido limpio.
+
+### 2. Razón social real — placeholder de alta detectado, corregido
+
+JP pidió confirmar por consulta directa (join `tenant_node`↔`cuenta_bancaria.banco_codigo`, mismo
+tipo de verificación usado toda la sesión) qué empresa real corresponde a cada cliente antes de
+reemplazar ninguna etiqueta. Verificado: `f84d9ecc-...` (banco `galicia`, confirma Bracci) y
+`69479b8f-...` (banco `macro`, confirma ROKA) — pero **`tenant_node.nombre` de los dos sigue en
+`"CLIENTE PILOTO 01"`/`"CLIENTE PILOTO 03"`, el placeholder de alta, nunca actualizado** — a
+diferencia de otros clientes del piloto donde sí se cargó la razón social real (criterio "clientes
+reales directo al piloto"). El export armaba los banners de las 3 hojas con ese placeholder.
+
+Razón social real confirmada por el nombre del archivo real del plan de cuentas de cada cliente
+(mismo patrón para los dos): **"Bracci Repuestos S.A.S."** y **"ROKA Repuestos S.A.S."**.
+
+**Fix**: `razonSocialBracci`/`razonSocialRoka` se agregan al mismo JSON de `--listas` (nunca
+hardcodeados en código versionado, mismo criterio que las listas de socios) y pisan lo que devuelve
+la lectura de la base antes de armar el libro — `relevamiento-laura.ts` sigue leyendo
+`tenant_node.nombre` para su propio uso interno, sin tocar esa lectura. Commit `c6f6ba7`, 28/28
+tests verdes, barrido limpio. Verificado por consulta directa sobre el `.xlsx` regenerado: el
+banner de la Hoja 1 dice "BRACCI REPUESTOS S.A.S.", no el placeholder.
+
+**Deuda nueva, no resuelta en esta tarea** (fuera de alcance, solo se corrigió el Excel): `tenant_node.nombre` de Bracci y ROKA sigue con el placeholder en la base — si algún otro mecanismo
+llegara a leerlo esperando la razón social real, va a tener el mismo problema. Queda para una
+convocatoria propia si se decide actualizar la fila en la base (mismo protocolo de escritura real
+que el resto de la sesión: backup fresco, confirmar, verificar por consulta independiente).
+
+### 3. Los 3 archivos, regenerados y verificados
+
+`relevamiento-bracci-roka.xlsx` (30.547 bytes, 2 correlaciones de auditoría nuevas —
+`734a5812-...`/`befc292d-...`), `instructivo.docx` (regenerado tras liberarse un bloqueo de Word),
+`whatsapp.txt` (sin cambios). Los 3 en `privado/piloto_capa_d/entregas-laura/`, fuera de `git`.
+Sigue sin enviarse nada — JP los revisa antes de mandárselos a Laura.
+
+---
+
 ## 2026-09-02 (171) — 🟡 Sesión 3 de `27-roadmap-capa-d.md` — primer entregable real para Laura
 armado y entregado a JP para revisión (Excel de 3 hojas + instructivo + WhatsApp). **No se envía
 nada todavía** — queda para que JP lo revise y decida cuándo/cómo mandarlo. La respuesta de Laura
