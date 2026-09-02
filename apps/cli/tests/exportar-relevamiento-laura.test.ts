@@ -36,6 +36,8 @@ afterAll(async () => {
 const LISTAS_SINTETICAS = JSON.stringify({
   bracci: ['Es un cliente', 'Socio sintético A', 'Otro (aclarar abajo)'],
   roka: ['Es un cliente', 'Socio sintético B', 'Otro (aclarar abajo)'],
+  razonSocialBracci: 'CLIENTE SINTETICO BRACCI SAS',
+  razonSocialRoka: 'CLIENTE SINTETICO ROKA SAS',
 });
 
 function lectorDeListasDePrueba(contenido: string): LectorDeListas {

@@ -124,6 +124,13 @@ const esquemaListas = z.object({
   // ítem pasaría todos los controles y produciría un desplegable sin alternativa real.
   bracci: z.array(z.string().min(1)).min(2, 'la lista de Bracci necesita al menos 2 opciones'),
   roka: z.array(z.string().min(1)).min(2, 'la lista de ROKA necesita al menos 2 opciones'),
+  // Razón social REAL de cada cliente, tal como Laura la reconoce — nunca `tenant_node.nombre`
+  // solo: para Bracci/ROKA esa columna quedó con el placeholder de alta ("CLIENTE PILOTO 0X"),
+  // confirmado por consulta directa (join contra `cuenta_bancaria.banco_codigo`), no por suposición
+  // de orden numérico. Mismo motivo que las listas de arriba para no vivir hardcodeada en código
+  // versionado: quien corre la exportación real la aporta en este JSON, nunca commiteado.
+  razonSocialBracci: z.string().min(1, 'falta razonSocialBracci en el JSON de listas'),
+  razonSocialRoka: z.string().min(1, 'falta razonSocialRoka en el JSON de listas'),
 });
 
 export type MotivoAbortoCliRelevamientoLaura =
@@ -257,13 +264,21 @@ export async function exportarRelevamientoLaura(
     return { estado: 'abortado', motivoCodigo: resultado.motivoCodigo };
   }
 
+  // `tenant_node.nombre` (lo que trae `resultado.bracci/roka.razonSocial`) es el placeholder de
+  // alta del piloto, no la razón social real — se pisa acá con lo confirmado por consulta directa
+  // y aportado en `--listas`, nunca con lo que devolvió la lectura de la base.
+  const datosConRazonSocialReal = {
+    bracci: { ...resultado.bracci, razonSocial: listas.razonSocialBracci },
+    roka: { ...resultado.roka, razonSocial: listas.razonSocialRoka },
+  };
+
   // Arma el libro EN MEMORIA. `armarLibroLaura` corre `verificarSinIdentificadores` (INV-13) como
   // último paso interno y LANZA si matchea — acá abajo eso se traduce a `escritura_fallida` y la
   // reserva se limpia, nunca queda un `.xlsx` a medio escribir ni un `fd` huérfano.
   let libro;
   let buffer: Uint8Array;
   try {
-    libro = await armarLibroLaura(resultado, {
+    libro = await armarLibroLaura(datosConRazonSocialReal, {
       generadoEn,
       listaBracci: listas.bracci,
       listaRoka: listas.roka,
