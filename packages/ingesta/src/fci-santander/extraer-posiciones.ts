@@ -321,15 +321,29 @@ export class SaldoDesalineadoError extends Error {
  *  antes de parsear nada, es preferible a un resultado silenciosamente incorrecto. */
 export class BuildDePdftotextIncorrectaError extends Error {
   constructor() {
+    const binario = rutaDePdftotext();
     super(
-      'El binario "pdftotext" del PATH no parece ser una build de Poppler (no se encontró "Poppler" en ' +
-        'su salida de versión). Este extractor está validado contra Poppler — otras builds (xpdf, entre ' +
-        'otras) producen resultados de `-layout` estructuralmente distintos para el mismo PDF, medido en ' +
-        'esta misma tarea (docs/diseno/19-fci-santander-extractor-hibrido.md). Instalar Poppler ' +
-        '(docs/devops/01-entornos.md §3.bis) antes de reintentar.',
+      `El binario "${binario}" (el que se está invocando efectivamente — de PDFTOTEXT_PATH si está ` +
+        'seteada, del PATH del proceso si no) no parece ser una build de Poppler (no se encontró ' +
+        '"Poppler" en su salida de versión). Este extractor está validado contra Poppler — otras ' +
+        'builds (xpdf, entre otras) producen resultados de `-layout` estructuralmente distintos para ' +
+        'el mismo PDF, medido en esta misma tarea (docs/diseno/19-fci-santander-extractor-hibrido.md). ' +
+        'Si esta ruta no es la esperada (por ejemplo "pdftotext" a secas resolviendo un binario ' +
+        'equivocado del PATH), ver docs/devops/01-entornos.md §3.bis, o fijar PDFTOTEXT_PATH ' +
+        'explícito. Instalar Poppler antes de reintentar si no está instalado.',
     );
     this.name = 'BuildDePdftotextIncorrectaError';
   }
+}
+
+/**
+ * Escape hatch para fijar el binario de `pdftotext` explícito, sin depender del `PATH` del proceso —
+ * pensado para el shadowing de Git Bash/MinGW64 documentado en `docs/devops/01-entornos.md` §3.bis
+ * (esa terminal antepone `/mingw64/bin/pdftotext`, de xpdf, al de Poppler). Vacío el default: en
+ * PowerShell y en CI Linux el `PATH` del proceso ya resuelve al binario correcto sin setear nada acá.
+ */
+function rutaDePdftotext(): string {
+  return process.env.PDFTOTEXT_PATH?.trim() || 'pdftotext';
 }
 
 /**
@@ -341,7 +355,7 @@ export class BuildDePdftotextIncorrectaError extends Error {
  * (Poppler y xpdf además devuelven códigos distintos de 0 para `-v`) — no hace falta `try/catch`.
  */
 function salidaDeVersionDePdftotext(): string {
-  const resultado = spawnSync('pdftotext', ['-v'], { encoding: 'utf8' });
+  const resultado = spawnSync(rutaDePdftotext(), ['-v'], { encoding: 'utf8' });
   return `${resultado.stdout ?? ''}${resultado.stderr ?? ''}`;
 }
 
@@ -504,7 +518,7 @@ export function extraerBloquesConPdftotext(bytes: Uint8Array): Bloque[] {
   let salida: string;
   try {
     writeFileSync(rutaTemporal, bytes);
-    salida = execFileSync('pdftotext', ['-layout', rutaTemporal, '-'], { encoding: 'utf8' });
+    salida = execFileSync(rutaDePdftotext(), ['-layout', rutaTemporal, '-'], { encoding: 'utf8' });
   } finally {
     rmSync(rutaTemporal, { force: true });
   }

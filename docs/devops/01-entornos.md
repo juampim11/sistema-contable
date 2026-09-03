@@ -127,6 +127,23 @@ CI) antes de correr el código que depende de eso — `pnpm verificar` no lo det
 |---|---|---|---|
 | `pdftotext` | `packages/ingesta/src/fci-santander/extraer-posiciones.ts` — fuente auxiliar de la SECUENCIA de etiquetas (ver `docs/diseno/19-fci-santander-extractor-hibrido.md`) | **Poppler**, no xpdf ni cualquier binario que resuelva ese nombre. Confirmado en esta sesión (2026-08-25): xpdf 4.00 y Poppler producen resultados estructuralmente DISTINTOS para el mismo PDF real con `-layout` — el diseño del extractor se validó contra Poppler 24.02.0. Verificar la build con `pdftotext -v` antes de asumir que "ya está instalado" alcanza. | `choco install poppler -y` (shell elevada) |
 
+**🔴 Causa raíz confirmada (2026-09-02, `HANDOFF.md` entrada 175): la terminal Bash de Claude Code en
+este entorno ve un `pdftotext` que NO es Poppler, aunque Poppler esté bien instalado.** Git
+Bash/MinGW64 antepone `/mingw64/bin` al `PATH` del proceso, y ahí vive un `pdftotext` de **xpdf 4.00**
+(Glyph & Cog) que shadowea al de Poppler instalado por WinGet (`oschwartz10612.Poppler`) — confirmado
+con `which -a pdftotext` (dos coincidencias en `/mingw64/bin` antes que la de WinGet) y con la salida
+real de `spawnSync` sobre ese binario (banner de xpdf, código de salida 99). **No es un problema de
+instalación**: `Get-Command pdftotext` en PowerShell resuelve directo al binario de Poppler, y
+`pdftotext -v` corrido desde PowerShell muestra el banner real de Poppler.
+
+**Regla práctica: verificar o correr `packages/ingesta/src/fci-santander/extraer-posiciones.ts` (o
+cualquier código que dependa de `pdftotext`) vía PowerShell — nunca vía la terminal Bash de este
+entorno.** Un resultado de `BuildDePdftotextIncorrectaError` corriendo desde Bash no significa que
+Poppler esté mal instalado: significa que Bash está resolviendo el binario equivocado. Repetir la
+misma verificación desde PowerShell antes de concluir que hay un problema de instalación real.
+Pendiente, próxima tarea: escape hatch de variable de entorno para fijar el binario explícito sin
+depender del `PATH` del proceso.
+
 🔴 **Sin chequeo automático todavía.** Si este binario llega a ser una dependencia real de producción
 (no solo de un extractor preliminar), agregar una verificación de arranque (mismo espíritu que el guard
 de `conUsuario()` contra `BYPASSRLS`) que confirme la build correcta antes de correr, en vez de fallar
