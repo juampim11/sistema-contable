@@ -315,6 +315,21 @@ aplicación que falta, además del DDL: `PedidoDeResolucion.cuitTitularDeclarado
   cliente externo al piloto**, confirmar con asesoría legal que el patrón sostiene la distribución
   comercial tal como está planteada — y, si no, decidir reemplazo de binario o cambio de modelo de
   distribución. Detalle completo: `docs/arquitectura/ADR-0000-stack-infra.md` §2.4.
+- 🟡 **`.env.example` está gitignoreado y nunca estuvo trackeado en el repo — pendiente, sin dueño.**
+  Encontrado al editarlo para documentar el escape hatch `PDFTOTEXT_PATH` (`docs/devops/01-entornos.md`
+  §3.bis, `HANDOFF.md` 176): `.gitignore` lo excluye dos veces (línea 5, `.env.*` genérico, y línea 15,
+  `.env.example` explícito de más), y `git ls-files -- .env.example` devuelve vacío — nunca se commiteó,
+  pese a que `CLAUDE.md` §2 lo declara el punto de documentación versionado de variables de entorno
+  ("Nada de secretos en el repo. Todo por variables de entorno (`.env.example`)"). El archivo en sí no
+  tiene secretos (son nombres de variable y valores de ejemplo/desarrollo — `.env`/`.env.local`, con
+  valores reales, sí quedan correctamente ignorados por el mismo patrón `.env.*` de la línea 5), así que
+  el motivo de la línea 15 explícita no quedó documentado en ningún lado: pudo ser deliberado en algún
+  momento por una razón que no se escribió, o un exceso del patrón genérico que nadie corrigió después.
+  Efecto concreto, medido en esta tarea: el cambio a `.env.example` que documenta `PDFTOTEXT_PATH` existe
+  en disco pero es invisible para git — no viaja a Codex ni a ninguna otra sesión, ni queda en ningún
+  commit. Cierre: confirmar con el titular si la línea 15 fue deliberada y por qué; si no lo fue, sacar
+  `.env.example` del `.gitignore` (la línea 5 genérica queda igual, sigue tapando `.env`/`.env.local`
+  reales) y commitear el archivo tal como está hoy.
 - 🟡 **Promoción de "reconcile-or-refuse" a regla formal (candidata R43) en `ADR-0002-seguridad.md`
   §B — pendiente, sin dueño.** Principio ya aplicado en código (`SaldoDesalineadoError`,
   `EncabezadoDeFondoNoEncontradoError`, `ConsistenciaInternaPdftotextError`,
