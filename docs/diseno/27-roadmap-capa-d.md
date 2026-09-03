@@ -346,6 +346,97 @@ de aislamiento ni el secreto fiscal — eso no es alcance negociable y no se rec
 
 ---
 
+## Anexo Sesión 4 — checklist y contrato verbatim (recuperado del transcript, 2026-09-03)
+
+> El checklist de `analista-funcional` y el bosquejo de contrato de `tech-lead` (Sesión 4, HANDOFF
+> 176) nunca se persistieron verbatim en ningún archivo — vivían solo en el transcript de esa sesión
+> de Claude Code. Recuperados y fijados a disco acá antes de perderse. La síntesis condensada
+> (parafraseada) sigue en HANDOFF 176; este anexo es el texto literal.
+
+### Checklist de `analista-funcional` (6 pasos), verbatim
+
+0. Build de `pdftotext` en el entorno de medición. `pdftotext -v`. Confirmado: Poppler + versión, o
+   xpdf. Si no se registra esto primero, cualquier hallazgo sobre longitud de línea queda no medido.
+1. ¿Falla F1 (geométrico simple)? Contar apariciones de cada etiqueta clave (nombre-de-fondo, SALDO
+   INICIAL, SALDO FINAL, movimiento) que reconstruye `unpdf`/`aFilas()`, contra el conteo real (hecho
+   por JP, solo cifras, sin texto). Éxito: 100% de coincidencia → cerrar acá, no seguir las rondas
+   siguientes. Fracaso: medir rango de `y` de fragmentos numéricos vs. etiquetas — ¿disjuntos (como
+   Santander) o solapados con ruido? Reportar el gap en puntos.
+2. ¿Falla F2 (literal ancla ingenuo)? Elegir el candidato a ancla más obvio del documento Bracci,
+   contar matches totales vs. reales. Tasa de falsos positivos = (matches − reales) / matches. Si >
+   0%, identificar dónde aparecen los falsos positivos (título / legal / encabezado repetido — como
+   categoría, no como texto).
+3. ¿Falla F3 (longitud de línea)? Si se considera segmentar por ancho de `-layout`, exigir la
+   medición en al menos 2 builds de `pdftotext` antes de aceptarla. Si solo hay una build disponible,
+   la fila queda no medido — riesgo de no portabilidad, declarado explícito, y el diseño no se apoya
+   en esa regla como única defensa.
+4. Ancla de contenido candidata (tipo SALDO INICIAL/FINAL): contar apariciones vs. conteo real,
+   verificar alternancia estricta INICIAL→FINAL.
+5. Diseño de reconcile-or-refuse: qué dos fuentes se cruzan, qué campo por cada una, qué excepción
+   aborta ante discrepancia (sin promediar ni elegir "la mejor").
+
+### Bosquejo de contrato común de FCI, `tech-lead`, verbatim
+
+- `capacidades: { ejePosicion: 'cantidad' | 'importe'; certificado: boolean }` — declarativo, igual
+  criterio que `CapacidadesAdaptador` de bancos.
+- `FondoExtraidoFci`: `fondo`, `posicionInicial`/`posicionFinal` (`{cantidad?, importe?}` según
+  capacidad, nunca inventado), `movimientos: MovimientoFci[]`, `movimientosConfiables`, agregados
+  crudos en la unidad declarada, `capaAperturaDisponible: boolean` (generaliza `pepsBloqueado`).
+- `MovimientoFci`: `tipo`, `fecha`, `cantidad?`, `precio?`, `importe?` — campos específicos como
+  `certificado` quedan fuera del tipo común.
+- Mover `OrdenMovimientoInvalidoError`/`FechaMovimientoInvalidaError` a un módulo `fci-comun/`
+  compartido por los tres extractores.
+- La fuente de extracción (geometría vs. texto) queda deliberadamente fuera del contrato — es "lo
+  único específico de cada banco", mismo principio que `contrato.ts` de bancos.
+
+### Auditoría de cumplimiento del checklist contra E-7/E-8 (autocrítica registrada, no relato de éxito)
+
+El checklist **no se siguió literal** durante la medición real de Bracci (E-7/E-8, HANDOFF 175-182,
+otra sesión/chat que este anexo). Tabla honesta, paso por paso:
+
+| Paso | ¿Se siguió? | Detalle |
+|---|---|---|
+| 0 (build) | ✅ Sí, de hecho por necesidad | La causa raíz de Poppler/xpdf (HANDOFF 175) obligó a confirmarlo antes de seguir — el único paso que el checklist pedía y que terminó haciéndose por otra razón. |
+| 1 (F1 — geométrico) | 🔴 **NO HECHO** | Nunca se hizo el conteo real por un humano contra la reconstrucción de `unpdf`/`aFilas` para el documento de Bracci. Lo que sí se hizo (E-8) fue comparar `unpdf` vs. `pdftotext` **entre sí**, y por separado Bracci vs. Elite-IT — ninguna de las dos cosas es "conteo real de JP contra la reconstrucción", que es lo que el paso exige. |
+| 2 (F2 — ancla ingenua) | 🟡 Parcial | Se probó el patrón exacto de `fci-galicia` contra Bracci (E-8, HANDOFF 181) y dio 0 matches — pero no se siguió el paso completo (elegir el candidato MÁS OBVIO del documento de Bracci en sí y medir su tasa de falsos positivos ahí; lo que se hizo fue probar el ancla de OTRO documento). |
+| 3 (F3 — longitud de línea) | 🔴 **RETROACTIVAMENTE: NO MEDIDO, no aprobado** | Se usó una sola build de `pdftotext` (Poppler) en las 3 rondas de E-7/E-8. El checklist exige 2 builds o declarar la fila "no medido" explícito — nunca se declaró así en su momento. Este anexo lo declara ahora, retroactivo. |
+| 4 (ancla de contenido) | 🟡 Parcial | Se buscaron anclas candidatas (SALDO, FONDO, CLASE, etc., E-7 ronda 2) pero ninguna alternó de forma verificable INICIAL→FINAL en Bracci — el paso se ejecutó, el resultado fue negativo, lo cual es información válida, no un fallo del paso. |
+| 5 (reconcile-or-refuse) | 🔴 **Pendiente, no resuelto** | Se descubrió la relación real entre las tablas "Fima en Pesos" (con el salto de página) y "Resultados Inversiones" (con atribución fragmentada) de Bracci — pero nunca se formalizó como spec de reconcile-or-refuse (qué campo compara, qué excepción aborta ante discrepancia). Queda pendiente de diseño, no solo de medición. |
+
+**Con el criterio de cierre del propio `analista-funcional`** ("100% de fondos y movimientos
+resueltos sin heurística de mejor esfuerzo, 0 discrepancias sin explicar entre fuentes cruzadas"):
+**Bracci NO califica todavía como "layout confirmado"** — la pregunta de los 3 totales del recuadro
+superior (Parte D de E-8, HANDOFF 181/182) sigue sin explicar, y el paso 5 sigue sin resolver.
+
+### Brechas del contrato de `tech-lead` contra los tipos reales (verificado contra el código, no interpretación)
+
+Cuatro observaciones para `tech-lead`, a resolver ANTES de cualquier gate en foreground — verificadas
+línea por línea contra `packages/ingesta/src/fci-galicia/extraer-posiciones.ts` y
+`packages/ingesta/src/fci-santander/extraer-posiciones.ts` tal como existen hoy:
+
+1. **`posicionInicial` no tiene equivalente en `FondoExtraido` (Galicia).** Galicia solo tiene
+   `tenenciaDeclarada` — un único punto de posición, no un par inicial/final como
+   `saldoInicialImporte`/`saldoFinalImporte` de Santander. El contrato necesita algo como
+   `posicionInicialDisponible: boolean`, no alcanza con campos opcionales sueltos.
+2. **La cotización de posición no tiene dónde vivir en el contrato.** `cotizacionDeclarada` en
+   Galicia vive a nivel de FONDO (una cotización por corte). `MovimientoFci` del bosquejo solo tiene
+   `precio?` a nivel de MOVIMIENTO — cubre el patrón de Santander (que sí tiene `precio` por
+   movimiento) pero no tiene lugar para una cotización a nivel de fondo como la de Galicia.
+3. **Los arrays crudos por tipo de movimiento están sin tipar en el bosquejo.** Galicia tiene
+   `suscripciones`/`rescates` (`readonly string[]`, cantidades); Santander tiene
+   `importesSuscripciones`/`importesRescates` (`readonly string[]`, importes) — es el MISMO patrón en
+   los dos extractores actuales, y el bosquejo lo deja como "agregados crudos en la unidad declarada"
+   sin tipar. Dado que los dos bancos convergieron solos en esta forma, debería tipar explícito.
+4. **`capaAperturaDisponible` (generaliza `pepsBloqueado`) solo existe hoy en Santander.** Galicia no
+   tiene ningún campo equivalente. Si el contrato lo exige para los dos extractores, es una migración
+   real sobre `fci-galicia` (código nuevo, no un rename) — tiene que entrar explícito en el alcance
+   del gate en foreground que arme `tech-lead`, no asumirse gratis.
+
+Sin contrato final escrito, sin ningún extractor tocado — queda documentado y verificable para cuando
+se convoque el gate en foreground.
+
+---
+
 > ⚠️ **Implicancia contable y fiscal.** Este documento consolida decisiones de estructura y de
 > proceso con efecto directo sobre balance y sobre datos de terceros. No agrega ninguna decisión
 > nueva de dominio — remite a `23`/`24`/`25`/`26`, que ya llevan su propia advertencia. **Validar con

@@ -6,6 +6,793 @@
 
 ---
 
+## 2026-09-03 (182) — Cierre documental de E-8 (sin código): C se resolvió por inspección directa
+de JP, D se cierra como no medible por esta vía. Consolidado el hallazgo de E-7/E-8 completo en
+`docs/diseno/10-deuda-declarada.md` §C.
+
+**Herramienta:** Claude Code, misma sesión que (175)-(181). Tarea puramente documental — sin
+`Edit`/`Write` sobre ningún archivo de código, sin correr ningún script.
+
+### C — resuelto, por inspección directa, no por medición
+
+JP miró el documento real y confirmó: la tabla "Fima en Pesos" de julio de Bracci tiene un **salto
+de página real, con el encabezado de columnas repetido** en la página siguiente. Es la causa
+verdadera del conteo bajo que el sondeo de la entrada 181 había medido (25 filas contra 53 de
+"Resultados Inversiones" en el mismo documento) y que había quedado marcado ahí como hipótesis de
+truncamiento sin confirmar — **la hipótesis era la dirección correcta, pero la causa no era un error
+de extracción del script**, es que el documento efectivamente parte la tabla entre dos páginas.
+Consecuencia directa para el diseño: **cualquier extractor futuro para este layout (o su variante de
+Galicia) necesita reconcatenar tablas continuadas entre páginas ANTES de contar filas** — sin esto,
+cualquier conteo por página es engañoso. Ninguno de los 8 adaptadores bancarios actuales necesitó
+esto (ninguno tiene una tabla que cruce página); sería el primer caso real. Declarado en
+`10-deuda-declarada.md` §C, sin dueño todavía.
+
+### D — cerrado como "no medible con `pdftotext` por líneas"
+
+Se probaron 3 radios de búsqueda progresivos (línea exacta del ancla, ventana ±3 líneas, radio de 15
+líneas en ambas direcciones) contra los 3 documentos de Bracci, sin encontrar ningún importe
+reconocible cerca de ninguna de las 4 anclas ("Total Pesificado" ×2, "Total en $", "Total en USD",
+"FONDOS"). **Decisión explícita de JP: no escalar al método geométrico** (`aFilas`, coordenadas x/y)
+para resolver esto — expondría los 3 importes reales de Bracci sin que haya todavía una necesidad
+concreta que lo justifique (la pregunta de reconciliación es interesante, no bloqueante de nada hoy).
+Queda pendiente de resolución por vía humana (pregunta directa a Laura o al banco), no por medición
+adicional. Sin código, sin escalamiento del método.
+
+### Consolidado en `docs/diseno/10-deuda-declarada.md` §C
+
+Dos bullets nuevos, con el hallazgo real de toda la línea E-7/E-8 (HANDOFF 175-182):
+
+1. **Patrón de separador decimal corrupto por OCR (`###.###.####`) — candidato a guard formal.**
+   Confirmado en 2 de 3 PDF de FCI de ROKA (mayo/junio 2026, 11 y 8 ocurrencias respectivamente).
+   Mismo criterio que `verificarBuildDePdftotext()`: fallar alto y explícito antes de parsear un
+   número que puede estar corrompido en silencio, nunca aceptarlo a ciegas. No bloqueante hoy —
+   ningún extractor de producción procesa todavía estos documentos.
+2. **Requisito de reconcatenación de tablas multi-página** para el futuro extractor de Bracci/
+   variante-Galicia (detallado arriba, punto C).
+
+### E-8 cerrado formalmente
+
+`docs/seguridad/registro-excepciones.md`: agregado el cierre de E-8 (bloques A/B ya cerrados en 181,
+C/D cerrados en esta entrada). Ningún dato real expuesto en ningún momento de las 2 sesiones de E-8.
+
+### Qué sigue
+
+- Sin dueño todavía para ninguno de los 2 hallazgos consolidados en `10-deuda-declarada.md` §C.
+- La clasificación del documento de Bracci (HANDOFF 180: ¿`tipo_documento='fci'` o fuente distinta?)
+  sigue sin decisión — esta ronda fue puramente de cierre documental de E-8, no tocó esa pregunta.
+- El contrato de FCI (Sesión 4, HANDOFF 176) sigue sin bosquejarse.
+- Pendiente humano, no de esta sesión: la pregunta a Laura/banco sobre la reconciliación de totales
+  (Parte D) y sobre qué documento es realmente este (identidad del emisor, si mezcla instrumentos —
+  HANDOFF 180 punto 8).
+
+### Commits
+
+Ninguno — cierre puramente documental. Pendiente acumulado sin commitear: `HANDOFF.md`,
+`docs/seguridad/registro-excepciones.md` (E-2×E-7, E-8 y su cierre), `docs/diseno/
+10-deuda-declarada.md` (2 bullets nuevos), y el fix de `fci-santander/extraer-posiciones.ts` + su
+test (HANDOFF 175).
+
+---
+
+## 2026-09-02 (181) — Sondeo E-8 (nuevo, `docs/seguridad/registro-excepciones.md`): diagnóstico de
+capa de texto/OCR sobre los 6 PDF de FCI (Bracci + ROKA) con el método de Frente 5 (HANDOFF 119), más
+reconciliación aritmética interna de 3 cifras en los reportes de Bracci. **Hallazgo real y concreto**:
+2 de los 3 PDF de FCI de ROKA tienen corrupción de OCR confirmada en el separador decimal (patrón
+`###.###.####`, exactamente el `"33.788.6654"` que JP había visto). La hipótesis de escaneo (05 y 07
+de ROKA) queda **refutada a medias** — solo julio es escaneo puro; mayo también tiene capa de texto,
+pero corrupta. La Parte D (reconciliación de totales de Bracci) **no fue medible** con el método
+genérico — reportado explícito, no forzado.
+
+**Herramienta:** Claude Code, misma sesión que (175)-(180). Script efímero
+(`packages/ingesta/scripts/_sondeo-efimero-e8-fci-texto-y-totales.ts`), mostrado completo antes de
+correr, vía PowerShell, iterado varias veces para corregir anclas de la Parte C/D (mostrado cada
+versión), borrado al cerrar, `git status --short` limpio después. **No se tocó ROKA fuera de esta
+autorización puntual** (JP la dio explícita para este task, incluidos sus 3 PDF de FCI).
+
+### A. Capa de texto — hipótesis de JP, confirmada a medias
+
+| Archivo | Cliente | Banco (booleano) | Bytes pdftotext | Pág. sinTexto | Filas geométricas | ¿Capa nativa? |
+|---|---|---|---|---|---|---|
+| 05-2026-FCI.pdf | Bracci | (ninguno de la lista probada) | 13996 | 0/4 | 163 | sí |
+| 06-2026-FCI.pdf | Bracci | (ninguno) | 12549 | 0/4 | 148 | sí |
+| 07-2026-FCI.pdf | Bracci | (ninguno) | 17273 | 0/5 | 201 | sí |
+| 2026-05 FCI.pdf | ROKA | MACRO | 5863 | 0/1 | 39 | **sí** |
+| 2026-06 FCI.pdf | ROKA | MACRO | 4290 | 0/1 | 32 | sí |
+| 2026-07 FCI .pdf | ROKA | (ninguno) | **1** | 1/1 | 0 | **no** |
+
+**La hipótesis de JP ("05 y 07 son escaneos, 06 es nativo") queda CONTRADICHA en su forma literal,
+no confirmada, pero admite una lectura que la reconcilia**: la medición dice que **05 SÍ tiene capa
+de texto** (5863 bytes, 39 filas geométricas — igual que 06, no como 07), y **solo 07 es imagen
+pura** (1 byte de salida, `requiereOcr`, mismo patrón exacto que BBVA en Frente 5). Explícito, como
+pidió JP: la medición contradice la afirmación literal "05 no tiene texto" — si tiene, y no poco (39
+filas geométricas). Pero cruzando con la Parte B (abajo): **05 es justamente uno de los 2 archivos
+con la corrupción de OCR confirmada** (11 ocurrencias del patrón sospechoso). Lectura que reconcilia
+ambos datos, no forzada: los 3 PDF de ROKA podrían ser igual de "escaneo" en origen (compatible con
+CamScanner en los 3) — lo que distingue a 05/06 de 07 no es si son escaneos, sino si el OCR logró
+embeber una capa de texto (05 y 06 sí, corrupta; 07 no, ninguna). La hipótesis de JP mezclaba dos
+preguntas distintas ("¿es un escaneo?" y "¿tiene texto extraíble?") que la medición separa: puede
+ser un escaneo Y tener texto (con o sin corrupción), o ser un escaneo sin ningún texto.
+
+**Dato no pedido pero relevante**: el booleano de banco (lista cerrada de 8 candidatos) da **MACRO**
+para los 2 PDF de ROKA con texto — coherente con que ROKA ya bancariza con Macro. Los 3 de Bracci no
+matchean ningún banco de la lista (mismo patrón ya visto en la ronda de vocabulario: "GALICIA" como
+palabra literal no aparece, aunque "FIMA" sí — el emisor probablemente no imprime el nombre del banco
+tal cual).
+
+### B. Separador decimal — el hallazgo más importante de esta ronda
+
+| Archivo | AR completo | Sin miles | **OCR sospechoso (doble punto)** | Partido entre tokens |
+|---|---|---|---|---|
+| 05-2026-FCI (Bracci) | 9 | 85 | 0 | 0 |
+| 06-2026-FCI (Bracci) | 9 | 79 | 0 | 0 |
+| 07-2026-FCI (Bracci) | 9 | 124 | 0 | 0 |
+| 2026-05 FCI (ROKA) | 14 | 22 | **11** | 0 |
+| 2026-06 FCI (ROKA) | 16 | 24 | **8** | 0 |
+| 2026-07 FCI (ROKA) | — sin capa de texto — | | | |
+
+**🔴 Confirmado: los 2 PDF de ROKA con capa de texto (mayo y junio) tienen corrupción de OCR real en
+el separador decimal** — 11 y 8 ocurrencias respectivamente del patrón `###.###.####` (dos puntos
+seguidos, sin ninguna coma), exactamente la forma de `"33.788.6654"` que JP había visto a ojo. Los 3
+de Bracci dan **0** en ese patrón — Bracci no está afectado por este problema. Lectura: que un
+documento tenga "capa de texto nativa" (parte A) no prueba que sea confiable — un PDF puede tener
+texto embebido por un OCR de origen (compatible con la marca CamScanner que JP mencionó) y ese texto
+puede estar corrupto en el separador decimal aunque técnicamente "tenga texto". Esto es un hallazgo
+nuevo, no anticipado por la Parte A por sí sola.
+
+### C. Bracci julio — "Fima en Pesos" vs. "Resultados Inversiones"
+
+La búsqueda del título literal "Fima en Pesos" dio un falso positivo temprano (línea 20, en la
+carátula) — la tabla real se ubicó por la posición de sus propias filas (`Entrada`/`Salida`, líneas
+148-225), no por su título. Con el span corregido:
+
+| Tabla | Filas/operaciones | Fechas únicas |
+|---|---|---|
+| "Fima en Pesos" (Entrada=17, Salida=8) | **25** | **13** |
+| "Resultados Inversiones" (SUSCRIP+RESCATE) | **53** | **23** |
+
+Ratio de filas: 25/53 ≈ 0,47 — apenas por debajo del umbral que fijé (0,5) para señalar la hipótesis
+de truncamiento. Ratio de fechas: 13/23 ≈ 0,57 — NO por debajo del umbral. **Lectura, sin forzar**:
+hay una diferencia real y medible entre las dos tablas, pero es más chica de lo que el pedido
+original sugería como sospecha ("mucho menor a lo esperable") — es compatible con que "Fima en
+Pesos" simplemente tenga menos operaciones por fecha que "Resultados Inversiones" (patrón de negocio
+real), no necesariamente con un truncamiento de extracción. **No confirmado ni descartado.**
+
+### D. Reconciliación de totales — NO MEDIBLE con este método, reportado explícito
+
+Encontré los 4 anclas de texto (2 ocurrencias de "Total Pesificado", "Total en $", "Total en USD",
+"FONDOS" suelto) en los 3 documentos de Bracci, pero **ningún importe con formato AR reconocible
+aparece dentro de un radio de 15 líneas de ninguna de las 4 anclas**, en ninguno de los 3 documentos
+— medido explícito, no supuesto (diagnóstico de distancia, probado hasta 15 líneas en ambas
+direcciones, siempre `null`). Tres intentos con métodos progresivamente más laxos (línea exacta,
+ventana ±3, radio 15) dieron el mismo resultado. **Conclusión honesta: no medible con este método.**
+Lectura, sin forzar: el "recuadro superior" probablemente tiene un layout de caja/tabla que
+`pdftotext -layout` no serializa como texto contiguo cerca de sus etiquetas — haría falta el método
+geométrico (`aFilas`, coordenadas x/y) para asociar etiqueta↔valor, mismo tipo de problema que ya
+resolvió el diseño de Santander (`19`) para sus dos zonas de `y` disjuntas. No se fuerza ninguna
+respuesta a las preguntas de (ii)==(i) / (iii)==(i) — quedan sin resolver.
+
+### Qué sigue
+
+- **ROKA**: 2 de 3 meses de FCI necesitan re-extracción con reparación de OCR (o pedir el documento
+  de nuevo al banco) antes de poder confiar en ningún importe — el separador decimal roto es
+  silencioso si no se lo busca a propósito. Julio sigue bloqueado por ser imagen pura (mismo
+  tratamiento que BBVA: proyecto de OCR aparte, no ajuste puntual).
+- **Bracci**: la reconciliación de totales sigue sin resolver — si hace falta, el próximo intento
+  necesita el método geométrico (`aFilas`), no `pdftotext` de líneas.
+- Sigue sin tocarse el contrato de FCI (Sesión 4, HANDOFF 176) ni la clasificación del documento
+  (HANDOFF 180) — esta ronda fue puramente de medición adicional, a pedido de JP.
+
+### Commits
+
+Ninguno — solo lectura. `docs/seguridad/registro-excepciones.md` (E-8 nuevo) es cambio real, junto
+con lo pendiente de (175): `HANDOFF.md` + el fix de `fci-santander/extraer-posiciones.ts` + su test.
+Nada commiteado todavía.
+
+---
+
+## 2026-09-02 (180) — Convocatoria formal `analista-funcional` + `contador-dominio` sobre la
+clasificación del documento de FCI de Bracci (HANDOFF 175-179). Ambos, de forma independiente,
+**refuerzan** la lectura de "detalle de movimientos de cuenta comitente, no reporte de posición de
+FCI puro" — y los dos la refinan con un hallazgo que la medición original no había señalado. Ningún
+código, ningún `tipo_documento` nuevo, ningún contrato tocado. Dos afirmaciones verificables de los
+dictámenes, confirmadas contra el repo real antes de aceptarlas.
+
+**Herramienta:** Claude Code, misma sesión que (175)-(179). 2 agentes en paralelo, cada uno con la
+prohibición explícita de tocar `privado/` y el mismo resumen medido de las 3 rondas anteriores.
+
+### Verificado antes de aceptar (no solo afirmado)
+
+- `knowledge/README.md:4` dice `sources_status: esqueleto-sin-contenido` y no existe ninguna carpeta
+  `rt-facpce` — confirma la base de `contador-dominio` para responder "no tengo esa fuente cargada"
+  en lo normativo.
+- `expectativa_fuente_cliente.banco_codigo` y `.cuenta_bancaria_id`
+  (`0027_cierre_mensual.sql:454-455`) son **nullable**, sin `not null` — confirma el hallazgo de
+  `analista-funcional` de que declarar "este cliente tiene FCI" ya es representable hoy sin extender
+  el mecanismo.
+
+### `analista-funcional` — refina la hipótesis con un dato que la convocatoria no había señalado
+
+**`SALDO` está entre los 6 términos confirmados en CERO en Bracci.** Si la hipótesis fuera "estado de
+cuenta" al estilo Santander (`SALDO INICIAL`/`FINAL`, doc `19`), se esperaría encontrar la palabra —
+no aparece. Conclusión más precisa: es un **detalle de movimientos + posición** (los términos que SÍ
+están: `MOVIMIENTOS`, `POSICION`, `TOTAL`), no un "estado de cuenta" con lógica de saldo corrido. La
+palabra `COMITENTE` es la señal más específica de todas — terminología de mercado de capitales (ALyC/
+Caja de Valores), ausente en el material de Elite-IT.
+
+**2 alternativas no descartadas, declaradas explícitas**: (a) el EMISOR del PDF podría no ser el
+banco administrador del fondo sino una ALyC/broker relacionada (ej. Galicia Valores S.A.) — "mismo
+banco" es un hecho sobre el FONDO, no sobre quién emite este documento puntual; (b) el documento
+podría incluir OTROS instrumentos además de FCI (la ausencia de `ESPECIE` es ambigua, no concluyente).
+Ninguna de las dos se resuelve por metadatos.
+
+**Pregunta 2 (tipo de documento nuevo vs. fuente distinta del mismo hecho)**: recomienda **NO** crear
+`tipo_documento` nuevo — tratarlo como candidato a normalizar contra el contrato `MovimientoFci` ya
+existente (mismo patrón que ya funcionó dos veces con layouts de PDF completamente distintos: Galicia
+por bloques, Santander por anclas — un extractor nuevo, mismo contrato de salida). Escalar a
+`tipo_documento` propio SOLO si la confirmación humana encuentra hechos económicos ajenos a FCI en
+volumen relevante.
+
+**Pregunta 3 (superposición entre 2 documentos del mismo hecho)**: **hueco real, sin mecanismo hoy**
+en `documento_ingerido`/`fuente_cierre` — verificado contra el DDL real, no contra el diseño de
+referencia. `fuente_cierre.expectativa_id` nulo cubre "llegó un documento que no se esperaba", nunca
+"dos documentos compiten por el mismo hecho". Propuesta pre-completada para cuando se convoque de
+verdad: detectable solo si ambas fuentes normalizan al mismo contrato (clave
+`cliente_id, fondo, clase, fecha, tipo, cantidad`); resolución con el principio reconcile-or-refuse ya
+declarado en `19` (candidato R43, no promovido) — nunca reconciliar en silencio, un `motivo_codigo`
+nuevo en `pendiente_cierre` (ej. `fuente_solapada`, aditivo al catálogo cerrado actual). **Marcado
+explícito como hipotético, sin evidencia de que Bracci entregue ambos documentos hoy.**
+
+**Pregunta 4 (impacto en `expectativa_fuente_cliente`)**: el mecanismo de expectativas NO necesita
+extensión para declarar "este cliente tiene FCI" (verificado arriba). El hueco real está en el
+catálogo de CUENTA, no en la expectativa: `cuenta_bancaria_identificador.tipo_cuenta` es una unión
+cerrada sin valor para "cuenta comitente", con columnas pensadas para CBU que un número de comitente
+no es — no bloqueante hoy porque `cuenta_bancaria_id` es nullable.
+
+### `contador-dominio` — declara el límite de `knowledge/` primero, después da criterio de partida
+doble (no normativa, marcado explícito)
+
+**Pregunta 5 (¿mismos asientos?)**: no son el mismo objeto contable. Un reporte de posición de FCI
+documenta un solo hecho (tenencia de cuotapartes, VCP, altas/bajas) con los roles ya construidos
+(`inversiones_fci`/`resultado_rescate_fci`, `packages/fci`). Un detalle de cuenta comitente agrupa
+instrumentos heterogéneos (títulos, ON, acciones, plazo fijo, moneda extranjera), cada uno con hecho
+económico y cuenta distintos. **`USD` presente + `CUOTAPARTES` ausente es coherente con que Bracci NO
+sea (solo) un reporte de FCI** — compatible con que el broker reporte la operación de FCI en importe,
+sin desglosar cantidad de cuotapartes/VCP (ese detalle vive en la gerente del fondo, no en el broker).
+
+**Pregunta 6 (¿aplica el PEPS ya construido?)**: el algoritmo de consumo de capas
+(`consumirRescate`) es abstracto en mecánica, pero el paquete **no es genérico** — `RolFCI` es unión
+cerrada de 2 valores, los extractores están tipados a vocabulario de FCI. Si hay acciones/ON/títulos,
+reusar exige diseño nuevo (rol distinto, forma de capa distinta), no aplicación mecánica. Plazo fijo
+es un mecanismo DISTINTO (devengamiento, no consumo de lotes) — nunca una variante de PEPS. Diferencia
+de cambio en USD tampoco es automático — depende de un criterio que no está en `knowledge/`.
+
+**Pregunta 7 (formulación exacta al banco)**: (a) si se necesita el detalle FCI a nivel cuotapartes —
+pedir el "Estado de posición y movimientos de cuotapartes de FCI" (o el nombre de la gerente, ej.
+FIMA) con fecha/tipo/cantidad/VCP/importe por operación + saldo inicial/final por fondo — el shape
+exacto que ya leen `fci-galicia`/`fci-santander`; (b) si hay otros instrumentos — pedir el "Estado de
+cuenta de Caja de Valores S.A." o el reporte del depositario, por especie/ISIN/cantidad/precio/
+moneda/fechas, y el certificado de plazo fijo aparte. Marcado explícito como conocimiento de plaza,
+no cita normativa.
+
+### Cierre obligatorio (los dos) — 17 puntos declarados `indeterminado`, no forzados
+
+Los más repetidos entre los dos dictámenes, independientes: **identidad real del emisor del PDF**
+(¿banco, ALyC relacionada, Caja de Valores?), **si hay instrumentos no-FCI mezclados**, **si existe
+una sección de posición/saldo verificable dentro del documento**, y **naturaleza exacta de `USD`**
+(moneda de tenencia vs. cotización vs. total de referencia). Los dos cierran igual: la única forma de
+cerrar esto es que una persona (nunca un agente) mire el documento real, mismo régimen E-2/E-7 ya
+vigente. `contador-dominio` cierra con **"Validar con profesional matriculado"**.
+
+### Qué sigue
+
+Sin código, sin `tipo_documento` nuevo, sin tocar el contrato de FCI de la Sesión 4 (HANDOFF 176) —
+sigue pendiente, ahora con más información para bosquejarlo cuando corresponda. JP decide: (a) mirar
+él mismo la carátula del documento (página 1, la única forma real de cerrar los puntos 1-2 del
+pendiente), (b) declarar todo esto como deuda en `10-deuda-declarada.md` y pausar la línea de FCI de
+Bracci, o (c) otra cosa.
+
+### Commits
+
+Ninguno — solo convocatoria + síntesis. Sigue pendiente de (175): `HANDOFF.md`,
+`docs/seguridad/registro-excepciones.md` (2 addendums) y el fix de `fci-santander/
+extraer-posiciones.ts` + su test, sin commitear.
+
+---
+
+## 2026-09-02 (179) — Sondeo cruzado E-2 × E-7 (adendum registrado en
+`docs/seguridad/registro-excepciones.md` antes de correr): comparación estructural entre los 3 PDF
+de Elite-IT SAS (E-2, layout que `fci-galicia` SÍ reconoce) y los 3 PDF de Bracci (E-7). **Resultado
+más claro de las 3 rondas**: son documentos de tipo distinto, con evidencia estructural cruzada, no
+solo vocabulario. Refuerza fuerte la hipótesis de la ronda anterior — Bracci no es un reporte de
+posición de FCI, es más compatible con un estado de cuenta/detalle de movimientos con Fondo y Clase
+como columnas por renglón, no como encabezado de bloque.
+
+**Herramienta:** Claude Code, misma sesión que (175)-(178). Antes de correr, evalué explícito si el
+cruce necesitaba una convocatoria propia (pedido de JP: "si considerás que hace falta, parná y
+decilo") — conclusión: no, porque el método reforzado no cambia (cero texto/importe/fecha real,
+solo conteos/booleanos/máscaras) y la única novedad es presentar los dos resultados lado a lado con
+cada columna rotulada por cliente, nunca combinados en un valor único (mismo principio que INV-5,
+aplicado a un reporte en vez de una consulta SQL) — se registró como addendum de E-2×E-7, no como
+E-8 nuevo. Script efímero mostrado completo antes de correr, vía PowerShell, borrado al cerrar,
+`git status --short` limpio después.
+
+### El patrón exacto de `fci-galicia` (`FONDO\s*-\s*(.+?)\s*CLASE\s+[A-Z]`)
+
+| | Elite-IT (3 docs) | Bracci (3 docs) |
+|---|---|---|
+| Matches del patrón exacto | 3 / 1 / 3 (7 total — coincide con la cantidad de fondos por corte) | **0 / 0 / 0** |
+| Menciones sueltas de "FONDO" sin el patrón | Dentro de párrafos largos de texto legal/disclaimer (máscaras con muchas palabras seguidas, sin números) | **Dentro de filas de tabla con fecha + 3 importes en la misma línea** (ej. máscara real: `AAAAAA AAAA #,###.## ###### AAAAAAAAAAA ##/#/#### $##.## ##,###.## $###,###.##`) |
+
+Esto responde las preguntas 1 y 2 de JP con evidencia directa, no inferencia: en Elite-IT el patrón
+exacto SÍ aparece, una vez por fondo del corte, tal como espera `fci-galicia`. En Bracci **nunca
+aparece, ni una variante cercana** — lo que hay cerca de la palabra "FONDO" es estructuralmente una
+fila de movimiento (fecha + varios importes en la misma línea), no un encabezado de bloque. Es la
+confirmación más directa hasta ahora de que Bracci no es una variante del layout de Elite-IT/Galicia
+posición-de-fondo, aunque comparta banco y familia FIMA.
+
+### Tabla comparativa de vocabulario (suma de los 3 documentos por lado — unpdf y pdftotext
+coinciden exacto en las dos columnas de cada cliente, confirmando que no es un artefacto de una sola
+fuente)
+
+| término | Elite-IT | Bracci |
+|---|---|---|
+| SALDO | 3 | **0** |
+| CONCERTACION | 7 | **0** |
+| LIQUIDACION | 7 | **0** |
+| COMISION | 6 | **0** |
+| ESPECIE | 3 | **0** |
+| CUOTAPARTES | 3 | **0** |
+| TOTAL | **0** | 24 |
+| USD | **0** | 15 |
+| POSICION | 6 | 3 |
+| MOVIMIENTOS | 6 | 3 |
+| COMITENTE | 3 | 8 |
+| PESOS | 5 | 20 |
+| SUSCRIPCION | 21 | 91 |
+| FONDO | 16 | 10 |
+| CLASE | 16 | **79** |
+
+Seis términos que Elite-IT usa (SALDO, CONCERTACION, LIQUIDACION, COMISION, ESPECIE, CUOTAPARTES)
+están en CERO en Bracci, en las 2 fuentes, los 3 documentos — no es un problema de detección, es
+ausencia real. Y dos términos que Bracci usa con fuerza (TOTAL, USD) están en cero en Elite-IT. El
+perfil de vocabulario es opuesto, no una variante del mismo.
+
+### Estructura — respuesta a la pregunta 3 (CLASE vs. última página)
+
+| Documento | CLASE por página | Columnas candidatas por página | ¿Coincide el pico de CLASE con la ÚLTIMA página? |
+|---|---|---|---|
+| 05-2026 (4 pág.) | p1=1, p2=1, p3=11, **p4=12** | p1=3, p2=6, p3=6, **p4=12** | **Sí** — pico y última página son la misma (p4) |
+| 06-2026 (4 pág.) | p1=2, p2=1, **p3=14**, p4=8 | p1=0, p2=9, p3=9, p4=12 | **No** — el pico (p3=14) es la anteúltima, no la última (p4=8) |
+| 07-2026 (5 pág.) | p1=2, p2=1, p3=1, **p4=16**, p5=9 | p1=0, p2=8, p3=6, p4=12, p5=10 | **No** — el pico (p4=16) es la anteúltima, no la última (p5=9) |
+
+**Respuesta precisa, sin forzar el patrón de la ronda anterior**: el pico de `CLASE` coincide con la
+última página SOLO en 1 de los 3 documentos — en los otros dos está en la página anterior a la
+última. Lo que sí es constante en los 3: el pico está en la página con MÁS columnas geométricas
+candidatas (12 en los 3 casos), sea o no la física-última del documento. Elite-IT, en comparación,
+tiene `CLASE` bajo y parejo (16 total en 3 documentos, sin concentración en ninguna página — su único
+documento con 2 páginas la tiene toda en la página 1).
+
+**Dato nuevo, no pedido pero relevante**: `SUSCRIPCION` (91 total en Bracci) y `CLASE` (79 total) son
+del mismo orden de magnitud — compatible con que cada movimiento de suscripción/rescate lleve
+también una referencia a "Clase" en la misma fila (columna de clase de fondo por operación), no un
+encabezado que aparece una vez por fondo como en Elite-IT.
+
+### Estructura general — páginas y densidad
+
+Elite-IT: 1-2 páginas reales (unpdf), una tabla densa y compacta por página (5-6 columnas), sin
+crecer en número de páginas entre cortes. Bracci: 4-5 páginas reales, con la página 1 siempre distinta
+(0-3 columnas, tipo carátula) y las páginas de movimientos con estructura tabular consistente entre
+sí dentro del mismo documento. Documentos de forma fundamentalmente distinta, no solo de contenido.
+
+### Lectura de conjunto — confianza alta esta vez, con 3 líneas de evidencia independientes convergiendo
+
+1. El patrón literal exacto de `fci-galicia`: presente en Elite-IT, ausente en Bracci (no una
+   variante — cero coincidencias cercanas).
+2. El perfil de vocabulario: opuesto entre los dos (Elite-IT usa SALDO/CONCERTACIÓN/LIQUIDACIÓN/
+   COMISIÓN/ESPECIE que Bracci no usa nunca; Bracci usa TOTAL/USD con fuerza que Elite-IT no usa).
+3. La estructura geométrica: Elite-IT es compacto (1-2 páginas), Bracci es extenso (4-5 páginas) con
+   "FONDO" apareciendo dentro de filas de movimiento, no como encabezado de bloque.
+
+**Con esto, la hipótesis de la ronda 178 pasa de "confianza media" a razonablemente sólida**: el
+documento de Bracci no es un reporte de posición de FCI al estilo Galicia/Santander — es
+estructuralmente un documento distinto (compatible con un detalle de movimientos de comitente/broker,
+con Fondo y Clase como columnas por operación). Sigue sin confirmarse contra el contenido completo
+del documento (nadie lo leyó completo, ni un agente ni el script) — es lectura de metadatos
+convergentes, no un hecho verificado línea por línea.
+
+### Qué sigue
+
+JP decide: (a) convocar `analista-funcional` + `contador-dominio` sobre la pregunta de clasificación
+("¿esto es `tipo_documento='fci'` o necesita su propio tratamiento?"), (b) seguir midiendo con otra
+ronda dirigida, o (c) frenar acá. Sigue sin escribirse el bosquejo del contrato de FCI (Sesión 4,
+HANDOFF 176) — la decisión de clasificación de este documento probablemente lo condiciona.
+
+### Commits
+
+Ninguno — solo lectura. `docs/seguridad/registro-excepciones.md` (addendum de cruce) es cambio real,
+junto con lo pendiente de (175): `HANDOFF.md` + el fix de `fci-santander/extraer-posiciones.ts` y su
+test. Nada commiteado todavía.
+
+---
+
+## 2026-09-02 (178) — Sondeo E-7, ronda 2 (continuación de 177, misma excepción con addendum en
+`docs/seguridad/registro-excepciones.md`), contra los mismos 3 PDF de FCI de Bracci. Resultado: la
+anomalía de la ronda anterior queda explicada (más decimales de los que reconoce `esImporte`, NO
+números partidos en fragmentos), aparece vocabulario nuevo real (`COMITENTE`, `POSICION`,
+`MOVIMIENTOS`, `TOTAL`, `SUSCRIPCION`) y una señal fuerte de administradora (**FIMA**, familia de
+fondos de Banco Galicia) — hipótesis de trabajo: el documento de Bracci **no es un reporte de
+posición de FCI**, es un **estado de cuenta de comitente/broker** con las suscripciones y rescates
+de FCI como líneas de movimiento entre otras. **Sin confirmar** — es lectura de la medición, no un
+hecho verificado contra el documento completo. Sigue sin escribirse el bosquejo del contrato.
+
+**Herramienta:** Claude Code, misma sesión que (175)-(177). Script efímero
+(`packages/ingesta/scripts/_sondeo-efimero-fci-bracci-ronda2.ts`), mostrado completo antes de correr,
+vía PowerShell, borrado al cerrar, `git status --short` limpio después. Salida: solo conteos,
+booleanos y máscaras de forma (dígito→`#`, letra→`A`) — nunca un valor real. Autorización propia de
+JP para esta ronda, registrada como addendum de E-7 (no una excepción nueva).
+
+### A. La anomalía de la ronda anterior — resuelta
+
+- **Hipótesis (2) descartada de forma concluyente**: 0 empalmes coma/punto+dígito-siguiente en las
+  dos fuentes, los 3 documentos — ningún número viene partido en fragmentos separados.
+- **Hipótesis (3) descartada**: `SUSCRIP`/`RESCATE` NO se reparten uniforme por página (sería la
+  firma de un encabezado/leyenda) — se concentran en páginas puntuales (ronda 2 confirma exacto lo de
+  la ronda 1: página 2-3 del documento, 0 en la 1 y en las últimas), consistente con apariciones reales
+  por movimiento, no un rótulo repetido.
+- **Hipótesis (1) confirmada, es la explicación real**: la mayoría de los "no reconocidos por
+  `esImporte`" son formatos que esa función no cubre — decimales largos tipo `##.########` (hasta 8
+  decimales, 20-25 apariciones por documento, en el mismo orden de magnitud que las menciones de
+  `SUSCRIPCION`/`RESCATE`: probablemente la **cantidad de cuotapartes** de cada movimiento) y formato
+  con punto decimal en vez de coma (`#####.##`, `#######.##`, `##,###.##`: probablemente **precio de
+  cuotaparte**). Los pocos SÍ reconocidos por `esImporte` (7-8 por documento, formato `$##.###,##`)
+  coinciden en cantidad con las 8 apariciones de `TOTAL` — sugiere que son **subtotales/totales por
+  sección**, no un importe por movimiento.
+- Dato nuevo, no pedido explícitamente pero relevante: hay MÁS fechas (`##/#/####`, 65 en el
+  documento de julio) que menciones de `SUSCRIP`+`RESCATE` juntas (36) — más de 1 fecha por
+  movimiento. No se investigó por qué (posible fecha de concertación + fecha de liquidación, o una
+  fecha de encabezado por página) — queda abierto.
+
+### B. Vocabulario ampliado — 7 de 37 términos probados dan positivo
+
+`POSICION` (1), `TOTAL` (8), `MOVIMIENTOS` (1), `COMITENTE` (2-3), `PESOS` (6-8), `USD` (5),
+`SUSCRIPCION` (21-43, creciendo mes a mes) — **exactos entre las dos fuentes** (unpdf y pdftotext
+coinciden dígito a dígito en cada conteo, las 2 rondas). Los otros 30 (incluidos `SALDO`,
+`CUOTAPARTE`, `PATRIMONIO`, `TENENCIA`, `VALOR CUOTAPARTE`, `ESTADO DE CUENTA`, `LIQUIDACION`,
+`CONCERTACION`) siguen en 0 en las dos fuentes, ya normalizado por mayúscula y acento — **no era un
+problema de acentuación ni de mayúsculas**, la ronda anterior no los encontraba porque genuinamente
+no están.
+
+### C. Estructura — confirma "listado de movimientos", no resumen compacto
+
+- **La página 1 es distinta de las demás en las 3 corridas** (0 "columnas candidatas" detectadas por
+  el método geométrico, contra 6-12 en las páginas siguientes) — compatible con ser carátula/
+  encabezado, no tabla.
+- **Las páginas de movimientos (2-4) SÍ comparten columnas** entre sí (mismos valores de `x`
+  aproximados, ej. 243/300/362/411/460/483 se repiten entre páginas del mismo documento) — refuerza
+  que es una tabla real con estructura consistente, no texto libre.
+- **La última página de cada documento tiene su propio patrón de columnas** (`x≈[84, 89, 94, 150,
+  200, 252, 254, 303, 363, 407, 469, 519]`, hasta 12 columnas candidatas — más que las páginas de
+  movimientos), distinto del resto — compatible con una sección aparte (JP había preguntado
+  específicamente por esto, por la concentración de `CLASE` ahí en la ronda 1). **No se pudo
+  determinar de qué se trata sin exponer contenido** — queda como pregunta abierta para una próxima
+  medición dirigida, si hace falta.
+- Fechas con forma `#/#/####` y `##/#/####` (día/mes de 1 o 2 dígitos, año de 4) en las páginas de
+  movimientos; 0 fechas en la página 1 y en la/s última/s.
+
+### D. Administradora — 2 positivos, uno de los dos NO confiable
+
+- **`FIMA` da positivo en los 3 documentos** — es la familia de fondos de **Banco Galicia**, marca
+  real y conocida (no un dato del cliente). Señal fuerte: sugiere que el ADMINISTRADOR del fondo es
+  Galicia, aunque el LAYOUT del documento no sea el de `fci-galicia/` (que ya dio 0 fondos en la
+  medición real de HANDOFF 175) — sería un documento distinto emitido por el mismo banco/broker, no
+  por el fondo en sí.
+- **`ST` también da positivo, pero es RUIDO, no señal**: es un substring de 2 letras sin límite de
+  palabra — coincide con fragmentos de "ESTADO", "COSTO", "REGISTRO" o cualquier palabra española que
+  lo contenga. **No se puede confiar en este positivo** con el método usado (substring simple, sin
+  `\b`) — declarado explícito como no confiable en vez de forzar una lectura.
+
+### Lectura de conjunto, con nivel de confianza explícito
+
+- **Alta confianza** (múltiples señales independientes, geometría + vocabulario coinciden): es un
+  documento de **varias páginas con una tabla real de movimientos** (páginas 2-4), con
+  suscripciones/rescates de FCI como líneas dentro de un documento más amplio — no un resumen
+  compacto de posición como Galicia o Santander.
+- **Confianza media** (una sola señal, plausible pero no cruzada): el documento podría ser un
+  **estado de cuenta de comitente/broker** (por `COMITENTE`, `POSICION`, `MOVIMIENTOS`, `TOTAL`
+  juntos) en vez de un reporte de FCI puro — y el emisor sería **Banco Galicia** (por `FIMA`), aunque
+  con un layout distinto del ya conocido.
+- **Sin confirmar, no forzado**: qué es la sección de la última página; por qué hay más fechas que
+  movimientos; si "cantidad de cuotapartes" y "precio" son de verdad los dos formatos numéricos
+  identificados en el punto A.
+
+### Qué sigue
+
+Sigue sin escribirse el bosquejo del contrato (JP: medir primero). Con esta lectura de "estado de
+cuenta de comitente, no reporte de FCI puro", puede convenir una convocatoria a `analista-funcional`
++ `contador-dominio` antes de seguir midiendo — la pregunta cambia de "¿cuál es el layout de FCI de
+Bracci?" a "¿este documento entra en la categoría `tipo_documento='fci'` en absoluto, o es otra cosa
+(un estado de cuenta con FCI adentro) que necesita su propio tratamiento?". No decidido en esta
+entrada — se lo llevo a JP.
+
+### Commits
+
+Ninguno — solo lectura. `docs/seguridad/registro-excepciones.md` (addendum de E-7) sí es un cambio
+real, junto con lo pendiente de (175): `HANDOFF.md` + el fix de `fci-santander/extraer-posiciones.ts`
+y su test. Nada commiteado todavía.
+
+---
+
+## 2026-09-02 (177) — Sondeo E-7 nuevo (autorizado por JP, no hereda la autorización de 175) contra
+los 3 PDF de FCI de Bracci, protocolo de la Sesión 4 (matriz de vocabulario + geometría). Resultado:
+**el documento de Bracci NO usa la palabra "SALDO" en absoluto**, en ningún mes, por ninguna de las
+dos fuentes — descarta con más fuerza todavía el layout Santander-style (que corría sobre bloques
+`SALDO INICIAL`→`FINAL`). Es un documento estructuralmente distinto de los dos ya conocidos: 4-6
+páginas (vs. 1-2 de Galicia/Santander), con `SUSCRIP`/`RESCATE` repetidos docenas de veces —
+compatible con un listado de movimientos página por página, no un resumen compacto de posición.
+**No alcanza para diseñar el extractor todavía** — solo lectura, sin código nuevo, sin escribir el
+bosquejo del contrato (JP pidió medir primero, bosquejar después).
+
+**Herramienta:** Claude Code, misma sesión que (175)/(176). Script efímero
+(`packages/ingesta/scripts/_sondeo-efimero-fci-bracci-vocabulario.ts`), mostrado completo antes de
+correr, corrido vía PowerShell (Poppler resuelve bien ahí, causa raíz en 175), borrado al cerrar,
+`git status --short` limpio después. Reusa `aFilas` (`texto-pdf.ts`) y `esImporte` (`parseo-ar.ts`),
+ya auditados — no escribe ningún parser nuevo. Salida: solo conteos y rangos de `y`, nunca texto ni
+importe.
+
+### Resultado, por documento (mayo/junio/julio 2026)
+
+| | pdftotext (pág. 1) | unpdf (todas las páginas) |
+|---|---|---|
+| Páginas totales | 5 / 5 / 6 | 4 / 4 / 5 |
+| `FONDO` | 1 / 2 / 2 líneas | 1-2 fragmentos, concentrados en 1-2 `y` puntuales |
+| `SUSCRIP` | 7 / 4 / 4 líneas | 7-25 fragmentos por documento, repartidos en varias páginas |
+| `RESCATE` | 0 / 0 / 0 líneas (pág. 1) | 3-10 fragmentos, solo páginas 2-3 |
+| `CLASE` | 1 / 2 / 2 líneas | 1-16 fragmentos, concentrados en páginas 3-5 |
+| `COTIZAC` | 0 / 1 / 1 líneas | 0-1 fragmentos |
+| `FINAL` | 0 / 1 / 1 líneas | 0 fragmentos (unpdf no lo encuentra ni una vez) |
+| `SALDO`, `CUOTAPARTE`, `CUOTA PARTE`, `PATRIMONIO`, `TENENCIA`, `VALOR CUOTA`, `VALOR DE CUOTA`, `INICIAL` | **0 en los 3 documentos, las 2 fuentes** | **0 en los 3 documentos, las 2 fuentes** |
+| Fragmentos numérico-símil (`esImporte`) | — | 0 en página 1 (mismo patrón de zonas disjuntas que Santander); 0-10 en páginas 2-3; 0 en las últimas |
+
+### Lectura, sin forzar conclusión
+
+- **Cero coincidencias de "SALDO" en absoluto** (ni como parte de "SALDO INICIAL/FINAL", ni suelta)
+  es la señal más fuerte de esta ronda: el documento de Bracci no reporta posición como
+  inicio/movimientos/cierre al estilo Santander. Puede ser un layout de "detalle de movimientos"
+  puro, sin resumen de posición en el mismo documento — o puede usar un término de saldo que no está
+  en el vocabulario candidato (ninguno de los 14 probados cubre eso, así que queda abierto).
+- El patrón de `SUSCRIP`/`RESCATE` con conteos altos (hasta 25 en un documento) y **sin ningún
+  numérico-símil que acompañe en la misma proporción** (máximo 10 numéricos contra 25 menciones de
+  `SUSCRIP` en el mismo documento) sugiere que `esImporte` no está reconociendo la forma numérica real
+  de este documento (¿más decimales que una moneda, como cuotapartes de 4-6 decimales? — hipótesis,
+  no confirmada) — mismo tipo de sorpresa que ya pasó con Santander (`unpdf` no reconocía "SALDO" por
+  un motivo de fondo nunca identificado con precisión).
+- `CLASE` concentrado en páginas 3-5 con conteos altos (11-16) sugiere una tabla o leyenda que se
+  repite por página (encabezado de columna, o una leyenda de clases de fondo) — no confirmado.
+- 4-6 páginas es sustancialmente más que Galicia/Santander (1-2) — compatible con un listado
+  detallado de movimientos, no un resumen compacto.
+
+### Qué falta antes de poder diseñar el extractor
+
+Esto NO alcanza para escribir el bosquejo del contrato (JP: medir primero, bosquejar con el layout ya
+entendido). Falta, como mínimo: (a) confirmar por qué `esImporte` no encuentra más numéricos de los
+que encuentra — ¿otra forma de decimal, u otro motivo de fondo?; (b) identificar el término real de
+"saldo"/posición si existe, o confirmar que este documento simplemente no lo reporta; (c) entender
+qué es la alta repetición de `CLASE` en páginas 3-5. Siguiente convocatoria: nueva ronda de sondeo
+E-7 (autorización propia, no heredada) con vocabulario ampliado y, si hace falta, inspección de la
+FORMA de los fragmentos numéricos (cantidad de dígitos/decimales) sin exponer su valor.
+
+### Commits
+
+Ninguno — solo lectura. Sigue pendiente de (175): `HANDOFF.md` + el fix de
+`fci-santander/extraer-posiciones.ts` y su test, sin commitear.
+
+---
+
+## 2026-09-02 (176) — Sesión 4 de `27-roadmap-capa-d.md` convocada de verdad (5 agentes reales, en
+paralelo) para decidir cómo medir el tercer layout de FCI de Bracci (HANDOFF 175). Solo diseño —
+ningún código nuevo, ningún dato real tocado.
+
+**Herramienta:** Claude Code, misma sesión que (175). Convocatoria real vía `Agent()` (backend-dev,
+tech-lead, devops, plan-cuentas-multicliente, analista-funcional), en paralelo, cada uno con la
+prohibición explícita de tocar `privado/`.
+
+### Hallazgo verificado (no solo afirmado): duplicación literal de código entre los 2 extractores FCI
+
+`tech-lead` reportó que `OrdenMovimientoInvalidoError` y `FechaMovimientoInvalidaError` están
+copiadas palabra por palabra entre `fci-galicia/extraer-posiciones.ts:264-269` y
+`fci-santander/extraer-posiciones.ts:194-199` — **verificado con `grep` línea por línea antes de
+aceptarlo**, coincide exacto. El resto de lo que reportó como "se repite" (patrón reconcile-or-refuse,
+parseo AR, forma del resultado) no se verificó línea por línea, queda como su lectura.
+
+### Síntesis de los 5 reportes
+
+1. **`tech-lead`**: con 2 layouts reales ya divergentes en los ejes que importan (fuente de
+   extracción, unidad del Eje 1 — cantidad vs. importe), recomienda **definir el contrato común de
+   FCI AHORA**, antes del 3er extractor — más evidencia que la que tuvo BBVA cuando se congeló el
+   contrato de bancos. Bosquejo: `capacidades: {ejePosicion, certificado}` declarativo,
+   `FondoExtraidoFci`/`MovimientoFci` comunes, mover los 2 errores duplicados a un módulo `fci-comun/`.
+   La fuente de extracción (geometría vs. texto) queda fuera del contrato, mismo criterio que
+   `contrato.ts` de bancos.
+2. **`backend-dev`**: protocolo de medición — correr `pdftotext -layout` (Poppler) **y** `unpdf` en
+   paralelo desde cero (nunca asumir las mismas zonas de `y` que Santander), con una matriz de conteo
+   de vocabulario candidato amplio (FONDO, SALDO, CUOTAPARTE, PATRIMONIO, TENENCIA, SUSCRIP, RESCATE,
+   COTIZAC, VALOR CUOTA, CLASE) por fuente — nunca texto ni importe en la salida. Reusable sin ajuste:
+   `parseo-ar.ts`, `packages/fci` (`aPuntoFijo`, `esCero`). No reusable: literales de encabezado y
+   rangos de `x`/`y` medidos contra los PDF de cada banco puntual. **Correr todo por PowerShell**, no
+   por la herramienta Bash de esta sesión (causa raíz ya diagnosticada en 175).
+3. **`devops`**: orden sugerido — (a) documentar YA la causa real en `docs/devops/01-entornos.md`
+   §3.bis (Git Bash/MinGW64 antepone `/mingw64/bin` con xpdf; verificar/ejecutar este extractor vía
+   PowerShell), costo cero; (b) agregar una variable de entorno (`PDFTOTEXT_PATH` o similar) como
+   escape hatch para forzar el binario correcto sin depender del `PATH` del proceso, sin hardcodear
+   una ruta de WinGet (rompería CI en Linux); (c) mejorar `BuildDePdftotextIncorrectaError` para que
+   incluya la ruta resuelta del binario. No recomienda un guard de arranque tipo `BYPASSRLS` — el
+   riesgo no es el mismo (shadowing de un binario externo, no un bypass de seguridad por request).
+4. **`plan-cuentas-multicliente`**: el nombre del fondo es catálogo neutro, no atributo versionado
+   por cliente — lo que sí necesita vigencia (mismo patrón que `jurisdicciones-activas.md`) es la
+   relación cliente↔fondo (qué fondos tiene abierto, desde cuándo). Mismo mecanismo
+   `rol_funcional → cuenta_id` que bancos, pero **vocabulario de roles propio de FCI**, no reusar el
+   de movimientos bancarios de `packages/contabilidad` — una posición tiene semántica de stock+flujo
+   sin equivalente ahí. El extractor no debe resolver tratamiento fiscal ni hornear nada vigente hoy:
+   solo hechos crudos (`cliente_id`, fondo, fecha, cantidad, precio) — la resolución es de Capa D,
+   leyendo atributos del cliente vigentes A LA FECHA del movimiento. Gap no bloqueante: Bracci no
+   tiene todavía su `knowledge/clientes/CLIENTE-<id>/jurisdicciones-activas.md`.
+5. **`analista-funcional`**: checklist de descubrimiento en 6 pasos (build de `pdftotext` primero,
+   después las 3 rondas fallidas ya conocidas de Santander explícitamente re-chequeadas para Bracci
+   antes de asumir que no aplican, ancla de contenido, diseño reconcile-or-refuse), con criterio
+   numérico de "layout confirmado" (100% de fondos y movimientos resueltos sin heurística de mejor
+   esfuerzo, 0 discrepancias sin explicar entre fuentes cruzadas) y el recordatorio del método E-7
+   (conteos/booleanos/rangos de coordenadas sí; texto, importe, nombre de fondo, CUIT, razón social,
+   nunca).
+
+### Qué decisión queda para JP antes de seguir
+
+- Si el contrato común de FCI se escribe AHORA (recomendación de `tech-lead`) o se posterga hasta
+  tener el 3er extractor construido.
+- Si se autoriza el próximo sondeo E-7 (nuevo, no hereda la autorización de 175) contra los 3 PDF de
+  Bracci con el protocolo de `backend-dev` + `analista-funcional`.
+- Prioridad de los 3 puntos de `devops` (documentación → variable de entorno → mensaje de error).
+
+Nada de esto se ejecutó todavía — es la convocatoria de diseño, antes de la próxima tarea de código.
+
+### Commits
+
+Ninguno en esta entrada (solo convocatoria + síntesis). Sigue pendiente lo de (175): `HANDOFF.md` +
+el fix de `fci-santander/extraer-posiciones.ts` y su test, sin commitear.
+
+---
+
+## 2026-09-02 (175) — 🔴 FCI de Bracci: la tarea de "conectar el adapter fci-galicia, ya construido y
+probado, a Capa D" partía de una premisa falsa — no hay ningún adapter de FCI oficializado, y
+**ninguno de los dos extractores preliminares reconoce el documento real de Bracci**, confirmado con
+corrida real (no solo análisis estructural). Además, el "bloqueo de Poppler" documentado desde
+2026-08-25 **no es un problema de instalación**: Poppler 25.07.0 ya está instalado y se resuelve bien
+por PowerShell (el shell primario real); el bloqueo era que la herramienta Bash de esta sesión
+antepone `/mingw64/bin/pdftotext` (xpdf 4.00) en el `PATH`, tapando al binario correcto. Sin tocar
+persistencia ni Capa D. **No se tocó ROKA, tarjeta, ni B.17**, según lo pedido.
+
+**Herramienta:** Claude Code, sesión interactiva. Chat nuevo, re-entrada con contexto de HANDOFF 174
+(adapter Visa Corporativa, B.17), `27-roadmap-capa-d.md` y `19-fci-santander-extractor-hibrido.md`.
+Paso 1 (inventario read-only) ejecutado y confirmado con JP antes de seguir a la verificación de
+Poppler + layout (Paso 1-bis, autorizado explícitamente por JP tras ver el primer resultado).
+
+### 1. Inventario contra el piloto (`conUsuario()`, identidad `11111111-...` rol `socio`, sin escribir nada)
+
+| Chequeo | Resultado |
+|---|---|
+| `documento_ingerido` de Bracci (cualquier tipo) | **0 filas** — ni sus propios extractos de Galicia están backfilleados (Sesión 2a solo backfilleó Bancor/Nación/ICBC) |
+| `documento_ingerido` tipo `fci` | **0 filas** |
+| `cuenta_bancaria` de Bracci | 2 cuentas (Galicia cta cte + especial, ambas ARS) — ninguna cuenta de FCI |
+| Capa C (`reconocimiento_movimiento`) | Corrió, pero solo sobre movimientos bancarios de Galicia (1871 `decision_humana`, 1640 `propuesta`, 435 `sin_reconocer` — los mismos números del entregable a Laura). Cero relación con FCI |
+
+Conclusión del Paso 1: FCI de Bracci nunca entró a ningún lote ni a Capa C. Reportado a JP antes de
+seguir (regla de la tarea).
+
+### 2. Verificación estructural real contra los 3 PDF (mayo/junio/julio 2026) — método reforzado E-7
+
+Autorizado por JP para seguir con la causa raíz de Poppler y la confirmación de layout. Script
+efímero (`packages/ingesta/scripts/_sondeo-efimero-fci-bracci-layout.ts`), mostrado completo antes de
+correr, solo conteos/booleanos/nombres de error en la salida — nunca texto real ni importes. Reusa
+`extraerPosicionesFci` (Galicia) y `extraerPosicionesFciSantander` (Santander), ya auditados. Borrado
+al cerrar, confirmado con `git status --short` limpio.
+
+**Causa raíz real del "bloqueo de Poppler"**: no es de instalación. `Get-Command pdftotext` en
+PowerShell resuelve a `poppler-25.07.0` (WinGet, `oschwartz10612.Poppler`) y `pdftotext -v` corrido
+por PowerShell confirma el banner real de Poppler. El error `BuildDePdftotextIncorrectaError` que
+salió corriendo el mismo script por la herramienta Bash se debe a que Git Bash antepone
+`/mingw64/bin` al `PATH`, y ahí vive un `pdftotext` de xpdf 4.00 (Glyph & Cog) que shadowea al de
+Poppler — confirmado con `which -a pdftotext` (2 veces `/mingw64/bin/pdftotext`, después el de
+WinGet) y con `spawnSync` directo (`status 99`, `stderr` con el banner de xpdf). Corriendo el mismo
+script vía PowerShell, el guard de build pasa sin problema.
+
+**Con el guard de build resuelto, el resultado real contra los 3 documentos de Bracci:**
+
+- **`fci-galicia`**: corre sin error, **0 fondos en los 3 meses** — confirma con corrida real (no
+  solo el análisis estructural del literal `FONDO - ... CLASE` de commit `b4e95d5`) que Bracci NO usa
+  este layout.
+- **`fci-santander`**: ya no falla por build, pero **revienta con un `TypeError` no controlado**
+  (`Cannot read properties of undefined (reading 'indiceDelNombre')`,
+  `packages/ingesta/src/fci-santander/extraer-posiciones.ts:557`,
+  `paresConNombre[0]!.indiceDelNombre` sobre un array vacío) — el extractor asume que siempre
+  encuentra al menos un bloque `SALDO INICIAL`→`FINAL` con nombre de fondo, y para los 3 documentos
+  de Bracci **no encontró ninguno**. Es un bug real (falta el guard de "0 pares encontrados", que
+  debería lanzar un error de la familia reconcile-or-refuse, no un `TypeError` crudo) — **no
+  corregido en esta tarea**, fuera de alcance de un sondeo de solo lectura.
+
+**Lectura de negocio, con evidencia más fuerte que la hipótesis anterior**: el análisis estructural
+previo (conteo del literal `Fondo:`, 3 coincidencias en el documento de Bracci) hacía pensar que el
+layout era Santander-style. La corrida real contradice eso — el patrón más específico
+(`SALDO INICIAL`/`SALDO FINAL` emparejados) da **cero bloques**, no algunos. La hipótesis más
+plausible ahora es que Bracci usa un **tercer layout, distinto de Galicia y de Santander**, todavía
+sin analizar — no una variante menor de uno de los dos ya conocidos.
+
+### 3. `NingunBloqueDeSaldoEncontradoError` — el `TypeError` corregido, con su test (autorizado por JP,
+higiene de manejo de errores, sin convocatoria: mismo criterio que el resto del extractor, no una
+decisión de arquitectura)
+
+`packages/ingesta/src/fci-santander/extraer-posiciones.ts`: agregado el guard `if (pares.length ===
+0) throw new NingunBloqueDeSaldoEncontradoError()` inmediatamente después de armar los pares
+`SALDO INICIAL`→`FINAL` (antes de resolver nombre de fondo, que es donde reventaba el `TypeError`
+crudo). Nueva clase de error, misma familia reconcile-or-refuse que `SaldoDesalineadoError`/
+`EncabezadoDeFondoNoEncontradoError`/`ConsistenciaInternaPdftotextError`: mensaje explícito
+("Formato no reconocido: no se encontró ningún bloque SALDO INICIAL→SALDO FINAL..."), sin dato del
+documento.
+
+**Refactor mínimo necesario para poder testearlo con líneas sintéticas** (mismo patrón que el resto
+del archivo de test, que nunca pasa por un PDF real): la lógica de armado de bloques, que vivía
+inline dentro de `extraerBloquesConPdftotext` (la función que shellea a `pdftotext`), se extrajo a
+`bloquesDesdeLineas(lineas: readonly string[]): Bloque[]`, pura y exportada.
+`extraerBloquesConPdftotext` queda como wrapper fino: shellea, arma `lineas`, delega.
+
+**Tests nuevos** (`fci-santander-extraer-posiciones.test.ts`): camino feliz (1 bloque bien formado,
+confirma que el refactor no rompió nada), 0 bloques con líneas de relleno, y array vacío — los dos
+últimos esperan `NingunBloqueDeSaldoEncontradoError`, nunca un `TypeError`. **Verificado con
+mutación real** (no la formal de ADR-0002 §B.0, que exige convocatoria — no aplica acá; sí la
+disciplina de probarlo roto): comenté el guard (`if (false)`), corrí el archivo de test solo, los 2
+tests nuevos se pusieron en rojo con el mismo `TypeError` real (`Cannot read properties of undefined
+(reading 'indiceDelNombre')`), restauré el guard, volvió a verde. 46/46 tests del archivo,
+`pnpm typecheck` limpio.
+
+**Corrida acotada, no el gate completo** (memoria "gate completo nunca en background"):
+`node_modules/.bin/vitest run packages/ingesta/tests/fci-santander-extraer-posiciones.test.ts` en
+foreground, ~1s. Se corrió también sin querer una vez la suite completa entera intentando filtrar
+por nombre desde `pnpm test -- <patrón>` (582s, 121 archivos, 2194 tests) — el filtro no restringió
+el alcance. Confirmado con esa corrida completa (no relacionada con este fix, dato aparte) que hay 3
+archivos ya rotos en `main`, ninguno tocado por esta tarea: `tools/verificar-fixtures.test.ts`,
+`packages/data/tests/reglas-de-codigo.test.ts` (R-F, `relevamiento-laura.test.ts` construye
+`clase:'propuesta'` fuera de `nucleo/motor.ts`) y `packages/ingesta/tests/version-del-extractor.test.ts`
+(`detectores-forma.ts` cambió — el guard de PAN de HANDOFF 174 — sin pasar por
+`pnpm extractor:version:aceptar`). **Los tres son deuda preexistente de sesiones anteriores, no de
+esta tarea** — reportados, no resueltos acá (fuera de alcance, memoria "no resolver hallazgo
+adyacente en la misma tarea").
+
+### 4. Qué queda, explícito
+
+- Ningún extractor de FCI reconoce hoy el documento real de Bracci. El `TypeError` de `fci-santander`
+  ya no es un riesgo de higiene (corregido arriba), pero el extractor SIGUE sin reconocer el
+  documento de Bracci — falla ahora con un error controlado en vez de uno crudo, no encontró el
+  layout. Falta medir el layout real de Bracci desde cero (mismo método que
+  `19-fci-santander-extractor-hibrido.md` §"El hallazgo central").
+- Documentar en `docs/diseno/27-roadmap-capa-d.md` que el "bloqueo de Poppler" queda resuelto como
+  **no-bloqueante de infraestructura real** — sigue siendo necesario recordar que un agente/sesión
+  que use la herramienta Bash de Claude Code en este entorno ve un `pdftotext` incorrecto; correr
+  cualquier verificación de este extractor vía PowerShell, o fijar el `PATH` explícito en el propio
+  extractor (ninguna de las dos hecha todavía). **Pendiente, próxima tarea.**
+- Sesión 4 del roadmap (backend-dev + tech-lead + devops + plan-cuentas-multicliente +
+  analista-funcional) — JP confirmó convocarla ahora, con la certeza nueva de que Bracci usa un
+  tercer layout distinto de Galicia y Santander (no una variante de uno de los dos ya conocidos).
+- Los 3 archivos de test ya rotos en `main` (punto 3) quedan reportados, sin dueño.
+- No se tocó ROKA (aunque el roadmap sugiere que podría compartir layout con Bracci), ni tarjeta, ni
+  B.17, según lo pedido explícitamente.
+
+### 5. Commits
+
+El inventario y el sondeo de layout (puntos 1-2) fueron solo lectura — 2 scripts efímeros, mostrados,
+corridos y borrados. El fix del punto 3 sí cambia código: `packages/ingesta/src/fci-santander/
+extraer-posiciones.ts` y su test. **Sin commitear todavía** — `git status --short` al cierre de esta
+entrada: `HANDOFF.md`, los dos archivos del fix.
+
+---
+
 ## 2026-09-02 (174) — 🟡 Adapter de extracción "Visa Corporativa" (tarjeta de Bracci) construido,
 probado y enchufado al registro real. Cierra la premisa falsa de la tarea original — no había ningún
 adapter, ni era una liquidación de tarjeta. **Persistencia sigue sin arrancar**: 1 bloqueante cerrado
