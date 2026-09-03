@@ -207,6 +207,26 @@ export class FechaMovimientoInvalidaError extends Error {
 }
 
 /**
+ * `pdftotext -layout` no encontró ninguna línea reconocible como SALDO INICIAL o SALDO FINAL en toda
+ * la página 1 — cero bloques, no un bloque mal formado. Es la señal de que el documento no tiene el
+ * layout Santander-style que este extractor sabe leer (otro banco, otra versión del reporte), no un
+ * documento roto: se distingue de `SaldoDesalineadoError` (que exige al menos un evento de saldo para
+ * poder hablar de "desalineado") y nunca se deja caer al primer acceso indexado de la etapa
+ * siguiente — mismo principio reconcile-or-refuse que el resto de este extractor
+ * (`19-fci-santander-extractor-hibrido.md`).
+ */
+export class NingunBloqueDeSaldoEncontradoError extends Error {
+  constructor() {
+    super(
+      'Formato no reconocido: no se encontró ningún bloque SALDO INICIAL→SALDO FINAL en la página 1 ' +
+        'del documento. Este extractor está validado contra el layout Santander-style; puede ser un ' +
+        'documento de otro layout, u otra sección del mismo documento.',
+    );
+    this.name = 'NingunBloqueDeSaldoEncontradoError';
+  }
+}
+
+/**
  * Un fondo tiene encabezado pero le falta la fila de SALDO INICIAL o SALDO FINAL — nunca se completa
  * con un valor inventado (`0`, u otra cosa): se aborta la extracción de ese documento entero, porque
  * sin las dos filas no hay Eje 1 posible para NINGÚN fondo del documento y seguir extraería datos a
@@ -498,6 +518,16 @@ export function extraerBloquesConPdftotext(bytes: Uint8Array): Bloque[] {
     .map((l) => l.trim())
     .filter((l) => l !== '');
 
+  return bloquesDesdeLineas(lineas);
+}
+
+/**
+ * La misma lógica de `extraerBloquesConPdftotext`, a partir de las líneas YA separadas — pura, sin
+ * `pdftotext` de por medio. Factorizada para poder ejercitar cada error (incluido
+ * `NingunBloqueDeSaldoEncontradoError`) con líneas sintéticas, mismo patrón que el resto de este
+ * archivo de test (`comoEncabezadoDeFondo`, `comoEtiquetaDeSaldo`, etc.).
+ */
+export function bloquesDesdeLineas(lineas: readonly string[]): Bloque[] {
   type EventoDeSaldo = { readonly indice: number; readonly tipo: 'inicial' | 'final' };
   const eventosDeSaldo: EventoDeSaldo[] = [];
   lineas.forEach((linea, indice) => {
@@ -527,6 +557,14 @@ export function extraerBloquesConPdftotext(bytes: Uint8Array): Bloque[] {
   }
   if (indiceInicialAbierto !== null) {
     throw new SaldoDesalineadoError(numeroDeBloque + 1, 'inicial_sin_final_al_final_del_documento');
+  }
+
+  // Sin esto, un documento con 0 bloques (layout distinto, no un bloque mal formado) llega al
+  // `paresConNombre[0]!` de más abajo con el array vacío y revienta con un `TypeError` crudo de
+  // JavaScript en vez de fallar con un error de dominio explícito — hallazgo real corriendo el
+  // extractor contra un documento de FCI que no es Santander-style (`HANDOFF.md`, entrada 175).
+  if (pares.length === 0) {
+    throw new NingunBloqueDeSaldoEncontradoError();
   }
 
   // Nombre de cada bloque — retrocediendo desde su SALDO INICIAL hasta el fin del bloque anterior. Se

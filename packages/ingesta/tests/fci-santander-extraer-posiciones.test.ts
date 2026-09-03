@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  bloquesDesdeLineas,
   BuildDePdftotextIncorrectaError,
   camposDeLinea,
   comoEncabezadoDeFondo,
@@ -19,6 +20,7 @@ import {
   ConsistenciaInternaPdftotextError,
   EncabezadoDeFondoNoEncontradoError,
   FechaMovimientoInvalidaError,
+  NingunBloqueDeSaldoEncontradoError,
   nombreFondoExpuestoSantander,
   OrdenMovimientoInvalidoError,
   SaldoDesalineadoError,
@@ -241,6 +243,51 @@ describe('Errores — identifican el punto exacto, nunca contenido ni un mensaje
   it('OrdenMovimientoInvalidoError y FechaMovimientoInvalidaError tienen mensaje propio, sin dato', () => {
     expect(new OrdenMovimientoInvalidoError().name).toBe('OrdenMovimientoInvalidoError');
     expect(new FechaMovimientoInvalidaError().name).toBe('FechaMovimientoInvalidaError');
+  });
+
+  it('NingunBloqueDeSaldoEncontradoError menciona "no reconocido", sin dato del documento', () => {
+    const error = new NingunBloqueDeSaldoEncontradoError();
+    expect(error.name).toBe('NingunBloqueDeSaldoEncontradoError');
+    expect(error.message).toContain('no reconocido');
+  });
+});
+
+describe('bloquesDesdeLineas — HALLAZGO REAL: documento sin ningún SALDO INICIAL/FINAL', () => {
+  // Caso legítimo: 1 fondo bien formado, para confirmar que el guard nuevo no rompe el camino feliz.
+  const lineasConUnFondo = [
+    'Encabezado del reporte',
+    'Fondo: Renta Sintetica Plus',
+    'SALDO INICIAL  12.345,67',
+    '01/06/2026  RESCATE  1234567  100,0000  1.500,000000  150.000,00',
+    'SALDO FINAL  9.876,54',
+  ];
+
+  it('camino feliz: 1 bloque bien formado se resuelve igual que antes del refactor', () => {
+    const bloques = bloquesDesdeLineas(lineasConUnFondo);
+    expect(bloques).toHaveLength(1);
+    expect(bloques[0]).toMatchObject({
+      nombre: 'Renta Sintetica Plus',
+      saldoInicialImporte: '12345.67',
+      saldoFinalImporte: '9876.54',
+    });
+    expect(bloques[0]?.movimientosCrudos).toHaveLength(1);
+  });
+
+  // HALLAZGO REAL (HANDOFF 175): un documento sin layout Santander-style (0 líneas SALDO
+  // INICIAL/FINAL) llegaba a `paresConNombre[0]!.indiceDelNombre` con el array vacío y reventaba con
+  // un `TypeError` crudo de JavaScript en vez de un error de dominio — reproducido acá con líneas
+  // sintéticas, sin necesitar el documento real ni `pdftotext`.
+  it('0 bloques SALDO INICIAL/FINAL: lanza NingunBloqueDeSaldoEncontradoError, nunca un TypeError crudo', () => {
+    const lineasSinSaldo = [
+      'Encabezado del reporte',
+      'Texto legal sin ningun saldo declarado',
+      'Otra linea de relleno, sin Fondo ni SALDO',
+    ];
+    expect(() => bloquesDesdeLineas(lineasSinSaldo)).toThrow(NingunBloqueDeSaldoEncontradoError);
+  });
+
+  it('un array de líneas vacío también lanza NingunBloqueDeSaldoEncontradoError', () => {
+    expect(() => bloquesDesdeLineas([])).toThrow(NingunBloqueDeSaldoEncontradoError);
   });
 });
 
