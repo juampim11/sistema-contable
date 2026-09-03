@@ -325,6 +325,37 @@ aplicación que falta, además del DDL: `PedidoDeResolucion.cuitTitularDeclarado
   promoción a regla de `ADR-0002` §B exige la **prueba de mutación de §B.0** (código defectuoso que la
   ponga roja, caso legítimo, conteo de mutaciones declarado) — esa prueba es parte de la tarea de
   cierre, no un paso posterior opcional.
+- 🔴 **Patrón de separador decimal corrupto por OCR (`###.###.####`, doble punto sin coma) —
+  CONFIRMADO en 2 de 3 PDF de FCI de ROKA (mayo/junio 2026), candidato a guard formal, sin dueño
+  todavía.** Medido por sondeo E-8 (`docs/seguridad/registro-excepciones.md`, `HANDOFF.md` 181/182):
+  11 y 8 ocurrencias respectivamente del patrón `\d{1,3}(?:\.\d{3})+\.\d{2,6}` en el texto extraído
+  con `pdftotext -layout` — la forma exacta de un separador decimal AR (`,`) que un OCR convirtió en
+  punto de miles de más (`"33.788,6654"` → `"33.788.6654"`). Julio de ROKA es imagen pura (0 bytes de
+  texto, mismo bloqueo que BBVA, sin este síntoma porque no hay texto que corromper). Bracci da 0 en
+  los 3 documentos — no afectado. **Mismo criterio que `verificarBuildDePdftotext()`
+  (`fci-santander/extraer-posiciones.ts`): fallar alto y explícito antes de parsear, nunca aceptar un
+  número que puede estar corrompido en silencio.** Cierre, cuando haya dueño: un detector reusable
+  (candidato a vivir junto a `esImporte`/`importeACentavos` en `parseo-ar.ts`, o como guard de
+  extractor) que reconozca el patrón `entero.entero.entero` (2+ puntos, sin ninguna coma) como
+  sospechoso y aborte con un error explícito — mismo principio reconcile-or-refuse del bullet
+  anterior, aplicado a UNA sola fuente en vez de dos (la sospecha viene de la FORMA del número, no de
+  una discrepancia entre fuentes). No bloqueante hoy: ningún extractor de producción procesa todavía
+  estos documentos.
+- 🟡 **Requisito de diseño para el futuro extractor de FCI de Bracci/variante-Galicia: reconcatenar
+  tablas continuadas entre páginas ANTES de contar filas — sin dueño todavía.** Encontrado por
+  inspección directa de JP (no por medición, `HANDOFF.md` 182): la tabla "Fima en Pesos" del PDF de
+  julio de Bracci tiene un salto de página real, con el encabezado de columnas repetido en la página
+  siguiente — el sondeo E-8 (`HANDOFF.md` 181) había medido un conteo de filas mucho menor al
+  esperado ahí (25 contra 53 de "Resultados Inversiones" en el mismo documento) y lo había marcado
+  como hipótesis de truncamiento sin confirmar; **la causa real es el salto de página, no un error de
+  extracción del sondeo**. Cualquier extractor futuro para este layout (o su variante de Galicia) que
+  cuente filas por página, sin reconocer y saltar el encabezado repetido de una tabla que continúa,
+  va a subcontar sistemáticamente cualquier tabla que cruce una página — mismo tipo de defecto ya
+  visto en otros adaptadores con tablas de una sola página (ninguno de los 8 adaptadores bancarios de
+  `packages/ingesta/src/adaptadores/` necesitó esto todavía, porque ninguno tiene una tabla que
+  cruce página; este sería el primer caso real). Cierre, cuando se construya el extractor: detectar
+  el encabezado de columnas repetido (mismo texto o mismo patrón geométrico de columnas que el
+  primero) y fusionar las filas de ambas páginas antes de cualquier conteo o verificación.
 - 🟡 **Ninguna herramienta de la sesión de trabajo fuerza `formaParaLog` sobre un comando de shell
   suelto contra un documento real — pendiente, sin dueño.** `registro-incidentes.md` fila **12**
   (2026-08-25): un agente corrió `pdftotext -layout ... \| sed 's/[0-9]/9/g'` directo por Bash para medir

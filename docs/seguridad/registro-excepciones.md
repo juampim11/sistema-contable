@@ -227,6 +227,34 @@ nombre real. Con esta confirmación: el nombre real de fondo es dato de producto
 FIMA de Galicia), no dato de Elite-IT, y puede exponerse como nombre de hoja — decisión registrada
 acá, no solo en la conversación.
 
+### Addendum E-2 × E-7 (2026-09-02) — cruce de metadatos estructurales, dos registros en una corrida
+
+**Por qué es un cruce, no una excepción nueva.** Una sola corrida de script mide, en la misma
+ejecución, material de **dos registros de excepción distintos**: los 3 PDF de Elite-IT SAS ya
+cubiertos por E-2 (`privado/extractos/Sistematizacion Conciliacion Bancaria/FCI/
+Extracto_Inversiones_Galicia_2025_{06_30,07_31,08_29}.pdf`) y los 3 PDF de Bracci ya cubiertos por
+E-7 (`privado/piloto_capa_d/Bracci/FCI/`). Motivo: determinar si el documento de Bracci es un TIPO DE
+DOCUMENTO distinto del de Elite-IT, siendo ambos del mismo banco (Galicia) y la misma familia de
+fondos (FIMA, confirmada por JP arriba). Autorizado explícito por JP, 2026-09-02, con instrucción
+expresa de registrar el cruce antes de correr y de frenar si se considera que hace falta una
+convocatoria propia.
+
+**Evaluación de si hace falta autorización adicional (hecha antes de correr, no asumida): no.**
+El método reforzado no cambia — cero texto real, cero importe, cero fecha real; solo conteos,
+booleanos y máscaras de forma, igual que E-2 y E-7 por separado. La única novedad es presentar los
+dos resultados **lado a lado en una tabla comparativa**, con cada columna rotulada por cliente — no
+se combinan en un valor único, no hay fila sin distinguir de qué cliente viene cada conteo (mismo
+principio que INV-5, aplicado acá a un reporte en vez de a una consulta SQL). No se lee ningún archivo
+fuera de los 3+3 ya autorizados por cada registro. Con esto: se procede bajo E-2 + E-7 combinados,
+sin abrir un E-8.
+
+**Salida**: tabla comparativa de vocabulario (mismos ~37 términos de la ronda 2 de E-7) y de
+estructura (páginas, columnas geométricas, filas por página) entre Elite-IT (n=3) y Bracci (n=3), más
+el conteo del patrón literal `FONDO\s*-\s*(.+?)\s*CLASE\s+[A-Z]` (el que usa `fci-galicia`) en cada
+lado — nombre de fondo siempre enmascarado si hace falta mostrar la forma, nunca el texto. Script
+efímero, mostrado completo antes de correr, borrado al cerrar — mismo protocolo que el resto de este
+registro. Resultado completo: `HANDOFF.md`, entrada 179.
+
 ### E-3 — placeholder de demo insertado en El Prat (Santander): no es un caso de §F.3
 
 **Por qué esta sección no encaja en la tabla de arriba.** Todo lo que precede es sobre **sacar** un dato
@@ -613,6 +641,70 @@ controles rigen igual que en E-1, con su propia convocatoria completa (`dba-data
 **Retención residual, mismo patrón que E-2/incidente #9.** El PDF no genera derivado con TTL propio. Lo
 que puede quedar es la salida del script (conteos/booleanos, no dato en claro) en el transcript local de
 la sesión — pendiente, fuera del repo, a cargo de JP, revisar y borrar al cerrar la sesión.
+
+**Addendum — reusada 2026-09-02 (Sesión 4 de `docs/diseno/27-roadmap-capa-d.md`, HANDOFF 175/176/177/
+178).** Mismo alcance, mismo método reforzado, mismo material (los 3 PDF de FCI de Bracci, mayo/junio/
+julio 2026) — no es una excepción nueva, es la continuación de la medición de formato que E-7 ya
+autorizó (descubrir si un extractor existente reconoce el layout real). Cada ronda: autorización
+explícita de JP, propia (no heredada de la ronda anterior), script efímero mostrado completo antes de
+correr, corrido por quien conduce, borrado al cerrar, sin `INSERT` ni `conUsuario`/`conJob` de por
+medio. La ronda de HANDOFF 178 agrega **máscaras de forma** (dígito→`#`, letra→`A`, puntuación/signos
+intactos) como tercera categoría de dato permitido, además de conteos y booleanos — nunca el valor
+enmascarado se arma a partir del texto real completo, solo su forma.
+
+### E-8 — diagnóstico de capa de texto/corrupción de OCR sobre los 6 PDF de FCI (Bracci + ROKA) y
+reconciliación aritmética interna de los totales de Bracci
+
+**Por qué es excepción nueva y no un addendum más de E-7.** El material (los 3 PDF de FCI de Bracci
+ya cubiertos por E-7, más los 3 PDF de FCI de ROKA — "FCI (Bracci, **ROKA**)" ya está en el título de
+E-7 desde su alta original, así que el material en sí no es nuevo) es el mismo, pero el MÉTODO sí es
+distinto: importa por primera vez a FCI la técnica de diagnóstico de capa de texto de **Frente 5**
+(`HANDOFF.md` 119, 2026-08-25 — diagnóstico real que confirmó BBVA como imagen pura: `aFilas()`/pdf.js
+con páginas `sinTexto`/`conTexto`, más conteo de bytes de `pdftotext`), y agrega una categoría de
+dato nueva que ninguna ronda anterior usó: **comparación aritmética interna de importes reales**
+(¿(ii) = alguno de (i)? ¿(iii) = alguno de (i)?), donde el valor real se parsea y compara **dentro del
+script**, y solo el resultado booleano/categórico sale a la salida — nunca el importe. Es el mismo
+patrón ya usado en E-2/E-5 para el veredicto `cierra: true/false`, aplicado acá a una comparación de
+3 cifras en vez de 2.
+
+**Autorización**: explícita de JP, 2026-09-02, con las reglas duras de siempre (sin valor real en la
+salida, "PARÁ y decilo" si hace falta mirar un valor real, sin escribir extractor ni tocar ningún
+contrato, script efímero mostrado antes de correr y borrado al cerrar).
+
+**Alcance — 4 bloques**:
+- **A**: capa de texto de los 6 PDF (pdftotext bytes + `aFilas`/`extraerTexto` páginas sinTexto/
+  conTexto + filas geométricas), confirmando o refutando si alguno es escaneo puro (mismo criterio
+  que BBVA en Frente 5).
+- **B**: para los que tengan capa de texto, conteo de patrones de máscara de separador decimal
+  (formato AR completo, sin separador de miles, sospechoso de OCR roto con doble punto, partido entre
+  tokens) — nunca el valor.
+- **C**: en julio de Bracci, conteo comparado de filas/fechas únicas entre dos tablas del mismo
+  documento (nombres de tabla y columnas ya conocidos por JP, no extraídos por el script de ningún
+  contenido nuevo) — solo conteos.
+- **D**: reconciliación aritmética de 3 cifras de nivel encabezado/posición en los 3 reportes de
+  Bracci — parseadas y comparadas dentro del script, la salida es únicamente el booleano de cada
+  comparación, nunca la cifra.
+
+**Resultado**: `HANDOFF.md`, entrada 181.
+
+**✅ CERRADO (2026-09-03, `HANDOFF.md` 182).** Bloques A y B quedaron cerrados en la entrada 181
+(hallazgo real: corrupción de OCR confirmada en 2 de 3 PDF de FCI de ROKA — ver
+`docs/diseno/10-deuda-declarada.md` §C para el candidato a guard formal). Los bloques C y D cierran
+así:
+- **C — resuelto, pero por inspección directa de JP, no por medición del script.** Confirmado: hay
+  un salto de página real dentro de la tabla "Fima en Pesos" de julio de Bracci, con el encabezado de
+  columnas repetido en la página siguiente — es la causa real del conteo bajo que el sondeo había
+  marcado como hipótesis de truncamiento sin confirmar. Requisito de diseño nuevo para el futuro
+  extractor, declarado en `10-deuda-declarada.md` §C: reconcatenar tablas continuadas entre páginas
+  antes de contar filas.
+- **D — cerrado como "no medible con `pdftotext` por líneas".** Se probaron 3 radios de búsqueda
+  progresivos (línea exacta, ventana ±3, radio 15) sin encontrar ningún importe reconocible cerca de
+  ninguna de las 4 anclas, en ninguno de los 3 documentos. **Decisión de JP: no escalar al método
+  geométrico** (`aFilas`, coordenadas x/y) — expondría los 3 importes reales de Bracci sin que haya
+  todavía una necesidad concreta que lo justifique. Pendiente de resolución por vía humana (pregunta
+  directa a Laura o al banco), no por medición adicional.
+
+Sin código tocado, sin extractor escrito, sin contrato creado — cierre puramente documental.
 
 ---
 
