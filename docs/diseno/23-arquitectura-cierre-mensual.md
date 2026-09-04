@@ -846,3 +846,80 @@ esas decisiones — se pueden tomar después sin volver a abrir este documento.
 > mensual y de ejercicio, con efecto directo sobre balance y liquidación de impuestos. Se apoya en lo
 > que Laura describe y en la evidencia registrada en el set `00`–`13`, no en una revisión normativa
 > propia. **Validar con profesional matriculado antes de que esto produzca un asiento real.**
+
+---
+
+## 5. Anexo — Convocatoria del paso #2 (contrato de salida común): síntesis conciliada
+
+**2026-09-03.** Convocatoria real (no simulada) a `arquitecto-software` + `motor-conciliacion-contable`,
+sobre §3.3 fila 2 de este documento — "congelar el contrato de salida común" entre bancos, FCI y
+liquidaciones de tarjeta. Alcance: solo diseño, TypeScript, sin migración, sin tocar ningún adapter.
+Ningún tipo nuevo se escribió en `esquema.ts` en esta tarea — lo que sigue es la síntesis conciliada
+de los dos dictámenes completos, para decidir antes de escribir código.
+
+### 5.1 Los 5 puntos de §2.3, con acuerdo total entre los dos dictámenes
+
+| # | Punto (`23` §2.3) | Posición conciliada |
+|---|---|---|
+| 1 | `saldoInicial`/`saldoFinal` declarados | El motor no los toca directo — los consume el resultado del paso 3.5 (cuadratura por fuente), nunca el valor crudo. El tipo actual en `cuentaDetectadaSchema` alcanza para bancos. Para FCI/liquidaciones el concepto tiene forma distinta por dominio (importe vs. cantidad de cuotapartes vs. no aplica) — no es un campo faltante uniforme, sino una unidad que cada dominio declara distinto. Sin trabajo pendiente en esta convocatoria. |
+| 2 | `verificacion` multi-eje normalizada | La forma correcta **ya existe, construida y probada**, en `liquidaciones/esquema.ts` (`resultadoDeEjeSchema`: `{eje, estado, motivo?}`, tri-estado, motivo obligatorio si `no_verificable`). No se inventa de cero: se promueve al `esquema.ts` raíz como genérico, y cada dominio instancia con su propia unión cerrada de ejes — nunca un `record` con las claves de los tres dominios juntas. `no_verificable` es de primera clase por eje, siempre con motivo de vocabulario cerrado, en los tres dominios (bancos sube su estándar al de liquidaciones, no al revés). El `verificacionSchema` rico de bancos no se toca; se agrega una función de proyección cuando se construya el paso 3. `verificacion` (de la fuente) y `verificacion_heredada` (del renglón propuesto, migración `0027`) son dos tipos distintos que no se fusionan — responden preguntas distintas. |
+| 3 | `moneda` explícita + hueco de valuación | `moneda` por movimiento entra al contrato común de los tres dominios (bancos ya lo tiene desde Nación; FCI no tiene el campo — hueco real, no decisión; liquidaciones puede seguir con `z.literal('ARS')`, correcto para su caso medido). El par suelto `cotizacion`/`cotizacionProvista` de bancos falta blindarlo: hoy `{cotizacionProvista: true, cotizacion: undefined}` es un objeto válido pese a contradecir su propio nombre — se resuelve con una unión discriminada (`no_aplica` / `cotizacion_provista` / `cotizacion_ausente`) que hace ese estado irrepresentable en vez de solo prohibido por un `refine`. |
+| 4 | Referencia de capa consumida en el resultado | **Queda fuera del contrato común de `packages/ingesta`.** No es "específica de FCI vs. compartida" — es que el concepto no pertenece a la capa de ingesta en absoluto: es un cálculo downstream (costeo PEPS, `packages/fci`), no algo que un extractor produce al leer un documento. Meterla en el contrato común sería, en palabras del dictamen de `motor-conciliacion-contable`, repetir "el mismo error de capacidad decorativa que este repo ya evita en otros lados" — cita textual de la nota de `liquidaciones/esquema.ts` §`capacidadesDeFormatoSchema`: *"una capacidad que nadie verifica es un booleano decorativo"*. El lugar ya está decidido y construido: `asiento_propuesto_renglon.valuacion_ref` (migración `0027`, doctrina D-7 de este mismo documento — "el asiento cita, no recalcula"). |
+| 5 | N cuentas por documento | Confirmado resuelto en los tres dominios, mismo patrón (`cuentas[]` en bancos, `fondos[]` en FCI, `liquidaciones[]` en liquidaciones). Nada que diseñar. |
+
+**Nota — el contrato congelado no está en uso todavía.** `resolverAsiento`
+(`packages/motor-conciliacion/src/resolver.ts`, código real, posterior a lo que decía este documento)
+trabaja sobre `MovimientoParaResolver`, que solo tiene `movimientoId`/`clienteId`/`fecha`/`importe`/
+`cuentaBancariaId` — **no lee moneda, no lee cotización, no lee ningún objeto de verificación**
+(confirmado por grep, cero ocurrencias). Congelar este contrato resuelve la **forma** de los datos;
+conectarlos al resolver — la rama que decide qué hacer cuando `verificacion` trae un eje
+`no_verificable` o cuando falta la cotización de un movimiento en moneda extranjera — es una tarea de
+código aparte, todavía sin convocar. No leer el cierre de este anexo como "el motor ya usa esto".
+
+### 5.2 Corrección de citas numéricas encontradas en esta convocatoria
+
+La cita `(`12` §4.1)` de la línea 198 ("Caso B — FCI: el renglón que ningún documento produce") es
+un número de **Project Knowledge**, no del repo `docs/diseno/`. Este mismo documento se identifica en
+su propia cabecera (líneas 1-4) como *"Documento de Project Knowledge — 14, copiado al repo como
+`docs/diseno/23-arquitectura-cierre-mensual.md`"* — la convocatoria de esta sesión originalmente citó
+"`14` §3.3" para referirse a este documento, y **era correcto** en esos términos; el repo simplemente
+usa otro número (`23`) para el mismo archivo.
+
+Verificado para la cita puntual de capa consumida: `docs/diseno/12-cotizacion-bna-plan.md` (repo) no
+tiene ninguna mención de FCI, PEPS ni costeo por capas — trata la cotización BNA para USD, sin
+relación (creado 2026-08-19, `git log` sin historial de rename). El contenido real de costeo PEPS por
+capas vive en `docs/diseno/17-fci-peps-plan.md` (creado directamente con ese nombre, 2026-08-22, sin
+haber sido nunca "`12`"). Es consistente con que "PK-12" y "repo-17" sean el mismo documento.
+
+Confirmado (fuente: Project Knowledge, verificado por JP en su propio índice — no accesible
+desde el repo): el archivo se llama literalmente `12-fci-inversiones-peps.md`, y la frase
+citada aparece verbatim en su sección `## 4. Los problemas de datos identificados`, punto 1.
+No es una síntesis hecha al escribir este documento — es cita literal de PK-12, solo que ese
+número no corresponde a ningún archivo del repo (el repo reorganizó el mismo contenido bajo
+`17-fci-peps-plan.md`, sin conservar la cita en esa forma exacta). Cierra la pregunta que
+quedaba para `documentador` en este punto puntual — el mapeo completo de todas las demás citas
+PK↔repo (`05`, `09`, `10`, `13`, etc.) sigue pendiente, sin resolver acá.
+
+**Hallazgo fuera de alcance, anotado y no resuelto acá**: `12` aparece citado unas 18 veces en
+este documento, siempre en contexto de FCI — consistente con que TODAS sean el mismo número de Project
+Knowledge mal trasladado, no errores sueltos. Mapear el índice completo de Project Knowledge contra
+`docs/diseno/` (empezando por `05`, `09`, `10`, `12`, `13`, que se citan con la misma ambigüedad en
+todo este documento) es tarea de `documentador`, fuera del alcance de esta convocatoria.
+
+### 5.3 Preguntas abiertas — estado actualizado tras esta convocatoria
+
+De las 4 preguntas que dejó abiertas `arquitecto-software`:
+
+1. **¿"eje no aplica a este documento" es ausencia del eje en el array, o un cuarto estado?**
+   (ej.: `checksum_del_emisor` en Cabal.) Sigue abierta, tal como la dejó `arquitecto-software` —
+   inclinado por "ausencia", sin cerrarlo.
+2. **¿Cuándo `cotizacion_ausente` bloquea el cierre vs. avanza marcado para revisión humana?**
+   **No es una pregunta de diseño abierta** — `cotizacion_no_disponible` ya existe en
+   `MOTIVOS_PENDIENTE_CIERRE` desde la migración `0027`, pero nada lo produce todavía. Es tarea de
+   código pendiente, con destino ya decidido, no una decisión de arquitectura por tomar.
+3. **¿`CapaConsumidaRef` singular o array por renglón?** Sigue sin poder cerrarse: depende de la
+   respuesta de Laura a la pregunta 7 de la ronda 3 (§4.2, punto 6 más arriba en este documento) — si
+   la reimputación es un asiento por rescate o uno mensual consolidado.
+4. **Gap de cobertura de R-M/R-N sobre FCI** (`fci-galicia/`, `fci-santander/` sin el mismo aislamiento
+   que `adaptadores/`/`liquidaciones/`). Sigue abierta, recomendada para `dba-data` + `tech-lead` cuando
+   se construya el paso 3 de la tabla de §3.3.
