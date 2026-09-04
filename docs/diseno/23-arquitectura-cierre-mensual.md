@@ -917,9 +917,12 @@ De las 4 preguntas que dejó abiertas `arquitecto-software`:
    **No es una pregunta de diseño abierta** — `cotizacion_no_disponible` ya existe en
    `MOTIVOS_PENDIENTE_CIERRE` desde la migración `0027`, pero nada lo produce todavía. Es tarea de
    código pendiente, con destino ya decidido, no una decisión de arquitectura por tomar.
-3. **¿`CapaConsumidaRef` singular o array por renglón?** Sigue sin poder cerrarse: depende de la
-   respuesta de Laura a la pregunta 7 de la ronda 3 (§4.2, punto 6 más arriba en este documento) — si
-   la reimputación es un asiento por rescate o uno mensual consolidado.
+3. **¿`CapaConsumidaRef` singular o array por renglón?** **CERRADA — 2026-09-04.** Laura respondió
+   la pregunta 7 de la ronda 3 (`fci-guia.docx`, feedback real): la reimputación es **un asiento por
+   rescate**, nunca uno mensual consolidado. `CapaConsumidaRef` puede ser un array de las capas
+   consumidas POR ESE rescate puntual — no hace falta soportar el caso "un renglón que resume varios
+   rescates del mes", que queda descartado. Sin impacto de código todavía: la Capa D de FCI no tiene
+   una línea escrita (ver `27-roadmap-capa-d.md` Sección A) — esto fija el diseño para cuando arranque.
 4. **Gap de cobertura de R-M/R-N sobre FCI** (`fci-galicia/`, `fci-santander/` sin el mismo aislamiento
    que `adaptadores/`/`liquidaciones/`). Sigue abierta, recomendada para `dba-data` + `tech-lead` cuando
    se construya el paso 3 de la tabla de §3.3.

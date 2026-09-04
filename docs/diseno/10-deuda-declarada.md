@@ -422,6 +422,55 @@ ancla del esquema (`cuenta_ident_algun_ancla_chk`) ya cubre correctamente este c
 simplemente no se puede dar de alta sin un ancla real, que es exactamente lo que ese `check` existe
 para exigir |
 
+| **B.18** | 🟠 **`knowledge/` vacío es un bloqueante TRANSVERSAL, no solo del caso puntual que lo
+disparó — sin dueño todavía.** Ya estaba declarado en **B.6** ("los cuatro que el Módulo 2 consume
+directo: crédito fiscal, percepciones, régimen de recaudación bancaria provincial, y **porción
+computable del impuesto a los débitos y créditos**") — este ítem no repite el hecho, agrega el
+ángulo que faltaba: **B.6 lo describe como guardrail funcionando "con costo operativo"; acá se deja
+explícito que el costo se repite cada vez, no una sola vez.**
+
+Disparador concreto, hoy: la convocatoria a `contador-dominio` sobre el hallazgo 1 del feedback de
+Laura (2026-09-04, corrección de `impuesto_debitos_creditos` para Bracci/ROKA — ver el hallazgo
+correspondiente más arriba en el documento que originó esta convocatoria) chocó exactamente contra
+el mismo hueco que B.6 ya nombraba por su nombre: *"no tengo esa fuente cargada"* para el porcentaje
+computable de la Ley 25.413. **No es una sorpresa ni un caso aislado — es la garantía cumpliéndose
+tal como B.6 predijo, la segunda vez que se mide el costo real.**
+
+Y es transversal en un sentido más amplio que "estos cuatro huecos de Módulo 2": **cualquier
+pregunta futura de porcentaje computable, tratamiento de IVA/Ganancias, o cualquier otra que
+dependa de `fiscal-nacional-iva-ganancias`/`fiscal-ingresos-brutos-convenio-multilateral` con fuente
+real, va a repetir este mismo freno** — no es específico del impuesto a los débitos y créditos, es
+específico de que la fuente no existe.
+
+**Sin dueño todavía. Prioridad de cargar `knowledge/` cuando se resuelva quién es
+`fiscal-nacional-iva-ganancias` real en este proyecto (persona del estudio o fuente normativa
+concreta a cargar)** — no es una tarea de código, es una decisión de producto/proceso sobre de dónde
+sale el contenido de `knowledge/` (ver `docs/agents/guia-carga-conocimiento.md`, si ya tiene
+respuesta sobre quién carga qué). Hasta que eso se resuelva, cada convocatoria a un agente fiscal
+sobre un caso real va a terminar en la misma respuesta — correcta, pero repetida |
+
+| **B.19** | 🟡 **1541 (Bracci) + 139 (ROKA) renglones de `asiento_propuesto_renglon` ya generados
+siguen citando la cuenta VIEJA del impuesto a los débitos y créditos (`1.2.3.130`/`4.2.3.310`) —
+sin dueño todavía.** La corrección de `regla_imputacion` del 2026-09-04 (feedback real de Laura,
+hallazgo 1 del relevamiento) cierra las reglas viejas y abre las nuevas apuntando a `1.2.3.230`
+"Pago a cuenta Ganancias" — verificado por consulta directa: **conteo idéntico antes y después de
+la corrección, 1541/139, exacto** — confirma que **solo aplica hacia adelante**, ningún renglón ya
+emitido se recalculó ni se tocó.
+
+**No existe hoy ningún CLI de reproceso de Capa D** — a diferencia de Capa C, que sí tiene
+`packages/ingesta/src/reproceso/recapturar-conceptos.ts` (y su comando
+`apps/cli/src/recapturar-conceptos.ts`) para volver a correr el léxico sobre movimientos ya
+persistidos. Para Capa D (asientos propuestos), el mecanismo equivalente —cerrar/superseder los
+1541+139 renglones existentes y generar los nuevos con la cuenta corregida, respetando la
+disciplina de vigencia y sin reescribir historia sobre asientos ya confirmados si los hubiera— no
+tiene una línea de código escrita.
+
+Cierre, cuando haya dueño: diseñar el reproceso de Capa D (probablemente `supersede` el
+`asiento_propuesto`/`asiento_propuesto_renglon` afectado + genera uno nuevo citando la regla
+vigente a la fecha del movimiento, mismo patrón de supersesión que el resto del proyecto) —
+convocatoria completa (`dba-data` + `motor-conciliacion-contable` + `contador-dominio`), no una
+tarea de una sola sesión |
+
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
 - **La deuda de seguridad abierta**: `08-plan-de-construccion.md` §6.0 — nueve líneas, de bloqueante de
@@ -482,21 +531,27 @@ para exigir |
   anterior, aplicado a UNA sola fuente en vez de dos (la sospecha viene de la FORMA del número, no de
   una discrepancia entre fuentes). No bloqueante hoy: ningún extractor de producción procesa todavía
   estos documentos.
-- 🟡 **Requisito de diseño para el futuro extractor de FCI de Bracci/variante-Galicia: reconcatenar
-  tablas continuadas entre páginas ANTES de contar filas — sin dueño todavía.** Encontrado por
-  inspección directa de JP (no por medición, `HANDOFF.md` 182): la tabla "Fima en Pesos" del PDF de
-  julio de Bracci tiene un salto de página real, con el encabezado de columnas repetido en la página
-  siguiente — el sondeo E-8 (`HANDOFF.md` 181) había medido un conteo de filas mucho menor al
-  esperado ahí (25 contra 53 de "Resultados Inversiones" en el mismo documento) y lo había marcado
-  como hipótesis de truncamiento sin confirmar; **la causa real es el salto de página, no un error de
-  extracción del sondeo**. Cualquier extractor futuro para este layout (o su variante de Galicia) que
-  cuente filas por página, sin reconocer y saltar el encabezado repetido de una tabla que continúa,
-  va a subcontar sistemáticamente cualquier tabla que cruce una página — mismo tipo de defecto ya
-  visto en otros adaptadores con tablas de una sola página (ninguno de los 8 adaptadores bancarios de
-  `packages/ingesta/src/adaptadores/` necesitó esto todavía, porque ninguno tiene una tabla que
-  cruce página; este sería el primer caso real). Cierre, cuando se construya el extractor: detectar
-  el encabezado de columnas repetido (mismo texto o mismo patrón geométrico de columnas que el
-  primero) y fusionar las filas de ambas páginas antes de cualquier conteo o verificación.
+- 🟡 **Requisito de diseño para el extractor de FCI del LAYOUT ACTUAL de Bracci ("Fima en
+  Pesos"/"Resultados Inversiones"): reconcatenar tablas continuadas entre páginas ANTES de contar
+  filas.** Encontrado por inspección directa de JP (no por medición, `HANDOFF.md` 182): la tabla
+  "Fima en Pesos" del PDF de julio de Bracci tiene un salto de página real, con el encabezado de
+  columnas repetido en la página siguiente — el sondeo E-8 (`HANDOFF.md` 181) había medido un
+  conteo de filas mucho menor al esperado ahí (25 contra 53 de "Resultados Inversiones" en el mismo
+  documento) y lo había marcado como hipótesis de truncamiento sin confirmar; **la causa real es el
+  salto de página, no un error de extracción del sondeo**.
+
+  🔴 **PAUSADO — 2026-09-04, no resuelto, en espera del reporte nuevo.** Feedback real de Laura
+  (`fci-guia.docx`): el "Reporte para Impuestos" de Bracci (el layout que este bullet describe)
+  queda **deprecado** — Laura está gestionando que Bracci emita el mismo reporte "FIMA" que ya usa
+  Elite-IT SAS, formato con evidencia de que **ya tiene extractor construido y validado**
+  (`fci-galicia`, layout `FONDO - <nombre> CLASE <letra>`, confirmado contra Elite-IT real —
+  `27-roadmap-capa-d.md` Sección A). Mientras no llegue ese documento nuevo, **no se invierte más
+  trabajo en reconciliar el layout actual de Bracci** — ni este requisito de reconcatenación, ni el
+  resto del checklist de E-7/E-8 sin cerrar (`27-roadmap-capa-d.md`, anexo Sesión 4: paso 5
+  "reconcile-or-refuse" pendiente, Parte D de E-8 sobre los 3 totales del recuadro superior sin
+  explicar). No es "resuelto": si el reporte nuevo de Bracci nunca llega, o si Laura confirma que
+  sigue siendo el layout actual, este bullet se reactiva tal cual está, sin haber perdido nada de lo
+  ya medido acá.
 - 🟡 **Ninguna herramienta de la sesión de trabajo fuerza `formaParaLog` sobre un comando de shell
   suelto contra un documento real — pendiente, sin dueño.** `registro-incidentes.md` fila **12**
   (2026-08-25): un agente corrió `pdftotext -layout ... \| sed 's/[0-9]/9/g'` directo por Bash para medir
