@@ -380,17 +380,47 @@ silencio movimientos de dos tarjetas distintas en una sola cuenta.
 
 Sin esta migración, **la tarjeta corporativa de Bracci no se puede ingestar de punta a punta hoy** —
 el adapter de extracción está construido, probado y enchufado al registro real, pero el lote se
-rechaza en INV-6 antes de persistir nada | **Diseño CERRADO** — convocatoria COMPLETA de `CLAUDE.md`
-§3.1 ya realizada (2026-09-03, `dba-data` + `security-engineer` + `seguridad-datos-financieros`, los
-tres en paralelo, sin objeciones sin resolver: las dos correcciones cruzadas del segundo hallazgo de
-arriba quedaron incorporadas al DDL consolidado, y la colisión se verificó contra el corpus completo
-de los 3 meses, no solo la muestra). **Sin dueño todavía para la implementación real** (migración
-`.sql` + wiring de aplicación) — decisión explícita de JP: queda para una sesión aparte, **sin
-convocar a `backend-dev` todavía**. Modo plan formal de §3.2(a) sigue vigente antes del primer `Write`
-real sobre la migración. El wiring que falta queda resumido en el segundo hallazgo cruzado de arriba
-(`cuitTitularDeclarado` al blocklist de logs, columnas al insert ya protegido por
-`conErroresTraducidos`, `numero` opcional también en el tipo TypeScript, `moneda` en
-`PedidoDeResolucion`) |
+rechaza en INV-6 antes de persistir nada | **Mecanismo CERRADO y aplicado al piloto** (migración
+`0036`, wiring completo — `backend-dev` convocado en sesión posterior, verificado por consulta
+directa contra `cuenta_bancaria_identificador`: columnas, checks e índice presentes tal como diseñó
+la convocatoria de 2026-09-03). **Bloqueado para el cliente Bracci puntual — ver el tercer hallazgo
+abajo, no falta wiring, falta el dato en el documento.**
+
+**Tercer hallazgo, 2026-09-04 — el mecanismo está correcto; Bracci no tiene ancla real que darle.**
+Antes de dar de alta la cuenta real, se verificó `leerCuitTitular()` contra el texto real de los 3
+documentos (read-only, método reforzado — solo booleanos/geometría, nunca el valor en la salida).
+Dos hallazgos, no uno:
+
+1. **Bug real, ya corregido**: `leerCuitTitular()` tomaba "el primer fragmento con forma de CUIT en
+   las primeras 10 filas" — y en los 3 meses reales, ese primer fragmento es el **CUIT del banco
+   emisor**, en una fila rotulada "CUIT Banco", no el del titular. Confirmado por barrido: el mismo
+   valor único aparece repetido en el encabezado de cada página (por eso "el primero" siempre
+   coincidía). **Corregido**: la función ahora descarta la fila entera si contiene "BANCO" (mismo
+   criterio de descarte por vocabulario de ruido que ya usa el resto del adapter) y devuelve `null`
+   explícito si no queda candidato — nunca lanza, nunca loguea ningún valor. Exportada (mismo criterio
+   que `sinPan()`) para permitir prueba de mutación directa: 4 tests, ciclo
+   verde→mutante→rojo→revertido→verde confirmado real (no solo descripto) sobre el código de
+   producción. Ver `packages/ingesta/tests/visa-corporativa-cuit-titular.test.ts` y el comentario
+   actualizado en `visa-corporativa.ts` junto a `leerCuitTitular`.
+2. **El hallazgo que de verdad bloquea, y el fix del punto 1 no lo resuelve**: barrido el documento
+   **completo** (no solo las primeras 10 filas, las ~200 filas geométricas de cada uno de los 3
+   meses), con el mismo detector de forma que usa el proyecto — **ninguno** de los 3 documentos
+   reales de la tarjeta corporativa de Bracci publica el CUIT del titular en ninguna forma
+   reconocible por `RE_CUIT`. El único CUIT-shaped que existe en todo el documento es el del banco.
+   Ni `numero` (nunca lo publicó, ya sabido desde el hallazgo original de B.17), ni `cbu` (ídem), ni
+   ahora `cuitTitular` — **las tres anclas posibles de INV-6 están ausentes, no una de las tres.**
+
+**No es una brecha de diseño del "tercer camino" — es que este cliente puntual no tiene el dato que
+el tercer camino necesita.** El mecanismo (migración `0036`, `resolverPorCuitTitular`,
+`altaDeCuentaBancaria` con `cuitTitular`) queda construido y correcto para el caso donde el
+documento SÍ publica un CUIT de titular reconocible; simplemente Bracci no lo tiene en este formato.
+
+**Estado: Bracci — tarjeta corporativa BLOQUEADA, sin dueño de la resolución de datos (no de
+código).** No se da de alta nada hasta que Laura consiga el dato por otra vía — banco, otro formato
+de resumen, o el número de cuenta/CBU real. No se convoca a ningún agente nuevo por esto: el check de
+ancla del esquema (`cuenta_ident_algun_ancla_chk`) ya cubre correctamente este caso — la fila
+simplemente no se puede dar de alta sin un ancla real, que es exactamente lo que ese `check` existe
+para exigir |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 

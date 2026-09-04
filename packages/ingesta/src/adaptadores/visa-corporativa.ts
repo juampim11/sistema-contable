@@ -454,21 +454,31 @@ function leerImporteYMoneda(fila: FilaGeometrica): { readonly importeCent: bigin
 
 /**
  * El CUIT del titular: por FORMA (`RE_CUIT`), acotado a las primeras 10 filas de carátula, toma el
- * PRIMERO que encuentra.
+ * PRIMER candidato cuya fila no esté descartada.
  *
- * 🔴 **Medido, no supuesto** (hallazgo de `code-reviewer`: "el primero que aparece" es un riesgo real
- * si el emisor imprime SU PROPIO CUIT antes que el del titular en esa ventana). Contra los 3
- * documentos reales: hay **exactamente 1** fragmento con forma de CUIT en las primeras 10 filas, en
- * los 3 meses — mismo índice de fila y misma `x`, cluster junto a la razón social y el domicilio
- * (contenido evidentemente dinámico/por-cliente, no el letterhead genérico de las 2 filas
- * anteriores). No hay un segundo candidato con el que discriminar en esta ventana, así que "el
- * primero" no es ambiguo hoy. **No se verificó leyendo la etiqueta real** (regla dura: nunca se lee
- * contenido real del documento, solo forma) — si un documento futuro imprime el CUIT del emisor
- * DENTRO de las primeras 10 filas, este criterio se rompe en silencio y hay que anclar por posición
- * relativa a una etiqueta, no por "el primero".
+ * 🔴 **CONFIRMADO REAL — 2026-09-04, cliente Bracci, verificación read-only sin imprimir valores.**
+ * El riesgo que este comentario ya advertía ("si el emisor imprime SU PROPIO CUIT antes que el del
+ * titular en esa ventana") se materializó: en los 3 documentos reales (mayo/junio/julio 2026), el
+ * ÚNICO fragmento con forma de CUIT en TODO el documento —no solo en las primeras 10 filas— es el
+ * CUIT del banco emisor, en una fila rotulada "CUIT Banco". La versión anterior de esta función lo
+ * tomaba como si fuera el del titular. **Y no es solo un bug de selección**: barrido el documento
+ * completo, ninguno de los 3 meses publica el CUIT del titular en ninguna forma reconocible por
+ * `RE_CUIT` — declarado como bloqueante en `docs/diseno/10-deuda-declarada.md` §B.17, no algo que
+ * este fix resuelva por sí solo para este cliente.
+ *
+ * **Fix**: se descarta la fila ENTERA (no solo el fragmento) si su texto normalizado contiene
+ * `"BANCO"` — mismo criterio de descarte por vocabulario de ruido que ya usa el resto del proyecto
+ * (p. ej. `VOCABULARIO_RESUMEN`/`reconoceVisaCorporativa` acá mismo). Si tras el descarte no queda
+ * ningún candidato en la ventana, devuelve `null` explícito — nunca lanza, nunca loguea el valor
+ * descartado ni el que sí encontró.
+ *
+ * Exportada (no solo para uso interno) para permitir la prueba de mutación directa —mismo criterio
+ * ya establecido para `sinPan()` en este archivo— sin tener que armar un documento sintético
+ * completo.
  */
-function leerCuitTitular(filas: readonly FilaGeometrica[]): string | null {
+export function leerCuitTitular(filas: readonly FilaGeometrica[]): string | null {
   for (const fila of filas.slice(0, 10)) {
+    if (normalizar(textoDeFila(fila)).includes('BANCO')) continue;
     for (const f of fila.fragmentos) {
       const m = sinEstado(RE_CUIT_COMPARTIDO).exec(f.texto);
       if (m?.[0]) return m[0];
