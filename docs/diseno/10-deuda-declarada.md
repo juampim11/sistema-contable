@@ -279,6 +279,99 @@ en la misma sesión, no fue prevista por `dba-data` solo** — se deja así de e
 retome esto entienda por qué el índice tiene 4 columnas y no 3, sin tener que reconstruir el
 razonamiento.
 
+**Segundo hallazgo cruzado — convocatoria formal completa (2026-09-03), `dba-data` +
+`security-engineer` + `seguridad-datos-financieros`, los tres en paralelo y sin verse entre sí, mismo
+patrón de convergencia que el hallazgo de arriba.** Dos correcciones bloqueantes sobre el DDL, más el
+wiring que faltaba dejar explícito:
+
+- **El DDL de arriba no compila tal cual.** `cuenta_bancaria_identificador` no tiene columna `moneda`
+  (nunca la tuvo — vive en `cuenta_bancaria`/`lote_ingesta_cuenta`, no acá): el índice de 4 columnas
+  falla con `column "moneda" does not exist` (`dba-data`). Falta agregarla.
+- **Régimen de pepper equivocado — los TRES agentes llegaron al mismo hallazgo, cada uno por su
+  cuenta.** `cuit_titular_hmac` no puede usar `hmacIdentificador()` (pepper GLOBAL, el mismo régimen
+  que `cbu_hmac`) como proponía el DDL original de arriba. Un CBU identifica una cuenta puntual —
+  compartirlo entre dos clientes del estudio es anómalo. Un CUIT identifica una **persona**, que sí
+  puede legítimamente ser titular en más de un cliente del mismo estudio (un socio o apoderado con
+  tarjeta corporativa en dos empresas distintas). Con pepper global, el mismo CUIT produce el mismo
+  digest en los dos clientes — la correlación cruzada exacta que `hmacDocumento()` (pepper derivado
+  por cliente, vía HKDF) ya existe para impedir, documentada en el propio código
+  (`hmac-identificador.ts:152-156`) y usada hoy por `identificador_hmac`/`documento_hmac` (`0013`).
+  Corrección: `cuit_titular_hmac = hmacDocumento('cuit', valor, clienteId)`. No cambia el DDL — `bytea`,
+  `pepper_id` siguen igual — solo qué función de `packages/shared/seguridad` la calcula.
+- **Clasificación**: `cuit_titular_hmac` sube a **N2** (no N1 como en el DDL original) — no está
+  descartado que el titular sea una persona física distinta del cliente en algún formato de tarjeta
+  futuro (`seguridad-datos-financieros`, sobre `visa-corporativa.ts:456-478`: la lectura "titular =
+  cliente" es una inferencia por posición, nunca verificada leyendo la etiqueta real). `moneda` nueva:
+  N1. `cuit_titular_ultimos4` sin cambio, N2 enmascarado.
+
+DDL consolidado, con las dos correcciones ya incorporadas — reemplaza al de arriba, no lo complementa:
+
+```sql
+alter table cuenta_bancaria_identificador
+  add column moneda char(3) not null default 'ARS';
+alter table cuenta_bancaria_identificador
+  add constraint cuenta_ident_moneda_chk check (moneda ~ '^[A-Z]{3}$');
+
+alter table cuenta_bancaria_identificador
+  add column cuit_titular_hmac bytea;  -- hmacDocumento('cuit', valor, clienteId) -- NUNCA hmacIdentificador()
+alter table cuenta_bancaria_identificador
+  add column cuit_titular_ultimos4 char(4);
+alter table cuenta_bancaria_identificador
+  add constraint cuenta_ident_cuit_titular_ultimos4_chk
+    check (cuit_titular_ultimos4 is null or cuit_titular_ultimos4 ~ '^[0-9]{4}$');
+
+alter table cuenta_bancaria_identificador
+  alter column numero drop not null;
+
+alter table cuenta_bancaria_identificador
+  add constraint cuenta_ident_algun_ancla_chk
+    check (numero is not null or cbu_hmac is not null or cuit_titular_hmac is not null);
+alter table cuenta_bancaria_identificador
+  add constraint cuenta_ident_cuit_titular_solo_tarjeta_chk
+    check (cuit_titular_hmac is null or tipo_cuenta = 'tarjeta_corporativa');
+
+create unique index uq_cuenta_ident_cuit_titular_vigente
+  on cuenta_bancaria_identificador (cliente_id, pepper_id, cuit_titular_hmac, moneda)
+  where cuit_titular_hmac is not null and vigente_hasta is null;
+```
+
+Verificado por `dba-data`, sentencia por sentencia: es aditivo puro más una relajación de `NOT NULL` —
+ningún `check` nuevo puede evaluar `FALSE` sobre una fila existente (`numero` era `NOT NULL` en el
+100% de las filas hasta este mismo `ALTER`; las dos columnas de CUIT nacen `NULL` en todas). Riesgo de
+aplicación: bajo.
+
+**Wiring de aplicación, encontrado por `security-engineer`, pendiente de cuando se escriba la
+migración real** (no es DDL, pero sin esto el DDL no sirve):
+- `cuitTitularDeclarado` (el campo nuevo de `PedidoDeResolucion`) agregado a `CLAVES_SENSIBLES_EXTERNAS`
+  en el mismo commit que lo introduce — hoy `titularDocumento` está bloqueado en el blocklist de logs,
+  pero `esClaveSensible` compara por nombre exacto y el nombre nuevo no está.
+- Las dos columnas nuevas van al `insert` de `cuenta_bancaria_identificador` que YA está envuelto en
+  `conErroresTraducidos` (`packages/data/src/ingesta/escrituras.ts:130-148`) — no a un camino de
+  escritura separado, que no heredaría la protección.
+- `PedidoDeAltaDeCuenta.numero` pasa a `string | undefined` en el TIPO TypeScript
+  (`escrituras.ts:68`), no solo relajado en la base — y `apps/cli/src/alta-cuenta.ts:961` necesita
+  guard de `undefined` antes de imprimir.
+- `PedidoDeResolucion` necesita también la `moneda` del documento (`CuentaDetectada.moneda`, ya
+  obligatoria en el schema del adapter) para que la tercera rama de `resolverCuentaDelExtracto` filtre
+  por moneda, no solo por CUIT (`dba-data`).
+
+**Verificación contra el corpus completo, no solo la muestra de 10 filas de arriba.** Corrida
+read-only (`resolverAdaptador` → `.leer()`, mismo camino que `probar-adaptador.ts`, sin tocar la base
+ni el storage) contra los 3 archivos reales completos de mayo/junio/julio 2026 de Bracci. Script
+descartable, mismo régimen que `comparar-titularidad.ts` (HANDOFF 2026-08-11 (29)): corrido, leído,
+borrado — no comiteado. Salida, solo booleanos, el CUIT nunca se imprimió:
+
+```
+moneda=ARS meses_comparados=3 resultado=consistente
+moneda=USD meses_comparados=3 resultado=consistente
+colision_detectada: false
+algun_mes_sin_titular_documento: false
+```
+
+Confirma, con el universo completo y no una muestra, lo que medían las 10 filas originales: el CUIT
+del titular es estable en las dos monedas a lo largo de los 3 meses, sin colisión y sin ningún mes
+donde el documento deje de publicarlo.
+
 Con la evidencia de hoy (Bracci: una sola tarjeta corporativa, confirmada), el caso de "dos tarjetas
 distintas con el mismo titular" queda declarado como límite conocido y no resuelto — mismo criterio de
 "no inventar la regla sin caso real" que ya usa este archivo en otros puntos. El propio índice único
@@ -287,14 +380,17 @@ silencio movimientos de dos tarjetas distintas en una sola cuenta.
 
 Sin esta migración, **la tarjeta corporativa de Bracci no se puede ingestar de punta a punta hoy** —
 el adapter de extracción está construido, probado y enchufado al registro real, pero el lote se
-rechaza en INV-6 antes de persistir nada | Sin dueño todavía. Cuando se retome: convocatoria COMPLETA
-de `CLAUDE.md` §3.1 (`dba-data` + `security-engineer` + `seguridad-datos-financieros`, los tres
-obligatorios por ser esquema/RLS sobre datos de un cliente real) y modo plan formal de §3.2(a) antes
-del primer `Write` — `dba-data` ya lo dejó explícito: "no hay margen de 'no aplica'". El wiring de
-aplicación que falta, además del DDL: `PedidoDeResolucion.cuitTitularDeclarado` en
-`resolver-cuenta.ts`, pasar `cuentaLeida.cuenta.titularDocumento` desde `ingestar.ts` cuando
-`numero`/`cbu` faltan y `tipoCuenta==='tarjeta_corporativa'`, y el flujo de alta
-(`apps/cli/src/alta-cuenta.ts`, hoy asume `numero`+`cbu` siempre presentes) |
+rechaza en INV-6 antes de persistir nada | **Diseño CERRADO** — convocatoria COMPLETA de `CLAUDE.md`
+§3.1 ya realizada (2026-09-03, `dba-data` + `security-engineer` + `seguridad-datos-financieros`, los
+tres en paralelo, sin objeciones sin resolver: las dos correcciones cruzadas del segundo hallazgo de
+arriba quedaron incorporadas al DDL consolidado, y la colisión se verificó contra el corpus completo
+de los 3 meses, no solo la muestra). **Sin dueño todavía para la implementación real** (migración
+`.sql` + wiring de aplicación) — decisión explícita de JP: queda para una sesión aparte, **sin
+convocar a `backend-dev` todavía**. Modo plan formal de §3.2(a) sigue vigente antes del primer `Write`
+real sobre la migración. El wiring que falta queda resumido en el segundo hallazgo cruzado de arriba
+(`cuitTitularDeclarado` al blocklist de logs, columnas al insert ya protegido por
+`conErroresTraducidos`, `numero` opcional también en el tipo TypeScript, `moneda` en
+`PedidoDeResolucion`) |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
