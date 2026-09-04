@@ -6,6 +6,69 @@
 
 ---
 
+## 2026-09-04 (183) — Diseño de `padron_contraparte` cerrado en dos convocatorias (sin código, sin
+migración): catálogo nuevo para que Capa C identifique proveedores/clientes específicos por nombre.
+Consolidado en `docs/diseno/29-padron-contraparte.md`.
+
+**Herramienta:** Claude Code, sesión nueva. 5 dictámenes en total (2 rondas), cada uno mostrado completo
+a JP antes de sintetizar. Ningún `Edit`/`Write` sobre código — solo el documento de diseño y esta entrada.
+
+### Motivación
+
+Hallazgo de Laura (contadora): varios proveedores de un cliente del piloto no se clasifican solos porque
+el léxico de Capa C reconoce el patrón genérico de la glosa ("pago a ALGÚN proveedor") pero no el nombre
+específico. Ningún nombre real de proveedor/cliente se escribió en ningún dictamen ni en este documento.
+
+### Ronda 1 — arquitecto-software + contador-dominio + dba-data
+
+Tabla nueva (`padron_contraparte`, no extensión de `padron_socio` — invariantes NOT NULL y clasificación
+N2 vs. N2-R distintas). Se consulta DESPUÉS del léxico y de `padron_socio`, solo como refinamiento —
+**nunca promueve `decision_humana → propuesta` por sí sola** (evidencia de nombre es estructuralmente más
+débil que el HMAC exacto que hoy protege contra "conversión silenciosa de socio en proveedor").
+`clasificacion ∈ {'proveedor','cliente','otro'}` alcanza para familia de cuenta, sin colisión verificada
+contra el léxico existente. Sin HMAC/pepper/satélite — es N2 simple, más liviana que su precedente.
+
+### Ronda 2 — dba-data + plan-cuentas-multicliente (el bloqueante que dejó abierto la ronda 1)
+
+Pregunta: cómo enlazar `padron_contraparte` con `cuenta_id` para que Capa D proponga la cuenta específica,
+no solo la familia genérica. **Discrepancia real entre los dos dictámenes**, no consenso automático:
+`dba-data` propuso `padron_contraparte.cuenta_id` (FK que resuelve la cuenta, por precedente de forma con
+`cuenta_bancaria.cuenta_id`); `plan-cuentas-multicliente` verificó **empíricamente contra el piloto real**
+(227 y 219 cuentas activas en los dos únicos clientes con plan real cargado, solo lectura, sin ningún
+nombre expuesto) y encontró **cero casos** de sub-cuenta por proveedor — todo pago imputa hoy a un puñado
+de cuentas genéricas.
+
+**Decisión de JP: se adopta el mecanismo de plan-cuentas-multicliente** — `padron_contraparte_id` como FK
+de EVIDENCIA en el asiento propuesto (mismo trato que `padron_manifestacion_id`), nunca como resolución de
+`cuenta_id`. Motivo explícito: evidencia empírica pesa más que precedente de forma cuando no hay ningún
+caso real que justifique el mecanismo más pesado — mismo criterio que ya aplicó `0030` al no construir
+`'por_jurisdiccion'`/`'por_impuesto'` sin necesidad demostrada. Si en el futuro un cliente real necesita
+cuenta propia por proveedor, el mecanismo ya existe sin tocar este diseño (alta de `cuenta`+
+`cuenta_atributo` + `regla_imputacion` `'fija'` para ese caso puntual) — no se pre-construye un `cuenta_id`
+nullable "por si acaso".
+
+### Hallazgo de proceso: el diseño no estaba persistido
+
+`dba-data`, al empezar la ronda 2, corrió `grep -rn "padron_contraparte"` sobre migraciones/`docs/`/
+`HANDOFF.md` y confirmó **cero resultados** — la ronda 1 solo había existido en la sesión que la produjo.
+Mismo riesgo que ya está registrado como lección de este repo (memoria: "planes y dictámenes van al
+repo"). Corregido con `29-padron-contraparte.md` + esta entrada, ANTES de escribir cualquier migración.
+
+### Qué sigue
+
+Sin código, sin migración, sin CLI todavía. Pendiente explícito antes de implementar (detallado en
+`29-padron-contraparte.md` §4): verificar el número de migración libre real (no asumir `0037`), diseñar
+la función pura de matcheo + su prueba de mutación, resolver si hace falta vigencia real en la tabla
+(punto que arquitecto-software y dba-data no cerraron entre sí), clasificar las columnas nuevas en
+`clasificacion-campos.ts`, y convocar `dba-data` + `security-engineer` + `seguridad-datos-financieros` +
+`qa-automation` para la implementación real, por la matriz de `agents/README.md` §3.1.
+
+### Commits
+
+Pendiente: `docs/diseno/29-padron-contraparte.md` (nuevo) + esta entrada de `HANDOFF.md`.
+
+---
+
 ## 2026-09-03 (182) — Cierre documental de E-8 (sin código): C se resolvió por inspección directa
 de JP, D se cierra como no medible por esta vía. Consolidado el hallazgo de E-7/E-8 completo en
 `docs/diseno/10-deuda-declarada.md` §C.
