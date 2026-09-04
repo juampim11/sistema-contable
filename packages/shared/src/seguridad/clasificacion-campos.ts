@@ -308,6 +308,21 @@ export const CLASIFICACION = {
       vigente_desde: { nivel: 'N1', exportable: true },
       vigente_hasta: { nivel: 'N1', exportable: true },
       created_at: MARCA_TIEMPO,
+      // B.17 (migración 0036) — tercer camino de resolución de INV-6, para la tarjeta corporativa
+      // que no publica numero ni cbu en ninguna página legible.
+      moneda: { nivel: 'N1', exportable: true },
+      cuit_titular_hmac: {
+        nivel: 'N2',
+        exportable: false,
+        nota: 'HMAC del CUIT del titular con hmacDocumento (pepper POR CLIENTE, NUNCA hmacIdentificador). ' +
+          'N2 y no N1 como cbu_hmac (corrección de seguridad-datos-financieros, convocatoria de 0036): un ' +
+          'CBU identifica una cuenta, propia del cliente por construcción, pero el titular declarado en ' +
+          'una tarjeta corporativa no está descartado que sea una persona física distinta del cliente en ' +
+          'algún formato futuro (visa-corporativa.ts:456-478 lee "titular = cliente" por posición, nunca ' +
+          'verificado contra la etiqueta real) — tratarlo como dato de un tercero hasta confirmar lo ' +
+          'contrario es la lectura conservadora.',
+      },
+      cuit_titular_ultimos4: { nivel: 'N2', enmascarar: 'ultimos4', exportable: true },
     },
   },
 
@@ -1478,6 +1493,16 @@ export const CLAVES_SENSIBLES_EXTERNAS = [
    * los detectores. Lo mismo con el `valor` de un `candidatoIdentificacion` de tipo `dni`.
    */
   'titular_documento',
+  /**
+   * 🔴 B.17 (migración 0036, `resolver-cuenta.ts::PedidoDeResolucion.cuitTitularDeclarado`) —
+   * agregada en el MISMO commit que introduce el campo, no después. `esClaveSensible` compara por
+   * nombre exacto, así que sin esta entrada `logger.warn('x', { cuitTitularDeclarado: valor })`
+   * compilaría igual que ya le pasó una vez a `titularDocumento` (ver la nota de arriba) — la
+   * tercera rama de `resolverCuentaDelExtracto` no loguea el valor hoy (solo `cliente_id`/
+   * `motivo_codigo`, mismo patrón que las otras dos ramas), pero esto tapa el camino igual si algún
+   * día alguien pasa el `pedido` completo a un log por comodidad.
+   */
+  'cuit_titular_declarado',
   'titular_condicion_iva',
   'contraparte_banco',
   'glosa_original',

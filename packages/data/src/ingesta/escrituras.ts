@@ -19,7 +19,12 @@
  * olvido. Lo que sale de acá son uuid y conteos.
  */
 
-import { hmacIdentificador, pepperIdActual, ultimos4ParaGuardar } from '@sistema-contable/shared/seguridad';
+import {
+  hmacDocumento,
+  hmacIdentificador,
+  pepperIdActual,
+  ultimos4ParaGuardar,
+} from '@sistema-contable/shared/seguridad';
 import { logger } from '@sistema-contable/shared/observabilidad';
 import type { ContextoAuditado } from '../db/auditoria.ts';
 import type { Tx } from '../db/conexion.ts';
@@ -64,10 +69,21 @@ export type PedidoDeAltaDeCuenta = {
    *
    * **No puede ser el CBU.** El check `cuenta_ident_numero_no_es_cbu` (migración 0006) rechaza los 22
    * dígitos exactos, porque guardar el CBU acá lo dejaría en claro y anularía la decisión de hashearlo.
+   *
+   * B.17 (migración 0036): opcional desde que existe la tarjeta corporativa, cuya carátula no publica
+   * ni `numero` ni `cbu` en ninguna página legible — el ancla pasa a ser `cuitTitular`. El check
+   * `cuenta_ident_algun_ancla_chk` sigue exigiendo que al menos UNO de los tres esté presente.
    */
-  readonly numero: string;
-  /** CBU en claro. Se hashea y **no se guarda ni se devuelve**. */
-  readonly cbu: string;
+  readonly numero?: string | undefined;
+  /** CBU en claro. Se hashea y **no se guarda ni se devuelve**. Opcional, mismo motivo que `numero`. */
+  readonly cbu?: string | undefined;
+  /**
+   * CUIT del titular, en claro. Se hashea con `hmacDocumento` (pepper por cliente, NUNCA
+   * `hmacIdentificador`) y **no se guarda ni se devuelve** — mismo régimen que `cbu`. Solo tiene
+   * sentido para `tipoCuenta === 'tarjeta_corporativa'` (`cuenta_ident_cuit_titular_solo_tarjeta_chk`,
+   * migración 0036).
+   */
+  readonly cuitTitular?: string | undefined;
   readonly vigenteDesde: string;
 };
 
@@ -92,17 +108,39 @@ export async function altaDeCuentaBancaria(
   _ctx: ContextoAuditado,
   pedido: PedidoDeAltaDeCuenta,
 ): Promise<ResultadoAlta> {
-  const digest = hmacIdentificador(pedido.cbu);
-  const ultimos4 = ultimos4ParaGuardar(pedido.cbu);
+  // B.17 (0036): el CBU pasó a opcional — solo se hashea si el pedido lo trae. Idem el CUIT del
+  // titular, con `hmacDocumento` (pepper POR CLIENTE) y NUNCA `hmacIdentificador` (pepper global):
+  // un CUIT identifica una persona, que puede legítimamente ser titular en más de un cliente del
+  // mismo estudio, y el pepper global crearía la correlación cruzada entre clientes que
+  // `hmacDocumento` existe para impedir (ver `resolver-cuenta.ts::resolverPorCuitTitular`).
+  const digest = pedido.cbu !== undefined ? hmacIdentificador(pedido.cbu) : null;
+  const ultimos4 = pedido.cbu !== undefined ? ultimos4ParaGuardar(pedido.cbu) : null;
+  const digestCuitTitular =
+    pedido.cuitTitular !== undefined ? hmacDocumento('cuit', pedido.cuitTitular, pedido.clienteId) : null;
+  const cuitTitularUltimos4 =
+    pedido.cuitTitular !== undefined ? ultimos4ParaGuardar(pedido.cuitTitular) : null;
   const pepperId = pepperIdActual();
 
-  // Si el identificador ya está cargado para este cliente, se devuelve el existente.
-  const yaEsta = await tx.consultar<{ id: string; cuenta_bancaria_id: string }>(
-    `select id::text as id, cuenta_bancaria_id::text as cuenta_bancaria_id
-       from cuenta_bancaria_identificador
-      where cliente_id = $1 and pepper_id = $2 and cbu_hmac = $3 and vigente_desde = $4::date`,
-    [pedido.clienteId, pepperId, digest, pedido.vigenteDesde],
-  );
+  // Si el identificador ya está cargado para este cliente, se devuelve el existente. Dos ramas: por
+  // CBU (comportamiento de siempre) o, cuando no hay CBU, por CUIT del titular + moneda (0036) — las
+  // dos son la MISMA garantía de idempotencia, solo cambia el ancla disponible.
+  const yaEsta =
+    digest !== null
+      ? await tx.consultar<{ id: string; cuenta_bancaria_id: string }>(
+          `select id::text as id, cuenta_bancaria_id::text as cuenta_bancaria_id
+             from cuenta_bancaria_identificador
+            where cliente_id = $1 and pepper_id = $2 and cbu_hmac = $3 and vigente_desde = $4::date`,
+          [pedido.clienteId, pepperId, digest, pedido.vigenteDesde],
+        )
+      : digestCuitTitular !== null
+        ? await tx.consultar<{ id: string; cuenta_bancaria_id: string }>(
+            `select id::text as id, cuenta_bancaria_id::text as cuenta_bancaria_id
+               from cuenta_bancaria_identificador
+              where cliente_id = $1 and pepper_id = $2 and cuit_titular_hmac = $3 and moneda = $4
+                and vigente_desde = $5::date`,
+            [pedido.clienteId, pepperId, digestCuitTitular, pedido.moneda, pedido.vigenteDesde],
+          )
+        : [];
   const existente = yaEsta[0];
   if (existente) {
     logger.info('alta_cuenta.ya_existia', {
@@ -127,22 +165,28 @@ export async function altaDeCuentaBancaria(
   const cuentaBancariaId = cuenta[0]?.id;
   if (!cuentaBancariaId) throw new Error('El alta de cuenta no devolvió id.');
 
+  // El insert de `cuenta_bancaria_identificador` — YA envuelto en `conErroresTraducidos` — se
+  // EXTIENDE con las tres columnas de 0036, nunca un segundo camino de escritura separado: perdería
+  // la traducción de errores que este `insert` ya tiene.
   const identificador = await conErroresTraducidos(undefined, () =>
     tx.consultar<{ id: string }>(
       `insert into cuenta_bancaria_identificador
          (cliente_id, cuenta_bancaria_id, tipo_cuenta, numero, cbu_hmac, cbu_ultimos4,
-          pepper_id, vigente_desde)
-       values ($1, $2, $3, $4, $5, $6, $7, $8::date)
+          pepper_id, vigente_desde, moneda, cuit_titular_hmac, cuit_titular_ultimos4)
+       values ($1, $2, $3, $4, $5, $6, $7, $8::date, $9, $10, $11)
        returning id::text as id`,
       [
         pedido.clienteId,
         cuentaBancariaId,
         pedido.tipoCuenta,
-        pedido.numero,
+        pedido.numero ?? null,
         digest,
         ultimos4,
         pepperId,
         pedido.vigenteDesde,
+        pedido.moneda,
+        digestCuitTitular,
+        cuitTitularUltimos4,
       ],
     ),
   );

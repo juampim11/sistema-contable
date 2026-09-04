@@ -37,7 +37,7 @@
  */
 
 import type { Tx } from '@sistema-contable/data';
-import { hmacIdentificador } from '@sistema-contable/shared/seguridad';
+import { hmacDocumento, hmacIdentificador } from '@sistema-contable/shared/seguridad';
 import { logger } from '@sistema-contable/shared/observabilidad';
 
 export type PedidoDeResolucion = {
@@ -46,6 +46,20 @@ export type PedidoDeResolucion = {
   /** Identificador leído de la carátula del documento por etiqueta. */
   readonly cbuDeclarado?: string | undefined;
   readonly numeroDeclarado?: string | undefined;
+  /**
+   * B.17 — tercer camino, solo cuando la carátula no publica `numero` ni `cbu` (tarjeta corporativa):
+   * el CUIT del titular, también leído de la carátula por etiqueta, nunca por patrón libre. Se
+   * intenta ANTES de devolver `sin_identificador_en_caratula`, nunca en lugar de las dos anclas
+   * anteriores.
+   */
+  readonly cuitTitularDeclarado?: string | undefined;
+  /**
+   * La moneda del documento (`CuentaDetectada.moneda`, ya obligatoria en el esquema del adapter).
+   * La tercera rama la necesita para no colisionar cuando el mismo titular tiene tarjeta en dos
+   * monedas (`uq_cuenta_ident_cuit_titular_vigente`, migración 0036) — las otras dos ramas no la usan
+   * porque `numero`/`cbu` ya son anclas suficientes por sí solas.
+   */
+  readonly moneda: 'ARS' | 'USD';
   /** Fecha del período, para resolver contra el identificador vigente ENTONCES. */
   readonly alFecha: string;
 };
@@ -65,6 +79,78 @@ export type ResolucionDeCuenta =
     };
 
 /**
+ * Cero candidatas: distingue `cuenta_no_pertenece_al_cliente` de `cuenta_no_registrada` **sin
+ * preguntar de quién es la cuenta** — la pregunta solo mira al cliente declarado (¿tiene alguna
+ * cuenta registrada?), nunca a otro. Compartida por las tres ramas de resolución.
+ */
+async function estadoSinCandidatas(
+  tx: Tx,
+  clienteId: string,
+): Promise<'cuenta_no_pertenece_al_cliente' | 'cuenta_no_registrada'> {
+  const propias = await tx.consultar<{ n: string }>(
+    `select count(*)::text as n from cuenta_bancaria_identificador where cliente_id = $1`,
+    [clienteId],
+  );
+  const tieneCuentas = Number(propias[0]?.n ?? '0') > 0;
+  return tieneCuentas ? 'cuenta_no_pertenece_al_cliente' : 'cuenta_no_registrada';
+}
+
+/**
+ * Tercer camino de INV-6 (B.17): resuelve por el CUIT del titular declarado en la carátula, para el
+ * caso de tarjeta corporativa que no publica `numero` ni `cbu` en ninguna página legible.
+ *
+ * **`hmacDocumento`, nunca `hmacIdentificador`.** Un CUIT identifica una PERSONA, que puede
+ * legítimamente ser titular en más de un cliente del mismo estudio (un socio o apoderado con tarjeta
+ * corporativa en dos empresas distintas) — con el pepper global de `hmacIdentificador()` el mismo
+ * CUIT produciría el mismo digest en los dos clientes, la correlación cruzada exacta que
+ * `hmacDocumento()` (pepper derivado por cliente) existe para impedir.
+ */
+async function resolverPorCuitTitular(
+  tx: Tx,
+  pedido: PedidoDeResolucion,
+  cuitTitular: string,
+): Promise<ResolucionDeCuenta> {
+  const digestCuitTitular = hmacDocumento('cuit', cuitTitular, pedido.clienteId);
+
+  // Mismos dos invariantes que la consulta por CBU/número: `cliente_id = $1` siempre (nunca hay
+  // oráculo cross-tenant posible) y el rango de vigencia acotado a la fecha del período. `moneda`
+  // se suma acá porque el mismo titular puede tener tarjeta en dos monedas (0036).
+  const candidatas = await tx.consultar<{ cuenta_bancaria_id: string }>(
+    `select distinct cuenta_bancaria_id::text as cuenta_bancaria_id
+       from cuenta_bancaria_identificador
+      where cliente_id = $1
+        and cuit_titular_hmac = $2
+        and moneda = $3
+        and vigente_desde <= $4::date
+        and (vigente_hasta is null or vigente_hasta >= $4::date)`,
+    [pedido.clienteId, digestCuitTitular, pedido.moneda, pedido.alFecha],
+  );
+
+  if (candidatas.length === 1) {
+    const cuentaBancariaId = candidatas[0]?.cuenta_bancaria_id;
+    if (cuentaBancariaId) {
+      return { estado: 'resuelta', clienteId: pedido.clienteId, cuentaBancariaId };
+    }
+  }
+
+  if (candidatas.length > 1) {
+    logger.warn('resolucion.ambigua', {
+      cliente_id: pedido.clienteId,
+      candidatas: candidatas.length,
+      motivo_codigo: 'cuenta_ambigua',
+    });
+    return { estado: 'cuenta_ambigua' };
+  }
+
+  const estado = await estadoSinCandidatas(tx, pedido.clienteId);
+  logger.warn('resolucion.fallida', {
+    cliente_id: pedido.clienteId,
+    motivo_codigo: estado,
+  });
+  return { estado };
+}
+
+/**
  * Resuelve la cuenta. Las cinco salidas son las del plan §7.2.8 y **ninguna de las cuatro de fracaso
  * permite continuar**.
  *
@@ -78,8 +164,17 @@ export async function resolverCuentaDelExtracto(
 ): Promise<ResolucionDeCuenta> {
   const identificador = pedido.cbuDeclarado ?? pedido.numeroDeclarado;
   if (!identificador || identificador.replace(/\D/g, '').length === 0) {
-    // Sin identificador en la carátula no hay nada contra qué resolver. Adivinar por "la única cuenta que
-    // tiene el cliente" sería el mismo error que dar de alta sola: el archivo definiría la verdad.
+    // Sin numero/cbu, B.17 da una tercera oportunidad ANTES de rendirse: el CUIT del titular, cuando
+    // la carátula lo declara (tarjeta corporativa). Nunca al revés — numeroDeclarado/cbuDeclarado
+    // siguen siendo las anclas primarias.
+    const cuitTitular = pedido.cuitTitularDeclarado;
+    if (cuitTitular && cuitTitular.replace(/\D/g, '').length > 0) {
+      return resolverPorCuitTitular(tx, pedido, cuitTitular);
+    }
+
+    // Sin ningún identificador en la carátula no hay nada contra qué resolver. Adivinar por "la única
+    // cuenta que tiene el cliente" sería el mismo error que dar de alta sola: el archivo definiría la
+    // verdad.
     logger.warn('resolucion.sin_identificador', {
       cliente_id: pedido.clienteId,
       motivo_codigo: 'sin_identificador_en_caratula',
@@ -139,20 +234,9 @@ export async function resolverCuentaDelExtracto(
     return { estado: 'cuenta_ambigua' };
   }
 
-  /**
-   * Cero candidatas. Ahora hay que distinguir los dos casos, y **sin preguntar de quién es la cuenta**.
-   *
-   * La distinción se hace con una pregunta que solo mira al cliente declarado: *¿este cliente tiene alguna
-   * cuenta registrada?* Si tiene, el archivo probablemente es de otro cliente. Si no tiene ninguna, es un
-   * alta pendiente. En los dos casos la información sale del propio cliente, nunca de otro.
-   */
-  const propias = await tx.consultar<{ n: string }>(
-    `select count(*)::text as n from cuenta_bancaria_identificador where cliente_id = $1`,
-    [pedido.clienteId],
-  );
-  const tieneCuentas = Number(propias[0]?.n ?? '0') > 0;
-
-  const estado = tieneCuentas ? 'cuenta_no_pertenece_al_cliente' : 'cuenta_no_registrada';
+  // Cero candidatas. Distinguir los dos casos, y **sin preguntar de quién es la cuenta** — ver
+  // `estadoSinCandidatas` arriba.
+  const estado = await estadoSinCandidatas(tx, pedido.clienteId);
   logger.warn('resolucion.fallida', {
     cliente_id: pedido.clienteId,
     motivo_codigo: estado,

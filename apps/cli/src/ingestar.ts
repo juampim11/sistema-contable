@@ -586,6 +586,16 @@ export async function ingestar(
       const resolucion = await resolverCuentaDelExtracto(tx, {
         clienteId: args.cliente,
         numeroDeclarado: cuentaLeida.cuenta.numero,
+        // B.17: tercer camino de resolución para tarjeta corporativa sin `numero` ni `cbu` en la
+        // carátula — el CUIT del titular, acotado a `tipoCuenta === 'tarjeta_corporativa'` (mismo
+        // criterio que el `check cuenta_ident_cuit_titular_solo_tarjeta_chk` de la migración 0036).
+        cuitTitularDeclarado:
+          cuentaLeida.cuenta.numero === undefined &&
+          cuentaLeida.cuenta.cbu === undefined &&
+          cuentaLeida.cuenta.tipoCuenta === 'tarjeta_corporativa'
+            ? cuentaLeida.cuenta.titularDocumento
+            : undefined,
+        moneda: cuentaLeida.cuenta.moneda,
         alFecha: periodoHasta,
       });
       if (resolucion.estado !== 'resuelta') {

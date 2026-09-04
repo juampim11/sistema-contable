@@ -329,6 +329,9 @@ export async function completarLote(
       const resolucion = await resolverCuentaDelExtracto(tx, {
         clienteId: args.cliente,
         numeroDeclarado: cuentaLeida.cuenta.numero,
+        // B.17: no ejercita el tercer camino (esta CLI no completa lotes de tarjeta corporativa
+        // hoy) — `moneda` pasa igual porque el tipo la exige desde 0036.
+        moneda: cuentaLeida.cuenta.moneda,
         alFecha: periodoHasta,
       });
       if (resolucion.estado !== 'resuelta') {

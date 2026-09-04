@@ -136,6 +136,7 @@ async function ingestar(
         const r = await resolverCuentaDelExtracto(tx, {
           clienteId: clienteDeclarado,
           cbuDeclarado: cbuEnLaCaratula,
+          moneda: 'ARS',
           alFecha: PERIODO,
         });
         // El resolvedor de ingesta y el contrato del almacenamiento comparten los estados a propósito:
@@ -214,6 +215,7 @@ describe('los otros tres finales de la resolución', () => {
       resolverCuentaDelExtracto(tx, {
         clienteId: s.clienteA,
         cbuDeclarado: CBU_DE_NADIE,
+        moneda: 'ARS',
         alFecha: PERIODO,
       }),
     );
@@ -225,6 +227,7 @@ describe('los otros tres finales de la resolución', () => {
       resolverCuentaDelExtracto(tx, {
         clienteId: s.clienteC === '' ? s.clienteB : s.clienteC,
         cbuDeclarado: CBU_DE_NADIE,
+        moneda: 'ARS',
         alFecha: PERIODO,
       }),
     );
@@ -243,7 +246,7 @@ describe('los otros tres finales de la resolución', () => {
 
   it('sin identificador en la carátula NO adivina por "la única cuenta del cliente"', async () => {
     const r = await conUsuario(USUARIOS.contadorA, (tx) =>
-      resolverCuentaDelExtracto(tx, { clienteId: s.clienteA, alFecha: PERIODO }),
+      resolverCuentaDelExtracto(tx, { clienteId: s.clienteA, moneda: 'ARS', alFecha: PERIODO }),
     );
     expect(r.estado).toBe('sin_identificador_en_caratula');
   });
@@ -336,6 +339,7 @@ describe('los otros tres finales de la resolución', () => {
       resolverCuentaDelExtracto(tx, {
         clienteId: s.clienteA,
         cbuDeclarado: CBU_DE_A,
+        moneda: 'ARS',
         alFecha: PERIODO,
       }),
     );
@@ -364,6 +368,7 @@ describe('la vigencia: un extracto viejo resuelve con el identificador de ENTONC
       resolverCuentaDelExtracto(tx, {
         clienteId: s.clienteA,
         cbuDeclarado: CBU_DE_A,
+        moneda: 'ARS',
         alFecha: '2025-06-15', // anterior a vigente_desde
       }),
     );
@@ -388,6 +393,7 @@ describe('el control que NO valida nada, y por eso no se usa', () => {
       resolverCuentaDelExtracto(tx, {
         clienteId: s.clienteA,
         cbuDeclarado: CBU_DE_NADIE,
+        moneda: 'ARS',
         alFecha: PERIODO,
       }),
     );

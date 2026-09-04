@@ -193,9 +193,9 @@ const GRANTS_POR_COLUMNA: readonly {
   { tabla: 'cuenta_bancaria', rol: 'app_request', privilegio: 'SELECT', columnas: ['abierta_desde', 'alias', 'banco_codigo', 'cerrada_en', 'cliente_id', 'created_at', 'cuenta_id', 'id', 'moneda'] },
   { tabla: 'cuenta_bancaria', rol: 'app_request', privilegio: 'UPDATE', columnas: ['abierta_desde', 'alias', 'banco_codigo', 'cerrada_en', 'cliente_id', 'created_at', 'cuenta_id', 'id', 'moneda'] },
   { tabla: 'cuenta_bancaria_identificador', rol: 'app_job', privilegio: 'SELECT', columnas: ['cbu_hmac', 'cliente_id'] },
-  { tabla: 'cuenta_bancaria_identificador', rol: 'app_request', privilegio: 'INSERT', columnas: ['cbu_hmac', 'cbu_ultimos4', 'cliente_id', 'created_at', 'cuenta_bancaria_id', 'id', 'numero', 'pepper_id', 'tipo_cuenta', 'vigente_desde', 'vigente_hasta'] },
-  { tabla: 'cuenta_bancaria_identificador', rol: 'app_request', privilegio: 'SELECT', columnas: ['cbu_hmac', 'cbu_ultimos4', 'cliente_id', 'created_at', 'cuenta_bancaria_id', 'id', 'numero', 'pepper_id', 'tipo_cuenta', 'vigente_desde', 'vigente_hasta'] },
-  { tabla: 'cuenta_bancaria_identificador', rol: 'app_request', privilegio: 'UPDATE', columnas: ['cbu_hmac', 'cbu_ultimos4', 'cliente_id', 'created_at', 'cuenta_bancaria_id', 'id', 'numero', 'pepper_id', 'tipo_cuenta', 'vigente_desde', 'vigente_hasta'] },
+  { tabla: 'cuenta_bancaria_identificador', rol: 'app_request', privilegio: 'INSERT', columnas: ['cbu_hmac', 'cbu_ultimos4', 'cliente_id', 'created_at', 'cuenta_bancaria_id', 'cuit_titular_hmac', 'cuit_titular_ultimos4', 'id', 'moneda', 'numero', 'pepper_id', 'tipo_cuenta', 'vigente_desde', 'vigente_hasta'] },
+  { tabla: 'cuenta_bancaria_identificador', rol: 'app_request', privilegio: 'SELECT', columnas: ['cbu_hmac', 'cbu_ultimos4', 'cliente_id', 'created_at', 'cuenta_bancaria_id', 'cuit_titular_hmac', 'cuit_titular_ultimos4', 'id', 'moneda', 'numero', 'pepper_id', 'tipo_cuenta', 'vigente_desde', 'vigente_hasta'] },
+  { tabla: 'cuenta_bancaria_identificador', rol: 'app_request', privilegio: 'UPDATE', columnas: ['cbu_hmac', 'cbu_ultimos4', 'cliente_id', 'created_at', 'cuenta_bancaria_id', 'cuit_titular_hmac', 'cuit_titular_ultimos4', 'id', 'moneda', 'numero', 'pepper_id', 'tipo_cuenta', 'vigente_desde', 'vigente_hasta'] },
   // `auditoria_seguridad_readonly` (0035, R42 — amplía 0023): agrupar por lote los movimientos
   // desactualizados (`detectar-lotes-desactualizados.ts`). Nunca `archivo_clave`/`motivo_codigo`/
   // `procesado_por` — el diagnóstico no necesita el archivo ni el detalle de un rechazo ni quién

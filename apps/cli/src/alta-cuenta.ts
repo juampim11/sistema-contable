@@ -35,6 +35,16 @@
  *
  * uuid, el tipo de cuenta, la **forma** de los identificadores leídos y conteos. Nunca un valor. Así la
  * salida se puede pegar en un ticket sin pensarlo.
+ *
+ * ## `--tarjeta true` — alta por CUIT del titular (B.17, migración 0036)
+ *
+ * Una tarjeta corporativa cuya carátula no publica `numero` ni `cbu` en ninguna página legible (caso
+ * real: Bracci, `docs/diseno/10-deuda-declarada.md` §B.17) no tiene nada que `leerCaratula` pueda leer
+ * — ese formato lo reconoce `packages/ingesta/src/adaptadores/visa-corporativa.ts`, fuera de alcance
+ * acá. Con `--tarjeta true --vigencia YYYY-MM-DD`, el script se salta `leerCaratula` por completo y
+ * pide el CUIT del titular con el mismo prompt oculto que ya usa el CBU manual — **nunca por
+ * argumento**, mismos tres riesgos de la sección de arriba. La vigencia la declara el operador porque
+ * tampoco hay período que leer de un formato no reconocido.
  */
 
 import { readFileSync } from 'node:fs';
@@ -54,6 +64,7 @@ import {
   type TextoDelPdf,
 } from '@sistema-contable/ingesta';
 import { forma } from '@sistema-contable/shared/observabilidad';
+import { verificadorCuitEsValido } from '@sistema-contable/shared/seguridad';
 import { cargarEnv } from '../../../tools/cargar-env.ts';
 import {
   altaDeCuentaBancaria,
@@ -113,6 +124,31 @@ const esquema = z.object({
   tipo: z.enum(TIPOS_PARA_DESAMBIGUAR).optional(),
   /** Etiqueta humana. **Nunca** la razón social. */
   alias: z.string().max(60).optional(),
+  /**
+   * B.17 — dispara el camino de alta por CUIT del titular, para una tarjeta corporativa cuya
+   * carátula no publica `numero` ni `cbu` en ninguna página legible.
+   *
+   * `--tarjeta true`, un solo token (sin guiones): mismo criterio que el resto de los flags de este
+   * archivo (`--tipo`, `--alias`, `--moneda`), que el parseo de acá abajo mapea 1:1 sin conversión de
+   * kebab-case a camelCase.
+   *
+   * Explícito y NUNCA inferido de `--tipo`: `leerCaratula` no sabe reconocer el formato de este
+   * documento — esa lectura vive en `packages/ingesta/src/adaptadores/visa-corporativa.ts`, fuera de
+   * alcance acá, mismo criterio de "vocabulario interno del adaptador no se expone" que ya rige el
+   * resto de este archivo. Con el flag puesto, el script ni siquiera intenta `leerCaratula`: pide el
+   * CUIT del titular por prompt oculto, igual que el CBU manual de Santander.
+   */
+  tarjeta: z.literal('true').optional(),
+  /**
+   * Solo junto con `--tarjeta true`: la vigencia no se puede leer de una carátula cuyo formato este
+   * script no reconoce, así que la declara el operador — con la fecha real del período del resumen
+   * que tiene delante, nunca "hoy" (mismo motivo que ya vale para `leerCaratula`: una vigencia
+   * inventada resolvería para extractos de antes de que la tarjeta existiera).
+   */
+  vigencia: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
 });
 
 export type ArgumentosAltaDeCuenta = z.infer<typeof esquema>;
@@ -167,7 +203,10 @@ export function argumentos(argv: readonly string[] = process.argv.slice(2)): Arg
         `El CBU NO se pasa por argumento, nunca: se lee del archivo, o si la carátula tiene más de una ` +
         `cuenta, se pide con un prompt interactivo oculto en el momento.${SALTO}` +
         `--tipo (${TIPOS_PARA_DESAMBIGUAR.join('|')}) solo hace falta cuando --moneda sola encuentra más ` +
-        `de una cuenta candidata (caso Macro: dos cuentas en la misma moneda, de tipo distinto).`,
+        `de una cuenta candidata (caso Macro: dos cuentas en la misma moneda, de tipo distinto).${SALTO}${SALTO}` +
+        `Tarjeta corporativa sin numero/cbu en la carátula (B.17): --tarjeta true --vigencia YYYY-MM-DD, ` +
+        `sin --tipo ni --moneda distinta de ARS/USD. El CUIT del titular se pide con un prompt oculto, ` +
+        `nunca por argumento — mismo motivo que el CBU.`,
     );
   }
   return r.data;
@@ -895,6 +934,47 @@ export async function pedirCbuConfirmado(
 }
 
 // -----------------------------------------------------------------------------
+// Prompt oculto de CUIT del titular — B.17 (migración 0036). Mismo motivo que el CBU de arriba: un
+// CUIT NUNCA se pasa por argumento (historial de la terminal, línea de comandos, contexto de un
+// agente). Wrapper de `pedirValorConfirmado`, con la validación de forma y de dígito verificador que
+// ya usa `alta-socio.ts::pedirDocumentoConfirmado` para el mismo tipo de dato.
+// -----------------------------------------------------------------------------
+
+/**
+ * Pide el CUIT del titular de la tarjeta corporativa dos veces y exige que coincidan byte a byte
+ * antes de aceptarlo — mismo criterio que `pedirCbuConfirmado`: `forma()` no sirve para autoverificar
+ * un CUIT tampoco (dos CUIT de 11 dígitos se ven idénticos bajo cualquier máscara por posición).
+ */
+export async function pedirCuitTitularConfirmado(
+  entrada: EntradaOculta = process.stdin,
+  salida: SalidaOculta = process.stdout,
+): Promise<string> {
+  const valor = await pedirValorConfirmado(
+    {
+      primero: '  CUIT del titular (11 dígitos): ',
+      segundo: '  Repetí el CUIT para confirmar: ',
+      aviso: [
+        'La carátula de esta tarjeta corporativa no publica numero ni CBU — B.17.',
+        'Se pide acá, tecleado, para que nunca quede en el historial de la terminal.',
+        'No lo copies ni lo pegues de ningún chat, ticket, captura ni asistente de IA — tipealo directo.',
+        'No vas a ver NADA en pantalla mientras tipeás — ni un asterisco, a propósito. Escribí los 11 ' +
+          'dígitos igual y apretá Enter; después va a aparecer un segundo pedido para confirmarlo.',
+      ],
+    },
+    entrada,
+    salida,
+  );
+  const normalizado = valor.replace(/\D/g, '');
+  if (!/^\d{11}$/.test(normalizado)) {
+    throw new Error('El CUIT tiene que ser de 11 dígitos.');
+  }
+  if (!verificadorCuitEsValido(normalizado)) {
+    throw new Error('El dígito verificador del CUIT no es válido.');
+  }
+  return normalizado;
+}
+
+// -----------------------------------------------------------------------------
 // CLI
 // -----------------------------------------------------------------------------
 
@@ -921,31 +1001,67 @@ if (esEjecucionDirecta) {
   }
   // Solo las ramas Bancor y Nación de `leerCaratula` la usan (ver las notas junto a
   // `FILAS_DE_CARATULA_BANCOR`/`FILAS_DE_CARATULA_NACION`) — se computa siempre, es barato, y así
-  // ninguna de las dos llamadas de abajo se olvida de pasarla.
+  // ninguna de las dos llamadas de abajo se olvida de pasarla. El modo `tarjeta` (B.17, abajo) no la
+  // usa, pero igual se valida que el archivo sea un PDF legible antes de pedirle nada al operador.
   const filasGeometricas = await aFilas(contenido);
 
   /**
-   * Primer intento sin CBU manual. Si la carátula tiene una sola cuenta, esto alcanza y nunca se pide
-   * nada por prompt. Si tiene más de una, `leerCaratula` tira el error puntual de "no se puede atribuir
-   * a una sola moneda" — se atrapa ACÁ, y solo esa condición, para pedir el CBU de forma oculta. Cualquier
-   * otro error (número de cuenta, período, etc.) sigue de largo sin pasar por el prompt.
+   * B.17 — dos modos mutuamente excluyentes, nunca mezclados en una sola llamada de alta:
+   *
+   *   - `caratula`: el camino de siempre — lee `numero`/`cbu` de la carátula, con o sin CBU manual.
+   *   - `tarjeta`: tarjeta corporativa cuya carátula no publica ni `numero` ni `cbu` en ninguna
+   *     página legible (Bracci, HANDOFF 2026-09-02/03). `leerCaratula` no aplica —no reconoce ese
+   *     formato, y esa lectura vive en `visa-corporativa.ts`, fuera de alcance acá— así que el ancla
+   *     es el CUIT del titular, pedido SIEMPRE por prompt oculto, nunca leído del documento.
    */
-  let caratula: ReturnType<typeof leerCaratula>;
-  let cbuFueManual = false;
-  try {
-    caratula = leerCaratula(texto, args.moneda, undefined, args.tipo, filasGeometricas);
-  } catch (error) {
-    const esAmbiguedadDeCbu =
-      error instanceof Error && error.message.includes('no se puede atribuir a una sola moneda');
-    if (!esAmbiguedadDeCbu) throw error;
+  type DatosAlta =
+    | { readonly modo: 'caratula'; readonly caratula: ReturnType<typeof leerCaratula>; readonly cbuFueManual: boolean }
+    | { readonly modo: 'tarjeta'; readonly cuitTitular: string; readonly vigencia: string };
+
+  let datos: DatosAlta;
+
+  if (args.tarjeta === 'true') {
+    const vigenciaDeclarada = args.vigencia;
+    if (vigenciaDeclarada === undefined) {
+      imprimir('');
+      imprimir('  ABORTA: --tarjeta true requiere --vigencia YYYY-MM-DD.');
+      imprimir('  No se puede leer el período de una carátula cuyo formato este script no reconoce —');
+      imprimir('  esa lectura vive en packages/ingesta/src/adaptadores/visa-corporativa.ts, fuera de');
+      imprimir('  alcance acá. Pasá la fecha real del período del resumen que tenés delante.');
+      imprimir('');
+      process.exit(1);
+    }
     try {
-      const cbuManual = await pedirCbuConfirmado();
-      caratula = leerCaratula(texto, args.moneda, cbuManual, args.tipo, filasGeometricas);
-      cbuFueManual = true;
+      const cuitTitular = await pedirCuitTitularConfirmado();
+      datos = { modo: 'tarjeta', cuitTitular, vigencia: vigenciaDeclarada };
     } catch (errorDePrompt) {
       const mensaje = errorDePrompt instanceof Error ? errorDePrompt.message : 'error desconocido';
       imprimir(`  ABORTA: ${mensaje}`);
       process.exit(1);
+    }
+  } else {
+    /**
+     * Primer intento sin CBU manual. Si la carátula tiene una sola cuenta, esto alcanza y nunca se pide
+     * nada por prompt. Si tiene más de una, `leerCaratula` tira el error puntual de "no se puede atribuir
+     * a una sola moneda" — se atrapa ACÁ, y solo esa condición, para pedir el CBU de forma oculta. Cualquier
+     * otro error (número de cuenta, período, etc.) sigue de largo sin pasar por el prompt.
+     */
+    try {
+      const caratula = leerCaratula(texto, args.moneda, undefined, args.tipo, filasGeometricas);
+      datos = { modo: 'caratula', caratula, cbuFueManual: false };
+    } catch (error) {
+      const esAmbiguedadDeCbu =
+        error instanceof Error && error.message.includes('no se puede atribuir a una sola moneda');
+      if (!esAmbiguedadDeCbu) throw error;
+      try {
+        const cbuManual = await pedirCbuConfirmado();
+        const caratula = leerCaratula(texto, args.moneda, cbuManual, args.tipo, filasGeometricas);
+        datos = { modo: 'caratula', caratula, cbuFueManual: true };
+      } catch (errorDePrompt) {
+        const mensaje = errorDePrompt instanceof Error ? errorDePrompt.message : 'error desconocido';
+        imprimir(`  ABORTA: ${mensaje}`);
+        process.exit(1);
+      }
     }
   }
 
@@ -954,13 +1070,19 @@ if (esEjecucionDirecta) {
   // en texto completo: es una constante del programa (qué rótulo matcheó), nunca la línea real del
   // documento — permite confirmar que el filtro por moneda entró por la sección correcta.
   imprimir('');
-  imprimir('  Leído de la carátula (formas, no valores):');
+  imprimir('  Leído (formas, no valores):');
   imprimir(`    Moneda pedida     ${args.moneda}`);
-  imprimir(`    Sección leída     ${caratula.seccionUsada}`);
-  imprimir(`    CBU               ${forma(caratula.cbu)}`);
-  imprimir(`    Número de cuenta  ${forma(caratula.numero)}`);
-  imprimir(`    Tipo de cuenta    ${caratula.tipoCuenta}`);
-  imprimir(`    Vigente desde     ${caratula.desde}`);
+  if (datos.modo === 'caratula') {
+    imprimir(`    Sección leída     ${datos.caratula.seccionUsada}`);
+    imprimir(`    CBU               ${forma(datos.caratula.cbu)}`);
+    imprimir(`    Número de cuenta  ${forma(datos.caratula.numero)}`);
+    imprimir(`    Tipo de cuenta    ${datos.caratula.tipoCuenta}`);
+    imprimir(`    Vigente desde     ${datos.caratula.desde}`);
+  } else {
+    imprimir('    Tipo de cuenta    tarjeta_corporativa (B.17, sin numero/cbu en la carátula)');
+    imprimir(`    CUIT del titular  ${forma(datos.cuitTitular)}`);
+    imprimir(`    Vigente desde     ${datos.vigencia}`);
+  }
   imprimir('');
 
   try {
@@ -988,11 +1110,16 @@ if (esEjecucionDirecta) {
            * sensible).
            */
           motivo:
-            `alta de cuenta ${args.banco} desde la caratula del resumen, piloto Modulo 1` +
-            (cbuFueManual ? ' — CBU ingresado manualmente por el operador, no leido del documento' : '') +
-            (args.tipo === undefined
-              ? ''
-              : ` — el operador especifico --tipo=${args.tipo} para elegir la seccion (formato Macro)`),
+            datos.modo === 'caratula'
+              ? `alta de cuenta ${args.banco} desde la caratula del resumen, piloto Modulo 1` +
+                (datos.cbuFueManual
+                  ? ' — CBU ingresado manualmente por el operador, no leido del documento'
+                  : '') +
+                (args.tipo === undefined
+                  ? ''
+                  : ` — el operador especifico --tipo=${args.tipo} para elegir la seccion (formato Macro)`)
+              : `alta de tarjeta corporativa ${args.banco} por CUIT del titular (B.17, sin numero ni ` +
+                `cbu en la caratula), piloto Modulo 1`,
         },
         (ctx) =>
           altaDeCuentaBancaria(tx, ctx, {
@@ -1000,10 +1127,11 @@ if (esEjecucionDirecta) {
             bancoCodigo: args.banco,
             moneda: args.moneda,
             alias: args.alias,
-            tipoCuenta: caratula.tipoCuenta,
-            numero: caratula.numero,
-            cbu: caratula.cbu,
-            vigenteDesde: caratula.desde,
+            tipoCuenta: datos.modo === 'caratula' ? datos.caratula.tipoCuenta : 'tarjeta_corporativa',
+            numero: datos.modo === 'caratula' ? datos.caratula.numero : undefined,
+            cbu: datos.modo === 'caratula' ? datos.caratula.cbu : undefined,
+            cuitTitular: datos.modo === 'tarjeta' ? datos.cuitTitular : undefined,
+            vigenteDesde: datos.modo === 'caratula' ? datos.caratula.desde : datos.vigencia,
           }),
       ),
     );
@@ -1013,7 +1141,11 @@ if (esEjecucionDirecta) {
     imprimir(`    identificador_id    ${resultado.identificadorId}`);
     imprimir(`    pepper_id           ${resultado.pepperId}`);
     imprimir('');
-    imprimir('  El CBU quedó SOLO como HMAC. El valor completo no se guardó en ninguna columna.');
+    imprimir(
+      datos.modo === 'caratula'
+        ? '  El CBU quedó SOLO como HMAC. El valor completo no se guardó en ninguna columna.'
+        : '  El CUIT del titular quedó SOLO como HMAC. El valor completo no se guardó en ninguna columna.',
+    );
     imprimir('');
   } finally {
     await cerrarConexiones();

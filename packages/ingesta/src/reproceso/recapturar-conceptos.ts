@@ -209,6 +209,9 @@ export async function recapturarConceptosDeLote(
     const resolucion = await resolverCuentaDelExtracto(tx, {
       clienteId: pedido.clienteId,
       numeroDeclarado: cuenta.cuenta.numero,
+      // B.17: no ejercita el tercer camino (el reproceso no cubre tarjeta corporativa hoy) —
+      // `moneda` pasa igual porque el tipo la exige desde 0036.
+      moneda: cuenta.cuenta.moneda,
       alFecha: periodoHasta,
     });
     if (resolucion.estado !== 'resuelta') {
