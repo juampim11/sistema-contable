@@ -190,14 +190,15 @@ cuando se implemente):
 | `vigente_desde`/`vigente_hasta` | **N2** | vigencia de una relación comercial real |
 | `created_at` | N1 | estándar |
 
-### 1.6 Punto abierto, no decidido por el usuario todavía
+### 1.6 Punto abierto — RESUELTO al aprobar la implementación (§6)
 
 **¿`padron_contraparte` necesita vigencia `[vigente_desde, vigente_hasta)` real?** arquitecto-software no
 encontró razón estructural para copiarla de `padron_socio` ("un proveedor no deja de ser proveedor con la
 misma semántica que un socio deja la sociedad") y lo dejó como pregunta abierta para
 contador-dominio/product-owner. dba-data la incluyó en su DDL ilustrativo por "mismo criterio que
-`padron_socio`", sin resolver la tensión. **No se decide en este documento** — queda para la
-implementación, con su propia convocatoria breve si hace falta.
+`padron_socio`", sin resolver la tensión. **Decisión de JP al aprobar el plan de implementación
+(2026-09-05): SÍ, mismo patrón semiabierto que `padron_socio`** — así quedó escrito en la migración `0037`
+(§6).
 
 ## 2. Convocatoria 2 — enlace con `cuenta_id` (dba-data + plan-cuentas-multicliente)
 
@@ -303,3 +304,45 @@ solo en la sesión que las produjo, hasta que `dba-data`, en la segunda ronda, c
 "padron_contraparte"` sobre el repo completo y confirmó cero resultados. Este documento cierra ese hueco.
 Sin él, el diseño no existiría para Codex ni para la próxima sesión — mismo riesgo ya registrado en
 [[planes-y-dictamenes-van-al-repo]].
+
+## 6. Implementación (`0037`) — cerrada, sin conectar al pipeline
+
+Convocatoria previa a escribir el DDL real: `security-engineer` + `seguridad-datos-financieros` sobre
+el DDL concreto de §1.5 (exigido por CLAUDE.md §3.1 para toda migración/RLS, no cubierto por las dos
+rondas de diseño). Un solo hallazgo bloqueante, corregido:
+
+- **El guardia `patron !~ '[0-9]{7}'` tenía un vector de evasión medido en este repo**
+  (`packages/shared/src/seguridad/detectores-forma.ts`): un CUIT con separadores de miles
+  ("30.712.345.678") no tiene ninguna corrida de 7 dígitos *consecutivos*. Corregido a
+  `patron !~ '[0-9]([[:space:].-]?[0-9]){6,}'` — 7+ dígitos con separador OPCIONAL entre cada uno.
+  Puerta de admisión CONSERVADORA: un nombre real con una cadena larga de dígitos (código postal,
+  número de sucursal) puede rechazarse como falso positivo — trade-off aceptado, mismo criterio que
+  `padron_socio`; el CLI lo indica con claridad en el mensaje de error.
+- **`asiento_propuesto_renglon.padron_contraparte_id` necesita FK COMPUESTA**, no simple — confirmado
+  contra el DDL real de esa tabla (mismo patrón que `fk_asiento_renglon_manifestacion`). Sin la FK
+  compuesta, un renglón de un cliente podría citar, como evidencia, el patrón de OTRO cliente — RLS no
+  protege el `INSERT` del hijo contra ese vector. Verificado con mutación de DDL en vivo
+  (`mutaciones-0037.test.ts`, bloque G): con una FK reducida a una sola columna, el cruce entra; con la
+  FK compuesta real, se rechaza (`23503`).
+
+Entregado en esta tarea:
+
+- Migración `packages/data/migrations/0037_padron_contraparte.sql` — tabla, RLS, el enlace de evidencia.
+- `packages/contabilidad/src/nucleo/contraparte.ts` — `resolverEvidenciaDeContraparte()`, la función
+  pura con el corte de `es_socio` como regla dura. Prueba de mutación en vivo
+  (`packages/contabilidad/tests/contraparte.test.ts`): comentar el corte da rojo, restaurarlo da verde.
+- `packages/data/src/contabilidad/escrituras.ts` — `altaDeContraparte`/`bajaDeContraparte`.
+- `apps/cli/src/alta-contraparte.ts` — CLI de alta/baja, sin prompt oculto (`patron` no es N2-R).
+- `packages/data/tests/mutaciones-0037.test.ts` — 9 mutaciones + 8 legítimos sobre los checks/FK
+  propios de esta migración (incluidas las dos mutaciones de DDL en vivo de arriba).
+- Clasificación en `clasificacion-campos.ts`, registro en `catalogo.test.ts` (dominio cerrado) y en
+  `grants-conjunto-cerrado.test.ts` (conjunto de grants).
+
+**No conectado a propósito** (ver §4): `motor.ts`/`aplicarContrapartida`, la lectura de
+`padron_contraparte` en `lecturas.ts`, y la persistencia de `padron_contraparte_id` al escribir un
+renglón real. Es la integración pendiente, con su propia convocatoria si hace falta. Tampoco se cargó
+ningún proveedor real — paso posterior, con confirmación de la contadora nombre por nombre.
+
+**Nada de esto se aplicó contra el piloto.** Solo migración local, verificada con `--estado` de
+solo lectura contra el piloto antes de tocar nada en local (confirmó que el piloto está limpio y que
+`0037` es lo único pendiente ahí).
