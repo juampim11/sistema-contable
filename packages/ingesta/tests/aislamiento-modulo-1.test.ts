@@ -153,6 +153,11 @@ const FUERA_DEL_MODULO_1: Readonly<Record<string, string>> = {
     'ingesta). Cobertura de aislamiento en aislamiento-modulo-2.test.ts.',
   padron_socio_documento:
     'Satélite N2-R del padrón de socios (0013), misma razón que padron_socio.',
+  padron_contraparte:
+    'Tabla del Módulo 2 (0037): catálogo de proveedores/clientes conocidos por nombre. El pipeline de ' +
+    'este escenario no la escribe (no hay alta de contraparte en la ingesta) — se carga por CLI, ' +
+    'misma razón que padron_socio. No conectada al pipeline de reconocimiento todavía ' +
+    '(docs/diseno/29-padron-contraparte.md §4), así que hoy no tiene cobertura de aislamiento propia.',
   reconocimiento_movimiento:
     'Tabla del Módulo 2 (migración 0014): el resultado del motor. La ingesta NO la escribe — el ' +
     'motor corre después, sobre movimientos ya persistidos, y es lo que separa "qué dice el ' +

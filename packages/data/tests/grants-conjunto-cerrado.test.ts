@@ -247,6 +247,12 @@ const GRANTS_POR_COLUMNA: readonly {
   // `manifestado_en` (la fecha NO es elegible) y sin `manifestado_por` (identidad declarada no es
   // identidad autenticada). Y **ningún** UPDATE ni DELETE, que es lo que vuelve `completo_hasta`
   // inmutable y lo que hace legítima la FK compuesta de `reconocimiento_contrapartida`.
+  // 0037: sin `administrativo` (decidir que un tercero es proveedor/cliente cambia la imputación de
+  // TODOS sus movimientos sin que nada falle, mismo criterio que padron_socio). UPDATE acotado a
+  // `vigente_hasta` — `patron` ES la clave de match, no una etiqueta cosmética como `denominacion`.
+  { tabla: 'padron_contraparte', rol: 'app_request', privilegio: 'INSERT', columnas: ['clasificacion', 'cliente_id', 'created_at', 'id', 'patron', 'vigente_desde', 'vigente_hasta'] },
+  { tabla: 'padron_contraparte', rol: 'app_request', privilegio: 'SELECT', columnas: ['clasificacion', 'cliente_id', 'created_at', 'id', 'patron', 'vigente_desde', 'vigente_hasta'] },
+  { tabla: 'padron_contraparte', rol: 'app_request', privilegio: 'UPDATE', columnas: ['vigente_hasta'] },
   { tabla: 'padron_manifestacion', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'completo_hasta', 'revoca_a'] },
   { tabla: 'padron_manifestacion', rol: 'app_request', privilegio: 'SELECT', columnas: ['cliente_id', 'completo_hasta', 'id', 'manifestado_en', 'manifestado_por', 'revoca_a'] },
   { tabla: 'padron_socio', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'created_at', 'denominacion', 'documento_hmac', 'documento_tipo', 'documento_ultimos4', 'id', 'pepper_id', 'vigente_desde', 'vigente_hasta'] },
@@ -337,8 +343,8 @@ const GRANTS_POR_COLUMNA: readonly {
   { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
   { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
   { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'UPDATE', columnas: ['asiento_estado', 'superseded_by_id'] },
-  { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
-  { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
+  { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_contraparte_id', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
+  { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_contraparte_id', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
   // La vista `asiento_propuesto_totales` (`security_invoker=true`, D-16 de HANDOFF 128): sin este
   // grant, el dueño del esquema bypassea RLS al resolverla — SELECT únicamente, nunca escritura (es
   // un agregado, no una tabla).
@@ -449,6 +455,8 @@ const GRANTS_A_NIVEL_TABLA: readonly string[] = [
   'movimiento_contraparte_identificador|app_request|SELECT',
   'movimiento_origen_crudo|app_request|INSERT',
   'movimiento_origen_crudo|app_request|SELECT',
+  'padron_contraparte|app_request|INSERT',
+  'padron_contraparte|app_request|SELECT',
   'padron_manifestacion|app_request|SELECT',
   'padron_socio|app_request|INSERT',
   'padron_socio|app_request|SELECT',

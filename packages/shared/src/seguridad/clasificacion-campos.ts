@@ -563,6 +563,46 @@ export const CLASIFICACION = {
    * columnas N2-R, consultada en cada pasada) y `padron_socio_documento` (N2-R, el documento en
    * claro, satélite).
    */
+  /**
+   * `padron_contraparte` (0037): catálogo por cliente de proveedores/clientes conocidos por NOMBRE.
+   * A diferencia de `padron_socio`, sin partición N2/N2-R — un nombre comercial no es un
+   * identificador que habilite fraude (ADR-0002 §A.1), a diferencia del documento fiscal de un
+   * socio. `docs/diseno/29-padron-contraparte.md`.
+   */
+  padron_contraparte: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      patron: {
+        nivel: 'N2',
+        exportable: true,
+        nota:
+          'Nombre comercial de un proveedor/cliente, mismo criterio que `tenant_node.nombre`/' +
+          '`padron_socio.denominacion`. Se mantiene en N2 por el check ' +
+          '`padron_contraparte_patron_sin_documento_chk` (puerta de admisión, no confianza): sin ' +
+          'él, cargar un documento ahí por error dejaría el dato en claro de un tercero en una ' +
+          'columna que se lee sin rol y sin auditoría.',
+      },
+      clasificacion: {
+        nivel: 'N2',
+        exportable: true,
+        nota:
+          'proveedor|cliente|otro — mismo criterio que subió `cuenta_atributo.rol_funcional` a N2: ' +
+          'afirma un hecho real de la relación comercial de ESTE cliente con un tercero puntual.',
+      },
+      vigente_desde: {
+        nivel: 'N2',
+        exportable: true,
+        nota:
+          'Vigencia de una relación comercial real ("desde cuándo este patrón identifica a este ' +
+          'tercero"), mismo criterio que `padron_socio.vigente_desde`.',
+      },
+      vigente_hasta: { nivel: 'N2', exportable: true },
+      created_at: MARCA_TIEMPO,
+    },
+  },
+
   padron_socio: {
     columnaTenant: 'cliente_id',
     campos: {
@@ -1323,6 +1363,10 @@ export const CLASIFICACION = {
       asiento_id: UUID_INTERNO,
       fuente_cierre_id: UUID_INTERNO,
       padron_manifestacion_id: UUID_INTERNO,
+      padron_contraparte_id: {
+        ...UUID_INTERNO,
+        nota: 'FK de evidencia a padron_contraparte (0037) — mismo tier que padron_manifestacion_id: el uuid no revela contenido.',
+      },
       orden: { nivel: 'N1', exportable: true },
       cuenta_id: UUID_INTERNO,
       cuenta_ref: {

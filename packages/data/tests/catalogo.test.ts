@@ -59,6 +59,7 @@ import {
 } from '../../ingesta/src/esquema.ts';
 import { CLASES_IDENTIFICADOR_CONTRAPARTE, TIPOS_DOCUMENTO_SOCIO } from '@sistema-contable/shared/seguridad';
 import { CONCEPTOS_CANONICOS } from '../../contabilidad/src/nucleo/catalogo.ts';
+import { CLASIFICACIONES_CONTRAPARTE } from '../../contabilidad/src/nucleo/contraparte.ts';
 import {
   CLASES_RECONOCIMIENTO,
   ESTADOS_RESOLUCION,
@@ -834,6 +835,14 @@ type DominioCerrado = {
  * completo está en el comentario de `TIPOS_CUENTA_ALTA`.
  */
 const DOMINIOS_CERRADOS: DominioCerrado[] = [
+  {
+    check: 'padron_contraparte_clasificacion_chk',
+    tabla: 'padron_contraparte',
+    columna: 'clasificacion',
+    constante: 'CLASIFICACIONES_CONTRAPARTE',
+    valores: CLASIFICACIONES_CONTRAPARTE,
+    migracion: '0037',
+  },
   {
     check: 'membership_historia_operacion_chk',
     tabla: 'membership_historia',

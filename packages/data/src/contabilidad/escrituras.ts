@@ -500,6 +500,133 @@ export async function persistirReconocimiento(
     : { estado: 'creado', reconocimientoId: id };
 }
 
+// -----------------------------------------------------------------------------
+// Alta y baja de `padron_contraparte` (migración 0037)
+// -----------------------------------------------------------------------------
+
+/**
+ * Mirror SIMPLIFICADO de `altaDeSocio`/`bajaDeSocio`: sin HMAC, sin pepper, sin satélite N2-R —
+ * `patron` es N2 simple, un nombre comercial no es un identificador que habilite fraude (ADR-0002
+ * §A.1), a diferencia del documento fiscal de un socio. Una sola tabla, un solo insert.
+ */
+export type PedidoDeAltaDeContraparte = {
+  readonly clienteId: string;
+  /** YA normalizado por el llamador (CLI), con `normalizar()` — mismo contrato que `altaDeSocio`
+   *  con el documento: la normalización vive una sola vez, antes de que el valor llegue acá. */
+  readonly patron: string;
+  /** Dominio cerrado (`padron_contraparte_clasificacion_chk`); lo arbitra la base, mismo criterio
+   *  que `tipo`/`concepto` en `PedidoDePersistirReconocimiento` — este paquete no importa la unión
+   *  de `packages/contabilidad`. */
+  readonly clasificacion: string;
+  readonly vigenteDesde: string;
+};
+
+export type ResultadoAltaDeContraparte = { readonly contraparteId: string };
+
+/**
+ * Da de alta el patrón. Igual que `altaDeSocio`, sin rama de idempotencia: el índice único parcial
+ * `uq_padron_contraparte_vigente` es sobre vigencia ACTIVA, y una segunda alta con el mismo patrón
+ * activo es un error real (alta duplicada a mano), no un reproceso benigno. Se deja que Postgres lo
+ * rechace; `conErroresTraducidos` lo traduce sin dato del patrón en el mensaje (F2,
+ * `seguridad-datos-financieros`: nunca el `DETAIL` crudo de Postgres, que expondría `patron` en claro).
+ */
+export async function altaDeContraparte(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoDeAltaDeContraparte,
+): Promise<ResultadoAltaDeContraparte> {
+  const fila = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string }>(
+      `insert into padron_contraparte (cliente_id, patron, clasificacion, vigente_desde)
+       values ($1, $2, $3, $4::date)
+       returning id::text as id`,
+      [pedido.clienteId, pedido.patron, pedido.clasificacion, pedido.vigenteDesde],
+    ),
+  );
+  const contraparteId = fila[0]?.id;
+  if (!contraparteId) throw new Error('El alta de contraparte no devolvió id.'); // H-14
+
+  // Sin `clasificacion`: 0037 la sube a N2 (mismo criterio que `cuenta_atributo.rol_funcional`) — el
+  // tipo del logger la rechaza (mismo patrón que `denominacion`/`documento` en `altaDeSocio`).
+  logger.info('alta_contraparte.creado', { cliente_id: pedido.clienteId });
+
+  return { contraparteId };
+}
+
+export type PedidoDeBajaDeContraparte = {
+  readonly clienteId: string;
+  readonly contraparteId: string;
+  readonly vigenteHasta: string;
+};
+
+export type MotivoBajaDeContraparte = 'BAJA_CONTRAPARTE_NO_ENCONTRADA';
+
+export class BajaDeContraparteNoEncontradaError extends Error {
+  readonly codigo: MotivoBajaDeContraparte = 'BAJA_CONTRAPARTE_NO_ENCONTRADA';
+  readonly clienteId: string;
+  readonly contraparteId: string;
+
+  constructor(clienteId: string, contraparteId: string) {
+    super(
+      `No hay una contraparte con vigencia abierta para dar de baja (cliente ${clienteId}, ` +
+        `contraparte ${contraparteId}).`,
+    );
+    this.name = 'BajaDeContraparteNoEncontradaError';
+    this.clienteId = clienteId;
+    this.contraparteId = contraparteId;
+  }
+}
+
+/** Mismo motivo exacto que `BajaMismoDiaDeAltaError`: `padron_contraparte_vigencia_chk` exige
+ *  `vigente_hasta > vigente_desde` ESTRICTO. */
+export class BajaMismoDiaDeAltaContraparteError extends Error {
+  readonly codigo = 'BAJA_MISMO_DIA_DE_ALTA' as const;
+
+  constructor() {
+    super(
+      'No se puede cerrar la vigencia con la misma fecha (o una anterior) a la del alta — ' +
+        'padron_contraparte exige vigente_hasta > vigente_desde. Si el error se detectó el mismo ' +
+        'día de la carga, dar la baja con la fecha de MAÑANA.',
+    );
+    this.name = 'BajaMismoDiaDeAltaContraparteError';
+  }
+}
+
+/**
+ * Cierra la vigencia. Único UPDATE que el grant por columna permite. Un patrón mal cargado NO se
+ * corrige con un UPDATE de `patron`/`clasificacion` (no hay grant): acá `patron` ES la clave
+ * funcional de matching, así que un error de carga se corrige dando de baja la fila y dando de alta
+ * una nueva con el valor correcto — más estricto que `padron_socio` (que sí permite corregir
+ * `denominacion` por ser una etiqueta cosmética, no la clave de match).
+ */
+export async function bajaDeContraparte(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoDeBajaDeContraparte,
+): Promise<{ readonly contraparteId: string }> {
+  let filas: readonly { readonly id: string }[];
+  try {
+    filas = await conErroresTraducidos(undefined, () =>
+      tx.consultar<{ id: string }>(
+        `update padron_contraparte set vigente_hasta = $3::date
+          where cliente_id = $1 and id = $2 and vigente_hasta is null
+          returning id::text as id`,
+        [pedido.clienteId, pedido.contraparteId, pedido.vigenteHasta],
+      ),
+    );
+  } catch (error) {
+    if (error instanceof ErrorDeBase && error.constraint === 'padron_contraparte_vigencia_chk') {
+      throw new BajaMismoDiaDeAltaContraparteError();
+    }
+    throw error;
+  }
+  const id = filas[0]?.id;
+  if (!id) throw new BajaDeContraparteNoEncontradaError(pedido.clienteId, pedido.contraparteId);
+
+  logger.info('alta_contraparte.baja', { cliente_id: pedido.clienteId });
+  return { contraparteId: id };
+}
+
 export type ResumenDePersistencia = {
   readonly creados: number;
   readonly supersedidos: number;
