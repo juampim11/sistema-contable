@@ -165,6 +165,20 @@ export const RE_DNI = /(?<![\d\-.,])\d{7,8}(?![\d\-.,])/g;
 export const RE_CORRIDA_LARGA = /(?<![\d\-.,])\d{9,}(?![\d\-.,])/g;
 
 /**
+ * Mirror en TypeScript de `padron_contraparte_patron_sin_documento_chk` (migración `0037`) — el
+ * guard PRE-parseo del CLI de alta (`apps/cli/src/alta-contraparte.ts`) contra un documento tipeado
+ * por error donde va un nombre. Las dos listas se prueban por separado, no hay forma de derivarlas
+ * sin ciclo de import (mismo motivo que `TIPOS_CUENTA`/`TIPOS_CUENTA_ALTA`).
+ *
+ * A diferencia de `RE_CUIT`/`RE_DNI` (que exigen la forma EXACTA de un documento bien formado), este
+ * detector es el heurístico más amplio que `padron_contraparte` necesita: 7 dígitos o más, con un
+ * separador OPCIONAL (espacio, guión o punto) entre cada uno — así que un CUIT partido en bloques de
+ * miles ("30.712.345.678") sigue contando como una sola corrida y no lo evade. No usa
+ * `digitosConSeparador()` (ese helper exige un largo EXACTO); acá el largo es "7 o más".
+ */
+export const RE_POSIBLE_DOCUMENTO_EN_TEXTO = /\d(?:[\s.-]?\d){6,}/g;
+
+/**
  * Copia de un regex **sin las flags que llevan estado**: `g` y `y`.
  *
  * Las dos hacen que `exec`/`test` arrastren `lastIndex` entre llamadas, así que un patrón reusado sobre

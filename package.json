@@ -42,6 +42,7 @@
     "detectar:lotes-desactualizados": "node apps/cli/src/detectar-lotes-desactualizados.ts",
     "backfill:documento-ingerido": "node apps/cli/src/backfill-documento-ingerido.ts",
     "alta:socio": "node apps/cli/src/alta-socio.ts",
+    "alta:contraparte": "node apps/cli/src/alta-contraparte.ts",
     "alta:socio:placeholder-demo": "node apps/cli/src/alta-socio-placeholder-demo.ts",
     "resolver:contrapartida": "node apps/cli/src/resolver-contrapartida.ts",
     "reconocer:lote": "node apps/cli/src/reconocer-lote.ts",

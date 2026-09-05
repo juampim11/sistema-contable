@@ -12,6 +12,17 @@
         "detectores-forma.ts": "5685814b2236a080",
         "glosa.ts": "9f0538ce3bf21bed"
       }
+    },
+    {
+      "version": 1,
+      "aceptada_en": "2026-09-05",
+      "bump": false,
+      "motivo": "RE_POSIBLE_DOCUMENTO_EN_TEXTO nueva en detectores-forma.ts, usada solo por el guard del CLI alta-contraparte.ts — no la consume ningun extractor/adaptador, no puede alterar ningun resultado",
+      "archivos": {
+        "contraparte.ts": "b05f30e66add0c61",
+        "detectores-forma.ts": "81f4c4896f472a63",
+        "glosa.ts": "9f0538ce3bf21bed"
+      }
     }
   ]
 }
