@@ -578,11 +578,18 @@ describe('R-E — el motor no contiene ni una regex escrita a mano sobre la glos
    * regla existe para prohibir. La allowlist son los tres archivos MECANISMO: `normalizacion.ts` (los
    * dos `.replace(regex)` del paso de normalización), `matcher.ts` (el único `startsWith`, el choke
    * point del prefijo) e `indice.ts` (el `.test(/[A-Z0-9]$/)` del ancla).
+   *
+   * `contraparte.ts` (0037) entra por el mismo argumento que `matcher.ts`: su `.includes()` no
+   * compara contra un LITERAL escrito a mano en el código (lo que esta regla prohíbe — "es una
+   * ENTRADA del léxico, no una condición de código") — compara la glosa contra `patron`, un valor
+   * que llega en runtime desde `padron_contraparte` (dato de un cliente, cargado por CLI). Es el
+   * choke point de ESE mecanismo, mismo rol que `matcher.ts` cumple para el léxico.
    */
   const PERMITIDOS_TEXTO_LIBRE = [
     'packages/contabilidad/src/nucleo/normalizacion.ts',
     'packages/contabilidad/src/nucleo/matcher.ts',
     'packages/contabilidad/src/nucleo/indice.ts',
+    'packages/contabilidad/src/nucleo/contraparte.ts',
   ];
   const PATRON_TEXTO_LIBRE = /\.includes\(|\.startsWith\(|\.endsWith\(|\.indexOf\(|\.match\(|\.search\(|\/[^/\n]{1,80}\/[gimsuy]*\.test\(/;
 
