@@ -50,6 +50,13 @@ export type FilaPlanilla = {
    *  fila ya está identificada sin decisión pendiente (clase `propuesta`) o cuando el enriquecimiento
    *  no corrió. */
   readonly pendiente: string | null;
+  /** `padron_contraparte` (0037) — `null` salvo que el motor haya matcheado (o ambiguado) contra un
+   *  proveedor/cliente conocido por nombre en `distinguir_tercero_de_socio`. Columna separada de
+   *  `pendiente` a propósito (mismo principio que ya separó `confianza`): es una pregunta distinta
+   *  ("¿lo conocemos?"), no una variante del "qué falta". Solo la CLASIFICACIÓN, nunca el nombre
+   *  matcheado — decisión de JP, 2026-09-06 (ver `textoDeContraparteConocida`,
+   *  `@sistema-contable/contabilidad`). */
+  readonly contraparteConocida: string | null;
 };
 
 /**
@@ -518,6 +525,7 @@ const COLOR_POR_COLUMNA: Readonly<Record<string, string>> = {
   identificacion: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
   confianza: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
   pendiente: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
+  contraparteConocida: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
   qEsQuienEs: ARGB_APORTE_DE_LAURA,
   comentarios: ARGB_APORTE_DE_LAURA,
   filaNumero: ARGB_CONTROL_INTERNO,
@@ -548,6 +556,13 @@ function columnasMovimientos(filas: readonly FilaPlanilla[]): readonly ColumnaMo
   columnas.push(
     { header: 'Tipo de movimiento', key: 'identificacion', width: 30 },
     { header: 'Confianza', key: 'confianza', width: 16 },
+    // padron_contraparte (0037): columna nueva, misma familia de origen ("identificado por el
+    // sistema") que sus vecinas — separada de "Qué falta" por el mismo principio que ya separó
+    // "Confianza" de "Tipo de movimiento" (una pregunta por columna), pero ANTES de "Qué falta" y
+    // no después: "Qué falta" tiene que seguir inmediatamente adyacente a "Corrección / Identidad"
+    // (ux-designer, test dedicado en `planilla.test.ts`) — ningún dato del sistema puede intercalarse
+    // entre la última pregunta del sistema y la primera columna de Laura.
+    { header: 'Contraparte conocida', key: 'contraparteConocida', width: 34 },
     { header: 'Qué falta', key: 'pendiente', width: 42 },
     // Feedback de Laura (`ux-designer`): vacías en las 1830 filas, siempre — nadie las pre-llena.
     // "Alta" + vacía = aprobación tácita (silencio); "A confirmar"/"Indeterminado" es donde el

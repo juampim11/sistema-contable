@@ -133,6 +133,7 @@ function filaDePrueba(over: Partial<FilaPlanilla> = {}): FilaPlanilla {
     identificacion: null,
     confianza: null,
     pendiente: null,
+    contraparteConocida: null,
     ...over,
   };
 }

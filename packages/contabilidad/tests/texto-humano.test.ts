@@ -117,7 +117,12 @@ describe('textoDeReconocimiento — las tres columnas, por clase', () => {
       via: 'texto_literal_exacto',
       evidencia: EVIDENCIA_DE_PRUEBA,
     };
-    expect(textoDeReconocimiento(r)).toEqual({ identificacion: 'Comisión bancaria', confianza: 'Alta', pendiente: null });
+    expect(textoDeReconocimiento(r)).toEqual({
+      identificacion: 'Comisión bancaria',
+      confianza: 'Alta',
+      pendiente: null,
+      contraparteConocida: null,
+    });
   });
 
   it('decision_humana: identificación con el tipo, "pendiente" con el texto de queDecide', () => {
@@ -142,6 +147,7 @@ describe('textoDeReconocimiento — las tres columnas, por clase', () => {
       identificacion: TEXTO_SIN_TIPO,
       confianza: null,
       pendiente: textoDeMotivoSinReconocer('ambiguo'),
+      contraparteConocida: null,
     });
   });
 
@@ -210,5 +216,71 @@ describe('textoDeReconocimiento — las tres columnas, por clase', () => {
     const aConfirmar = textoDeReconocimiento({ ...base, queDecide: 'distinguir_tercero_de_socio' });
     expect(altaConfianza.identificacion).toBe(aConfirmar.identificacion);
     expect(altaConfianza.confianza).not.toBe(aConfirmar.confianza);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// textoDeContraparteConocida / TextoDeReconocimiento.contraparteConocida — padron_contraparte (0037)
+// -----------------------------------------------------------------------------
+describe('textoDeReconocimiento.contraparteConocida', () => {
+  function decisionHumanaDistinguirSocio(evidenciaContraparte?: unknown) {
+    return {
+      clase: 'decision_humana' as const,
+      tipo: 'pago_a_proveedor_transferencia' as const,
+      concepto: 'comision_de_transferencia' as const,
+      polaridad: 'normal' as const,
+      lado: 'debe' as const,
+      via: 'texto_literal_exacto' as const,
+      evidencia: EVIDENCIA_DE_PRUEBA,
+      queDecide: 'distinguir_tercero_de_socio' as const,
+      ...(evidenciaContraparte !== undefined ? { evidenciaContraparte } : {}),
+    } as Extract<Reconocimiento, { clase: 'decision_humana' }>;
+  }
+
+  it('null cuando no se consultó padron_contraparte (sin evidenciaContraparte)', () => {
+    expect(textoDeReconocimiento(decisionHumanaDistinguirSocio()).contraparteConocida).toBeNull();
+  });
+
+  it('null para no_aplica y sin_match — nada nuevo que decirle a la contadora', () => {
+    expect(
+      textoDeReconocimiento(decisionHumanaDistinguirSocio({ estado: 'no_aplica' })).contraparteConocida,
+    ).toBeNull();
+    expect(
+      textoDeReconocimiento(decisionHumanaDistinguirSocio({ estado: 'sin_match' })).contraparteConocida,
+    ).toBeNull();
+  });
+
+  it.each(['proveedor', 'cliente', 'otro'] as const)(
+    'match con clasificacion=%s da un texto propio por clasificación, nunca el nombre matcheado',
+    (clasificacion) => {
+      const texto = textoDeReconocimiento(
+        decisionHumanaDistinguirSocio({ estado: 'match', contraparteId: 'c1', clasificacion }),
+      ).contraparteConocida;
+      expect(texto).not.toBeNull();
+      expect(texto).not.toContain('c1');
+      expect(texto).toContain('confirmá la cuenta');
+    },
+  );
+
+  it('multiples_patrones: texto de ambigüedad, no el de ningún clasificacion puntual', () => {
+    const texto = textoDeReconocimiento(
+      decisionHumanaDistinguirSocio({ estado: 'multiples_patrones', contraparteIds: ['c1', 'c2'] }),
+    ).contraparteConocida;
+    expect(texto).toContain('más de un tercero conocido');
+  });
+
+  it('queDecide distinto de distinguir_tercero_de_socio: siempre null, aunque venga evidenciaContraparte', () => {
+    const r = {
+      clase: 'decision_humana' as const,
+      tipo: 'pago_de_obligacion_fiscal' as const,
+      concepto: 'comision_de_transferencia' as const,
+      polaridad: 'normal' as const,
+      lado: 'debe' as const,
+      via: 'texto_literal_exacto' as const,
+      evidencia: EVIDENCIA_DE_PRUEBA,
+      queDecide: 'elegir_cuenta_de_pasivo_del_impuesto' as const,
+      evidenciaContraparte: { estado: 'match', contraparteId: 'c1', clasificacion: 'proveedor' } as never,
+    };
+    expect(textoDeReconocimiento(r).contraparteConocida).toBeNull();
   });
 });

@@ -126,6 +126,39 @@ const TEXTO_DISTINGUIR_TERCERO_DE_SOCIO_GENERICO =
   'Es un pago o cobro a una persona o empresa — no está confirmado si es un socio o un tercero. ' +
   'Depende del padrón de socios del cliente; revisalo vos.';
 
+/**
+ * `padron_contraparte` (0037) — columna NUEVA, separada de `pendiente`, mismo principio de diseño
+ * que ya separó `confianza` de `identificacion` (ver el docblock de `TextoDeReconocimiento`: "nunca
+ * un solo estado mezclando dos preguntas distintas"). Muestra SOLO la clasificación
+ * (proveedor/cliente/otro) — NUNCA el nombre matcheado (`patron`): decisión de JP, 2026-09-06. Dos
+ * motivos, ninguno de los dos "sería una fuga" (la contadora ya ve el nombre real en la glosa de la
+ * misma fila): `patron` es post-normalización y podría no verse idéntico a la glosa cruda que la
+ * planilla ya muestra, generando dudas infundadas de "por qué no coincide exacto"; y repetir un dato
+ * que ya está en otra columna de la misma fila no aporta nada, solo ruido.
+ */
+const TEXTO_CLASIFICACION_CONTRAPARTE: Record<'proveedor' | 'cliente' | 'otro', string> = {
+  proveedor: 'Coincide con un proveedor conocido — confirmá la cuenta.',
+  cliente: 'Coincide con un cliente conocido — confirmá la cuenta.',
+  otro: 'Coincide con un tercero conocido (clasificado como "otro") — confirmá la cuenta.',
+};
+const TEXTO_MULTIPLES_PATRONES_CONTRAPARTE =
+  'Coincide con más de un tercero conocido — confirmá cuál corresponde.';
+
+/** `r.clase` tiene que ser `'decision_humana'` — mismo contrato que `textoDeQueDecide`. `null` para
+ *  todo lo que no sea `distinguir_tercero_de_socio` con evidencia `match`/`multiples_patrones` —
+ *  incluido el caso sin `evidenciaContraparte` (nunca se consultó `padron_contraparte`, o dio
+ *  `sin_match`/`no_aplica`: nada nuevo que decirle a la contadora en esos casos). */
+export function textoDeContraparteConocida(
+  r: Extract<Reconocimiento, { readonly clase: 'decision_humana' }>,
+): string | null {
+  if (r.queDecide !== 'distinguir_tercero_de_socio') return null;
+  const evidencia = r.evidenciaContraparte;
+  if (evidencia === undefined) return null;
+  if (evidencia.estado === 'multiples_patrones') return TEXTO_MULTIPLES_PATRONES_CONTRAPARTE;
+  if (evidencia.estado === 'match') return TEXTO_CLASIFICACION_CONTRAPARTE[evidencia.clasificacion];
+  return null;
+}
+
 /** Los 7 valores de `MOTIVOS_SIN_RECONOCER` (`tipos.ts:150-158`). */
 const TEXTO_DE_MOTIVO_SIN_RECONOCER: Record<MotivoSinReconocer, string> = {
   concepto_no_catalogado:
@@ -202,17 +235,30 @@ export type TextoDeReconocimiento = {
   readonly identificacion: string;
   readonly confianza: string | null;
   readonly pendiente: string | null;
+  /** `padron_contraparte` (0037) — columna nueva, `null` salvo `match`/`multiples_patrones` sobre
+   *  `distinguir_tercero_de_socio`. Ver el docblock de `textoDeContraparteConocida`. */
+  readonly contraparteConocida: string | null;
 };
 
 export function textoDeReconocimiento(r: Reconocimiento): TextoDeReconocimiento {
   switch (r.clase) {
     case 'propuesta':
-      return { identificacion: textoDeTipo(r.tipo), confianza: 'Alta', pendiente: null };
+      return { identificacion: textoDeTipo(r.tipo), confianza: 'Alta', pendiente: null, contraparteConocida: null };
     case 'decision_humana': {
       const confianza = QUE_DECIDE_SIN_IDENTIDAD_CONFIRMADA.has(r.queDecide) ? 'A confirmar' : 'Alta';
-      return { identificacion: textoDeTipo(r.tipo), confianza, pendiente: textoDeQueDecide(r) };
+      return {
+        identificacion: textoDeTipo(r.tipo),
+        confianza,
+        pendiente: textoDeQueDecide(r),
+        contraparteConocida: textoDeContraparteConocida(r),
+      };
     }
     case 'sin_reconocer':
-      return { identificacion: TEXTO_SIN_TIPO, confianza: null, pendiente: textoDeMotivoSinReconocer(r.motivo) };
+      return {
+        identificacion: TEXTO_SIN_TIPO,
+        confianza: null,
+        pendiente: textoDeMotivoSinReconocer(r.motivo),
+        contraparteConocida: null,
+      };
   }
 }
