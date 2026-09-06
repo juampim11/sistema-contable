@@ -10,6 +10,7 @@ import type {
 import type { ConceptoCanonico } from './catalogo.ts';
 import type { PendienteDeLaura } from './lexico.ts';
 import type { ResolucionDeContraparte } from './contrapartida.ts';
+import type { EvidenciaDeContraparte } from './contraparte.ts';
 
 /**
  * La entrada del motor.
@@ -59,6 +60,11 @@ export type Reconocimiento =
       /** Solo presente cuando `aplicarContrapartida` (capa C, `motor.ts`) promovió esta propuesta.
        *  Ausente en toda propuesta de capa B (reglas 1-9, 11, 14). */
       readonly evidenciaContrapartida?: ResolucionDeContraparte;
+      /** Hermano de `evidenciaContrapartida`, para `padron_contraparte` (0037) — adjuntado por
+       *  `adjuntarEvidenciaDeContraparte` (capa C, `motor.ts`), NUNCA por `aplicarContrapartida`.
+       *  En la práctica, en esta rama, solo puede ser `'no_aplica'` (el corte de `es_socio` ya
+       *  promovió acá) — se declara igual, por simetría textual con la rama de abajo. */
+      readonly evidenciaContraparte?: EvidenciaDeContraparte;
     }
   | {
       readonly clase: Extract<ClaseDeReconocimiento, 'decision_humana'>;
@@ -73,6 +79,11 @@ export type Reconocimiento =
       /** Solo presente cuando `queDecide === 'distinguir_tercero_de_socio'` Y ya se corrió capa C.
        *  Es el "POR QUÉ" que la persona ve: uno de los 5 estados que no promueven. */
       readonly evidenciaContrapartida?: ResolucionDeContraparte;
+      /** Hermano de `evidenciaContrapartida`, para `padron_contraparte` (0037). Solo presente
+       *  cuando `queDecide === 'distinguir_tercero_de_socio'` — uno de `sin_match`/`match`/
+       *  `multiples_patrones` (nunca `'no_aplica'` acá: ese estado implica `es_socio`, que ya
+       *  promovió a `propuesta` antes de llegar a esta rama). */
+      readonly evidenciaContraparte?: EvidenciaDeContraparte;
     }
   | {
       readonly clase: Extract<ClaseDeReconocimiento, 'sin_reconocer'>;

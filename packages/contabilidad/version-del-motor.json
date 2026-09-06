@@ -166,6 +166,26 @@
         "texto-humano.ts": "4daf62486068cc5f",
         "tipos.ts": "7a091c2672ab69c8"
       }
+    },
+    {
+      "version": 3,
+      "aceptada_en": "2026-09-06",
+      "bump": true,
+      "motivo": "adjuntarEvidenciaDeContraparte: nueva evidencia de padron_contraparte en el Reconocimiento, altera el motor_digest y el texto que ve la contadora",
+      "archivos": {
+        "contraparte.ts": "b15448b3787482ce",
+        "contrapartida.ts": "9225c9191a65d5cf",
+        "entrada.ts": "2ad45a0406a1a49b",
+        "indice.ts": "c93529e3a0044adb",
+        "lexico.ts": "e3ebbde02837b6c7",
+        "matcher.ts": "0a15006f1992cf32",
+        "motor.ts": "e42610126a023cf4",
+        "normalizacion.ts": "17d7ecc738aad461",
+        "persistible.ts": "21aa3720fdfe8d2b",
+        "reconocimiento.ts": "9eef8df7c7ce87aa",
+        "texto-humano.ts": "6c9d8039838c182e",
+        "tipos.ts": "7a091c2672ab69c8"
+      }
     }
   ]
 }

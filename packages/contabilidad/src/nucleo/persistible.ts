@@ -128,12 +128,18 @@ export function marcarCapaCCorrida(reconocimiento: Reconocimiento): Reconocimien
  * (`05` §6). Ninguna fila de esta tabla contiene un dato del cliente.
  *
  * ⚠️ NO lleva la evidencia de contrapartida (`evidenciaContrapartida`, los 7 estados de
- * `ResolucionDeContraparte`). El RESULTADO de capa C sí queda persistido —está en `clase` y `tipo`,
- * porque la promoción los reescribe— pero el POR QUÉ no: esas columnas las crea `0015`. Es una pérdida
- * REAL y declarada, no un olvido: hasta `0015`, la cola de revisión va a poder decir *qué* propuso el
- * motor pero no *con qué evidencia de contrapartida*, y los cinco estados que NO promueven quedan
- * indistinguibles entre sí. Se acepta porque `0014` es útil y revertible solo, y porque el
- * determinante de capa C (el estado del padrón) tampoco existe hasta `0015`.
+ * `ResolucionDeContraparte`, ni su hermana `evidenciaContraparte` de `padron_contraparte`/`0037`). El
+ * RESULTADO de capa C sí queda persistido —está en `clase` y `tipo`, porque la promoción los
+ * reescribe— pero el POR QUÉ no. `reconocimiento_contrapartida` (la satélite pensada para esto) SE
+ * CREÓ en la migración `0021` — pero, verificado contra el código real (convocatoria de integración
+ * de `padron_contraparte`, 2026-09-06), **no tiene ningún escritor en producción**: ni
+ * `persistirReconocimiento` ni ningún otro punto de `packages/data/src` o `apps/cli/src` hace un
+ * `insert` ahí. Es una pérdida REAL y declarada, no un olvido: la cola de revisión puede decir *qué*
+ * propuso el motor pero no *con qué evidencia de contrapartida*, y los estados que NO promueven
+ * quedan indistinguibles entre sí en lo que se persiste (si bien la planilla exportada SÍ los
+ * distingue, calculándolos de nuevo en memoria — ver `packages/ingesta/src/planilla/
+ * exportar-planilla.ts`). Construir ese escritor es una tarea propia, con su convocatoria a
+ * `dba-data`, no resuelta acá.
  */
 export type FilaDeReconocimiento = {
   readonly clase: ClaseDeReconocimiento;

@@ -7,6 +7,8 @@ import type { Lado } from './tipos.ts';
 import type { PendienteDeLaura } from './lexico.ts';
 import type { EvidenciaDeMovimiento, Reconocimiento } from './reconocimiento.ts';
 import type { ResolucionDeContraparte } from './contrapartida.ts';
+import { resolverEvidenciaDeContraparte } from './contraparte.ts';
+import type { PatronDeContraparte } from './contraparte.ts';
 
 const CACHE_INDICES = new Map<string, IndiceDeLexico>();
 
@@ -172,6 +174,37 @@ export function aplicarContrapartida(
     case 'socio_fuera_de_vigencia':
       return { ...reconocimiento, evidenciaContrapartida: resolucion };
   }
+}
+
+/**
+ * TERCERA función de capa C — HERMANA de `aplicarContrapartida`, nunca la reemplaza ni construye
+ * `clase: 'propuesta'` (R-F sigue teniendo exactamente dos constructores: `reconocer()` y
+ * `aplicarContrapartida()`). Solo adjunta evidencia de `padron_contraparte` (0037) a un
+ * `Reconocimiento` YA resuelto por las dos funciones de arriba, preservando su clase tal cual —
+ * mismo criterio de "no tocar" que usa `aplicarContrapartida` para todo lo que no es
+ * `decision_humana` + `distinguir_tercero_de_socio`.
+ *
+ * `resolucionSocioEstado` es el `estado` que ya produjo `resolverContraparte()` para este mismo
+ * movimiento — se pasa tal cual, sin adaptador: `resolverEvidenciaDeContraparte` solo distingue el
+ * literal `'es_socio'` de cualquier otro de los 7 estados. `conceptoBancoNormalizado` y
+ * `patrones[].patron` tienen que venir YA normalizados por el llamador (`normalizar()`,
+ * `packages/shared/src/texto/normalizar.ts`) — ver el docblock de `resolverEvidenciaDeContraparte`.
+ */
+export function adjuntarEvidenciaDeContraparte(
+  reconocimiento: Reconocimiento,
+  resolucionSocioEstado: ResolucionDeContraparte['estado'],
+  conceptoBancoNormalizado: string,
+  patrones: readonly PatronDeContraparte[],
+): Reconocimiento {
+  if (reconocimiento.clase !== 'decision_humana') return reconocimiento;
+  if (reconocimiento.queDecide !== 'distinguir_tercero_de_socio') return reconocimiento;
+
+  const evidenciaContraparte = resolverEvidenciaDeContraparte(
+    resolucionSocioEstado,
+    conceptoBancoNormalizado,
+    patrones,
+  );
+  return { ...reconocimiento, evidenciaContraparte };
 }
 
 export { construirIndice };

@@ -13,8 +13,9 @@ import {
   type ResolucionDeContraparte,
   type SocioDelPadron,
 } from '../src/nucleo/contrapartida.ts';
-import { aplicarContrapartida } from '../src/nucleo/motor.ts';
+import { adjuntarEvidenciaDeContraparte, aplicarContrapartida } from '../src/nucleo/motor.ts';
 import type { Reconocimiento } from '../src/nucleo/reconocimiento.ts';
+import type { PatronDeContraparte } from '../src/nucleo/contraparte.ts';
 
 const HMAC_A = Buffer.alloc(32, 0xaa);
 const HMAC_B = Buffer.alloc(32, 0xbb);
@@ -288,5 +289,104 @@ describe('aplicarContrapartida', () => {
     const r = aplicarContrapartida(decisionHumanaDistinguirSocio('debe'), resolucion);
     expect(r.clase).toBe('decision_humana');
     if (r.clase === 'decision_humana') expect(r.evidenciaContrapartida).toEqual(resolucion);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// adjuntarEvidenciaDeContraparte — la TERCERA función de capa C (motor.ts, R-F), padron_contraparte (0037)
+// -----------------------------------------------------------------------------
+
+function patron(overrides: Partial<PatronDeContraparte> = {}): PatronDeContraparte {
+  return { contraparteId: 'contraparte-1', patron: 'FORCOR', clasificacion: 'proveedor', ...overrides };
+}
+
+describe('adjuntarEvidenciaDeContraparte', () => {
+  it('nunca toca una propuesta — mismo criterio que aplicarContrapartida, identidad estructural', () => {
+    const propuesta: Reconocimiento = {
+      clase: 'propuesta',
+      tipo: 'comision_bancaria',
+      concepto: 'comision_de_transferencia',
+      polaridad: 'normal',
+      lado: 'debe',
+      via: 'texto_literal_exacto',
+      evidencia: { entradaLexicoId: 'x', via: 'texto_literal_exacto', caracteresMatcheados: 5, huboCola: false },
+    };
+    expect(adjuntarEvidenciaDeContraparte(propuesta, 'sin_candidatos', 'FORCOR', [patron()])).toBe(propuesta);
+  });
+
+  it('decision_humana con OTRO queDecide no se toca — identidad estructural', () => {
+    const otro: Reconocimiento = {
+      clase: 'decision_humana',
+      tipo: 'indeterminado',
+      concepto: 'comision_de_transferencia',
+      polaridad: 'normal',
+      lado: 'debe',
+      via: 'texto_literal_exacto',
+      evidencia: { entradaLexicoId: 'x', via: 'texto_literal_exacto', caracteresMatcheados: 5, huboCola: false },
+      queDecide: 'confirmar_cuenta_propia_destino',
+    };
+    expect(adjuntarEvidenciaDeContraparte(otro, 'sin_candidatos', 'FORCOR', [patron()])).toBe(otro);
+  });
+
+  it('🔴 F5 — es_socio corta ANTES de mirar los patrones: no_aplica, aunque matchearía', () => {
+    const r = adjuntarEvidenciaDeContraparte(
+      decisionHumanaDistinguirSocio('debe'),
+      'es_socio',
+      'TRF INMED PROVEED FORCOR SA',
+      [patron()],
+    );
+    expect(r.clase).toBe('decision_humana');
+    if (r.clase === 'decision_humana') expect(r.evidenciaContraparte).toEqual({ estado: 'no_aplica' });
+  });
+
+  it('match: un patrón matchea la glosa normalizada', () => {
+    const r = adjuntarEvidenciaDeContraparte(
+      decisionHumanaDistinguirSocio('debe'),
+      'sin_candidatos',
+      'TRF INMED PROVEED FORCOR SA',
+      [patron()],
+    );
+    expect(r.clase).toBe('decision_humana');
+    if (r.clase === 'decision_humana') {
+      expect(r.evidenciaContraparte).toEqual({ estado: 'match', contraparteId: 'contraparte-1', clasificacion: 'proveedor' });
+    }
+  });
+
+  it('sin_match: ningún patrón matchea', () => {
+    const r = adjuntarEvidenciaDeContraparte(
+      decisionHumanaDistinguirSocio('debe'),
+      'sin_candidatos',
+      'TRANSFERENCIA DE TERCEROS',
+      [patron({ patron: 'RODAMET' })],
+    );
+    expect(r.clase).toBe('decision_humana');
+    if (r.clase === 'decision_humana') expect(r.evidenciaContraparte).toEqual({ estado: 'sin_match' });
+  });
+
+  it('multiples_patrones: dos patrones matchean la misma glosa', () => {
+    const r = adjuntarEvidenciaDeContraparte(
+      decisionHumanaDistinguirSocio('debe'),
+      'sin_candidatos',
+      'TRF INMED PROVEED FORCOR SA',
+      [patron({ contraparteId: 'c1', patron: 'FORCOR' }), patron({ contraparteId: 'c2', patron: 'FORCOR SA' })],
+    );
+    expect(r.clase).toBe('decision_humana');
+    if (r.clase === 'decision_humana') {
+      expect(r.evidenciaContraparte).toEqual({ estado: 'multiples_patrones', contraparteIds: ['c1', 'c2'] });
+    }
+  });
+
+  it('no muta el `evidenciaContrapartida` ya adjuntado por aplicarContrapartida — son campos hermanos', () => {
+    const conEvidenciaDeSocio = aplicarContrapartida(decisionHumanaDistinguirSocio('debe'), {
+      estado: 'sin_candidatos',
+    });
+    const r = adjuntarEvidenciaDeContraparte(conEvidenciaDeSocio, 'sin_candidatos', 'RODAMET', [
+      patron({ patron: 'RODAMET' }),
+    ]);
+    expect(r.clase).toBe('decision_humana');
+    if (r.clase === 'decision_humana') {
+      expect(r.evidenciaContrapartida).toEqual({ estado: 'sin_candidatos' });
+      expect(r.evidenciaContraparte).toEqual({ estado: 'match', contraparteId: 'contraparte-1', clasificacion: 'proveedor' });
+    }
   });
 });
