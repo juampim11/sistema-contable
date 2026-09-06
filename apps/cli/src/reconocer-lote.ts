@@ -59,6 +59,7 @@ import {
   marcarPadronConsultado,
   reconocer,
   resolverContraparte,
+  resolverEvidenciaDeContraparte,
   type CandidatoDeContraparte,
   type FilaDeReconocimiento,
   type IndiceDeLexico,
@@ -177,6 +178,12 @@ export function comoPedidoDePersistencia(
      *  compare «lo que el motor leyó» contra «lo que la base tiene ahora». */
     readonly entradaDigest: string;
   },
+  /** 🔴 `0038`: NUNCA sale de `fila`/`FilaDeReconocimiento` — sale del `Map` que arma el loop de
+   *  `reconocerLote`, indexado por `movimientoId`, sobre `resolucion.estado` y una llamada local a
+   *  `resolverEvidenciaDeContraparte`. Ver el comentario de `PedidoDePersistirReconocimiento.contrapartida`
+   *  en `escrituras.ts` para el motivo completo (el campo equivalente en `Reconocimiento` queda
+   *  `undefined` en la rama promovida). */
+  contrapartida: PedidoDePersistirReconocimiento['contrapartida'],
 ): PedidoDePersistirReconocimiento {
   return {
     clienteId: ids.clienteId,
@@ -198,6 +205,7 @@ export function comoPedidoDePersistencia(
     caracteresMatcheados: fila.caracteresMatcheados,
     huboCola: fila.huboCola,
     candidatos: fila.candidatos,
+    contrapartida,
   };
 }
 
@@ -308,12 +316,23 @@ export async function reconocerLote(
       // 🔴 Las dos capas ANTES de escribir, siempre. `marcarCapaCCorrida` lo vuelve estructural.
       const capaB = reconocer(evidenciaDeMotorDesde(ev), indices.get(ev.bancoCodigo) as IndiceDeLexico);
       let final = capaB;
+      let contrapartida: PedidoDePersistirReconocimiento['contrapartida'] = null;
       if (capaB.clase === 'decision_humana' && capaB.queDecide === 'distinguir_tercero_de_socio') {
         const candidatos = (candidatosPorMovimiento.get(ev.movimientoId) ?? []).map(comoCandidatoDeContraparte);
         // `padronDeclaradoCompleto: false` — el gate no se persiste hasta 0015, así que acá la rama
         // negativa NUNCA se propone como tercero. Es la posición conservadora, y es la correcta
         // mientras no exista `padron_manifestacion`.
         const resolucion = resolverContraparte(candidatos, padronConsultado, ev.fecha, false);
+        // 🔴 `0038`: se calcula ACÁ, sobre `resolucion.estado` directo — ANTES de que
+        // `aplicarContrapartida` pueda promover `final` a `'propuesta'` — porque
+        // `reconocimiento.evidenciaContraparte` queda `undefined` en esa rama (ver el comentario de
+        // `reconocimiento.ts`). Es la MISMA llamada que hace `adjuntarEvidenciaDeContraparte` puertas
+        // adentro; se duplica a propósito para no depender del campo que puede quedar sin llenar.
+        const evidenciaContraparte = resolverEvidenciaDeContraparte(
+          resolucion.estado,
+          normalizar(ev.conceptoBanco ?? ''),
+          patronesDeContraparte,
+        );
         final = aplicarContrapartida(capaB, resolucion);
         final = adjuntarEvidenciaDeContraparte(
           final,
@@ -321,6 +340,17 @@ export async function reconocerLote(
           normalizar(ev.conceptoBanco ?? ''),
           patronesDeContraparte,
         );
+        contrapartida = {
+          resolucionEstado: resolucion.estado,
+          resueltoAFecha: ev.fecha,
+          padronManifestacionId: null,
+          padronCompletoHasta: null,
+          patronContraparteEstado: evidenciaContraparte.estado,
+          patronContraparteIds:
+            evidenciaContraparte.estado === 'match' ? [evidenciaContraparte.contraparteId]
+            : evidenciaContraparte.estado === 'multiples_patrones' ? evidenciaContraparte.contraparteIds
+            : [],
+        };
       }
 
       porClase[final.clase] = (porClase[final.clase] ?? 0) + 1;
@@ -352,7 +382,7 @@ export async function reconocerLote(
         // sólo los seis campos de capa B— porque el principio es que el digest cubre TODO lo que el
         // motor puede leer, y lo que el motor puede leer ES `EvidenciaDeMovimientoLeida`.
         entradaDigest: digestDeEntrada(ev),
-      }));
+      }, contrapartida));
     }
 
     const base = {
