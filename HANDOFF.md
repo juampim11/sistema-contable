@@ -6,6 +6,123 @@
 
 ---
 
+## 2026-09-06 (186) — Mitad 1: escritor real de `reconocimiento_contrapartida` (migración `0038`) —
+`padron_contraparte` deja de perderse al terminar cada corrida.
+
+**Herramienta:** Claude Code, misma sesión que (184)/(185). Tarea acotada explícitamente por JP a la
+mitad "segura" del deuda de P4/P5 descubierta en la convocatoria anterior: persistir la evidencia que
+ya se calcula en memoria, **sin tocar** `padronDeclaradoCompleto` (sigue `false`) y **sin cambiar** qué
+se propone (`clase`) — solo qué se persiste de la evidencia ya calculada.
+
+### El hallazgo que corrigió la premisa, antes de diseñar nada
+
+`reconocimiento.ts` (rama `clase: 'propuesta'`) afirmaba que `evidenciaContraparte` "en la práctica solo
+puede ser `no_aplica`" — hallazgo de `dba-data` en la convocatoria anterior, verificado acá: es
+**FALSO**. `adjuntarEvidenciaDeContraparte` corta en `clase !== 'decision_humana'`, y para cuando se la
+llama sobre una fila `es_socio` ya promovida, el corte ya disparó — el campo queda **`undefined`**,
+nunca `no_aplica`. Consecuencia de diseño directa: el escritor no puede construirse leyendo
+`reconocimiento.evidenciaContraparte` (daría `undefined` para el 100% de los `es_socio`, exactamente el
+caso que la tabla existe para cubrir) — se arma en `reconocer-lote.ts` directo sobre `resolucion.estado`
+más una llamada local a `resolverEvidenciaDeContraparte`, ANTES de que `aplicarContrapartida` pueda
+promover nada. Comentario corregido, sin tocar tipo ni lógica.
+
+### Convocatoria de seguridad (`dba-data` + `security-engineer` + `seguridad-datos-financieros`), sobre el DDL concreto
+
+Sin bloqueantes de mecanismo (RLS/FKs/índice parcial fiel al precedente de `0021`). Cambios respecto
+del primer borrador, los tres incorporados al DDL final:
+
+1. **`padron_contraparte_id`** en la satélite nueva → **N2**, no `UUID_INTERNO` — `dba-data` y
+   `seguridad-datos-financieros` llegaron al mismo veredicto por caminos independientes. Precedente
+   correcto: `reconocimiento_contrapartida_match.socio_id` (uuid opaco pero enlazable a un tercero
+   puntual, mostrado en la cola de revisión activa), no `asiento_propuesto_renglon.padron_contraparte_id`
+   (rol distinto: cita evidencia sobre un asiento YA generado). Esa clasificación N1 de `0037` quedó
+   registrada como deuda separada, sin dueño (ver más abajo).
+2. **Hallazgo de secuenciación** (`dba-data`, bloqueante de PROCESO): esquema y escritor tienen que
+   desplegarse en el MISMO release — la migración sola, sin el código, rompe el próximo INSERT de capa
+   C de cualquier cliente (violación de `NOT NULL`).
+3. **`patron_contraparte_estado` NOT NULL sin condición**: verificado que `resolverEvidenciaDeContraparte`
+   es TOTAL sobre las 7 ramas de `resolucion_estado` (incluida `es_socio`, donde da `no_aplica`), y
+   verificado EN VIVO (`select count(*)`, 2026-09-06) que `reconocimiento_contrapartida` tenía 0 filas
+   en local y en piloto al momento de escribir la migración.
+
+### Implementación
+
+- **Migración `0038`**: columna `patron_contraparte_estado` + 2 generadas (`admite_matches_patron`,
+  `regimen_matches_patron`, mismo mecanismo de ancla que `0021` pero con sufijo explícito para no
+  confundir con las columnas homónimas de evidencia de SOCIO en la misma fila) + tabla satélite nueva
+  `reconocimiento_contrapartida_patron_match` (mirror de `reconocimiento_contrapartida_match`, sin
+  `match_clase` — acá no hay "vía", una sola forma de matchear).
+- `packages/contabilidad/src/nucleo/contraparte.ts`: dos constantes de dominio cerrado nuevas
+  (`ESTADOS_EVIDENCIA_CONTRAPARTE`, `REGIMENES_CON_MATCHES_PATRON`) para que los checks de `0038` se
+  registren en `catalogo.test.ts` como el resto del repo.
+- `packages/data/src/contabilidad/escrituras.ts`: `PedidoDePersistirReconocimiento.contrapartida`
+  (campo nuevo, `padronManifestacionId`/`padronCompletoHasta` tipados `null` a propósito — hace
+  IMPOSIBLE en el tipo que esta tarea toque Mitad 2 por accidente) + los dos INSERT condicionales en
+  `persistirReconocimiento`, gateados en que el PADRE se haya insertado de verdad EN ESTA LLAMADA
+  (nunca en `no_op`/`entrada_cambio_durante_la_corrida`/`digest_ya_en_la_cadena` — ahí el
+  `reconocimiento_id` nuevo no existe y `fk_recon_contrapartida_reconocimiento` abortaría con `23503`).
+- `apps/cli/src/reconocer-lote.ts`: captura `evidenciaContraparte` en la MISMA iteración, antes de
+  `aplicarContrapartida`, y la pasa a `comoPedidoDePersistencia` — nunca desde `final.evidenciaContraparte`.
+- `packages/shared/src/seguridad/clasificacion-campos.ts`: las 3 columnas del padre + la tabla satélite
+  completa, con el argumento de clasificación completo dejado en el comentario de la columna.
+- `VERSION_DEL_MOTOR`: **`--sin-bump`**, motivo "corrige comentario de `reconocimiento.ts`... agrega
+  constantes de dominio en `contraparte.ts`... cero impacto en resultados persistidos" — único archivo
+  de `nucleo/` tocado es el comentario; `reconocer()`/`aplicarContrapartida()` no cambiaron una línea.
+
+### Verificación
+
+`pnpm typecheck` limpio. 4 grupos de tests específicos de esta tarea, todos verdes: `catalogo.test.ts`
+(85/85), `grants-conjunto-cerrado.test.ts` (20/20, tras corregir un conteo hardcodeado de M4 de 11→14
+columnas por las 3 nuevas), `mutaciones-0038.test.ts` (12/12 — nuevo, cubre las 2 mutaciones que la
+convocatoria de seguridad marcó explícitas: FK anclada contra columnas de SOCIO en vez de PATRÓN; FK
+del patrón sin `cliente_id`) y `persistencia-contrapartida-0038.test.ts` (7/7 — nuevo, wiring de
+`persistirReconocimiento` incluido el gate de creado/supersedido/no_op). Efecto dominó controlado: 5
+archivos de test preexistentes tenían inserts a `reconocimiento_contrapartida` sin la columna nueva
+(`NOT NULL`) — corregidos y reverificados verdes (52/52 combinados:
+`mutaciones-0021.test.ts`/`aislamiento-0021.test.ts`/`caracterizacion-manifestacion-revocada-citable.test.ts`).
+`VERSION_DEL_MOTOR` aceptado, `version-del-motor.test.ts` 13/13. **Total específico de esta tarea: 189
+tests verdes.** Migración `0038` aplicada solo a LOCAL — nunca al piloto, sin autorización ni motivo
+para esta tarea.
+
+### Dos decisiones explícitas de alcance, tomadas por JP
+
+- **Paso 4 de verificación end-to-end (`reconocer-lote.ts` contra un lote sintético real) omitido a
+  propósito** — requiere entender la convención de matching de un adapter concreto (`matcher.ts`:
+  `exacto_o_prefijo` exige prefijo truncado, `prefijo_con_cola` matchea por igualdad exacta contra el
+  índice y separa la "cola" en otra capa de la ingesta), capa distinta a lo que esta tarea toca. La
+  cobertura de `persistencia-contrapartida-0038.test.ts` (7/7) + `mutaciones-0038.test.ts` (12/12) se
+  consideró suficiente. La cobertura real contra datos reales llegará con la carga de los 7 proveedores
+  reales de Bracci (pendiente, tarea aparte).
+- **`pnpm test` completo pendiente** — memoria del sistema en 1.91 GB al momento de cerrar esta tarea,
+  por debajo del margen razonable (ya documentado en esta sesión que con memoria así de baja el proceso
+  puede colgarse o crashear). Toda la cobertura específica de esta tarea corrida por separado y verde
+  (189 tests, detalle arriba). Cuando la memoria esté normal en otra sesión, correrlo una vez para
+  reconfirmar — mismo patrón ya usado al cerrar `padron_contraparte` (184).
+
+### Deuda registrada, no cerrada en esta tarea
+
+`docs/diseno/10-deuda-declarada.md`: `asiento_propuesto_renglon.padron_contraparte_id` (`0037`, ya
+aplicada) está clasificado N1 por una analogía que no es la correcta para su rol (comparado con
+`padron_manifestacion_id`, que es puntero de proceso y no identifica a nadie, en vez de con `socio_id`,
+que sí). Hallazgo de `seguridad-datos-financieros`, no bloquea `0038` (tablas y columnas distintas).
+Cierre: edición pura de `clasificacion-campos.ts`, sin dueño todavía.
+
+### Qué NO se tocó, a propósito
+
+`padronDeclaradoCompleto` sigue hardcodeado `false` en los tres call sites (Mitad 2, aparte, con su
+propia convocatoria a `analista-funcional` + `product-owner`). Ningún proveedor real cargado. El piloto,
+sin tocar — ni la migración `0037` (que todavía no está aplicada ahí) ni la `0038`.
+
+### Commits
+
+| Hash | Mensaje |
+|---|---|
+| `4c24a36` | `feat(data): migración 0038 — reconocimiento_contrapartida_patron_match + patron_contraparte_estado` |
+| `3353090` | `feat(data): persistirReconocimiento escribe reconocimiento_contrapartida (Mitad 1, 0038)` |
+| `808f9f4` | `feat(cli): reconocer-lote arma el pedido de contrapartida desde resolucion.estado` |
+| `cd29fda` | `docs(deuda): reclasificación pendiente de asiento_propuesto_renglon.padron_contraparte_id` |
+
+
 ## 2026-09-06 (185) — `padron_contraparte` conectado a Capa B/C (sin persistencia, sin Capa D):
 convocatoria encontró que el camino "obvio" era estructuralmente inalcanzable para el problema real;
 la integración real fue por la planilla, no por el asiento.
