@@ -6,6 +6,84 @@
 
 ---
 
+## 2026-09-06 (185) — `padron_contraparte` conectado a Capa B/C (sin persistencia, sin Capa D):
+convocatoria encontró que el camino "obvio" era estructuralmente inalcanzable para el problema real;
+la integración real fue por la planilla, no por el asiento.
+
+**Herramienta:** Claude Code, misma sesión que (184). Convocatoria formal
+(`motor-conciliacion-contable` + `arquitecto-software`) sobre cómo conectar el mecanismo ya cerrado en
+(184) al pipeline real — diseño en modo plan, aprobado, implementado en 4 commits.
+
+### El hallazgo que reencuadró la tarea
+
+El diseño original suponía que `asiento_propuesto_renglon.padron_contraparte_id` (la columna que ya
+construyó `0037`) era el destino natural de esta integración. `motor-conciliacion-contable` verificó
+contra el código real que **ese camino es estructuralmente inalcanzable para el 77,5% de
+`decision_humana` que motiva todo esto**: esa columna la escribe Capa D, que solo procesa movimientos
+con `clase='propuesta'` — y `distinguir_tercero_de_socio` casi nunca llega ahí (solo vía `es_socio`,
+que es justo el estado que corta `padron_contraparte` a `no_aplica` antes de consultarlo). Conectar por
+Capa D no habría movido la aguja del problema real en absoluto.
+
+La vía de valor real, verificada: la cola de revisión de ese 77,5% **hoy es la planilla Excel que
+recibe Laura** (`exportar-planilla.ts`), calculada en memoria en cada export — no una tabla.
+`arquitecto-software`, por separado, confirmó además que `reconocimiento_contrapartida` (la satélite
+pensada para persistir esta evidencia, migración `0021`) **no tiene ningún escritor en producción, ni
+siquiera para `padron_socio`** — construir sobre esa tabla habría sido decorar algo que nadie llena.
+
+Decisión: acotar la tarea a Capa B/C, en memoria, sin esquema ni persistencia. La persistencia real (y
+el enlace a Capa D) quedan para una tarea separada, con su propia convocatoria a `dba-data` que incluya
+explícitamente "construir el escritor que falta".
+
+### Commits (4, en orden)
+
+| Hash | Mensaje |
+|---|---|
+| `5d06c7e` | `feat(contabilidad): adjuntarEvidenciaDeContraparte — tercera función de capa C` |
+| `adb97c7` | `feat(contabilidad,ingesta): columna "Contraparte conocida" en la planilla` |
+| `8ce7b27` | `feat(data): leerPadronDeContrapartes — lectura de padron_contraparte para capa B/C` |
+| `f35469a` | `feat(ingesta,cli): conectar padron_contraparte a los tres llamadores de capa B/C` |
+
+`adjuntarEvidenciaDeContraparte` es HERMANA de `aplicarContrapartida`, nunca la reemplaza — R-F sigue
+con exactamente dos constructores de `clase:'propuesta'` en todo el repo. Columna "Contraparte
+conocida" nueva en la planilla: solo la clasificación (proveedor/cliente/otro), nunca el nombre
+matcheado (decisión de JP — `patron` es post-normalización, y repetir un dato que ya está en la glosa
+de la misma fila es ruido, no señal). `leerPadronDeContrapartes` filtra vigencia en SQL (a diferencia
+de `padron_socio`, que trae todo y filtra en memoria — acá no hay caso real que justifique traer
+no-vigentes). Wiring en los tres llamadores reales: `reconocer-lote.ts` (producción),
+`resolver-contrapartida.ts` (dry-run) y `exportar-planilla.ts` (el que llega a Laura).
+
+`VERSION_DEL_MOTOR` bump 2→3 (no `--sin-bump`): el cambio altera lo que ve la contadora una vez que
+haya proveedores cargados, y el bump fuerza el reproceso correcto de movimientos ya reconocidos.
+
+### Hallazgo de paso, corregido en la misma tarea
+
+El docblock de `persistible.ts` citaba "0015" (la migración planeada que `0021` reemplazó hace tiempo)
+como si la evidencia de contrapartida se fuera a persistir ahí — corregido con la nota real: la tabla
+pensada para eso (`reconocimiento_contrapartida`, `0021`) existe pero sigue sin escritor de producción
+(ver el hallazgo de arriba).
+
+### Verificación
+
+`pnpm test` completo: **2269 passed, 7 todo, 2 failed** — los mismos 2 fallos preexistentes de siempre
+(`tools/verificar-fixtures.test.ts`, `reglas-de-codigo.test.ts` R-F), sin relación con esta tarea.
+Un tercer fallo real apareció durante la primera corrida completa (la columna nueva rompía la
+adyacencia "Qué falta" → "Corrección / Identidad" que `ux-designer` ya había ratificado) — corregido
+reordenando la columna antes de "Qué falta", reverificado en aislado y en una segunda corrida completa.
+Nada tocó el piloto en ningún momento.
+
+### Qué sigue
+
+Explícitamente fuera de esta tarea: persistencia real en `reconocimiento_contrapartida` (sigue sin
+escritor, hueco declarado — no de esta tarea), el enlace a Capa D, y la carga de los 7 proveedores
+conocidos de Bracci (pendiente, con confirmación de la contadora nombre por nombre). Sin push a
+`origin/main` todavía.
+
+### Commits
+
+Los 4 de la tabla de arriba, más esta entrada de `HANDOFF.md` (pendiente de commitear).
+
+---
+
 ## 2026-09-05 (184) — Implementación de `padron_contraparte` cerrada (migración `0037`): mecanismo
 completo, en 4 commits, verificado individualmente y dentro de la corrida completa de `pnpm test`.
 Sin conectar al pipeline real y sin cargar proveedores reales — a propósito, los dos.
