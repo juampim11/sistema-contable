@@ -16,13 +16,16 @@
  *   G. `fk_asiento_renglon_contraparte` — FK COMPUESTA (hallazgo F1 de          1 mutación de DDL
  *      `seguridad-datos-financieros`/`security-engineer`): sin ella, un        (FK simple deja
  *      renglón de un cliente podría citar el patrón de OTRO                    pasar cross-tenant), 1 legítimo
+ *   H. `leerPadronDeContrapartes` (integración a capa B/C, 2026-09-06) —
+ *      vigencia filtrada en SQL y aislamiento cross-tenant ....................... 3 legítimos
  *                                                                               ─────────────────────
- *                                                                               9 mutaciones, 8 legítimos
+ *                                                                               9 mutaciones, 11 legítimos
  *
  * Requisito previo: `pnpm db:up && pnpm db:migrate && pnpm db:setup`, con `0037` APLICADA.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { leerPadronDeContrapartes } from '../src/contabilidad/lecturas.ts';
 import type { Client } from 'pg';
 import { cerrarConexiones, conUsuario, type Tx } from '../src/db/conexion.ts';
 import { entornoActual } from '../src/db/entorno.ts';
@@ -414,5 +417,54 @@ describe('0037 G — FK compuesta de `asiento_propuesto_renglon.padron_contrapar
       const fila = await crearRenglon(ej, s.clienteA, asientoId, cuentaId, null);
       expect(fila[0]?.['id']).toBeTruthy();
     });
+  });
+});
+
+// =============================================================================
+// H — `leerPadronDeContrapartes` (integración a capa B/C, 2026-09-06)
+// =============================================================================
+describe('0037 H — leerPadronDeContrapartes: vigencia filtrada en SQL y aislamiento cross-tenant', () => {
+  it('legítimo: trae solo las filas VIGENTES del cliente pedido, con id/patron/clasificacion', async () => {
+    let vigenteId = '';
+    let cerradaId = '';
+    await comoSocio(async (ej) => {
+      const vigente = await altaContraparte(ej, s.clienteA, { patron: 'CONTRAPARTE VIGENTE H' });
+      vigenteId = String(vigente['id']);
+      const cerrada = await altaContraparte(ej, s.clienteA, {
+        patron: 'CONTRAPARTE CERRADA H',
+        vigenteDesde: '2020-01-01',
+        vigenteHasta: '2020-02-01',
+      });
+      cerradaId = String(cerrada['id']);
+    });
+
+    const padron = await conUsuario(USUARIOS.contadorA, (tx) => leerPadronDeContrapartes(tx, s.clienteA));
+    const ids = padron.map((p) => p.id);
+    expect(ids).toContain(vigenteId);
+    expect(ids).not.toContain(cerradaId);
+
+    const fila = padron.find((p) => p.id === vigenteId);
+    expect(fila).toEqual({ id: vigenteId, patron: 'CONTRAPARTE VIGENTE H', clasificacion: 'proveedor' });
+  });
+
+  it('aislamiento: el contador de A no ve los patrones de B, y viceversa', async () => {
+    let idDeA = '';
+    let idDeB = '';
+    await comoSocio(async (ej) => {
+      idDeA = String((await altaContraparte(ej, s.clienteA, { patron: 'SOLO DE A H' }))['id']);
+      idDeB = String((await altaContraparte(ej, s.clienteB, { patron: 'SOLO DE B H' }))['id']);
+    });
+
+    const padronDeA = await conUsuario(USUARIOS.contadorA, (tx) => leerPadronDeContrapartes(tx, s.clienteA));
+    expect(padronDeA.map((p) => p.id)).toContain(idDeA);
+    expect(padronDeA.map((p) => p.id)).not.toContain(idDeB);
+
+    const padronDeAVistoPorB = await conUsuario(USUARIOS.contadorB, (tx) => leerPadronDeContrapartes(tx, s.clienteA));
+    expect(padronDeAVistoPorB).toEqual([]);
+  });
+
+  it('legítimo: cliente sin ningún patrón cargado devuelve array vacío, no un error', async () => {
+    const padron = await conUsuario(USUARIOS.socioOtroEstudio, (tx) => leerPadronDeContrapartes(tx, s.clienteC));
+    expect(padron).toEqual([]);
   });
 });

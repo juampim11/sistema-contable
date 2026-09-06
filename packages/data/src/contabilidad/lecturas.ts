@@ -121,6 +121,49 @@ export async function leerPadronDeSocios(tx: Tx, clienteId: string): Promise<rea
 }
 
 // -----------------------------------------------------------------------------
+// leerPadronDeContrapartes (0037) — mirror de leerPadronDeSocios, con una diferencia estructural
+// -----------------------------------------------------------------------------
+
+/**
+ * A diferencia de `SocioDelPadron` (que nunca trae `denominacion` — el motor compara por
+ * `documentoHmac`, el nombre es dato muerto para él), acá `patron` SÍ viaja en claro: es contra lo
+ * que `resolverEvidenciaDeContraparte()` compara. Es N2 (`clasificacion-campos.ts`, `0037`) — YA
+ * está en la lista de claves prohibidas de `loggerAcotado` por nombre de columna (mismo mecanismo
+ * que `denominacion`/`documento`), así que un log que intente `{ patron: ... }` no compila. Igual,
+ * ver el test dedicado que confirma que ningún `catch` de los tres llamadores serializa el array
+ * completo (`packages/data/tests/aislamiento-modulo-2.test.ts`).
+ */
+export type ContraparteDelPadron = {
+  readonly id: string;
+  readonly patron: string;
+  readonly clasificacion: string;
+};
+
+/**
+ * El padrón VIGENTE de contrapartes de un cliente — a diferencia de `leerPadronDeSocios` (que trae
+ * vigentes y no vigentes, porque el motor filtra en memoria contra la fecha DEL MOVIMIENTO, para
+ * poder resolver un extracto viejo con el padrón de entonces), acá se filtra `vigente_hasta` en la
+ * consulta: `resolverEvidenciaDeContraparte` v1 no tiene lógica de vigencia, y no hay caso real que
+ * justifique traer no-vigentes para que nadie los consuma — mismo criterio de "no construir sin caso
+ * real" que ya rige el diseño de `padron_contraparte` (`docs/diseno/29-padron-contraparte.md`).
+ * Decisión de JP, 2026-09-06.
+ */
+export async function leerPadronDeContrapartes(
+  tx: Tx,
+  clienteId: string,
+): Promise<readonly ContraparteDelPadron[]> {
+  const filas = await tx.consultar<{ id: string; patron: string; clasificacion: string }>(
+    `select id, patron, clasificacion
+       from padron_contraparte
+      where cliente_id = $1
+        and (vigente_hasta is null or vigente_hasta > current_date)`,
+    [clienteId],
+  );
+
+  return filas.map((f) => ({ id: f.id, patron: f.patron, clasificacion: f.clasificacion }));
+}
+
+// -----------------------------------------------------------------------------
 // leerCandidatosDeContraparte
 // -----------------------------------------------------------------------------
 
