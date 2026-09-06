@@ -404,6 +404,7 @@ function propuestaDe(movimientoId: string, clienteId: string, digest: string): P
     caracteresMatcheados: 12,
     huboCola: false,
     candidatos: [] as readonly string[],
+    contrapartida: null,
   };
 }
 

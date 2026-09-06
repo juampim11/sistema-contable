@@ -223,6 +223,26 @@ export type PedidoDePersistirReconocimiento = {
   readonly caracteresMatcheados: number | null;
   readonly huboCola: boolean | null;
   readonly candidatos: readonly string[];
+  /**
+   * 🔴 Evidencia de capa C sobre `padron_contraparte` (migración `0038`), null cuando capa C no corrió
+   * (`queDecide !== 'distinguir_tercero_de_socio'`). NO es un campo de `FilaDeReconocimiento` — R-K no
+   * lo espeja, porque no sale de ahí: `reconocimiento.evidenciaContraparte` queda `undefined` en la
+   * rama promovida (`es_socio` → `propuesta`, ver el comentario de `reconocimiento.ts`), así que
+   * `apps/cli/src/reconocer-lote.ts` arma este campo directo desde `resolucion.estado` y una llamada
+   * local a `resolverEvidenciaDeContraparte`, ANTES de que `aplicarContrapartida` pueda promover nada.
+   *
+   * `padronManifestacionId`/`padronCompletoHasta` van tipados `null` (no `string | null`) a propósito:
+   * es lo que hace IMPOSIBLE, en el tipo, que esta tarea (Mitad 1) toque Mitad 2 por accidente —
+   * cualquier intento de pasar un valor real es un error de compilación, no una revisión de código.
+   */
+  readonly contrapartida: null | {
+    readonly resolucionEstado: string;
+    readonly resueltoAFecha: string;
+    readonly padronManifestacionId: null;
+    readonly padronCompletoHasta: null;
+    readonly patronContraparteEstado: string;
+    readonly patronContraparteIds: readonly string[];
+  };
 };
 
 export type ResultadoDePersistirReconocimiento =
@@ -482,6 +502,51 @@ export async function persistirReconocimiento(
   );
   const id = creadas[0]?.id;
   if (!id) throw new ReconocimientoDigestYaEnLaCadenaError(pedido.clienteId, pedido.movimientoId);
+
+  // ---------------------------------------------------------------------------
+  // 🔴 `0038`: reconocimiento_contrapartida + su satélite de patrones — SOLO acá, DESPUÉS de que el
+  // INSERT de arriba devolvió `id`. El gate es "¿el padre se insertó de verdad EN ESTA LLAMADA?", no
+  // "¿capa C corrió?": si este código corriera antes del `if (!id) throw`, o si se moviera a una rama
+  // de `no_op`/`entrada_cambio_durante_la_corrida`/`digest_ya_en_la_cadena`, `pedido.reconocimientoId`
+  // NUNCA se insertó en `reconocimiento_movimiento` y `fk_recon_contrapartida_reconocimiento` abortaría
+  // la transacción con `23503`. Es estructural, no una elección de estilo.
+  // ---------------------------------------------------------------------------
+  if (pedido.contrapartida) {
+    const c = pedido.contrapartida;
+    const contrapartidaFila = await conErroresTraducidos(undefined, () =>
+      tx.consultar<{ id: string }>(
+        `insert into reconocimiento_contrapartida
+           (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase,
+            padron_manifestacion_id, padron_completo_hasta, resuelto_a_fecha,
+            patron_contraparte_estado)
+         values ($1, $2, $3, $4, $5, $6, $7::date, $8)
+         returning id::text as id`,
+        [
+          pedido.clienteId, id, c.resolucionEstado, pedido.clase,
+          c.padronManifestacionId, c.padronCompletoHasta, c.resueltoAFecha,
+          c.patronContraparteEstado,
+        ],
+      ),
+    );
+    const contrapartidaId = contrapartidaFila[0]?.id;
+    if (!contrapartidaId) throw new Error('La contrapartida no devolvió id.'); // H-14
+
+    // 🔴 NUNCA `on conflict` contra `uq_recon_contrapartida_patron_match_unico` (índice parcial): dejar
+    // subir el `23505` si el productor calculó mal el régimen — ver el `comment on index` de `0038`.
+    const regimen = c.patronContraparteIds.length > 1 ? 'varios' : 'patron_unico';
+    for (const patronId of c.patronContraparteIds) {
+      const filaPatron = await conErroresTraducidos(undefined, () =>
+        tx.consultar<{ id: string }>(
+          `insert into reconocimiento_contrapartida_patron_match
+             (cliente_id, contrapartida_id, regimen_matches, padron_contraparte_id)
+           values ($1, $2, $3, $4)
+           returning id::text as id`,
+          [pedido.clienteId, contrapartidaId, regimen, patronId],
+        ),
+      );
+      if (!filaPatron[0]?.id) throw new Error('El match de patrón no devolvió id.'); // H-14
+    }
+  }
 
   for (const entradaLexicoId of pedido.candidatos) {
     const fila = await conErroresTraducidos(undefined, () =>

@@ -650,6 +650,10 @@ describe('R-F — `clase: \'propuesta\'` solo se construye en nucleo/motor.ts', 
     // degradación de `pendienteDeLaura` en código de producción— no existe en un test que apunta
     // justamente a que la base rechace las filas mal formadas.
     'packages/data/tests/aislamiento-modulo-2.test.ts',
+    // Mismo motivo exacto que la línea de arriba, para el escritor de `reconocimiento_contrapartida`
+    // (0038): construye el PEDIDO de persistencia a mano para ejercitar el gate de
+    // creado/supersedido/no_op sin pasar por el motor.
+    'packages/data/tests/persistencia-contrapartida-0038.test.ts',
     // Calibración de léxico (E-4, `calibrar-lexico-metadatos.ts`): construye Reconocimiento sintéticos
     // para probar `contarPatrones()` sin base — mismo motivo exacto que `resolver-contrapartida.test.ts`
     // arriba.

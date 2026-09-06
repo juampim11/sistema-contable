@@ -190,6 +190,7 @@ async function escribirReconocimiento(
     caracteresMatcheados: 5,
     huboCola: false,
     candidatos: [],
+    contrapartida: null,
   });
   if (r.estado !== 'creado') {
     throw new Error(`fixture inválido: persistirReconocimiento devolvió "${r.estado}" en vez de "creado"`);
