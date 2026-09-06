@@ -30,11 +30,13 @@ import {
   cerrarConexiones,
   conUsuario,
   leerEvidenciaDeMovimientos,
+  leerPadronDeContrapartes,
   leerPadronYCandidatosDeContraparte,
   verificarCredencialDeRequest,
   type EvidenciaDeMovimientoLeida,
 } from '@sistema-contable/data';
 import {
+  adjuntarEvidenciaDeContraparte,
   aplicarContrapartida,
   construirIndice,
   lexicoDe,
@@ -44,8 +46,9 @@ import {
   type IndiceDeLexico,
   type Reconocimiento,
 } from '@sistema-contable/contabilidad';
-import { comoCandidatoDeContraparte, comoSocioDelPadron } from '@sistema-contable/ingesta';
+import { comoCandidatoDeContraparte, comoPatronDeContraparte, comoSocioDelPadron } from '@sistema-contable/ingesta';
 import { loggerAcotado } from '@sistema-contable/shared/observabilidad';
+import { normalizar } from '@sistema-contable/shared/texto';
 import { cargarEnv } from '../../../tools/cargar-env.ts';
 
 cargarEnv();
@@ -219,6 +222,9 @@ export async function resolverContrapartidaDeLote(
     });
     const padronConsultado = marcarPadronConsultado(padron.map(comoSocioDelPadron));
 
+    // padron_contraparte (0037) — leído una vez por lote, mismo criterio que el padrón de socios.
+    const patronesDeContraparte = (await leerPadronDeContrapartes(tx, args.cliente)).map(comoPatronDeContraparte);
+
     const indicesPorBanco = new Map<string, IndiceDeLexico>();
     function indiceDe(bancoCodigo: string): IndiceDeLexico | undefined {
       const cacheado = indicesPorBanco.get(bancoCodigo);
@@ -248,6 +254,12 @@ export async function resolverContrapartidaDeLote(
         const candidatos = (candidatosPorMovimiento.get(ev.movimientoId) ?? []).map(comoCandidatoDeContraparte);
         const resolucion = resolverContraparte(candidatos, padronConsultado, ev.fecha, args.padronCompleto);
         despues = aplicarContrapartida(antes, resolucion);
+        despues = adjuntarEvidenciaDeContraparte(
+          despues,
+          resolucion.estado,
+          normalizar(ev.conceptoBanco ?? ''),
+          patronesDeContraparte,
+        );
       }
       pares.push({ antes, despues });
     }

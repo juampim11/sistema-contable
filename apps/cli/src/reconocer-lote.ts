@@ -35,17 +35,20 @@ import {
   conUsuario,
   escribirConAuditoria,
   leerEvidenciaDeMovimientos,
+  leerPadronDeContrapartes,
   leerPadronYCandidatosDeContraparte,
   leerReconocimientosActivos,
   persistirReconocimientos,
   verificarCredencialDeRequest,
   type Candidato,
+  type ContraparteDelPadron,
   type EvidenciaDeMovimientoLeida,
   type PedidoDePersistirReconocimiento,
   type SocioDelPadron as SocioDelPadronLeido,
 } from '@sistema-contable/data';
 import {
   aFilaPersistible,
+  adjuntarEvidenciaDeContraparte,
   aplicarContrapartida,
   construirIndice,
   digestDeBanco,
@@ -59,9 +62,11 @@ import {
   type CandidatoDeContraparte,
   type FilaDeReconocimiento,
   type IndiceDeLexico,
+  type PatronDeContraparte,
   type SocioDelPadron,
 } from '@sistema-contable/contabilidad';
 import { loggerAcotado } from '@sistema-contable/shared/observabilidad';
+import { normalizar } from '@sistema-contable/shared/texto';
 import { cargarEnv } from '../../../tools/cargar-env.ts';
 
 cargarEnv();
@@ -140,6 +145,10 @@ export function parsearArgumentos(argv: readonly string[]): ArgumentosReconocimi
 
 function comoCandidatoDeContraparte(c: Candidato): CandidatoDeContraparte {
   return { clase: c.clase, hmac: c.identificadorHmac, pepperId: c.pepperId };
+}
+
+function comoPatronDeContraparte(p: ContraparteDelPadron): PatronDeContraparte {
+  return { contraparteId: p.id, patron: p.patron, clasificacion: p.clasificacion as PatronDeContraparte['clasificacion'] };
 }
 
 function comoSocioDelPadron(s: SocioDelPadronLeido): SocioDelPadron {
@@ -262,6 +271,9 @@ export async function reconocerLote(
     });
     const padronConsultado = marcarPadronConsultado(padron.map(comoSocioDelPadron));
 
+    // padron_contraparte (0037) — leído una vez por lote, mismo criterio que el padrón de socios.
+    const patronesDeContraparte = (await leerPadronDeContrapartes(tx, args.cliente)).map(comoPatronDeContraparte);
+
     const activos = await leerReconocimientosActivos(tx, {
       clienteId: args.cliente,
       loteIngestaId: args.loteId,
@@ -303,6 +315,12 @@ export async function reconocerLote(
         // mientras no exista `padron_manifestacion`.
         const resolucion = resolverContraparte(candidatos, padronConsultado, ev.fecha, false);
         final = aplicarContrapartida(capaB, resolucion);
+        final = adjuntarEvidenciaDeContraparte(
+          final,
+          resolucion.estado,
+          normalizar(ev.conceptoBanco ?? ''),
+          patronesDeContraparte,
+        );
       }
 
       porClase[final.clase] = (porClase[final.clase] ?? 0) + 1;

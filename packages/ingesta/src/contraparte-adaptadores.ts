@@ -13,8 +13,17 @@
  * `ingesta`, que ya puede ver los dos.
  */
 
-import type { Candidato, SocioDelPadron as SocioDelPadronLeido } from '@sistema-contable/data';
-import type { CandidatoDeContraparte, SocioDelPadron } from '@sistema-contable/contabilidad';
+import type {
+  Candidato,
+  ContraparteDelPadron as ContraparteDelPadronLeida,
+  SocioDelPadron as SocioDelPadronLeido,
+} from '@sistema-contable/data';
+import type {
+  CandidatoDeContraparte,
+  ClasificacionContraparte,
+  PatronDeContraparte,
+  SocioDelPadron,
+} from '@sistema-contable/contabilidad';
 
 export function comoCandidatoDeContraparte(c: Candidato): CandidatoDeContraparte {
   return { clase: c.clase, hmac: c.identificadorHmac, pepperId: c.pepperId };
@@ -28,4 +37,16 @@ export function comoSocioDelPadron(s: SocioDelPadronLeido): SocioDelPadron {
     vigenteDesde: s.vigenteDesde,
     vigenteHasta: s.vigenteHasta,
   };
+}
+
+/**
+ * `clasificacion` llega como `string` desde `data` (el dominio cerrado lo arbitra la base —
+ * `padron_contraparte_clasificacion_chk`, mismo criterio que `tipo`/`concepto` en
+ * `PedidoDePersistirReconocimiento`). El `as` acá es el mismo punto de confianza que ya usa
+ * `comoCandidatoDeContraparte` con `c.clase`: si la base algún día devuelve un valor fuera del
+ * dominio, es un bug de la migración, no algo que este adaptador pueda validar sin duplicar el
+ * `CHECK`.
+ */
+export function comoPatronDeContraparte(p: ContraparteDelPadronLeida): PatronDeContraparte {
+  return { contraparteId: p.id, patron: p.patron, clasificacion: p.clasificacion as ClasificacionContraparte };
 }

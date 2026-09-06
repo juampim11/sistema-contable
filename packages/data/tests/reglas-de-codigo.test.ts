@@ -1275,3 +1275,37 @@ describe('R-P — único punto de conexión con `tesseract.js` (plan 15, OCR de 
     expect(PATRON_IMPORTA_TESSERACT.test('// ver `ocr.ts`, que importa tesseract.js')).toBe(false);
   });
 });
+
+// -----------------------------------------------------------------------------
+describe('R-Q — el padrón COMPLETO de `padron_contraparte` nunca llega a un log (integración 2026-09-06)', () => {
+  /**
+   * `PatronDeContraparte.patron` es texto EN CLARO (a diferencia de `SocioDelPadron`, que nunca trae
+   * `denominacion`) — `patron`/`clasificacion` ya están en la lista de claves prohibidas de
+   * `loggerAcotado` por nombre de columna (N2, `clasificacion-campos.ts`, `0037`), así que
+   * `logger.info('x', { patron })` no compila. Lo que ese chequeo de TIPO no ve es un `catch`
+   * genérico que serialice la VARIABLE completa (`patronesDeContraparte`, el array de 0..N patrones)
+   * bajo una clave permitida (ej. `{ detalle: JSON.stringify(patronesDeContraparte) }`) — eso sí
+   * compila, y es exactamente el vector que este barrido cierra. Punto 5 de la convocatoria de
+   * integración de `padron_contraparte` a capa B/C — obligatorio en la misma tarea, no deuda.
+   */
+  const PATRON_LOG_CON_PATRONES = /log(?:ger)?\.\w+\([\s\S]{0,200}?patronesDeContraparte/;
+
+  it('ningún llamador (`reconocer-lote.ts`/`resolver-contrapartida.ts`/`exportar-planilla.ts`) logea `patronesDeContraparte`', () => {
+    expect(
+      infractores(PATRON_LOG_CON_PATRONES),
+      'la variable con el padrón completo de contrapartes (nombres en claro) no puede llegar a ' +
+        'ningún log — ni siquiera envuelta en JSON.stringify bajo una clave permitida.',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta una infracción plantada y no confunde un uso normal de la variable', () => {
+    expect(PATRON_LOG_CON_PATRONES.test('log.error("x", { detalle: JSON.stringify(patronesDeContraparte) })')).toBe(
+      true,
+    );
+    expect(PATRON_LOG_CON_PATRONES.test('logger.warn("y", { info: patronesDeContraparte.length })')).toBe(true);
+    // Uso normal — mapear/leer la variable sin pasarla a un log — no es una infracción.
+    expect(PATRON_LOG_CON_PATRONES.test('const x = patronesDeContraparte.map(comoPatronDeContraparte);')).toBe(
+      false,
+    );
+  });
+});

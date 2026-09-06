@@ -40,11 +40,13 @@ import {
   registrarAcceso,
   leerConAuditoria,
   leerIdentificadoresDeCuenta,
+  leerPadronDeContrapartes,
   leerPadronYCandidatosDeContraparte,
   type Tx,
 } from '@sistema-contable/data';
 import { ROLES_QUE_DESCARGAN } from '@sistema-contable/almacenamiento';
 import {
+  adjuntarEvidenciaDeContraparte,
   aplicarContrapartida,
   construirIndice,
   digestDeBanco,
@@ -54,7 +56,8 @@ import {
   resolverContraparte,
   textoDeReconocimiento,
 } from '@sistema-contable/contabilidad';
-import { comoCandidatoDeContraparte, comoSocioDelPadron } from '../contraparte-adaptadores.ts';
+import { comoCandidatoDeContraparte, comoPatronDeContraparte, comoSocioDelPadron } from '../contraparte-adaptadores.ts';
+import { normalizar } from '@sistema-contable/shared/texto';
 import {
   armarLibro,
   serializarLibro,
@@ -215,6 +218,9 @@ async function enriquecer(
   });
   const padronConsultado = marcarPadronConsultado(padron.map(comoSocioDelPadron));
 
+  // padron_contraparte (0037) — leído una vez por export, mismo criterio que el padrón de socios.
+  const patronesDeContraparte = (await leerPadronDeContrapartes(tx, pedido.clienteId)).map(comoPatronDeContraparte);
+
   const textos = new Map<string, ReturnType<typeof textoDeReconocimiento>>();
   for (const f of movFilas) {
     const antes = reconocer(evidenciaDeMotorDesde(f, bancoCodigo), indice);
@@ -226,6 +232,12 @@ async function enriquecer(
       // flag hoy está fijo en false), mismo criterio que `apps/cli/src/resolver-contrapartida.ts`.
       const resolucion = resolverContraparte(candidatos, padronConsultado, f.fecha, false);
       despues = aplicarContrapartida(antes, resolucion);
+      despues = adjuntarEvidenciaDeContraparte(
+        despues,
+        resolucion.estado,
+        normalizar(f.concepto_banco ?? ''),
+        patronesDeContraparte,
+      );
     }
 
     textos.set(f.id, textoDeReconocimiento(despues));
@@ -494,6 +506,7 @@ export async function exportarPlanillaDeLote(
       identificacion: texto?.identificacion ?? null,
       confianza: texto?.confianza ?? null,
       pendiente: texto?.pendiente ?? null,
+      contraparteConocida: texto?.contraparteConocida ?? null,
     };
   });
 
