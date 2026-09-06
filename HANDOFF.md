@@ -6,6 +6,68 @@
 
 ---
 
+## 2026-09-05 (184) — Implementación de `padron_contraparte` cerrada (migración `0037`): mecanismo
+completo, en 4 commits, verificado individualmente y dentro de la corrida completa de `pnpm test`.
+Sin conectar al pipeline real y sin cargar proveedores reales — a propósito, los dos.
+
+**Herramienta:** Claude Code, misma sesión que (183). Convocatoria previa de `security-engineer` +
+`seguridad-datos-financieros` sobre el DDL concreto (exigida por CLAUDE.md §3.1, no cubierta por las
+rondas de diseño de (183)) — un solo hallazgo bloqueante, corregido antes de escribir el archivo real:
+el guardia anti-documento (`patron !~ '[0-9]{7}'`, copiado de `padron_socio`) se evadía con separadores
+de miles ("30.712.345.678" no tiene 7 dígitos consecutivos); corregido a
+`patron !~ '[0-9]([[:space:].-]?[0-9]){6,}'`.
+
+### Commits (4, en orden, cada uno buildeable sobre el anterior)
+
+| Hash | Mensaje |
+|---|---|
+| `85870e4` | `feat(contabilidad): resolverEvidenciaDeContraparte — matcher de texto para padron_contraparte` |
+| `f3fd3f9` | `feat(data): 0037 — padron_contraparte, catálogo de contrapartes por nombre` |
+| `b010e7a` | `feat(cli): alta-contraparte — alta y baja de padron_contraparte` |
+| `a065798` | `docs(padron-contraparte): implementación de 0037 (§6)` |
+
+### Verificación
+
+Corrida completa de `pnpm test` (no aislada): **2250 passed, 7 todo, 2 failed** — los mismos 2 fallos
+preexistentes ya conocidos, sin relación con esta tarea (`tools/verificar-fixtures.test.ts`, un fixture
+bancario ajeno; `reglas-de-codigo.test.ts` R-F, `packages/ingesta/tests/relevamiento-laura.test.ts`,
+commit `9554c87`, nunca tocado en esta sesión). Ningún fallo nuevo.
+
+Cobertura específica de esta tarea, confirmada dentro de esa misma corrida completa: `mutaciones-0037.
+test.ts` (19), `contraparte.test.ts` (8), `alta-contraparte.test.ts` (14), `catalogo.test.ts` (83),
+`grants-conjunto-cerrado.test.ts` (20), `aislamiento-modulo-1.test.ts` (16), y R-E de `reglas-de-codigo.
+test.ts` — todas verdes. Incluye 2 mutaciones de DDL en vivo (el regex vulnerable restaurado y
+comparado; la FK de `asiento_propuesto_renglon.padron_contraparte_id` reducida a una columna) más la
+mutación del matcher puro (F5: comentar el corte de `es_socio` pone el test en rojo).
+
+`pnpm verificar` (el gate encadenado con `&&`) sigue sin poder completarse de punta a punta: corta en
+`verificar-fixtures.test.ts` (preexistente) antes de llegar a `pnpm test`. Typecheck, barrido y la
+suite completa se corrieron y confirmaron por separado, todos en el estado esperado.
+
+### Estado
+
+Mecanismo completo — tabla (`padron_contraparte`, N2 simple, sin HMAC/pepper/satélite N2-R), enlace de
+evidencia (`asiento_propuesto_renglon.padron_contraparte_id`, FK compuesta, nunca resuelve `cuenta_id`),
+matcher puro (`resolverEvidenciaDeContraparte`), CLI de alta/baja, clasificación de columnas — diseñado,
+implementado y probado. **NO conectado al pipeline real** (`motor.ts`/`aplicarContrapartida`, lectura
+del padrón en `lecturas.ts`, persistencia de `padron_contraparte_id` al escribir un renglón real) — es
+la integración pendiente, con su propia convocatoria si hace falta
+(`docs/diseno/29-padron-contraparte.md` §4). **NO se cargó ningún proveedor real de Bracci** — paso
+posterior, con confirmación de la contadora nombre por nombre. Nada aplicado contra el piloto en
+ningún momento (verificado con `--estado` de solo lectura, dos veces).
+
+### Qué sigue
+
+Sin push a `origin/main` — 16 commits locales, decisión pendiente de JP. Cuando se retome: (1) la
+integración al pipeline real, (2) la carga de los 7 proveedores conocidos de Bracci por CLI, (3) los
+2 fallos preexistentes de `pnpm verificar` siguen sin dueño.
+
+### Commits
+
+Los 4 de la tabla de arriba, más esta entrada de `HANDOFF.md` (pendiente de commitear).
+
+---
+
 ## 2026-09-04 (183) — Diseño de `padron_contraparte` cerrado en dos convocatorias (sin código, sin
 migración): catálogo nuevo para que Capa C identifique proveedores/clientes específicos por nombre.
 Consolidado en `docs/diseno/29-padron-contraparte.md`.
