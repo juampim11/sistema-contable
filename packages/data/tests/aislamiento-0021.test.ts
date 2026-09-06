@@ -152,8 +152,9 @@ async function sembrarLasTres(): Promise<void> {
       );
       const cp = await duenio.query<{ id: string }>(
         `insert into reconocimiento_contrapartida
-           (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase, resuelto_a_fecha)
-         values ($1, $2, 'es_socio', 'decision_humana', '2026-06-15')
+           (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase, resuelto_a_fecha,
+            patron_contraparte_estado)
+         values ($1, $2, 'es_socio', 'decision_humana', '2026-06-15', 'no_aplica')
          returning id::text as id`,
         [clienteId, recId],
       ).catch(async () => {
@@ -162,8 +163,9 @@ async function sembrarLasTres(): Promise<void> {
         // `mutaciones-0021.test.ts`. Se usa un estado no promotor, que es el que el motor produce hoy.
         return duenio.query<{ id: string }>(
           `insert into reconocimiento_contrapartida
-             (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase, resuelto_a_fecha)
-           values ($1, $2, 'sin_candidatos', 'decision_humana', '2026-06-15')
+             (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase, resuelto_a_fecha,
+              patron_contraparte_estado)
+           values ($1, $2, 'sin_candidatos', 'decision_humana', '2026-06-15', 'sin_match')
            returning id::text as id`,
           [clienteId, recId],
         );
@@ -285,8 +287,9 @@ describe('0021 — aislamiento por CONDUCTA de las tres tablas nuevas', () => {
       try {
         await tx.consultar(
           `insert into reconocimiento_contrapartida
-             (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase, resuelto_a_fecha)
-           values ($1, $2, 'sin_match_padron_incompleto', 'decision_humana', '2026-06-15')`,
+             (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase, resuelto_a_fecha,
+              patron_contraparte_estado)
+           values ($1, $2, 'sin_match_padron_incompleto', 'decision_humana', '2026-06-15', 'sin_match')`,
           [s.clienteA, escenario.reconocimientoA],
         );
         return 'entro';
@@ -330,8 +333,9 @@ describe('0021 — aislamiento por CONDUCTA de las tres tablas nuevas', () => {
     expect(
       await escribirEnB(
         `insert into reconocimiento_contrapartida
-           (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase, resuelto_a_fecha)
-         values ($1, $2, 'sin_candidatos', 'decision_humana', '2026-06-15')`,
+           (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase, resuelto_a_fecha,
+            patron_contraparte_estado)
+         values ($1, $2, 'sin_candidatos', 'decision_humana', '2026-06-15', 'sin_match')`,
         [s.clienteB, escenario.reconocimientoB],
       ),
       '🔴 el contador de A escribió una contrapartida en el cliente B',

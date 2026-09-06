@@ -59,7 +59,11 @@ import {
 } from '../../ingesta/src/esquema.ts';
 import { CLASES_IDENTIFICADOR_CONTRAPARTE, TIPOS_DOCUMENTO_SOCIO } from '@sistema-contable/shared/seguridad';
 import { CONCEPTOS_CANONICOS } from '../../contabilidad/src/nucleo/catalogo.ts';
-import { CLASIFICACIONES_CONTRAPARTE } from '../../contabilidad/src/nucleo/contraparte.ts';
+import {
+  CLASIFICACIONES_CONTRAPARTE,
+  ESTADOS_EVIDENCIA_CONTRAPARTE,
+  REGIMENES_CON_MATCHES_PATRON,
+} from '../../contabilidad/src/nucleo/contraparte.ts';
 import {
   CLASES_RECONOCIMIENTO,
   ESTADOS_RESOLUCION,
@@ -985,6 +989,27 @@ const DOMINIOS_CERRADOS: DominioCerrado[] = [
     constante: 'REGIMENES_CON_MATCHES',
     valores: REGIMENES_CON_MATCHES,
     migracion: '0021',
+  },
+  // Los dos de `0038`. `contrapartida_patron_estado_chk` espeja EvidenciaDeContraparte['estado'], no
+  // ResolucionDeContraparte — dominio DISTINTO del de `contrapartida_estado_chk` de arriba, pese a
+  // convivir en la misma tabla (padre). `contrapartida_patron_match_regimen_chk` es el subconjunto que
+  // admite matches de PATRÓN, no el de socio: NO reusa REGIMENES_CON_MATCHES ('socio_unico' vs
+  // 'patron_unico').
+  {
+    check: 'contrapartida_patron_estado_chk',
+    tabla: 'reconocimiento_contrapartida',
+    columna: 'patron_contraparte_estado',
+    constante: 'ESTADOS_EVIDENCIA_CONTRAPARTE',
+    valores: ESTADOS_EVIDENCIA_CONTRAPARTE,
+    migracion: '0038',
+  },
+  {
+    check: 'contrapartida_patron_match_regimen_chk',
+    tabla: 'reconocimiento_contrapartida_patron_match',
+    columna: 'regimen_matches',
+    constante: 'REGIMENES_CON_MATCHES_PATRON',
+    valores: REGIMENES_CON_MATCHES_PATRON,
+    migracion: '0038',
   },
   {
     check: 'padron_socio_documento_tipo_chk',

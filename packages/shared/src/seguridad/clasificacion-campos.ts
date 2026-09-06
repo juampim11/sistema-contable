@@ -977,6 +977,24 @@ export const CLASIFICACION = {
           'columna: es el PARÁMETRO de la corrida, y la diferencia se vuelve visible el día que alguien lea ' +
           'fecha_valor en vez de fecha (ver el comment on column de 0021).',
       },
+      patron_contraparte_estado: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Mismo tier que resolucion_estado: la interpretación de ESTA transacción de ESTE cliente, ' +
+          'ahora también respecto del padrón de contrapartes por nombre (0037). Migración 0038.',
+      },
+      admite_matches_patron: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Generada (0038), mismo criterio que admite_matches: aísla el bit de mayor contenido. Sufijo ' +
+          '`_patron` a propósito, para no colisionar con `admite_matches` (evidencia de SOCIO) en la misma fila.',
+      },
+      regimen_matches_patron: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Generada (0038), tres valores, mismo criterio que regimen_matches. Mismo motivo de sufijo que ' +
+          'admite_matches_patron.',
+      },
       created_at: MARCA_TIEMPO,
     },
   },
@@ -1016,6 +1034,43 @@ export const CLASIFICACION = {
         exportable: true,
         nota: 'La FORMA del identificador que matcheó, no su valor — precedente literal ' +
           'movimiento_contraparte_identificador.clase. `match_clase` y no `clase`: ver resolucion_estado.',
+      },
+      created_at: MARCA_TIEMPO,
+    },
+  },
+
+  /**
+   * Satélite 0..N de `reconocimiento_contrapartida` (migración 0038): los patrones de
+   * `padron_contraparte` (0037) contra los que matcheó la glosa. Nunca el texto del patrón.
+   */
+  reconocimiento_contrapartida_patron_match: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      contrapartida_id: UUID_INTERNO,
+      admite_matches: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Generada CONSTANTE. Mismo nivel y mismo motivo que reconocimiento_contrapartida_match.admite_matches.',
+      },
+      regimen_matches: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Escribible pero infalsificable (FK). Mismo nivel que su análoga de la satélite hermana.',
+      },
+      padron_contraparte_id: {
+        nivel: 'N2',
+        exportable: true,
+        nota: '🔴 Convocatoria de 0038 (dba-data + seguridad-datos-financieros, caminos independientes, mismo ' +
+          'veredicto): mismo tier que reconocimiento_contrapartida_match.socio_id — uuid opaco pero ENLAZABLE a ' +
+          'un tercero puntual de ESTE cliente, mostrado en la cola de revisión activa. NO el tier de ' +
+          'asiento_propuesto_renglon.padron_contraparte_id (N1, 0037): ese cita evidencia sobre un asiento YA ' +
+          'generado, un paso después — rol distinto (deuda de reclasificación registrada, sin dueño, en ' +
+          'docs/diseno/10-deuda-declarada.md). El riesgo acá es la correlación entre filas por un mismo uuid ' +
+          'recurrente (perfil comercial del tercero con este cliente), no el contenido del uuid. N2 y NO N2-R: ' +
+          'con N2-R esta tabla entraría sola en tablasQueExigenRolEnLectura() y la cola de revisión se volvería ' +
+          'inusable.',
       },
       created_at: MARCA_TIEMPO,
     },

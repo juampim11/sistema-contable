@@ -262,12 +262,16 @@ const GRANTS_POR_COLUMNA: readonly {
   { tabla: 'padron_socio_documento', rol: 'app_request', privilegio: 'SELECT', columnas: ['cliente_id', 'created_at', 'documento', 'id', 'socio_id'] },
   { tabla: 'reconocimiento_candidato', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'created_at', 'entrada_lexico_id', 'id', 'reconocimiento_clase', 'reconocimiento_id'] },
   { tabla: 'reconocimiento_candidato', rol: 'app_request', privilegio: 'SELECT', columnas: ['cliente_id', 'created_at', 'entrada_lexico_id', 'id', 'reconocimiento_clase', 'reconocimiento_id'] },
-  // `admite_matches` fuera del INSERT porque es generada; `id` y `created_at` porque los pone el
-  // DEFAULT. Y sin UPDATE ni DELETE: la evidencia de capa C es append-only.
-  { tabla: 'reconocimiento_contrapartida', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'padron_completo_hasta', 'padron_manifestacion_id', 'reconocimiento_clase', 'reconocimiento_id', 'resolucion_estado', 'resuelto_a_fecha'] },
-  { tabla: 'reconocimiento_contrapartida', rol: 'app_request', privilegio: 'SELECT', columnas: ['admite_matches', 'cliente_id', 'created_at', 'id', 'padron_completo_hasta', 'padron_manifestacion_id', 'reconocimiento_clase', 'reconocimiento_id', 'regimen_matches', 'resolucion_estado', 'resuelto_a_fecha'] },
+  // `admite_matches`/`admite_matches_patron`/`regimen_matches_patron` fuera del INSERT porque son
+  // generadas; `id` y `created_at` porque los pone el DEFAULT. Y sin UPDATE ni DELETE: la evidencia de
+  // capa C es append-only. `patron_contraparte_estado` agregado por `0038`.
+  { tabla: 'reconocimiento_contrapartida', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'padron_completo_hasta', 'padron_manifestacion_id', 'patron_contraparte_estado', 'reconocimiento_clase', 'reconocimiento_id', 'resolucion_estado', 'resuelto_a_fecha'] },
+  { tabla: 'reconocimiento_contrapartida', rol: 'app_request', privilegio: 'SELECT', columnas: ['admite_matches', 'admite_matches_patron', 'cliente_id', 'created_at', 'id', 'padron_completo_hasta', 'padron_manifestacion_id', 'patron_contraparte_estado', 'reconocimiento_clase', 'reconocimiento_id', 'regimen_matches', 'regimen_matches_patron', 'resolucion_estado', 'resuelto_a_fecha'] },
   { tabla: 'reconocimiento_contrapartida_match', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'contrapartida_id', 'match_clase', 'regimen_matches', 'socio_id'] },
   { tabla: 'reconocimiento_contrapartida_match', rol: 'app_request', privilegio: 'SELECT', columnas: ['admite_matches', 'cliente_id', 'contrapartida_id', 'created_at', 'id', 'match_clase', 'regimen_matches', 'socio_id'] },
+  // Satélite nueva de `0038`, mirror de reconocimiento_contrapartida_match sin `match_clase`.
+  { tabla: 'reconocimiento_contrapartida_patron_match', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'contrapartida_id', 'padron_contraparte_id', 'regimen_matches'] },
+  { tabla: 'reconocimiento_contrapartida_patron_match', rol: 'app_request', privilegio: 'SELECT', columnas: ['admite_matches', 'cliente_id', 'contrapartida_id', 'created_at', 'id', 'padron_contraparte_id', 'regimen_matches'] },
   // 🔴 16 columnas y no 20: `0021` revocó el INSERT de TABLA y lo volvió a otorgar por columna, para
   // cerrar `created_at` (antedatar el propio reconocimiento) y `superseded_por` (nacer SUPERSEDED:
   // sale de `uq_recon_vigente`, nunca aparece en la cola, y nada falla). `id` SÍ, y es deliberado —
@@ -470,6 +474,7 @@ const GRANTS_A_NIVEL_TABLA: readonly string[] = [
   'reconocimiento_candidato|app_request|SELECT',
   'reconocimiento_contrapartida|app_request|SELECT',
   'reconocimiento_contrapartida_match|app_request|SELECT',
+  'reconocimiento_contrapartida_patron_match|app_request|SELECT',
   'reconocimiento_movimiento|app_request|SELECT',
   'regla_imputacion|app_request|INSERT',
   'regla_imputacion|app_request|SELECT',
@@ -876,7 +881,11 @@ describe('R41 — prueba de mutación: 13 mutaciones, elegidas para refutar', ()
       expect(d).toContain(
         'POR_COLUMNA SOBRA: reconocimiento_contrapartida.resolucion_estado|SELECT|app_job',
       );
-      expect(d.filter((x) => x.startsWith('POR_COLUMNA SOBRA:'))).toHaveLength(11);
+      // 14, no 11: `0038` agregó 3 columnas a `reconocimiento_contrapartida`
+      // (patron_contraparte_estado, admite_matches_patron, regimen_matches_patron) — un grant de
+      // TABLA a `app_job` se expande a una fila de `column_privileges` por columna, así que el
+      // conteo esperado sube 1:1 con el ancho real de la tabla.
+      expect(d.filter((x) => x.startsWith('POR_COLUMNA SOBRA:'))).toHaveLength(14);
     });
   });
 

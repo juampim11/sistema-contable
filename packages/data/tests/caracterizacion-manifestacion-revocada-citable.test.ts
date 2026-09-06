@@ -222,8 +222,8 @@ describe('0021 — caracterización: manifestación revocada sigue siendo citabl
       const f = await ej(
         `insert into reconocimiento_contrapartida
            (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase,
-            padron_manifestacion_id, padron_completo_hasta, resuelto_a_fecha)
-         values ($1, $2, 'es_tercero_padron_completo', 'propuesta', $3, $4::date, $5::date)
+            padron_manifestacion_id, padron_completo_hasta, resuelto_a_fecha, patron_contraparte_estado)
+         values ($1, $2, 'es_tercero_padron_completo', 'propuesta', $3, $4::date, $5::date, 'no_aplica')
          returning id::text as id`,
         [escenario.a.clienteId, padre.reconocimientoId, manA, '2026-06-30', '2026-06-15'],
       );
@@ -256,8 +256,8 @@ describe('0021 — caracterización: manifestación revocada sigue siendo citabl
         return ej(
           `insert into reconocimiento_contrapartida
              (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase,
-              padron_manifestacion_id, padron_completo_hasta, resuelto_a_fecha)
-           values ($1, $2, 'es_tercero_padron_completo', 'propuesta', $3, $4::date, $5::date)`,
+              padron_manifestacion_id, padron_completo_hasta, resuelto_a_fecha, patron_contraparte_estado)
+           values ($1, $2, 'es_tercero_padron_completo', 'propuesta', $3, $4::date, $5::date, 'no_aplica')`,
           [escenario.b.clienteId, padre.reconocimientoId, manA, '2026-06-30', '2026-06-15'],
         );
       }),

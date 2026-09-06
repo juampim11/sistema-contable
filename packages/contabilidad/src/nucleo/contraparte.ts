@@ -45,6 +45,16 @@ export type EvidenciaDeContraparte =
   | { readonly estado: 'match'; readonly contraparteId: string; readonly clasificacion: ClasificacionContraparte }
   | { readonly estado: 'multiples_patrones'; readonly contraparteIds: readonly string[] };
 
+/** Dominio cerrado. Lista IDÉNTICA a `contrapartida_patron_estado_chk` (migración `0038`), derivada de
+ *  `EvidenciaDeContraparte['estado']`. Si esa unión gana un quinto estado, este array (y el check) se
+ *  quedan cortos y hay que actualizar los dos juntos, nunca uno solo. */
+export const ESTADOS_EVIDENCIA_CONTRAPARTE = ['no_aplica', 'sin_match', 'match', 'multiples_patrones'] as const;
+
+/** Dominio cerrado, subconjunto: los regímenes de `reconocimiento_contrapartida_patron_match` que
+ *  ADMITEN matches (migración `0038`). Lista IDÉNTICA a `contrapartida_patron_match_regimen_chk`.
+ *  No es la misma constante que la satélite hermana de socio ('socio_unico' vs 'patron_unico'). */
+export const REGIMENES_CON_MATCHES_PATRON = ['patron_unico', 'varios'] as const;
+
 /**
  * Resuelve la evidencia de contraparte de UN movimiento, dado el `estado` que ya produjo
  * `resolverContraparte` (`contrapartida.ts`) para ese mismo movimiento sobre `padron_socio`.

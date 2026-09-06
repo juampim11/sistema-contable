@@ -60,10 +60,13 @@ export type Reconocimiento =
       /** Solo presente cuando `aplicarContrapartida` (capa C, `motor.ts`) promovió esta propuesta.
        *  Ausente en toda propuesta de capa B (reglas 1-9, 11, 14). */
       readonly evidenciaContrapartida?: ResolucionDeContraparte;
-      /** Hermano de `evidenciaContrapartida`, para `padron_contraparte` (0037) — adjuntado por
-       *  `adjuntarEvidenciaDeContraparte` (capa C, `motor.ts`), NUNCA por `aplicarContrapartida`.
-       *  En la práctica, en esta rama, solo puede ser `'no_aplica'` (el corte de `es_socio` ya
-       *  promovió acá) — se declara igual, por simetría textual con la rama de abajo. */
+      /** SIEMPRE undefined en esta rama, verificado: `adjuntarEvidenciaDeContraparte` corta en
+       *  `clase !== 'decision_humana'`, y para cuando se la llama sobre esta fila la promoción de
+       *  `aplicarContrapartida` (si vino de `resolucion.estado === 'es_socio'`) ya ocurrió — el campo
+       *  se declara igual, por paralelismo de forma con la rama de abajo, pero nunca se llena. La
+       *  evidencia de `padron_contraparte` para las filas promovidas NO sale de este campo (ver
+       *  `packages/data/src/contabilidad/escrituras.ts`: el pedido de persistencia la recibe de
+       *  `resolucion.estado` directamente en `reconocer-lote.ts`, no de `Reconocimiento`). */
       readonly evidenciaContraparte?: EvidenciaDeContraparte;
     }
   | {

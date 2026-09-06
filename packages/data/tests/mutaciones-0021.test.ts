@@ -321,10 +321,14 @@ async function crearReconocimiento(
   return { id: String(f['id']), movimientoId: mov.id, entradaDigest: mov.entradaDigest };
 }
 
+// `patron_contraparte_estado` (0038) va FIJO en `'sin_match'`, literal y no parámetro: este archivo
+// prueba el mecanismo de SOCIO (0021), independiente de la evidencia de PATRÓN — un valor fijo alcanza
+// para satisfacer el NOT NULL sin ensanchar `PedidoContrapartida` con un campo que ningún caso de acá
+// necesita variar. La cobertura de `patron_contraparte_estado` en sí vive en `mutaciones-0038.test.ts`.
 const INSERT_CONTRAPARTIDA = `insert into reconocimiento_contrapartida
     (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase,
-     padron_manifestacion_id, padron_completo_hasta, resuelto_a_fecha)
-  values ($1, $2, $3, $4, $5, $6::date, $7::date)
+     padron_manifestacion_id, padron_completo_hasta, resuelto_a_fecha, patron_contraparte_estado)
+  values ($1, $2, $3, $4, $5, $6::date, $7::date, 'sin_match')
   returning id::text as id`;
 
 /**
@@ -1733,6 +1737,7 @@ describe('0021 F — el determinante y la foto histórica (2 mutaciones, 2 legí
         caracteresMatcheados: 12,
         huboCola: false,
         candidatos: [] as readonly string[],
+        contrapartida: null,
       });
 
       const escribir = (p: PedidoDePersistirReconocimiento) =>
@@ -1921,8 +1926,9 @@ describe('0021 G — lo que el barrido encontró sin cobertura (6 mutaciones, 1 
         const padre = await crearReconocimiento(ej, cuenta, 'decision_humana');
         const f = await ej(
           `insert into reconocimiento_contrapartida
-             (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase, resuelto_a_fecha)
-           values ($1, $2, 'sin_datos_del_padron', 'decision_humana', '2026-06-15')
+             (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase, resuelto_a_fecha,
+              patron_contraparte_estado)
+           values ($1, $2, 'sin_datos_del_padron', 'decision_humana', '2026-06-15', 'sin_match')
            returning resolucion_estado, admite_matches, regimen_matches`,
           [cuenta.clienteId, padre.id],
         );
