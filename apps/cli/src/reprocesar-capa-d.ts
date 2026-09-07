@@ -394,24 +394,41 @@ export async function reprocesarCapaD(args: ArgumentosReprocesarCapaD): Promise<
     cierreIdActual = cierresAbiertos[0] as string;
   }
 
+  // 🔴 Try/catch POR CANDIDATO — cada uno ya corre en su propia transacción (`conUsuario` por
+  // llamada), así que una falla acá nunca deja escritura a medias: solo decide si el LOOP sigue con
+  // el resto del lote o se corta. Sin este catch, una excepción en el candidato 800 de 1541 tira todo
+  // `reporteAplicado` construido hasta ahí y el operador solo ve `error_interno` — sin saber hasta
+  // dónde llegó (hallazgo de `security-engineer`, primera corrida real de `--aplicar`, HANDOFF 192+).
+  // El reintento sigue siendo seguro sin este catch (`leerCandidatosDeReproceso` excluye lo ya
+  // reprocesado) — esto es solo visibilidad, no un cambio de qué se escribe.
   const reporteAplicado: FilaReporteReproceso[] = [];
   for (const c of sel.candidatos) {
-    if (c.asientoEstado === 'propuesto') {
-      const resultado = await aplicarCasoA(args, c, sel.reglaAnteriorId, sel.reglaNuevaId, sel.cuentaNuevaId, refNueva);
-      reporteAplicado.push({ asientoId: c.asientoId, clasificacion: 'caso_a', aplicado: true, resultado });
-    } else {
-      const resultado = await aplicarCasoB(
-        args,
-        c,
-        sel.reglaAnteriorId,
-        sel.reglaNuevaId,
-        sel.cuentaAnteriorId,
-        sel.cuentaNuevaId,
-        refVieja,
-        refNueva,
-        cierreIdActual as string,
-      );
-      reporteAplicado.push({ asientoId: c.asientoId, clasificacion: 'caso_b', aplicado: true, resultado });
+    const clasificacion = c.asientoEstado === 'propuesto' ? 'caso_a' : 'caso_b';
+    try {
+      if (c.asientoEstado === 'propuesto') {
+        const resultado = await aplicarCasoA(args, c, sel.reglaAnteriorId, sel.reglaNuevaId, sel.cuentaNuevaId, refNueva);
+        reporteAplicado.push({ asientoId: c.asientoId, clasificacion: 'caso_a', aplicado: true, resultado });
+      } else {
+        const resultado = await aplicarCasoB(
+          args,
+          c,
+          sel.reglaAnteriorId,
+          sel.reglaNuevaId,
+          sel.cuentaAnteriorId,
+          sel.cuentaNuevaId,
+          refVieja,
+          refNueva,
+          cierreIdActual as string,
+        );
+        reporteAplicado.push({ asientoId: c.asientoId, clasificacion: 'caso_b', aplicado: true, resultado });
+      }
+    } catch (error) {
+      log.error('reprocesar_capa_d.fallo_en_lote', {
+        cliente_id: args.cliente,
+        asiento_id: c.asientoId,
+        causa_tipo: causaTipo(error),
+      });
+      reporteAplicado.push({ asientoId: c.asientoId, clasificacion, aplicado: false });
     }
   }
   for (const a of sel.anomalos) {
@@ -451,6 +468,12 @@ if (esEjecucionDirecta) {
     imprimir(`  total_asientos_cliente=${r.resumen.totalAsientosCliente}`);
     imprimir(`  caso_a=${r.resumen.casoA}  caso_b=${r.resumen.casoB}  anomalos=${r.resumen.anomalos}`);
     imprimir(`  proporcion_afectada_sobre_total=${r.resumen.proporcionSobreTotal}`);
+    if (r.estado === 'aplicado') {
+      // Distingue "no se intentó" (dry-run/anómalo) de "se intentó y falló" — sin esto, un
+      // `aplicado:false` de esta corrida se lee igual que una fila de dry-run.
+      const fallidos = r.reporte.filter((f) => f.clasificacion !== 'anomalo' && !f.aplicado).length;
+      imprimir(`  fallidos_en_esta_corrida=${fallidos}`);
+    }
     imprimir('');
 
     process.exit(0);
