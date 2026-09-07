@@ -6,13 +6,137 @@
 
 ---
 
-## 2026-09-07 (187) — 🔒 CIERRE de Mitad 1: reproceso de Capa D con supersesión (migración `0040`) —
+## 2026-09-07 (191) — Nota de proceso: tramo de ineficiencia real en (183)-(190), corregido en
+la misma sesión — para que la próxima sesión larga no lo repita.
+
+**Herramienta:** documentación pura, escrita al auditar la sesión.
+
+### Lo que pasó
+
+Esta sesión larga tuvo un tramo de ineficiencia real antes de corregir el rumbo: convocatorias de
+agentes para decisiones de diseño que Claude Code podía resolver solo, verificación excesiva de diffs
+de documentación de bajo riesgo (pedir el texto literal de HANDOFF/docs varias veces antes de aceptar
+un resumen), y un Project Knowledge (en el chat de Claude.ai paralelo) desalineado del estado real del
+repo — parado en el documento 14 cuando el repo ya iba por el 29+ con la migración `0037` aplicada.
+Ese desalineamiento generó recomendaciones de trabajo **ya hecho** — el caso concreto: convocar de
+nuevo el diseño de `documento_ingerido`, que llevaba una semana migrado y en uso real.
+
+### La corrección de rumbo
+
+Explícita, no implícita: distinguir qué necesita **rigor máximo** (diffs completos en texto, convocatoria
+formal de agentes) de qué **avanza directo sobre el resumen** del ejecutor. El criterio que quedó fijado:
+
+**Reservar el rigor máximo (diffs completos, convocatorias formales) para lo que toca datos reales o
+seguridad; todo lo demás avanza sobre el resumen.**
+
+Migraciones, RLS, seguridad, escrituras contra el piloto: rigor máximo, sin atajos. Documentación,
+diseño sin impacto en datos reales, decisiones ya cerradas por convocatorias anteriores: resumen del
+ejecutor alcanza, no hace falta repetir la ceremonia completa.
+
+### El resultado, medido
+
+El resto de la sesión (P4/P5, `0039`, `0040`) fue notablemente más eficiente aplicando esa distinción —
+convocatorias reales solo donde tocaban esquema/seguridad (`0038`, `0039`, `0040`, cada una con su
+propia convocatoria de DDL), y avance directo sobre el resumen en todo lo demás. Lección para sesiones
+futuras: la ceremonia completa (§3.1/§3.2 de `CLAUDE.md`) sigue siendo no negociable donde corresponde
+— el error de este tramo no fue aplicarla, fue aplicarla también donde no correspondía, a costa de
+velocidad real sin ganancia de seguridad real.
+
+---
+
+## 2026-09-07 (190) — Falso positivo de "pérdida de datos" (Bracci no aparecía en el piloto) —
+CERRADO: ninguna pérdida real. Entrada retroactiva, discutido en el chat de Claude.ai paralelo a esta
+sesión, con la causa raíz técnica ya registrada aparte en `docs/diseno/10-deuda-declarada.md`.
+
+**Herramienta:** documentación pura, escrita al auditar la sesión (2026-09-07).
+
+### Qué pasó
+
+Durante el trabajo de esta sesión surgió sospecha de que los datos reales de Bracci en el piloto se
+habían perdido — la señal que la disparó fue no encontrar el tenant esperado al consultar por nombre.
+Sospecha seria, tratada como tal: no se asumió que "no aparece" significara "algo cambió sin
+autorización" sin verificar primero.
+
+### Causa raíz — ninguna pérdida real
+
+**No hubo pérdida de datos.** La causa fue doble, y ninguna de las dos partes toca el volumen de datos
+en sí:
+
+1. **Error de búsqueda propio**: la consulta buscaba `tenant_node.nombre ilike '%bracci%'` y no
+   encontraba nada — pero `tenant_node.nombre` para los clientes del piloto es, por diseño deliberado,
+   un **placeholder** ("CLIENTE PILOTO 01", etc.); la razón social real nunca vive en esa columna, solo
+   se inyecta al momento de exportar, desde un JSON externo (`exportar-relevamiento-laura.ts`, ver su
+   propio docblock). Buscar por nombre real contra esa columna estaba **estructuralmente destinado** a
+   no encontrar nada, sin que eso implicara ausencia del dato.
+2. **Fragilidad de diseño, distinta y ya registrada aparte**: el guard de `sembrar()`
+   (`packages/data/tests/ayuda.ts`) — que trunca `tenant_node` y todo lo que cuelga, pensado solo para
+   correr contra la base LOCAL sintética — verifica una ETIQUETA (`APP_ENTORNO`) que el propio proceso
+   de test puede pisar, no el DSN real de conexión. Es una fragilidad estructural real (si un shell
+   queda con `ENV_FILE=.env.piloto` exportado y se corre `pnpm test` en la misma sesión sin reabrir
+   terminal, el guard no lo detecta), **pero verificado que el piloto real estaba intacto** — Bracci y
+   ROKA sin tocar. Detalle técnico completo, ya registrado antes de esta auditoría: `10-deuda-
+   declarada.md`, el ítem del guard de `sembrar()` (sección de deuda de `0039`).
+
+### La lección
+
+**Verificar volúmenes/backups (o, en este caso, la consulta y el diseño real de la columna) ANTES de
+asumir pérdida de datos.** La secuencia correcta —que es la que terminó siguiéndose— es: sospecha →
+verificación puntual y acotada (una consulta de solo lectura, nunca un intento de "reparar" nada) →
+confirmación de que el dato está intacto → recién ahí, si corresponde, registrar la fragilidad de
+diseño que la sospecha destapó, por separado de la sospecha misma. Nunca al revés.
+
+---
+
+## 2026-09-07 (189) — Acuerdo de fecha con Laura — CUMPLIDO, sin compromiso pendiente hoy. Entrada
+retroactiva: la negociación ocurrió en el chat de Claude.ai (paralelo a esta bitácora), no acá.
+
+**Herramienta:** ninguna de código — documentación pura, escrita al auditar la sesión (2026-09-07) para
+que este acuerdo no dependa solo de la memoria de JP o de un chat que no persiste en el repo.
+
+### El pedido de Laura
+
+Laura (la contadora) pidió una **fecha concreta** para recibir el primer entregable real de Capa D
+(el relevamiento de Bracci+ROKA) — con una alternativa explícita si el equipo no podía comprometerse a
+una: ella cargaría ROKA a mano mientras tanto, en paralelo, para no quedar bloqueada esperando.
+
+### El compromiso tomado
+
+Se comprometió una fecha con margen (el martes siguiente al pedido) — deliberadamente **NO** se
+prometió una fecha para el balance completo de 12 meses. La distinción, explícita desde el compromiso
+mismo: **"3 meses validados"** (Bracci: mayo/junio/julio 2026, el corpus que este repo ya tenía
+ingerido y verificado en ese momento — ver HANDOFF 165 y siguientes) es una entrega concreta y acotada;
+**"balance completo de 12 meses"** es un alcance distinto, con su propio trabajo de ingesta y
+verificación todavía no hecho, y por eso mismo **sin fecha prometida a propósito** — comprometer una
+fecha sobre trabajo no medido habría sido la misma clase de error que este repo ya tiene documentada en
+otros lados (prometer sin medir).
+
+### Cumplido, adelantado
+
+El compromiso se cumplió **antes** de la fecha comprometida: el paquete completo (Bracci + ROKA, no
+solo Bracci) quedó armado y listo para revisión de JP el **2026-09-02** (HANDOFF 171, commit `9554c87`
+del 2026-09-01 — el mecanismo de exportación se construyó un día antes de que el paquete se generara y
+quedara listo). Los 3 archivos (`relevamiento-bracci-roka.xlsx`, `instructivo.docx`, `whatsapp.txt`)
+quedaron en `privado/piloto_capa_d/entregas-laura/`, fuera de `git` a propósito — JP los revisó antes de
+decidir cuándo/cómo enviarlos a Laura.
+
+### Estado HOY: sin compromiso de fecha pendiente de nuestro lado
+
+El único bloqueo activo hoy es la **respuesta de Laura** al paquete — que ya llegó y ya se usó esta
+semana: el hallazgo 1 de su feedback (corrección de `regla_imputacion` para el impuesto a débitos y
+créditos) es el motivador directo de la migración `0040`/Mitad 1 del reproceso de Capa D (ver 187-188,
+y `docs/diseno/10-deuda-declarada.md` B.18/B.19). No hay ninguna fecha prometida y no cumplida, ni
+ninguna fecha prometida y pendiente, en ningún sentido, al cierre de esta sesión.
+
+---
+
+## 2026-09-07 (188) — 🔒 CIERRE de Mitad 1: reproceso de Capa D con supersesión (migración `0040`) —
 `asiento_propuesto` ya tiene mecanismo para corregir lo ya generado, verificado contra el corpus real.
 
-**Herramienta:** Claude Code, sesión completa. Motivador: la corrección de `regla_imputacion` de esta
-semana (impuesto a débitos/créditos, 25413) afecta **1680 `asiento_propuesto`** ya generados (139 +
-1541, dos clientes reales del piloto) y Capa D no tenía forma de llegar a lo ya propuesto — a
-diferencia de Capa C (`recapturar-conceptos.ts`).
+**Herramienta:** Claude Code, misma sesión que (183)-(187) — continúa directo de (187): el mismo turno
+que cerró el bug del digest siguió, sin cortar, convocando el reproceso de Capa D. Motivador: la
+corrección de `regla_imputacion` de esta semana (impuesto a débitos/créditos, 25413) afecta **1680
+`asiento_propuesto`** ya generados (139 + 1541, dos clientes reales del piloto) y Capa D no tenía forma
+de llegar a lo ya propuesto — a diferencia de Capa C (`recapturar-conceptos.ts`).
 
 ### La convocatoria y el hallazgo que reencuadró todo
 
@@ -87,6 +211,107 @@ exacto, no contra el estado final completo):
 **Nada tocó el piloto.** La corrida real contra los 1680 asientos (con la reconciliación manual de JP
 primero vía `confirmar-asientos.ts`) queda explícitamente fuera — paso posterior, autorización propia.
 No pusheado a `origin/main` todavía.
+
+---
+
+## 2026-09-07 (187) — 🔴 Migración `0039`: fallback secuencial a `descripcion` cuando `concepto_banco`
+no matchea + bug crítico del digest, encontrado por el propio E2E antes de que tocara producción.
+
+**Herramienta:** Claude Code, misma sesión que (183)-(186), continúa directo después de cargar los 7
+proveedores reales de Bracci en `padron_contraparte` y verificar el push de los 11 commits pendientes.
+**Entrada agregada retroactivamente el 2026-09-07, al auditar la documentación de la sesión** — el
+trabajo real (4 commits) quedó sin su propia entrada de `HANDOFF` en el momento, tapado por seguir
+directo a la convocatoria del reproceso de Capa D (188). Reconstruida contra los commits reales y
+`docs/diseno/10-deuda-declarada.md` (B.19-adyacentes), no de memoria.
+
+### El descubrimiento: 0 matches, y no era un problema del piloto
+
+Con los 7 proveedores ya cargados, medir el impacto del fallback (`resolver-contrapartida.ts`, sin
+`--aplicar`, solo conteos) contra el corpus real de Bracci dio **0 matches** — inesperado, dado que el
+propósito entero de cargar los proveedores era que empezaran a matchear. La primera hipótesis (dato mal
+cargado en el piloto) se descartó verificando: los 7 patrones estaban ahí, correctos, confirmados nombre
+por nombre contra `relevamiento-bracci-roka.xlsx` antes del alta.
+
+**Causa raíz real, medida contra el código, no asumida**: el matcher (`resolverEvidenciaDeContraparte`)
+lee `concepto_banco` — pero para el patrón de glosa de Galicia, el nombre del proveedor **nunca aparece
+en `concepto_banco`**, solo en `descripcion` (el texto completo de la fila). Un gap de diseño, no un
+problema de datos del piloto: el matcher siempre había estado mirando la columna equivocada para este
+banco.
+
+### Convocatoria y diseño del fallback
+
+Convocatoria formal (`dba-data` + `security-engineer` + `seguridad-datos-financieros`) sobre extender el
+matcher a leer `descripcion` además de/en vez de `concepto_banco`. Diseño aprobado: **fallback
+secuencial, nunca merge** — intenta `concepto_banco` primero, y solo si da `sin_match` prueba
+`descripcion`; el origen del match (`patron_contraparte_origen`, columna nueva de `0039`) queda
+persistido para que la contadora sepa de cuál campo salió cada match, nunca una fusión ciega de las dos
+fuentes.
+
+Implementado en 4 pasos revertibles, cada uno con diff completo revisado antes de avanzar: (1)
+`packages/contabilidad/src/nucleo/contraparte.ts` — la lógica pura de fallback; (2)
+`packages/contabilidad/src/nucleo/motor.ts` + `packages/data/src/contabilidad/lecturas.ts` — wiring del
+tipo `GlosasCandidatas`; (3) los 3 call sites reales (`reconocer-lote.ts`, `resolver-contrapartida.ts`,
+`exportar-planilla.ts`); (4) migración `0039` (`patron_contraparte_origen`, dominio cerrado, CHECK de
+coherencia contra `patron_contraparte_estado`).
+
+### El bug crítico: encontrado por un E2E sintético REAL, antes de tocar producción
+
+Con los 4 pasos ya en verde por sus tests unitarios/de integración, un **E2E sintético real (no
+simulado)** —construyendo el objeto de evidencia tal como lo arma el camino de producción real, no una
+versión recortada de test— hizo lo que ningún test anterior había hecho: reprodujo el bug.
+`digestDeEntrada` (el determinante de idempotencia de Capa B/C, `0021`) hashea `Object.keys()` del
+objeto que RECIBE en tiempo de ejecución, no del tipo declarado en TypeScript — y `reconocer-lote.ts`
+pasa el objeto de evidencia **completo** a propósito ("el digest cubre todo lo que el motor puede
+leer"). Al agregar `descripcion` a ese objeto para alimentar el fallback nuevo, el digest empezó a
+incluirla **sin que nadie lo hubiera decidido** — silencioso, porque `pnpm typecheck` y toda la suite
+existente pasaban limpio (el bug vive en una discrepancia runtime-vs-tipo que ningún test previo
+ejercitaba con el objeto real completo).
+
+**Efecto medido**: `reconocer-lote.ts --aplicar` habría reportado `entrada_cambio_durante_la_corrida`
+para el **100% de las corridas futuras, en cualquier cliente** — nunca persistiendo nada, sin excepción,
+desde el primer deploy de este cambio. La razón por la que ningún test lo atrapó antes: el gate que
+debía vigilar la coherencia entre el tipo TypeScript y la fórmula SQL gemela del digest (regla "R-L",
+citada por su nombre en un comentario de `entrada.ts` desde la migración `0021`) **nunca se había
+escrito** — quedó documentado como si existiera, sin commitear nunca.
+
+Convocatoria propia sobre el hallazgo (`dba-data` + `arquitecto-software` + `security-engineer`).
+Corrección: `descripcion` se excluye explícitamente del digest (`CLAVES_EXCLUIDAS_CON_DEUDA`, distinta
+de `CLAVES_QUE_NUNCA_SON_ENTRADA` — motivo distinto: una es imposible que altere el reconocimiento, la
+otra sí podría y se excluye por decisión consciente, con su deuda declarada), la regla R-L se escribió
+por primera vez, y se agregó una guarda en runtime dentro de `proyeccionDeEntrada()` que tira explícito
+(nombrando el campo) si las claves reales de un objeto no coinciden con las declaradas — para que la
+próxima vez que esto pase, falle ruidoso en la primera corrida, no en silencio.
+
+**Alcance medido contra el piloto real, antes de decidir el cierre** (solo lectura): sumar `descripcion`
+a la fórmula completa (la corrección "de fondo", no aplicada) habría cambiado el `entrada_digest` del
+**100% de las 10.663 filas** de `movimiento_bancario_crudo`, de las cuales **10.401 ya tienen
+`reconocimiento_movimiento` persistido** — habría disparado reproceso real de Capa C sobre resultados
+YA entregados a la contadora. Por eso el cierre aplicado hoy es la exclusión (cero riesgo), y el cierre
+de fondo queda declarado como deuda con su propio camino, no colado como efecto lateral (`docs/diseno/
+10-deuda-declarada.md`).
+
+### Otros 2 hallazgos registrados como deuda, mismo día
+
+`aislamiento-modulo-1.test.ts` tiene 4 tests rotos — confirmado con `git stash` que ya estaba roto en
+`main` **antes** de esta tarea (desde `0038`, la semana anterior), sin relación con el fallback; y
+`regla_imputacion_concepto_chk` (`0030`) evade la detección automática de `catalogo.test.ts` por un
+`is null or` semánticamente redundante en el CHECK — el mismo patrón que `0039` evitó a propósito en su
+propio DDL. Los dos, sin dueño todavía, detalle completo en `10-deuda-declarada.md`.
+
+### Commits
+
+| Hash | Mensaje |
+|---|---|
+| `8b179ed` | `feat(contabilidad,data): 0039 — fallback secuencial a descripcion + origen persistido` |
+| `1fee28c` | `feat(cli,ingesta): conectar el fallback de 0039 a los 3 call sites de producción` |
+| `d42fd17` | `fix(contabilidad): digestDeEntrada no hashea descripcion + R-L + guarda en runtime` |
+| `a6ec437` | `docs(deuda): 4 hallazgos de la sesión de 0039` |
+
+### Qué sigue
+
+Migración `0039` aplicada solo a LOCAL — nunca al piloto en esta tarea. La sesión siguió directo,
+sin cortar, a la convocatoria del reproceso de Capa D (188) — motivada por un hallazgo distinto
+(corrección de `regla_imputacion`), no una continuación del fallback de contraparte.
 
 ---
 

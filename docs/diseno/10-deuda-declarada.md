@@ -449,27 +449,28 @@ sale el contenido de `knowledge/` (ver `docs/agents/guia-carga-conocimiento.md`,
 respuesta sobre quién carga qué). Hasta que eso se resuelva, cada convocatoria a un agente fiscal
 sobre un caso real va a terminar en la misma respuesta — correcta, pero repetida |
 
-| **B.19** | 🟡 **1541 (Bracci) + 139 (ROKA) renglones de `asiento_propuesto_renglon` ya generados
-siguen citando la cuenta VIEJA del impuesto a los débitos y créditos (`1.2.3.130`/`4.2.3.310`) —
-sin dueño todavía.** La corrección de `regla_imputacion` del 2026-09-04 (feedback real de Laura,
-hallazgo 1 del relevamiento) cierra las reglas viejas y abre las nuevas apuntando a `1.2.3.230`
-"Pago a cuenta Ganancias" — verificado por consulta directa: **conteo idéntico antes y después de
-la corrección, 1541/139, exacto** — confirma que **solo aplica hacia adelante**, ningún renglón ya
-emitido se recalculó ni se tocó.
+| **B.19** | ✅ **MECANISMO CERRADO (2026-09-07, Mitad 1, migración `0040`, HANDOFF 187-188) — la
+corrida real contra los 1541 (Bracci) + 139 (ROKA) sigue pendiente, sin dueño para ESE paso.** 1541
+(Bracci) + 139 (ROKA) renglones de `asiento_propuesto_renglon` ya generados siguen citando la cuenta
+VIEJA del impuesto a los débitos y créditos (`1.2.3.130`/`4.2.3.310`). La corrección de
+`regla_imputacion` del 2026-09-04 (feedback real de Laura, hallazgo 1 del relevamiento) cierra las
+reglas viejas y abre las nuevas apuntando a `1.2.3.230` "Pago a cuenta Ganancias" — verificado por
+consulta directa: **conteo idéntico antes y después de la corrección, 1541/139, exacto** — confirma
+que **solo aplica hacia adelante**, ningún renglón ya emitido se recalculó ni se tocó.
 
-**No existe hoy ningún CLI de reproceso de Capa D** — a diferencia de Capa C, que sí tiene
-`packages/ingesta/src/reproceso/recapturar-conceptos.ts` (y su comando
-`apps/cli/src/recapturar-conceptos.ts`) para volver a correr el léxico sobre movimientos ya
-persistidos. Para Capa D (asientos propuestos), el mecanismo equivalente —cerrar/superseder los
-1541+139 renglones existentes y generar los nuevos con la cuenta corregida, respetando la
-disciplina de vigencia y sin reescribir historia sobre asientos ya confirmados si los hubiera— no
-tiene una línea de código escrita.
+**Hasta el 2026-09-06 no existía ningún CLI de reproceso de Capa D** — a diferencia de Capa C, que sí
+tenía `packages/ingesta/src/reproceso/recapturar-conceptos.ts`. **Cerrado el 2026-09-07**:
+`confirmar-asientos.ts` (reconciliación manual, reusa la transición de `0027`/`0028` que nadie
+invocaba) + `reprocesarAsientoNoRevisado`/`corregirAsientoEntregado` (los dos escritores, Caso
+A/Caso B según si el asiento ya fue revisado) + `reprocesar-capa-d.ts` (el CLI real, selector por
+`--regla-imputacion-anterior-id`, dry-run con la proporción sobre el total antes de `--aplicar`).
+**Medido, solo lectura, contra el corpus real de Bracci/ROKA: 0/1680 anomalías** — el mecanismo cubre
+el caso completo, mecánicamente, sin resto.
 
-Cierre, cuando haya dueño: diseñar el reproceso de Capa D (probablemente `supersede` el
-`asiento_propuesto`/`asiento_propuesto_renglon` afectado + genera uno nuevo citando la regla
-vigente a la fecha del movimiento, mismo patrón de supersesión que el resto del proyecto) —
-convocatoria completa (`dba-data` + `motor-conciliacion-contable` + `contador-dominio`), no una
-tarea de una sola sesión |
+**Lo que sigue sin dueño, y es DISTINTO de lo de arriba**: la corrida real de `reprocesar-capa-d.ts
+--aplicar` contra los 1680 renglones reales del piloto — deliberadamente fuera de Mitad 1, requiere
+su propia autorización explícita (primero la reconciliación manual de JP vía `confirmar-asientos.ts`
+sobre lo que ya se entregó, después el reproceso). El mecanismo está probado; la corrida real, no |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
