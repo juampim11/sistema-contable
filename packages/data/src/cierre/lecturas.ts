@@ -227,3 +227,28 @@ export async function leerMapeoCuentasBancarias(
 
   return new Map(filas.map((f) => [f.id, f.cuenta_id]));
 }
+
+// -----------------------------------------------------------------------------
+// leerEstadoDeAsientos — para el dry-run de `confirmar-asientos.ts` (Mitad 1 de reproceso, `0040`)
+// -----------------------------------------------------------------------------
+
+export type EstadoDeAsiento = { readonly asientoEstado: string; readonly cierreId: string };
+
+/**
+ * Un `Map` con SOLO los `asientoId` encontrados (para ese `clienteId`, vía RLS) — el caller detecta
+ * "no encontrado" por ausencia de clave, nunca por un valor inventado. Selector explícito por lista
+ * de ids (nunca "todo lo pendiente" del cliente) — mismo criterio que `0040`, punto 1 del plan.
+ */
+export async function leerEstadoDeAsientos(
+  tx: Tx,
+  args: { readonly clienteId: string; readonly asientoIds: readonly string[] },
+): Promise<ReadonlyMap<string, EstadoDeAsiento>> {
+  if (args.asientoIds.length === 0) return new Map();
+  const filas = await tx.consultar<{ id: string; asiento_estado: string; cierre_id: string }>(
+    `select id::text as id, asiento_estado, cierre_id::text as cierre_id
+       from asiento_propuesto
+      where cliente_id = $1 and id = any($2::uuid[])`,
+    [args.clienteId, args.asientoIds],
+  );
+  return new Map(filas.map((f) => [f.id, { asientoEstado: f.asiento_estado, cierreId: f.cierre_id }]));
+}

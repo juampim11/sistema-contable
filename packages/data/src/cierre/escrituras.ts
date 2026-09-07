@@ -347,3 +347,50 @@ export async function escribirPendienteDeImputacion(
     throw error;
   }
 }
+
+// -----------------------------------------------------------------------------
+// Reconciliación manual — `confirmarAsiento` (`0040`, Mitad 1, Paso 2). Reusa la transición
+// `asiento_propuesto_upd_confirmar` (`0027`) y el trigger de inmutabilidad post-terminal (`0028`):
+// esta función no agrega NINGÚN mecanismo nuevo de base, solo el UPDATE que nadie invocaba todavía
+// (el hallazgo que reencuadró toda la convocatoria: 1893/1893 asientos del piloto seguían
+// `'propuesto'`). Es la precondición del reproceso Caso B — sin esto, ningún asiento llega nunca a
+// `'confirmado'`.
+// -----------------------------------------------------------------------------
+
+export type PedidoConfirmarAsiento = {
+  readonly clienteId: string;
+  readonly asientoId: string;
+};
+
+export type ResultadoConfirmarAsiento =
+  | { readonly estado: 'confirmado' }
+  /**
+   * 🔴 0 filas afectadas — el asiento no estaba `'propuesto'` (ya `'confirmado'`, ya `'superseded'`,
+   * o el id no existe para este cliente). Mismo criterio que `reprocesarAsientoNoRevisado`: el
+   * conflicto sube explícito, nunca `ON CONFLICT`. El trigger de `0028` refuerza esto mismo un nivel
+   * más abajo — reconfirmar un asiento ya `'confirmado'` muere con `P0002`, nunca en silencio.
+   */
+  | { readonly estado: 'conflicto'; readonly motivoCodigo: 'asiento_no_estaba_propuesto' };
+
+export async function confirmarAsiento(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoConfirmarAsiento,
+): Promise<ResultadoConfirmarAsiento> {
+  const confirmado = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string }>(
+      `update asiento_propuesto
+          set asiento_estado = 'confirmado'
+        where cliente_id = $1 and id = $2 and asiento_estado = 'propuesto'
+        returning id::text as id`,
+      [pedido.clienteId, pedido.asientoId],
+    ),
+  );
+  if (!confirmado[0]?.id) {
+    return { estado: 'conflicto', motivoCodigo: 'asiento_no_estaba_propuesto' };
+  }
+
+  logger.info('reproceso_capa_d.confirmado', { cliente_id: pedido.clienteId, asiento_id: pedido.asientoId });
+
+  return { estado: 'confirmado' };
+}

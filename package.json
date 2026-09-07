@@ -45,6 +45,7 @@
     "alta:contraparte": "node apps/cli/src/alta-contraparte.ts",
     "alta:socio:placeholder-demo": "node apps/cli/src/alta-socio-placeholder-demo.ts",
     "resolver:contrapartida": "node apps/cli/src/resolver-contrapartida.ts",
+    "confirmar:asientos": "node apps/cli/src/confirmar-asientos.ts",
     "reconocer:lote": "node apps/cli/src/reconocer-lote.ts",
     "conciliar:lote": "node apps/cli/src/conciliar-lote.ts",
     "calibrar:lexico": "node apps/cli/src/calibrar-lexico-metadatos.ts",
