@@ -242,6 +242,14 @@ export type PedidoDePersistirReconocimiento = {
     readonly padronCompletoHasta: null;
     readonly patronContraparteEstado: string;
     readonly patronContraparteIds: readonly string[];
+    /**
+     * 🔴 `0039`. `'concepto_banco' | 'descripcion' | null` — CUÁL de las dos glosas produjo el match,
+     * cuando `patronContraparteEstado` es `'match'`/`'multiples_patrones'`; `null` en los otros dos
+     * estados (`no_aplica`/`sin_match`, nada que atribuir). `contrapartida_patron_origen_coherencia_chk`
+     * (0039) fuerza esa misma correspondencia en la base — un valor que no coincida con el estado
+     * aborta el INSERT con `23514`, nunca se persiste incoherente.
+     */
+    readonly patronContraparteOrigen: string | null;
   };
 };
 
@@ -518,13 +526,13 @@ export async function persistirReconocimiento(
         `insert into reconocimiento_contrapartida
            (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase,
             padron_manifestacion_id, padron_completo_hasta, resuelto_a_fecha,
-            patron_contraparte_estado)
-         values ($1, $2, $3, $4, $5, $6, $7::date, $8)
+            patron_contraparte_estado, patron_contraparte_origen)
+         values ($1, $2, $3, $4, $5, $6, $7::date, $8, $9)
          returning id::text as id`,
         [
           pedido.clienteId, id, c.resolucionEstado, pedido.clase,
           c.padronManifestacionId, c.padronCompletoHasta, c.resueltoAFecha,
-          c.patronContraparteEstado,
+          c.patronContraparteEstado, c.patronContraparteOrigen,
         ],
       ),
     );

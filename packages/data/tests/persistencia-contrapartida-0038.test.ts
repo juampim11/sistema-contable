@@ -181,6 +181,7 @@ describe('0038 — persistirReconocimiento: `contrapartida` no-null escribe el p
         padronCompletoHasta: null,
         patronContraparteEstado: 'sin_match',
         patronContraparteIds: [],
+        patronContraparteOrigen: null,
       },
     };
     const r = await persistir(pedido);
@@ -201,6 +202,7 @@ describe('0038 — persistirReconocimiento: `contrapartida` no-null escribe el p
         padronCompletoHasta: null,
         patronContraparteEstado: 'match',
         patronContraparteIds: [patronId],
+        patronContraparteOrigen: 'concepto_banco',
       },
     };
     const r = await persistir(pedido);
@@ -232,6 +234,7 @@ describe('0038 — persistirReconocimiento: `contrapartida` no-null escribe el p
         padronCompletoHasta: null,
         patronContraparteEstado: 'multiples_patrones',
         patronContraparteIds: [p1 as string, p2 as string],
+        patronContraparteOrigen: 'concepto_banco',
       },
     };
     const r = await persistir(pedido);
@@ -267,6 +270,7 @@ describe('0038 — persistirReconocimiento: `contrapartida` no-null escribe el p
         padronCompletoHasta: null,
         patronContraparteEstado: 'no_aplica',
         patronContraparteIds: [],
+        patronContraparteOrigen: null,
       },
     };
     const r = await persistir(pedido);
@@ -288,6 +292,7 @@ describe('0038 — el gate: solo se escribe si el PADRE se creó/supersedió EN 
       padronCompletoHasta: null,
       patronContraparteEstado: 'match' as const,
       patronContraparteIds: [patronId],
+      patronContraparteOrigen: 'concepto_banco' as const,
     };
 
     const primera = pedidoBase(mov, digest);
@@ -326,6 +331,7 @@ describe('0038 — el gate: solo se escribe si el PADRE se creó/supersedió EN 
         padronCompletoHasta: null,
         patronContraparteEstado: 'sin_match',
         patronContraparteIds: [],
+        patronContraparteOrigen: null,
       },
     };
     const r1 = await persistir(viejaConContrapartida);
@@ -343,6 +349,7 @@ describe('0038 — el gate: solo se escribe si el PADRE se creó/supersedió EN 
         padronCompletoHasta: null,
         patronContraparteEstado: 'no_aplica',
         patronContraparteIds: [],
+        patronContraparteOrigen: null,
       },
     };
     const r2 = await persistir(nuevaConContrapartida);

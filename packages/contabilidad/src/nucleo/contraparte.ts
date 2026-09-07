@@ -7,8 +7,8 @@
  * aplicó todavía), CUÁL proveedor/cliente conocido por NOMBRE matchea la glosa — evidencia
  * estructuralmente más débil, que nunca puede competir con el HMAC exacto.
  *
- * NO se conecta al pipeline real (`motor.ts`) en esta tarea — ver `docs/diseno/29-padron-contraparte.md`
- * §4 y el plan de implementación: es una integración posterior, deliberada.
+ * Conectado al pipeline real desde el 2026-09-06 (`motor.ts:adjuntarEvidenciaDeContraparte`, los 3
+ * call sites de `apps/cli`/`packages/ingesta`) — ver `docs/diseno/29-padron-contraparte.md` §4.
  */
 
 /** Dominio cerrado. Lista IDÉNTICA a `padron_contraparte_clasificacion_chk` (migración `0037`).
@@ -39,11 +39,26 @@ export type PatronDeContraparte = {
  * pipeline real, respetando la regla dura de `docs/diseno/29-padron-contraparte.md` §1.2 — un match
  * de nombre nunca promueve `decision_humana → propuesta` por sí solo.
  */
+/** Dominio cerrado. Lista IDÉNTICA a `contrapartida_patron_origen_chk` (migración `0039`). Solo las
+ *  variantes `match`/`multiples_patrones` de `EvidenciaDeContraparte` lo llevan — `no_aplica` no
+ *  consultó nada y `sin_match` no tiene nada que atribuir. */
+export const ORIGENES_EVIDENCIA_CONTRAPARTE = ['concepto_banco', 'descripcion'] as const;
+export type OrigenEvidenciaContraparte = (typeof ORIGENES_EVIDENCIA_CONTRAPARTE)[number];
+
 export type EvidenciaDeContraparte =
   | { readonly estado: 'no_aplica' }
   | { readonly estado: 'sin_match' }
-  | { readonly estado: 'match'; readonly contraparteId: string; readonly clasificacion: ClasificacionContraparte }
-  | { readonly estado: 'multiples_patrones'; readonly contraparteIds: readonly string[] };
+  | {
+      readonly estado: 'match';
+      readonly contraparteId: string;
+      readonly clasificacion: ClasificacionContraparte;
+      readonly origen: OrigenEvidenciaContraparte;
+    }
+  | {
+      readonly estado: 'multiples_patrones';
+      readonly contraparteIds: readonly string[];
+      readonly origen: OrigenEvidenciaContraparte;
+    };
 
 /** Dominio cerrado. Lista IDÉNTICA a `contrapartida_patron_estado_chk` (migración `0038`), derivada de
  *  `EvidenciaDeContraparte['estado']`. Si esa unión gana un quinto estado, este array (y el check) se
@@ -54,6 +69,44 @@ export const ESTADOS_EVIDENCIA_CONTRAPARTE = ['no_aplica', 'sin_match', 'match',
  *  ADMITEN matches (migración `0038`). Lista IDÉNTICA a `contrapartida_patron_match_regimen_chk`.
  *  No es la misma constante que la satélite hermana de socio ('socio_unico' vs 'patron_unico'). */
 export const REGIMENES_CON_MATCHES_PATRON = ['patron_unico', 'varios'] as const;
+
+/** Las dos glosas candidatas contra las que se intenta matchear, en orden de intento. Ambas tienen
+ *  que venir YA normalizadas por el llamador (`normalizar()`) — esta función no normaliza nada,
+ *  mismo criterio que el resto del archivo. */
+export type GlosasCandidatas = {
+  /** El segmento que ya extrae Capa B (`concepto_banco`) — se prueba PRIMERO: es la superficie más
+   *  chica y, cuando alcanza (Macro, vocabulario cerrado y anclado), la más precisa. */
+  readonly conceptoBanco: string;
+  /** La glosa completa del banco (`descripcion`) — se prueba SOLO si `conceptoBanco` da `sin_match`.
+   *  Convocatoria `dba-data`/`security-engineer`/`seguridad-datos-financieros` (2026-09-06, corpus
+   *  real de Bracci): para Galicia/Santander, `concepto_banco` es un corte geométrico que nunca
+   *  llega al nombre del proveedor (medido: 79/79 apariciones reales en `descripcion`, 0/79 en
+   *  `concepto_banco`); para Bancor/ICBC/Nación, `concepto_banco` ni se captura. */
+  readonly descripcion: string;
+};
+
+type ResultadoDeMatch =
+  | { readonly estado: 'sin_match' }
+  | { readonly estado: 'match'; readonly contraparteId: string; readonly clasificacion: ClasificacionContraparte }
+  | { readonly estado: 'multiples_patrones'; readonly contraparteIds: readonly string[] };
+
+function matchearContraGlosa(
+  glosaNormalizada: string,
+  patrones: readonly PatronDeContraparte[],
+): ResultadoDeMatch {
+  const matches = patrones.filter((p) => glosaNormalizada.includes(p.patron));
+
+  if (matches.length === 0) {
+    return { estado: 'sin_match' };
+  }
+
+  if (matches.length > 1) {
+    return { estado: 'multiples_patrones', contraparteIds: matches.map((m) => m.contraparteId) };
+  }
+
+  const unico = matches[0] as PatronDeContraparte;
+  return { estado: 'match', contraparteId: unico.contraparteId, clasificacion: unico.clasificacion };
+}
 
 /**
  * Resuelve la evidencia de contraparte de UN movimiento, dado el `estado` que ya produjo
@@ -67,10 +120,13 @@ export const REGIMENES_CON_MATCHES_PATRON = ['patron_unico', 'varios'] as const;
  * patrón de `padron_contraparte` terminaría mezclando las dos evidencias — exactamente lo que este
  * corte existe para impedir. Ver la prueba de mutación (`contraparte.test.ts`, F5).
  *
- * `glosaNormalizada` y `patron.patron` tienen que venir YA normalizados por el llamador
- * (`normalizar()`, `packages/shared/src/texto/normalizar.ts`) — esta función no normaliza nada: el
- * algoritmo vive una sola vez, mismo criterio que la puerta de admisión de la base (0037) verifica
- * la poscondición sin recalcularla.
+ * 🔴 FALLBACK SECUENCIAL, NUNCA MERGE (convocatoria 2026-09-06, hallazgo `dba-data`): se intenta
+ * `glosas.conceptoBanco` primero; si y solo si da `sin_match`, se reintenta con
+ * `glosas.descripcion` — y ese segundo resultado REEMPLAZA al primero, nunca se combinan las dos
+ * listas de matches. Sumar los `contraparteId` de las dos pasadas arriesgaría contar el mismo
+ * patrón dos veces como si fueran dos matches distintos y degradar a `multiples_patrones` por una
+ * ambigüedad que no existe. Si `conceptoBanco` ya dio `match`/`multiples_patrones`, `descripcion`
+ * NUNCA se consulta — el resultado lleva `origen: 'concepto_banco'` y ahí termina.
  *
  * Match v1: substring exacto, sin prefijo mínimo — conservador, mismo criterio que `galicia.ts`
  * ("conservador nunca es incorrecto, solo subóptimo"). La ambigüedad entre patrones (uno substring
@@ -78,23 +134,22 @@ export const REGIMENES_CON_MATCHES_PATRON = ['patron_unico', 'varios'] as const;
  */
 export function resolverEvidenciaDeContraparte(
   resolucionSocio: 'es_socio' | (string & {}),
-  glosaNormalizada: string,
+  glosas: GlosasCandidatas,
   patrones: readonly PatronDeContraparte[],
 ): EvidenciaDeContraparte {
   if (resolucionSocio === 'es_socio') {
     return { estado: 'no_aplica' };
   }
 
-  const matches = patrones.filter((p) => glosaNormalizada.includes(p.patron));
-
-  if (matches.length === 0) {
-    return { estado: 'sin_match' };
+  const porConceptoBanco = matchearContraGlosa(glosas.conceptoBanco, patrones);
+  if (porConceptoBanco.estado !== 'sin_match') {
+    return { ...porConceptoBanco, origen: 'concepto_banco' };
   }
 
-  if (matches.length > 1) {
-    return { estado: 'multiples_patrones', contraparteIds: matches.map((m) => m.contraparteId) };
+  const porDescripcion = matchearContraGlosa(glosas.descripcion, patrones);
+  if (porDescripcion.estado !== 'sin_match') {
+    return { ...porDescripcion, origen: 'descripcion' };
   }
 
-  const unico = matches[0] as PatronDeContraparte;
-  return { estado: 'match', contraparteId: unico.contraparteId, clasificacion: unico.clasificacion };
+  return { estado: 'sin_match' };
 }

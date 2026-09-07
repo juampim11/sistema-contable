@@ -327,6 +327,10 @@ export type EvidenciaDeMovimientoLeida = {
   /** ISO `YYYY-MM-DD` — la fecha que `resolverContraparte()` usa para filtrar vigencia del padrón. */
   readonly fecha: string;
   readonly contraparteCaptura: 'no_capturado' | 'sin_identificador' | 'capturado' | 'capturado_cuenta_propia';
+  /** N2, la glosa completa del banco (0039) — SOLO para alimentar `GlosasCandidatas.descripcion` en
+   *  el fallback de `resolverEvidenciaDeContraparte` cuando `conceptoBanco` no matchea. NUNCA viaja
+   *  a `evidenciaDeMotorDesde()`/`EvidenciaDeMovimiento`: ese tipo sigue, a propósito, sin glosa. */
+  readonly descripcion: string;
 };
 
 /**
@@ -352,9 +356,11 @@ export async function leerEvidenciaDeMovimientos(
     importe: string;
     fecha: string;
     contraparte_captura: string;
+    descripcion: string;
   }>(
     `select m.id, li.banco_codigo, m.concepto_banco, m.concepto_completo, m.concepto_banco_estrategia,
-            m.concepto_codigo, m.importe::text as importe, m.fecha::text as fecha, m.contraparte_captura
+            m.concepto_codigo, m.importe::text as importe, m.fecha::text as fecha, m.contraparte_captura,
+            m.descripcion
        from movimiento_bancario_crudo m
        join lote_ingesta li on li.cliente_id = m.cliente_id and li.id = m.lote_ingesta_id
       where m.cliente_id = $1 and m.lote_ingesta_id = $2
@@ -377,6 +383,7 @@ export async function leerEvidenciaDeMovimientos(
       columnaOrigen: Number(f.importe) < 0 ? 'debito' : 'credito',
       fecha: f.fecha,
       contraparteCaptura: f.contraparte_captura as EvidenciaDeMovimientoLeida['contraparteCaptura'],
+      descripcion: f.descripcion,
     };
   });
 }

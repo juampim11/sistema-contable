@@ -62,6 +62,7 @@ import { CONCEPTOS_CANONICOS } from '../../contabilidad/src/nucleo/catalogo.ts';
 import {
   CLASIFICACIONES_CONTRAPARTE,
   ESTADOS_EVIDENCIA_CONTRAPARTE,
+  ORIGENES_EVIDENCIA_CONTRAPARTE,
   REGIMENES_CON_MATCHES_PATRON,
 } from '../../contabilidad/src/nucleo/contraparte.ts';
 import {
@@ -1010,6 +1011,19 @@ const DOMINIOS_CERRADOS: DominioCerrado[] = [
     constante: 'REGIMENES_CON_MATCHES_PATRON',
     valores: REGIMENES_CON_MATCHES_PATRON,
     migracion: '0038',
+  },
+  // `0039`, hermana de `patron_contraparte_estado`. NULLABLE (a diferencia de los de arriba), pero el
+  // CHECK se escribió SIN `is null or` a propósito — un CHECK que evalúa a NULL ya satisface el
+  // constraint en Postgres, y `is null or` lo hubiera sacado de la forma `= ANY (ARRAY[...])` que este
+  // barrido detecta (mismo punto ciego, sin test, que `regla_imputacion_concepto_chk` de `0030` —
+  // registrado en deuda declarada, sin dueño).
+  {
+    check: 'contrapartida_patron_origen_chk',
+    tabla: 'reconocimiento_contrapartida',
+    columna: 'patron_contraparte_origen',
+    constante: 'ORIGENES_EVIDENCIA_CONTRAPARTE',
+    valores: ORIGENES_EVIDENCIA_CONTRAPARTE,
+    migracion: '0039',
   },
   {
     check: 'padron_socio_documento_tipo_chk',

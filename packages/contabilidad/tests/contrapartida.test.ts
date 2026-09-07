@@ -15,7 +15,7 @@ import {
 } from '../src/nucleo/contrapartida.ts';
 import { adjuntarEvidenciaDeContraparte, aplicarContrapartida } from '../src/nucleo/motor.ts';
 import type { Reconocimiento } from '../src/nucleo/reconocimiento.ts';
-import type { PatronDeContraparte } from '../src/nucleo/contraparte.ts';
+import type { GlosasCandidatas, PatronDeContraparte } from '../src/nucleo/contraparte.ts';
 
 const HMAC_A = Buffer.alloc(32, 0xaa);
 const HMAC_B = Buffer.alloc(32, 0xbb);
@@ -300,6 +300,13 @@ function patron(overrides: Partial<PatronDeContraparte> = {}): PatronDeContrapar
   return { contraparteId: 'contraparte-1', patron: 'FORCOR', clasificacion: 'proveedor', ...overrides };
 }
 
+/** Por default, `conceptoBanco` y `descripcion` valen lo mismo — mismo comportamiento que antes del
+ *  fallback (0039) para los casos que no lo ejercitan a propósito (ver `contraparte.test.ts` para los
+ *  casos del fallback en sí, ya cubiertos ahí sobre la función pura). */
+function glosas(conceptoBanco: string): GlosasCandidatas {
+  return { conceptoBanco, descripcion: conceptoBanco };
+}
+
 describe('adjuntarEvidenciaDeContraparte', () => {
   it('nunca toca una propuesta — mismo criterio que aplicarContrapartida, identidad estructural', () => {
     const propuesta: Reconocimiento = {
@@ -311,7 +318,7 @@ describe('adjuntarEvidenciaDeContraparte', () => {
       via: 'texto_literal_exacto',
       evidencia: { entradaLexicoId: 'x', via: 'texto_literal_exacto', caracteresMatcheados: 5, huboCola: false },
     };
-    expect(adjuntarEvidenciaDeContraparte(propuesta, 'sin_candidatos', 'FORCOR', [patron()])).toBe(propuesta);
+    expect(adjuntarEvidenciaDeContraparte(propuesta, 'sin_candidatos', glosas('FORCOR'), [patron()])).toBe(propuesta);
   });
 
   it('decision_humana con OTRO queDecide no se toca — identidad estructural', () => {
@@ -325,54 +332,81 @@ describe('adjuntarEvidenciaDeContraparte', () => {
       evidencia: { entradaLexicoId: 'x', via: 'texto_literal_exacto', caracteresMatcheados: 5, huboCola: false },
       queDecide: 'confirmar_cuenta_propia_destino',
     };
-    expect(adjuntarEvidenciaDeContraparte(otro, 'sin_candidatos', 'FORCOR', [patron()])).toBe(otro);
+    expect(adjuntarEvidenciaDeContraparte(otro, 'sin_candidatos', glosas('FORCOR'), [patron()])).toBe(otro);
   });
 
   it('🔴 F5 — es_socio corta ANTES de mirar los patrones: no_aplica, aunque matchearía', () => {
     const r = adjuntarEvidenciaDeContraparte(
       decisionHumanaDistinguirSocio('debe'),
       'es_socio',
-      'TRF INMED PROVEED FORCOR SA',
+      glosas('TRF INMED PROVEED FORCOR SA'),
       [patron()],
     );
     expect(r.clase).toBe('decision_humana');
     if (r.clase === 'decision_humana') expect(r.evidenciaContraparte).toEqual({ estado: 'no_aplica' });
   });
 
-  it('match: un patrón matchea la glosa normalizada', () => {
+  it('match: un patrón matchea la glosa normalizada — origen concepto_banco', () => {
     const r = adjuntarEvidenciaDeContraparte(
       decisionHumanaDistinguirSocio('debe'),
       'sin_candidatos',
-      'TRF INMED PROVEED FORCOR SA',
+      glosas('TRF INMED PROVEED FORCOR SA'),
       [patron()],
     );
     expect(r.clase).toBe('decision_humana');
     if (r.clase === 'decision_humana') {
-      expect(r.evidenciaContraparte).toEqual({ estado: 'match', contraparteId: 'contraparte-1', clasificacion: 'proveedor' });
+      expect(r.evidenciaContraparte).toEqual({
+        estado: 'match',
+        contraparteId: 'contraparte-1',
+        clasificacion: 'proveedor',
+        origen: 'concepto_banco',
+      });
     }
   });
 
-  it('sin_match: ningún patrón matchea', () => {
+  it('sin_match: ningún patrón matchea en ninguna de las dos glosas', () => {
     const r = adjuntarEvidenciaDeContraparte(
       decisionHumanaDistinguirSocio('debe'),
       'sin_candidatos',
-      'TRANSFERENCIA DE TERCEROS',
+      glosas('TRANSFERENCIA DE TERCEROS'),
       [patron({ patron: 'RODAMET' })],
     );
     expect(r.clase).toBe('decision_humana');
     if (r.clase === 'decision_humana') expect(r.evidenciaContraparte).toEqual({ estado: 'sin_match' });
   });
 
-  it('multiples_patrones: dos patrones matchean la misma glosa', () => {
+  it('multiples_patrones: dos patrones matchean la misma glosa — origen concepto_banco', () => {
     const r = adjuntarEvidenciaDeContraparte(
       decisionHumanaDistinguirSocio('debe'),
       'sin_candidatos',
-      'TRF INMED PROVEED FORCOR SA',
+      glosas('TRF INMED PROVEED FORCOR SA'),
       [patron({ contraparteId: 'c1', patron: 'FORCOR' }), patron({ contraparteId: 'c2', patron: 'FORCOR SA' })],
     );
     expect(r.clase).toBe('decision_humana');
     if (r.clase === 'decision_humana') {
-      expect(r.evidenciaContraparte).toEqual({ estado: 'multiples_patrones', contraparteIds: ['c1', 'c2'] });
+      expect(r.evidenciaContraparte).toEqual({
+        estado: 'multiples_patrones',
+        contraparteIds: ['c1', 'c2'],
+        origen: 'concepto_banco',
+      });
+    }
+  });
+
+  it('fallback: concepto_banco sin_match, descripcion matchea — origen descripcion', () => {
+    const r = adjuntarEvidenciaDeContraparte(
+      decisionHumanaDistinguirSocio('debe'),
+      'sin_candidatos',
+      { conceptoBanco: 'TRF INMED PROVEED', descripcion: 'TRF INMED PROVEED FORCOR SA VARIOS BANCO' },
+      [patron()],
+    );
+    expect(r.clase).toBe('decision_humana');
+    if (r.clase === 'decision_humana') {
+      expect(r.evidenciaContraparte).toEqual({
+        estado: 'match',
+        contraparteId: 'contraparte-1',
+        clasificacion: 'proveedor',
+        origen: 'descripcion',
+      });
     }
   });
 
@@ -380,13 +414,18 @@ describe('adjuntarEvidenciaDeContraparte', () => {
     const conEvidenciaDeSocio = aplicarContrapartida(decisionHumanaDistinguirSocio('debe'), {
       estado: 'sin_candidatos',
     });
-    const r = adjuntarEvidenciaDeContraparte(conEvidenciaDeSocio, 'sin_candidatos', 'RODAMET', [
+    const r = adjuntarEvidenciaDeContraparte(conEvidenciaDeSocio, 'sin_candidatos', glosas('RODAMET'), [
       patron({ patron: 'RODAMET' }),
     ]);
     expect(r.clase).toBe('decision_humana');
     if (r.clase === 'decision_humana') {
       expect(r.evidenciaContrapartida).toEqual({ estado: 'sin_candidatos' });
-      expect(r.evidenciaContraparte).toEqual({ estado: 'match', contraparteId: 'contraparte-1', clasificacion: 'proveedor' });
+      expect(r.evidenciaContraparte).toEqual({
+        estado: 'match',
+        contraparteId: 'contraparte-1',
+        clasificacion: 'proveedor',
+        origen: 'concepto_banco',
+      });
     }
   });
 });

@@ -8,7 +8,7 @@ import type { PendienteDeLaura } from './lexico.ts';
 import type { EvidenciaDeMovimiento, Reconocimiento } from './reconocimiento.ts';
 import type { ResolucionDeContraparte } from './contrapartida.ts';
 import { resolverEvidenciaDeContraparte } from './contraparte.ts';
-import type { PatronDeContraparte } from './contraparte.ts';
+import type { GlosasCandidatas, PatronDeContraparte } from './contraparte.ts';
 
 const CACHE_INDICES = new Map<string, IndiceDeLexico>();
 
@@ -186,14 +186,20 @@ export function aplicarContrapartida(
  *
  * `resolucionSocioEstado` es el `estado` que ya produjo `resolverContraparte()` para este mismo
  * movimiento — se pasa tal cual, sin adaptador: `resolverEvidenciaDeContraparte` solo distingue el
- * literal `'es_socio'` de cualquier otro de los 7 estados. `conceptoBancoNormalizado` y
- * `patrones[].patron` tienen que venir YA normalizados por el llamador (`normalizar()`,
+ * literal `'es_socio'` de cualquier otro de los 7 estados. `glosas` (`conceptoBanco`/`descripcion`,
+ * 0039) y `patrones[].patron` tienen que venir YA normalizados por el llamador (`normalizar()`,
  * `packages/shared/src/texto/normalizar.ts`) — ver el docblock de `resolverEvidenciaDeContraparte`.
+ *
+ * 🔴 `glosas` viaja como PARÁMETRO EXPLÍCITO, nunca como campo de `EvidenciaDeMovimiento` — esta
+ * función es el único choke point del motor que puede tocar la glosa completa del banco
+ * (`descripcion`), y `EvidenciaDeMovimiento` (`reconocimiento.ts`) sigue, a propósito, sin ella: ver
+ * el comentario 🔴 de ese archivo. Ensanchar ese tipo derogaría la barrera para TODO el motor, no
+ * solo para este matcher (convocatoria `security-engineer`, 2026-09-06).
  */
 export function adjuntarEvidenciaDeContraparte(
   reconocimiento: Reconocimiento,
   resolucionSocioEstado: ResolucionDeContraparte['estado'],
-  conceptoBancoNormalizado: string,
+  glosas: GlosasCandidatas,
   patrones: readonly PatronDeContraparte[],
 ): Reconocimiento {
   if (reconocimiento.clase !== 'decision_humana') return reconocimiento;
@@ -201,7 +207,7 @@ export function adjuntarEvidenciaDeContraparte(
 
   const evidenciaContraparte = resolverEvidenciaDeContraparte(
     resolucionSocioEstado,
-    conceptoBancoNormalizado,
+    glosas,
     patrones,
   );
   return { ...reconocimiento, evidenciaContraparte };

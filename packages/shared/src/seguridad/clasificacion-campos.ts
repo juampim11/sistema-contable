@@ -983,6 +983,14 @@ export const CLASIFICACION = {
         nota: 'Mismo tier que resolucion_estado: la interpretación de ESTA transacción de ESTE cliente, ' +
           'ahora también respecto del padrón de contrapartes por nombre (0037). Migración 0038.',
       },
+      patron_contraparte_origen: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Mismo tier que patron_contraparte_estado: metadata de PROCESO sobre la MISMA evidencia ' +
+          '(de qué campo bancario salió el match, concepto_banco o descripcion), no un dato nuevo del ' +
+          'tercero. Migración 0039 — condición puesta por seguridad-datos-financieros para auditar ' +
+          'después la tasa de falsos positivos de cada vía por separado.',
+      },
       admite_matches_patron: {
         nivel: 'N2',
         exportable: true,
