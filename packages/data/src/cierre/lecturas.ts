@@ -11,7 +11,7 @@
  */
 
 import type { Tx } from '../db/conexion.ts';
-import type { CuentaResolucion, ReglaImputacion, RolFuncionalCuenta } from './tipos.ts';
+import type { CuentaRef, CuentaResolucion, ReglaImputacion, RolFuncionalCuenta, TipoAsientoPropuesto } from './tipos.ts';
 
 // -----------------------------------------------------------------------------
 // leerReconocimientosParaImputar — D-26 (el JOIN) + filtro de alcance de D-28 (solo `propuesta`)
@@ -113,36 +113,29 @@ export async function leerReconocimientosParaImputar(
  * pre-filtró"). Volumen esperado: bajo, una fila por `(tipo_movimiento[, concepto])` vigente más su
  * historial — sin índice adicional hasta que un cliente real lo justifique (regla de `dba-data`).
  */
-export async function leerReglasDeImputacionVigentes(
-  tx: Tx,
-  args: { readonly clienteId: string },
-): Promise<readonly ReglaImputacion[]> {
-  const filas = await tx.consultar<{
-    id: string;
-    cliente_id: string;
-    tipo_movimiento: string;
-    concepto: string | null;
-    cuenta_resolucion: string;
-    cuenta_id: string | null;
-    rol_funcional_objetivo: string | null;
-    vigente_desde: string;
-    vigente_hasta: string | null;
-    respaldo: string;
-    decidido_por: string;
-    creada_en: string;
-  }>(
-    `select id::text as id, cliente_id::text as cliente_id, tipo_movimiento, concepto,
+type FilaReglaImputacion = {
+  id: string;
+  cliente_id: string;
+  tipo_movimiento: string;
+  concepto: string | null;
+  cuenta_resolucion: string;
+  cuenta_id: string | null;
+  rol_funcional_objetivo: string | null;
+  vigente_desde: string;
+  vigente_hasta: string | null;
+  respaldo: string;
+  decidido_por: string;
+  creada_en: string;
+};
+
+const COLUMNAS_REGLA_IMPUTACION = `id::text as id, cliente_id::text as cliente_id, tipo_movimiento, concepto,
             cuenta_resolucion, cuenta_id::text as cuenta_id,
             rol_funcional_objetivo, vigente_desde::text as vigente_desde,
             vigente_hasta::text as vigente_hasta, respaldo, decidido_por::text as decidido_por,
-            creada_en::text as creada_en
-       from regla_imputacion
-      where cliente_id = $1
-      order by tipo_movimiento, concepto nulls last, vigente_desde`,
-    [args.clienteId],
-  );
+            creada_en::text as creada_en`;
 
-  return filas.map((f) => ({
+function filaAReglaImputacion(f: FilaReglaImputacion): ReglaImputacion {
+  return {
     id: f.id,
     clienteId: f.cliente_id,
     tipoMovimiento: f.tipo_movimiento,
@@ -155,7 +148,58 @@ export async function leerReglasDeImputacionVigentes(
     respaldo: f.respaldo,
     decididoPor: f.decidido_por,
     creadaEn: f.creada_en,
-  }));
+  };
+}
+
+export async function leerReglasDeImputacionVigentes(
+  tx: Tx,
+  args: { readonly clienteId: string },
+): Promise<readonly ReglaImputacion[]> {
+  const filas = await tx.consultar<FilaReglaImputacion>(
+    `select ${COLUMNAS_REGLA_IMPUTACION}
+       from regla_imputacion
+      where cliente_id = $1
+      order by tipo_movimiento, concepto nulls last, vigente_desde`,
+    [args.clienteId],
+  );
+
+  return filas.map(filaAReglaImputacion);
+}
+
+/** Una regla puntual por id — para el selector de `reprocesar-capa-d.ts` (`--regla-imputacion-anterior-id`). */
+export async function leerReglaImputacionPorId(
+  tx: Tx,
+  args: { readonly clienteId: string; readonly reglaImputacionId: string },
+): Promise<ReglaImputacion | undefined> {
+  const filas = await tx.consultar<FilaReglaImputacion>(
+    `select ${COLUMNAS_REGLA_IMPUTACION} from regla_imputacion where cliente_id = $1 and id = $2`,
+    [args.clienteId, args.reglaImputacionId],
+  );
+  const f = filas[0];
+  return f ? filaAReglaImputacion(f) : undefined;
+}
+
+/**
+ * La regla actualmente ABIERTA (`vigente_hasta is null`) para el mismo `(tipo_movimiento, concepto)`
+ * de una regla dada — `uq_regla_imputacion_vigente` (`0030`) garantiza que hay COMO MÁXIMO una. Es el
+ * "destino" que `reprocesar-capa-d.ts` infiere solo — el operador no tipea un segundo id: sería
+ * redundante con lo que la propia base ya sabe, y una fuente más de error humano.
+ */
+export async function leerReglaSucesoraVigente(
+  tx: Tx,
+  args: { readonly clienteId: string; readonly tipoMovimiento: string; readonly concepto: string | null; readonly excluirReglaId: string },
+): Promise<ReglaImputacion | undefined> {
+  const filas = await tx.consultar<FilaReglaImputacion>(
+    `select ${COLUMNAS_REGLA_IMPUTACION}
+       from regla_imputacion
+      where cliente_id = $1 and tipo_movimiento = $2
+        and concepto is not distinct from $3
+        and vigente_hasta is null
+        and id <> $4`,
+    [args.clienteId, args.tipoMovimiento, args.concepto, args.excluirReglaId],
+  );
+  const f = filas[0];
+  return f ? filaAReglaImputacion(f) : undefined;
 }
 
 // -----------------------------------------------------------------------------
@@ -251,4 +295,177 @@ export async function leerEstadoDeAsientos(
     [args.clienteId, args.asientoIds],
   );
   return new Map(filas.map((f) => [f.id, { asientoEstado: f.asiento_estado, cierreId: f.cierre_id }]));
+}
+
+// -----------------------------------------------------------------------------
+// leerCandidatosDeReproceso — el selector real de `reprocesar-capa-d.ts` (`0040`, Mitad 1, Paso 4)
+// -----------------------------------------------------------------------------
+
+export type RenglonCandidato = {
+  readonly renglonId: string;
+  readonly cuentaId: string;
+  readonly cuentaRef: CuentaRef;
+  readonly lado: 'debe' | 'haber';
+  readonly importe: string;
+};
+
+export type CandidatoDeReproceso = {
+  readonly asientoId: string;
+  readonly asientoEstado: 'propuesto' | 'confirmado';
+  readonly cierreId: string;
+  readonly tipo: TipoAsientoPropuesto;
+  readonly fechaImputacion: string;
+  /** El renglón que citaba la cuenta de la regla ANTERIOR — el que hay que corregir. */
+  readonly renglonCorregible: RenglonCandidato;
+  /** El otro renglón del asiento (típicamente el del banco) — nunca se toca en ninguno de los 2 casos. */
+  readonly renglonOtro: RenglonCandidato;
+};
+
+/** `asientoId` que matchearon la cuenta de la regla anterior pero NO calificaron como candidato
+ *  limpio — el reporte de dry-run los tiene que mostrar, nunca descartarlos en silencio. */
+export type AsientoAnomaloDeReproceso = {
+  readonly asientoId: string;
+  readonly motivoCodigo: 'no_tiene_exactamente_dos_renglones' | 'los_dos_renglones_citan_la_cuenta_anterior';
+};
+
+/**
+ * Selector = "asientos vigentes (`'propuesto'`/`'confirmado'`, sin superseder) de este cliente con
+ * exactamente un renglón que cita `cuentaAnteriorId`" — nunca "todo lo desactualizado" del cliente:
+ * está acotado a la cuenta de UNA regla puntual, la que el operador nombró por `--regla-imputacion-
+ * anterior-id`. Excluye asientos que sean ellos mismos un ajuste (`corrige_asiento_id is not null`) y
+ * los que ya tienen una fila en `asiento_propuesto_reproceso` (ya reprocesados) — nunca reprocesa dos
+ * veces el mismo hecho económico por la misma corrida ni por una corrida repetida.
+ */
+export async function leerCandidatosDeReproceso(
+  tx: Tx,
+  args: { readonly clienteId: string; readonly cuentaAnteriorId: string },
+): Promise<{ readonly candidatos: readonly CandidatoDeReproceso[]; readonly anomalos: readonly AsientoAnomaloDeReproceso[] }> {
+  const filas = await tx.consultar<{
+    asiento_id: string;
+    asiento_estado: string;
+    cierre_id: string;
+    tipo: string;
+    fecha_imputacion: string;
+    renglon_id: string;
+    cuenta_id: string;
+    cuenta_ref: CuentaRef;
+    debe: string;
+    haber: string;
+  }>(
+    `select a.id as asiento_id, a.asiento_estado, a.cierre_id::text as cierre_id, a.tipo,
+            a.fecha_imputacion::text as fecha_imputacion,
+            r.id as renglon_id, r.cuenta_id::text as cuenta_id, r.cuenta_ref, r.debe, r.haber
+       from asiento_propuesto a
+       join asiento_propuesto_renglon r on r.cliente_id = a.cliente_id and r.asiento_id = a.id
+      where a.cliente_id = $1
+        and a.asiento_estado in ('propuesto', 'confirmado')
+        and a.corrige_asiento_id is null
+        and not exists (
+          select 1 from asiento_propuesto_reproceso rp
+           where rp.cliente_id = a.cliente_id and rp.asiento_id = a.id
+        )
+        and exists (
+          select 1 from asiento_propuesto_renglon r2
+           where r2.cliente_id = a.cliente_id and r2.asiento_id = a.id and r2.cuenta_id = $2
+        )
+      order by a.id, r.orden`,
+    [args.clienteId, args.cuentaAnteriorId],
+  );
+
+  const porAsiento = new Map<string, typeof filas>();
+  for (const f of filas) {
+    const lista = porAsiento.get(f.asiento_id) ?? [];
+    lista.push(f);
+    porAsiento.set(f.asiento_id, lista);
+  }
+
+  const candidatos: CandidatoDeReproceso[] = [];
+  const anomalos: AsientoAnomaloDeReproceso[] = [];
+
+  for (const [asientoId, renglones] of porAsiento) {
+    if (renglones.length !== 2) {
+      anomalos.push({ asientoId, motivoCodigo: 'no_tiene_exactamente_dos_renglones' });
+      continue;
+    }
+    const [r1, r2] = renglones as [(typeof renglones)[number], (typeof renglones)[number]];
+    const r1Corregible = r1.cuenta_id === args.cuentaAnteriorId;
+    const r2Corregible = r2.cuenta_id === args.cuentaAnteriorId;
+    if (r1Corregible === r2Corregible) {
+      // Los dos citan la cuenta anterior (o, imposible dado el `exists` de arriba, ninguno) — un
+      // asiento donde las dos patas caen en la misma cuenta no es el caso que este selector resuelve.
+      anomalos.push({ asientoId, motivoCodigo: 'los_dos_renglones_citan_la_cuenta_anterior' });
+      continue;
+    }
+    const corregible = r1Corregible ? r1 : r2;
+    const otro = r1Corregible ? r2 : r1;
+    const aRenglon = (f: (typeof renglones)[number]): RenglonCandidato => ({
+      renglonId: f.renglon_id,
+      cuentaId: f.cuenta_id,
+      cuentaRef: f.cuenta_ref,
+      lado: Number(f.debe) > 0 ? 'debe' : 'haber',
+      importe: Number(f.debe) > 0 ? f.debe : f.haber,
+    });
+    candidatos.push({
+      asientoId,
+      asientoEstado: renglones[0]?.asiento_estado as 'propuesto' | 'confirmado',
+      cierreId: renglones[0]?.cierre_id as string,
+      tipo: renglones[0]?.tipo as TipoAsientoPropuesto,
+      fechaImputacion: renglones[0]?.fecha_imputacion as string,
+      renglonCorregible: aRenglon(corregible),
+      renglonOtro: aRenglon(otro),
+    });
+  }
+
+  return { candidatos, anomalos };
+}
+
+// -----------------------------------------------------------------------------
+// leerCuentaRefVigente — la cita del plan de cuentas VIGENTE HOY, para las cuentas que
+// `reprocesar-capa-d.ts` introduce en un renglón nuevo (la cuenta nueva de la regla, y — en Caso B —
+// la cuenta vieja que hay que revertir). Corrida manual disparada HOY (D-15: el asiento cita el plan
+// vigente a su propia fecha; acá esa fecha es la del reproceso, no la del hecho económico original).
+// -----------------------------------------------------------------------------
+
+export async function leerCuentaRefVigente(
+  tx: Tx,
+  args: { readonly clienteId: string; readonly cuentaIds: readonly string[] },
+): Promise<ReadonlyMap<string, CuentaRef>> {
+  if (args.cuentaIds.length === 0) return new Map();
+  const filas = await tx.consultar<{ cuenta_id: string; codigo: string; denominacion: string; rol_funcional: string }>(
+    `select cuenta_id::text as cuenta_id, codigo, denominacion, rol_funcional
+       from cuenta_atributo
+      where cliente_id = $1 and cuenta_id = any($2::uuid[]) and vigente_hasta is null`,
+    [args.clienteId, args.cuentaIds],
+  );
+  return new Map(
+    filas.map((f) => [
+      f.cuenta_id,
+      { codigo: f.codigo, denominacion: f.denominacion, rolFuncional: f.rol_funcional as RolFuncionalCuenta },
+    ]),
+  );
+}
+
+// -----------------------------------------------------------------------------
+// leerCierreAbiertoDelCliente — el destino de Caso B (el `cierreIdActual` que `corregirAsientoEntregado`
+// exige) — nunca inferido, siempre UNA fila `cierre_estado = 'abierto'` o el CLI aborta explícito.
+// -----------------------------------------------------------------------------
+
+export async function leerCierreAbiertoDelCliente(tx: Tx, args: { readonly clienteId: string }): Promise<readonly string[]> {
+  const filas = await tx.consultar<{ id: string }>(
+    `select id::text as id from cierre_cliente_periodo where cliente_id = $1 and cierre_estado = 'abierto'`,
+    [args.clienteId],
+  );
+  return filas.map((f) => f.id);
+}
+
+// -----------------------------------------------------------------------------
+// contarAsientosDelCliente — el denominador del reporte de `reprocesar-capa-d.ts`: la proporción
+// afectada sobre EL TOTAL de asientos del cliente (el hallazgo de la convocatoria: para uno de los
+// dos clientes reales, esto ronda el 95% de todo lo que Capa D le generó — el operador tiene que
+// verlo ANTES de poder `--aplicar`, nunca enterarse después).
+// -----------------------------------------------------------------------------
+
+export async function contarAsientosDelCliente(tx: Tx, args: { readonly clienteId: string }): Promise<number> {
+  const filas = await tx.consultar<{ n: string }>(`select count(*)::text as n from asiento_propuesto where cliente_id = $1`, [args.clienteId]);
+  return Number(filas[0]?.n ?? '0');
 }
