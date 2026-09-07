@@ -6,6 +6,126 @@
 
 ---
 
+## 2026-09-07 (193) — 🔒 CIERRE: primera corrida real de `--aplicar` del reproceso de Capa D contra
+el piloto (0039/0040 aplicadas, Bracci + ROKA reprocesados) — 0 fallidos, 0 anómalos, todo exacto
+contra la predicción falsable.
+
+**Herramienta:** Claude Code, misma sesión que (192), continúa directo. Modo plan obligatorio (§3.2)
+por tocar migración + datos reales de dos clientes; plan aprobado por JP punto por punto, cada paso
+con su propia confirmación en el momento.
+
+### Lo que se hizo, en orden
+
+1. Backup fresco: `respaldos/piloto_20260907-185930Z.dump` (3.73 MB, SHA-256 `6d0c1e06...f711eaf`).
+2. `--estado` confirmó EXACTO `{0039, 0040}` pendientes en el piloto (no las 4 que se asumía al
+   arrancar — ver (192)). `pnpm db:migrate` aplicó las dos, una sola corrida, sin incidentes —
+   `--estado` posterior confirmó 40/40 `ya aplicada`.
+3. **Reconciliación (paso "confirmar-asientos.ts") OMITIDA a propósito.** Reconstruido el universo
+   real del export del 2/9 (`exportar-relevamiento-laura.ts`/`relevamiento-laura.ts`): la Hoja 3 lee
+   `asiento_propuesto` con `where cliente_id = $1` sin ningún otro filtro, agrupado por
+   `(cliente, tipo)` — Bracci y ROKA tienen un solo `tipo='devengamiento'` cada uno, así que el
+   export mostró **un ejemplo representativo por cliente** (no 1893 líneas individuales), y las 6
+   corridas del export (todas el 2026-09-02, entre 02:59 y 14:06Z) ocurrieron después de que el
+   último asiento de cada cliente ya existía — sin ambigüedad de fecha ni de subconjunto.
+   **Decisión de JP: 0 asientos marcados `'confirmado'` en esta corrida** — el export fue revisión de
+   criterio agregado (2 ejemplos representativos), no revisión individual asiento por asiento, y
+   marcar los 1893 como `'confirmado'` habría sido una atestación de revisión que no ocurrió (mismo
+   riesgo que `contador-dominio` ya señaló sobre `padronDeclaradoCompleto`). **La pregunta de qué
+   constituye confirmación real de un asiento puntual sigue abierta, sin caso real todavía que la
+   ejercite** — `confirmar-asientos.ts` (Paso 2 de (188)) sigue sin un solo uso real.
+4. Dry-run de `reprocesar-capa-d.ts` contra el piloto real, un cliente por vez: Bracci
+   (`total=1626, caso_a=1541, caso_b=0, anomalos=0`, 94.8%) y ROKA (`total=267, caso_a=139, caso_b=0,
+   anomalos=0`, 52.1%) — exacto contra lo medido en (188) con el script de una sola vez.
+5. **4 convocatorias en paralelo**, con el dry-run real como insumo, ninguna bloqueante:
+   - `contador-dominio`: sin objeción a que el 100% caiga en Caso A — `'propuesto'` ya significa "sin
+     confirmar individualmente", y tratarlo distinto por haber estado en un export agregado sería la
+     misma atestación falsa que JP ya rechazó. Cierra con "validar con profesional matriculado".
+   - `security-engineer`: sin drift entre `0040` (13/13 mutaciones, local) y el piloto real. Hallazgo
+     no bloqueante: el loop de aplicación no capturaba fallas por candidato — una excepción a mitad
+     de las 1541 escrituras de Bracci tiraba todo el reporte acumulado sin visibilidad de "hasta
+     dónde llegó" (el reintento ya era seguro, esto era solo observabilidad).
+   - `seguridad-datos-financieros`: no bloqueante. Aislamiento Bracci/ROKA verificado en 3 capas
+     (`conUsuario` + `cliente_id` explícito en cada consulta; RLS forzada + FK compuestos
+     tenant-scoped en `0040`; procesos de Node separados sin memoria compartida). Hallazgo real,
+     severidad media: `--motivo` no tiene heurística de patrones sensibles — riesgo de que la misma
+     prosa reusada entre las dos corridas contamine el trail de un cliente con un dato del otro.
+     Mitigación operativa (revisar el texto literal antes de cada `--aplicar`) aplicada; la técnica
+     (heurística Zod, ya prometida en `clasificacion-campos.ts` para `asiento_propuesto_reproceso.
+     motivo`) queda pendiente, mismo tier que H1 de `0030`.
+   - `dba-data`: sin drift, autorizable. Esquema, trigger, RLS, policies y grants idénticos carácter
+     por carácter contra el piloto real. `EXPLAIN ANALYZE` real: 5.6 ms, sin `Seq Scan`. `uq_regla_
+     imputacion_vigente` intacta desde `0030`.
+6. **Fix aplicado antes de `--aplicar`** (JP: "primera corrida real de todo este mecanismo, quiero
+   visibilidad"): try/catch por candidato en el loop de aplicación de `reprocesar-capa-d.ts` — cada
+   candidato ya corre en su propia transacción, así que el catch no cambia qué se escribe, solo evita
+   que una falla a mitad de lote tire todo el reporte acumulado. Nueva línea de resumen
+   `fallidos_en_esta_corrida` en el CLI, gateada a `estado === 'aplicado'` (no ensucia el dry-run).
+   `pnpm typecheck` limpio + `reprocesar-capa-d.test.ts` (7/7, local) antes de tocar el piloto.
+7. `--aplicar` real, ROKA primero (más chico, 139 candidatos), Bracci después (1541) — los dos con
+   0 fallidos, 0 anómalos.
+
+### El número que cierra la tarea (verificado por consulta directa, no por el output del CLI)
+
+`asiento_propuesto`: **3573 filas totales** (1893 + 1680, exacto), **1893 `'propuesto'`**
+(sin cambio de cantidad — los originales reemplazados se van, los nuevos entran), **1680
+`'superseded'`**, **0 `'confirmado'`**. `asiento_propuesto_reproceso`: **1680 filas** (1541 Bracci +
+139 ROKA). Todo exacto contra la tabla de predicción falsable del plan — sin un solo desvío.
+
+### Qué sigue
+
+Mitad 1 del reproceso de Capa D queda cerrada de punta a punta, incluida la primera corrida real.
+Deuda declarada explícita: la pregunta de "qué constituye confirmación real de un asiento puntual" (a
+diferencia de una revisión de criterio agregado) sigue sin caso real que la ejercite —
+`confirmar-asientos.ts` sigue sin uso en producción. La heurística de patrones sensibles para
+`--motivo` (hallazgo de `seguridad-datos-financieros`) queda pendiente, sin dueño todavía, mismo tier
+que H1/`0030`. Mitad 2 (generalizar a cualquier regla) sigue cerrada en contra (188).
+
+---
+
+## 2026-09-07 (192) — Corrección de (184)/(186): `0037` y `0038` SÍ se aplicaron al piloto real, con
+los 7 proveedores de Bracci — verificado ahora, al planificar la corrida de `0039`/`0040`.
+
+**Herramienta:** Claude Code, sesión nueva. Hallazgo de una verificación de solo lectura contra el
+piloto (`--estado` + consultas directas) hecha ANTES de armar el plan de la corrida real de `0039`/
+`0040` — no una tarea de código.
+
+### Lo que dicen (184) y (186), y lo que en realidad pasó
+
+(184) cierra diciendo, sobre `0037`: *"Nada aplicado contra el piloto en ningún momento"*. (186) cierra
+diciendo, sobre `0038`: *"El piloto, sin tocar — ni la migración `0037`... ni la `0038`"*. Las dos
+entradas son correctas para el momento en que se escribieron. Lo que no quedó registrado en ningún
+lado es que, más tarde en esa misma sesión — antes de (187), que ya habla de "con los 7 proveedores ya
+cargados... contra el corpus real de Bracci" — **se aplicaron `0037` y `0038` al piloto real y se
+cargaron ahí los 7 proveedores**, como parte del trabajo que llevó al hallazgo de "0 matches" y al
+diseño del fallback de `descripcion` (0039). JP confirmó que fue intencional.
+
+### Verificado ahora (solo lectura, contra el piloto real, `sistema_contable_piloto`)
+
+- `_migraciones`: `0037_padron_contraparte.sql` y `0038_evidencia_patron_contraparte.sql`, las dos
+  `aplicada_en = 2026-09-06T20:58:39Z` (mismo segundo — una sola corrida de `pnpm db:migrate`, no dos
+  separadas). `0039` y `0040` siguen `PENDIENTE` en el piloto.
+- `padron_contraparte`: 7 filas, las 7 bajo el mismo `cliente_id` (Bracci), las 7
+  `clasificacion='proveedor'`, ninguna con `vigente_hasta` — match EXACTO contra los 7 patrones
+  confirmados contra el Excel de relevamiento (FORCOR, EXPOYER, AUTOCOR, DISTRIBUIDORA DM, RODAMET,
+  SURPIEZAS, PEON REPUESTOS).
+- `reconocimiento_contrapartida`: 0 filas. `asiento_propuesto`: 1893 filas, las 1893 en `'propuesto'`
+  — consistente con lo ya documentado en (188).
+
+### La lección, otra vez
+
+Mismo patrón que ya está en memoria de sesiones anteriores: un cambio real contra el piloto, sin su
+propia línea en `HANDOFF`, hace que la bitácora mienta por omisión aunque cada entrada individual haya
+sido honesta en su momento. La corrección no es reescribir (184)/(186) — son historial fiel de lo que
+se sabía cuando se escribieron — es esta entrada, que las referencia y corrige la lectura.
+
+### Qué sigue
+
+Con esto corregido, el plan de la corrida real queda acotado a lo que efectivamente falta: aplicar
+`0039`/`0040` al piloto y ejecutar el reproceso de Capa D contra los 1680 `asiento_propuesto`
+afectados (ver próxima entrada, en curso).
+
+---
+
 ## 2026-09-07 (191) — Nota de proceso: tramo de ineficiencia real en (183)-(190), corregido en
 la misma sesión — para que la próxima sesión larga no lo repita.
 
