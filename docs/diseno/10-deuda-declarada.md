@@ -682,6 +682,93 @@ tarea de una sola sesión |
   cliente), no el contenido del uuid. No bloquea `0038` (tablas distintas, columnas distintas). Cierre:
   edición pura de `packages/shared/src/seguridad/clasificacion-campos.ts` (nivel N1→N2 de esa entrada),
   nunca de la migración `0037` ya aplicada — sin dueño todavía.
+- 🟡 **El guard de `sembrar()` (`packages/data/tests/ayuda.ts`) verifica una ETIQUETA que el propio
+  proceso de test fabrica, no el DSN real de conexión — sin dueño todavía.** `tools/setup-tests.ts` hace
+  `cargarEnv()` (que respeta un `ENV_FILE` ya exportado en el shell) y a continuación
+  `process.env['APP_ENTORNO'] = 'local'`, **sin condición**. El guard de `sembrar()` es
+  `if (entornoActual() !== 'local') throw` — pero `entornoActual()` (`packages/data/src/db/entorno.ts`)
+  solo lee ese mismo `APP_ENTORNO` que `setup-tests.ts` acaba de forzar; nunca compara contra el host o
+  la base real de `DATABASE_URL`. Si un shell corre con `ENV_FILE=.env.piloto` exportado (práctica ya
+  habitual para `--estado` contra el piloto antes de migrar) y en la MISMA sesión se corre después
+  `pnpm test` sin reabrir terminal, `DATABASE_URL` sigue apuntando al piloto pero el guard no lo
+  detecta — mide una etiqueta que el mismo código que se quiere frenar puede pisar. Mismo patrón de raíz
+  que ya cerró esta regla en `ADR-0002-seguridad.md` (recursión RLS, §H.3): *"un invariante verificado
+  con la visibilidad del escritor no es un invariante"* — acá el control de entorno se verifica con la
+  etiqueta que el propio escritor (`setup-tests.ts`) acaba de fijar. No hay incidente confirmado por esta
+  vía (verificado 2026-09-06: el piloto real está intacto, Bracci y ROKA sin tocar — ver HANDOFF de esta
+  fecha), es una fragilidad estructural, no una falla ya ocurrida. Cierre sugerido, sin aplicar todavía:
+  el guard debería verificar contra el DSN real (host/nombre de base de `DATABASE_URL`), nunca contra
+  `APP_ENTORNO` — que es una declaración, no una medición.
+- 🔴 **`descripcion` queda EXCLUIDA del determinante de entrada (`digestDeEntrada`/`0021`) — Capa C no
+  se re-evalúa si solo cambia la glosa completa de un movimiento. Sin dueño, con camino de cierre
+  medido.** Hallazgo real, no hipotético, de la convocatoria `dba-data` + `arquitecto-software` +
+  `security-engineer` (2026-09-06, tarea `0039`): al agregar `descripcion` a
+  `EvidenciaDeMovimientoLeida` (necesaria para el fallback del matcher de `padron_contraparte`),
+  `digestDeEntrada(ev)` la hasheó igual — `proyeccionDeEntrada()` recorre `Object.keys()` del objeto
+  que RECIBE, no del tipo declarado, y `apps/cli/src/reconocer-lote.ts:387` pasa `ev` entero a
+  propósito ("el digest cubre TODO lo que el motor puede leer"). La columna generada SQL gemela
+  (`0021_determinante_de_entrada_y_capa_c.sql:210-246`) no tiene `descripcion` en su fórmula — es una
+  expresión fija de 7 campos, no puede crecer sola. Las dos "gemelas" divergieron: confirmado con un
+  E2E real en LOCAL que `reconocer-lote.ts --aplicar` reportaba `entrada_cambio_durante_la_corrida`
+  para el 100% de las corridas, en cualquier cliente, y nunca persistía nada.
+  - **Alcance medido en el piloto** (solo lectura, `dba-data`, 2026-09-06): de sumar `descripcion` a
+    la fórmula SQL (la corrección "completa"), el **100% de las 10.663 filas** de
+    `movimiento_bancario_crudo` cambiarían de `entrada_digest` — `descripcion` es `NOT NULL` y nunca
+    vacía. De esas, **10.401 ya tienen `reconocimiento_movimiento` persistido**: dispararía reproceso
+    real de Capa C sobre resultados YA entregados a la contadora (Bracci/ROKA).
+  - **Cierre aplicado HOY, cero riesgo sobre el piloto:** `descripcion` se excluye del digest
+    (`packages/contabilidad/src/nucleo/entrada.ts`, constante `CLAVES_EXCLUIDAS_CON_DEUDA`,
+    deliberadamente separada de `CLAVES_QUE_NUNCA_SON_ENTRADA` — motivo distinto: `movimientoId`/
+    `bancoCodigo` NUNCA pueden alterar el reconocimiento, `descripcion` SÍ PUEDE y se excluye igual).
+    Consecuencia aceptada: si un banco reenvía una glosa corregida/completa para un movimiento ya
+    reconocido, el match de `padron_contraparte` no se re-evalúa solo por eso.
+  - **Cierre real, NO aplicado, con su propio camino:** sumar `descripcion` a la columna generada SQL
+    Y a `CLAVES_DE_ENTRADA_REAL` en TypeScript, como migración propia (`ALTER TABLE` con reescritura
+    completa, `ACCESS EXCLUSIVE`) — nunca colada como efecto lateral de otra tarea. Requiere, antes de
+    escribir una línea: convocatoria de `product-owner` (¿se re-entrega a Laura lo que cambie de
+    clasificación?, ¿en qué ventana?) y `contador-dominio`/`seguridad-datos-financieros` (¿un
+    resultado de Capa C ya reportado puede cambiar sin aviso a la contadora?). Ver también el hallazgo
+    hermano, abajo.
+- 🟡 **La regla de código "R-L" que el comentario de `entrada.ts` daba por existente nunca se había
+  escrito — cerrado 2026-09-06.** `entrada.ts:79-82` afirmaba: *"la coherencia entre las dos NO se
+  confía: la vigila R-L..."* — grep completo de `packages/data/tests/reglas-de-codigo.test.ts`, antes
+  de esta fecha: cero coincidencias de `EntradaDelMovimiento`. Era exactamente el gate que
+  `arquitecto-software` pidió como obligatorio en la Ronda 1 de `0021`
+  (`docs/diseno/11-migracion-0021-determinante-y-capa-c.md:293-299`) y quedó escrito como si ya
+  estuviera cerrado, sin commitear nunca — mismo patrón que el corolario de `CLAUDE.md` §1.8. Es lo
+  que permitió que el bug de arriba compilara limpio y pasara `pnpm typecheck` + toda la suite
+  existente; solo lo atrapó un E2E de punta a punta. **Cerrado en la misma tarea que lo encontró**:
+  R-L ahora existe (`reglas-de-codigo.test.ts`, compara por conjunto, vía regex, las claves de
+  `EntradaDelMovimiento` contra `EvidenciaDeMovimientoLeida`), más una guarda en runtime dentro de
+  `proyeccionDeEntrada()` que tira explícito (con el nombre del campo) si las claves reales de un
+  objeto no coinciden con `CLAVES_DE_ENTRADA_REAL` — no depende de que el textual se ejecute a tiempo,
+  falla en la primera corrida real. Se deja la línea acá para que quien lea esta deuda sepa que el
+  gate mencionado en `entrada.ts` ahora sí existe, con fecha.
+- 🟡 **`packages/ingesta/tests/aislamiento-modulo-1.test.ts` tiene 4 tests rotos desde la migración
+  `0038` (semana pasada) — sin dueño.** Los literales `expect(...).toEqual({...})` de "2 — la
+  verificación del verificador" y "3 — el barrido" están hardcodeados a mano y no incluyen
+  `reconocimiento_contrapartida_patron_match` — la tabla nueva que `0038` agregó. La lista de tablas
+  que el test DERIVA (`TABLAS_M1 = tablasDelModulo1(TABLAS)`) sí la ve; los 4 `expect` puntuales, no.
+  Confirmado con `git stash` (2026-09-06, sesión de `0039`) que ya estaba roto en `main` **antes** de
+  tocar nada de esta tarea — sin relación con el fallback a `descripcion`. Cierre: agregar
+  `reconocimiento_contrapartida_patron_match: 0` a los 4 literales (o derivar también esos conteos en
+  vez de escribirlos a mano — mismo argumento que ya motivó derivar `TABLAS_M1`).
+- 🟡 **`regla_imputacion_concepto_chk` (migración `0030`) evade la detección automática de
+  `catalogo.test.ts` — dominio cerrado de producción sin el mismo test de vigilancia que el resto,
+  sin dueño.** Hallazgo de `dba-data`, convocatoria de DDL de `0039` (2026-09-06). El check tiene la
+  forma `check (concepto is null or concepto in (...))` — el `is null or` es semánticamente
+  redundante (un CHECK que evalúa a `NULL` ya satisface el constraint en Postgres, no hace falta
+  escribirlo), pero saca al check de la forma exacta `col = ANY (ARRAY[...])` que
+  `packages/data/tests/catalogo.test.ts` usa para detectar dominios cerrados automáticamente y
+  exigirles una entrada en `DOMINIOS_CERRADOS`. Resultado: `regla_imputacion_concepto_chk` es un
+  dominio cerrado real, sobre una tabla de producción, que hoy puede divergir de su constante de
+  TypeScript espejo sin que ningún test lo note — el mismo tipo de brecha que el resto de los checks
+  de este esquema sí tienen cerrada. `0039` no repite la forma (se escribió sin `is null or` a
+  propósito, mismo hallazgo). Cierre, no aplicado acá: sacar el `is null or` de
+  `regla_imputacion_concepto_chk` (columna nullable, el CHECK sigue funcionando igual) y agregar la
+  entrada correspondiente en `DOMINIOS_CERRADOS` — requiere tocar una migración YA APLICADA
+  (`0030`), así que el cierre real es una migración nueva que recree el constraint con la forma
+  correcta, no una edición de `0030`.
 - El resto de las secciones de este documento.
 
 ---
