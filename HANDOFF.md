@@ -6,6 +6,90 @@
 
 ---
 
+## 2026-09-07 (187) — 🔒 CIERRE de Mitad 1: reproceso de Capa D con supersesión (migración `0040`) —
+`asiento_propuesto` ya tiene mecanismo para corregir lo ya generado, verificado contra el corpus real.
+
+**Herramienta:** Claude Code, sesión completa. Motivador: la corrección de `regla_imputacion` de esta
+semana (impuesto a débitos/créditos, 25413) afecta **1680 `asiento_propuesto`** ya generados (139 +
+1541, dos clientes reales del piloto) y Capa D no tenía forma de llegar a lo ya propuesto — a
+diferencia de Capa C (`recapturar-conceptos.ts`).
+
+### La convocatoria y el hallazgo que reencuadró todo
+
+`contador-dominio` (primero) → `arquitecto-software` + `dba-data` + `security-engineer` (en paralelo,
+condicionados por la respuesta de `contador-dominio`). Hallazgo central: **`asiento_estado` nunca sale
+de `'propuesto'` en producción** (1893/1893 asientos del piloto, medido) — la transición de
+confirmación existe desde `0027`/`0028` (RLS, grants, trigger de inmutabilidad) pero nadie la invoca
+nunca. El discriminador correcto de `contador-dominio` ("¿ya se revisó/entregó este asiento?") no se
+podía leer de la base — había que empezar a escribirlo.
+
+Alcance explícito: **Mitad 1**, acotada a la corrección de `regla_imputacion` de esta semana. Mitad 2
+(generalizar a cualquier cambio de regla + evaluar disparo automático) queda **cerrada en contra** por
+los cuatro dictámenes, no "a evaluar después" — es una decisión tomada, no una pregunta abierta.
+
+### Migración `0040` — convocatoria de DDL propia (`dba-data`+`security-engineer`+`seguridad-datos-financieros`)
+
+- `asiento_propuesto.corrige_asiento_id` — nunca reusa `superseded_by_id` (esa semántica dice "esto es
+  inválido"; un ajuste corrige, no invalida — los dos quedan igualmente vigentes).
+- Trigger `app.exigir_cierre_no_terminal_al_insertar_asiento` (BEFORE INSERT) — cierra un gap real que
+  `security-engineer` encontró: nada verificaba `cierre_estado` al insertar un asiento nuevo. Mensaje
+  de excepción sin interpolar `cierre_estado` (N2). **Carrera TOCTOU** encontrada independientemente
+  por `dba-data` y `security-engineer`: sin `for share`, un INSERT concurrente y una confirmación de
+  cierre concurrente se entrelazan bajo READ COMMITTED — probado EN VIVO con dos conexiones reales
+  orquestadas (`mutaciones-0040.test.ts`, grupo E): sin `for share` se cuela, con `for share` bloquea
+  correcto.
+- Tabla `asiento_propuesto_reproceso` — trail de negocio (`caso`/`reproceso_motivo_codigo` de dominio
+  cerrado, `motivo` N2 prosa libre). **Laudo explícito del titular**: `reproceso_motivo_codigo` en N2
+  (no N1) — `'dato_tardio_cliente'` nombra una conducta atribuible a un tercero real.
+- 13/13 mutaciones (5 mutaciones, 7 legítimos), incluida la carrera en vivo.
+
+### Los 4 pasos revertibles, cada uno con diff completo en texto revisado por JP antes de avanzar
+
+1. **`confirmar-asientos.ts`** — reconciliación manual (`confirmarAsiento` + `leerEstadoDeAsientos`).
+   Reusa `asiento_propuesto_upd_confirmar` (`0027`), sin mecanismo nuevo. Selector `--asiento-id`
+   repetible (nunca "todo lo pendiente"), dry-run por defecto.
+2. **`reprocesarAsientoNoRevisado`/`corregirAsientoEntregado`** — los dos escritores, uno por caso
+   (Caso A: reemplazo completo vía `superseded_by_id`; Caso B: ajuste nuevo con `corrige_asiento_id`,
+   el original NUNCA se toca). Dos bugs propios encontrados y corregidos ANTES de correr nada:
+   `motivoCodigo`/reglas hardcodeadas (hacía estructuralmente imposible `'dato_tardio_cliente'`) y un
+   `return { estado: undefined, ... } as never` residual de una edición mal terminada.
+3. **`reprocesar-capa-d.ts`** — selector real: dado `--regla-imputacion-anterior-id`, la regla sucesora
+   se infiere sola (`uq_regla_imputacion_vigente`, `0030`, garantiza como máximo una regla abierta por
+   tipo/concepto — nunca un segundo id tipeado a mano). `leerCandidatosDeReproceso` encuentra los
+   asientos vigentes con exactamente un renglón citando la cuenta vieja; lo que no encaja limpio sale
+   como `'anomalo'` en el reporte, nunca se descarta en silencio. Dry-run muestra Caso A/Caso B y **la
+   proporción sobre el total de asientos del cliente**, siempre visible antes de `--aplicar`.
+
+### La medición real, solo lectura, contra Bracci/ROKA — el número que cierra la decisión
+
+Contra los 1680 asientos reales: **`total_ok: 1680`, `total_anomalos: 0`** (1541 + 139, exacto contra
+lo ya medido). Mitad 1 cubre el caso real completo, mecánicamente, sin resto — ningún asiento de los
+dos clientes queda fuera del selector. Medido con dos scripts de una sola vez, corridos y borrados
+(no versionados): uno reveló que `regla_imputacion` no tiene `grant` a `app_job` (deliberado desde
+`0030` — "ningún camino de sistema tiene por qué [tocar] reglas de imputación contable"), así que la
+medición usó `conUsuario` con el socio real del piloto, no `conJob`.
+
+Dato para la corrida real futura: como `asiento_estado` nunca sale de `'propuesto'` hoy, los 1680
+caerían **todos en Caso A** si se corriera ahora — Caso B recién se ejercita cuando `confirmar-
+asientos.ts` se use en la práctica para marcar lo ya entregado.
+
+### Estado final
+
+4 commits locales, cada uno verificado EN AISLAMIENTO (staging parcial + `git stash push --keep-index
+-u` para excluir el trabajo de pasos posteriores del árbol, typecheck + suite real contra ESE estado
+exacto, no contra el estado final completo):
+
+- `c293b78` — migración `0040` (Paso 1).
+- `a4477db` — `confirmar-asientos.ts` (Paso 2).
+- `03c8fd9` — los dos escritores de reproceso (Paso 3).
+- `38514f4` — `reprocesar-capa-d.ts` + e2e con los DOS CLI reales encadenados (Paso 4).
+
+**Nada tocó el piloto.** La corrida real contra los 1680 asientos (con la reconciliación manual de JP
+primero vía `confirmar-asientos.ts`) queda explícitamente fuera — paso posterior, autorización propia.
+No pusheado a `origin/main` todavía.
+
+---
+
 ## 2026-09-06 (186) — Mitad 1: escritor real de `reconocimiento_contrapartida` (migración `0038`) —
 `padron_contraparte` deja de perderse al terminar cada corrida.
 
