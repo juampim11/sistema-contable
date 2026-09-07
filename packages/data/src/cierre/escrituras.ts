@@ -14,11 +14,14 @@
 
 import { logger } from '@sistema-contable/shared/observabilidad';
 import type {
+  CasoReprocesoAsiento,
   CoberturaDocumento,
   CuentaRef,
   EvidenciaPendienteCierre,
   MotivoPendienteCierre,
+  MotivoReprocesoAsiento,
   RolFuncionalCuenta,
+  TipoAsientoPropuesto,
   TipoDocumentoCierre,
 } from './tipos.ts';
 import type { ContextoAuditado } from '../db/auditoria.ts';
@@ -393,4 +396,228 @@ export async function confirmarAsiento(
   logger.info('reproceso_capa_d.confirmado', { cliente_id: pedido.clienteId, asiento_id: pedido.asientoId });
 
   return { estado: 'confirmado' };
+}
+
+// -----------------------------------------------------------------------------
+// Reproceso de Capa D con supersesión (`0040`, Mitad 1) — dos escritores, uno por caso.
+// `contador-dominio`: el discriminador es si la contadora YA REVISÓ/CONFIRMÓ el asiento
+// (`asiento_estado`), no la causa del cambio. Ninguno de los dos toca el mecanismo de idempotencia
+// de Capa B/C (`entrada_digest`) — son escrituras de aplicación explícitas, disparadas a mano por un
+// operador vía CLI, nunca automáticas (CLAUDE.md §1.7, cerrado en contra por la convocatoria).
+// -----------------------------------------------------------------------------
+
+export type PedidoDeReprocesoAsiento = {
+  readonly clienteId: string;
+  readonly fechaImputacion: string;
+  readonly renglones: readonly [RenglonParaEscribir, RenglonParaEscribir];
+  readonly motivoCodigo: MotivoReprocesoAsiento;
+  /**
+   * Exigidas cuando `motivoCodigo === 'correccion_criterio_estudio'`; `null` las dos cuando es
+   * `'dato_tardio_cliente'` (un documento tardío no reabre ninguna regla) — el CHECK de coherencia
+   * de `0040` (`asiento_propuesto_reproceso_regla_chk`) lo fuerza también en la base; este tipo lo
+   * deja como responsabilidad del caller, no lo valida acá (el 23514 de la base es la red final).
+   */
+  readonly reglaImputacionIdAnterior: string | null;
+  readonly reglaImputacionIdNueva: string | null;
+  /** N2 — prosa libre genuina (mismo tier que `cierre_transicion.motivo`). Ver el hallazgo H1
+   *  (convocatoria `0030`, sin cerrar): puede terminar citando un CUIT o un nombre de tercero — la
+   *  advertencia al operador antes de guardar es responsabilidad del CLI, no de este escritor. */
+  readonly motivo: string;
+  readonly hechoPor: string;
+};
+
+/**
+ * Caso A — el asiento viejo sigue `asiento_estado = 'propuesto'` (nadie lo confirmó todavía).
+ * Reusa `superseded_by_id`: el asiento nuevo va al MISMO `cierre_id` que el viejo (es la misma
+ * propuesta, recalculada) — a diferencia de Caso B, acá no hay período distinto que imputar.
+ */
+export type PedidoReprocesarAsientoNoRevisado = PedidoDeReprocesoAsiento & {
+  readonly asientoViejoId: string;
+  readonly cierreId: string;
+  readonly tipo: TipoAsientoPropuesto;
+};
+
+export type ResultadoReprocesarAsientoNoRevisado =
+  | { readonly estado: 'reemplazado'; readonly asientoNuevoId: string; readonly reprocesoId: string }
+  /**
+   * 🔴 0 filas afectadas en el `UPDATE` de supersesión — el asiento viejo YA NO estaba `'propuesto'`
+   * cuando se intentó reemplazarlo (alguien lo confirmó, o ya se reprocesó, entre que se listó y se
+   * aplicó). Nunca se envuelve en un `ON CONFLICT`: el conflicto sube como estado explícito, mismo
+   * criterio que `0029`/`0038` — un `0 filas` silencioso es exactamente el modo de falla que la
+   * ceremonia "listar, confirmar, frenar" de `CLAUDE.md` §1.9 existe para evitar.
+   */
+  | { readonly estado: 'conflicto'; readonly motivoCodigo: 'asiento_ya_no_estaba_propuesto' };
+
+const CASO_REEMPLAZO: CasoReprocesoAsiento = 'reemplazo_no_revisado';
+
+export async function reprocesarAsientoNoRevisado(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoReprocesarAsientoNoRevisado,
+): Promise<ResultadoReprocesarAsientoNoRevisado> {
+  const nuevo = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string }>(
+      `insert into asiento_propuesto (cliente_id, cierre_id, tipo, fecha_imputacion)
+       values ($1, $2, $3, $4::date)
+       returning id::text as id`,
+      [pedido.clienteId, pedido.cierreId, pedido.tipo, pedido.fechaImputacion],
+    ),
+  );
+  const asientoNuevoId = nuevo[0]?.id;
+  if (!asientoNuevoId) throw new Error('El alta del asiento de reemplazo no devolvió id.'); // H-14
+
+  for (const [orden, renglon] of pedido.renglones.entries()) {
+    await conErroresTraducidos(undefined, () =>
+      tx.consultar(
+        `insert into asiento_propuesto_renglon
+           (cliente_id, asiento_id, orden, cuenta_id, cuenta_ref, debe, haber, fecha_imputacion)
+         values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::date)`,
+        [
+          pedido.clienteId,
+          asientoNuevoId,
+          orden + 1,
+          renglon.cuentaId,
+          JSON.stringify(renglon.cuentaRef),
+          renglon.lado === 'debe' ? renglon.importe : '0',
+          renglon.lado === 'haber' ? renglon.importe : '0',
+          pedido.fechaImputacion,
+        ],
+      ),
+    );
+  }
+
+  // 🔴 `AND asiento_estado = 'propuesto'` — la red contra la carrera: si el asiento viejo ya no está
+  // `propuesto` (alguien lo confirmó, o ya se superseó, entre el listado y esta corrida), 0 filas.
+  const superseded = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string }>(
+      `update asiento_propuesto
+          set asiento_estado = 'superseded', superseded_by_id = $1
+        where cliente_id = $2 and id = $3 and asiento_estado = 'propuesto'
+        returning id::text as id`,
+      [asientoNuevoId, pedido.clienteId, pedido.asientoViejoId],
+    ),
+  );
+  if (!superseded[0]?.id) {
+    return { estado: 'conflicto', motivoCodigo: 'asiento_ya_no_estaba_propuesto' };
+  }
+
+  const reproceso = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string }>(
+      `insert into asiento_propuesto_reproceso
+         (cliente_id, asiento_id, asiento_nuevo_id, caso, reproceso_motivo_codigo, motivo,
+          regla_imputacion_id_anterior, regla_imputacion_id_nueva, hecho_por)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       returning id::text as id`,
+      [
+        pedido.clienteId,
+        pedido.asientoViejoId,
+        asientoNuevoId,
+        CASO_REEMPLAZO,
+        pedido.motivoCodigo,
+        pedido.motivo,
+        pedido.reglaImputacionIdAnterior,
+        pedido.reglaImputacionIdNueva,
+        pedido.hechoPor,
+      ],
+    ),
+  );
+  const reprocesoId = reproceso[0]?.id;
+  if (!reprocesoId) throw new Error('El alta de asiento_propuesto_reproceso no devolvió id.'); // H-14
+
+  logger.info('reproceso_capa_d.reemplazado', {
+    cliente_id: pedido.clienteId,
+    asiento_id: pedido.asientoViejoId,
+    asiento_nuevo_id: asientoNuevoId,
+  });
+
+  return { estado: 'reemplazado', asientoNuevoId, reprocesoId };
+}
+
+/**
+ * Caso B — el asiento original ya está `asiento_estado = 'confirmado'` (ya entregado). NUNCA se
+ * toca: el ajuste es un `asiento_propuesto` nuevo, `tipo = 'ajuste_cierre'`, con `corrige_asiento_id`
+ * apuntando al original. Va al `cierreIdActual` (el período ABIERTO en curso) — nunca al `cierre_id`
+ * del original (ya terminal): es lo que hace que el trigger `exigir_cierre_no_terminal_al_
+ * insertar_asiento` (`0040`) no choque con este mecanismo, ver el DDL.
+ */
+export type PedidoCorregirAsientoEntregado = PedidoDeReprocesoAsiento & {
+  readonly asientoOriginalId: string;
+  readonly cierreIdActual: string;
+};
+
+export type ResultadoCorregirAsientoEntregado = {
+  readonly asientoAjusteId: string;
+  readonly reprocesoId: string;
+};
+
+const CASO_AJUSTE: CasoReprocesoAsiento = 'ajuste_ya_entregado';
+
+export async function corregirAsientoEntregado(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoCorregirAsientoEntregado,
+): Promise<ResultadoCorregirAsientoEntregado> {
+  const ajuste = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string }>(
+      `insert into asiento_propuesto (cliente_id, cierre_id, tipo, fecha_imputacion, corrige_asiento_id)
+       values ($1, $2, 'ajuste_cierre', $3::date, $4)
+       returning id::text as id`,
+      [pedido.clienteId, pedido.cierreIdActual, pedido.fechaImputacion, pedido.asientoOriginalId],
+    ),
+  );
+  const asientoAjusteId = ajuste[0]?.id;
+  if (!asientoAjusteId) throw new Error('El alta del asiento de ajuste no devolvió id.'); // H-14
+
+  for (const [orden, renglon] of pedido.renglones.entries()) {
+    await conErroresTraducidos(undefined, () =>
+      tx.consultar(
+        `insert into asiento_propuesto_renglon
+           (cliente_id, asiento_id, orden, cuenta_id, cuenta_ref, debe, haber, fecha_imputacion)
+         values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::date)`,
+        [
+          pedido.clienteId,
+          asientoAjusteId,
+          orden + 1,
+          renglon.cuentaId,
+          JSON.stringify(renglon.cuentaRef),
+          renglon.lado === 'debe' ? renglon.importe : '0',
+          renglon.lado === 'haber' ? renglon.importe : '0',
+          pedido.fechaImputacion,
+        ],
+      ),
+    );
+  }
+
+  // Sin gate de "0 filas": a diferencia de Caso A, el original NUNCA se toca — no hay carrera que
+  // detectar acá (nada compite por escribir la MISMA fila).
+  const reproceso = await conErroresTraducidos(undefined, () =>
+    tx.consultar<{ id: string }>(
+      `insert into asiento_propuesto_reproceso
+         (cliente_id, asiento_id, asiento_nuevo_id, caso, reproceso_motivo_codigo, motivo,
+          regla_imputacion_id_anterior, regla_imputacion_id_nueva, hecho_por)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       returning id::text as id`,
+      [
+        pedido.clienteId,
+        pedido.asientoOriginalId,
+        asientoAjusteId,
+        CASO_AJUSTE,
+        pedido.motivoCodigo,
+        pedido.motivo,
+        pedido.reglaImputacionIdAnterior,
+        pedido.reglaImputacionIdNueva,
+        pedido.hechoPor,
+      ],
+    ),
+  );
+  const reprocesoId = reproceso[0]?.id;
+  if (!reprocesoId) throw new Error('El alta de asiento_propuesto_reproceso no devolvió id.'); // H-14
+
+  logger.info('reproceso_capa_d.ajustado', {
+    cliente_id: pedido.clienteId,
+    asiento_id: pedido.asientoOriginalId,
+    asiento_nuevo_id: asientoAjusteId,
+  });
+
+  return { asientoAjusteId, reprocesoId };
 }
