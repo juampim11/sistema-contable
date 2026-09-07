@@ -1406,6 +1406,12 @@ export const CLASIFICACION = {
       cliente_id: UUID_INTERNO,
       cierre_id: UUID_INTERNO,
       superseded_by_id: UUID_INTERNO,
+      corrige_asiento_id: {
+        ...UUID_INTERNO,
+        nota: 'Caso B del reproceso (0040): liga un ajuste_cierre al asiento YA CONFIRMADO que ' +
+          'corrige. El uuid no revela contenido — mismo tier que padron_manifestacion_id/' +
+          'padron_contraparte_id de asiento_propuesto_renglon.',
+      },
       tipo: { nivel: 'N1', exportable: true, nota: 'Vocabulario de proceso: qué clase de asiento es, no su contenido.' },
       fecha_imputacion: { nivel: 'N2', exportable: true, nota: 'La fecha contable real de un hecho económico de ESTE cliente.' },
       asiento_estado: {
@@ -1455,6 +1461,50 @@ export const CLASIFICACION = {
         nota: 'Cotización usada o capas de FCI consumidas — plata del propio cliente, mismo tier que valuacion en general (D-7/D-20).',
       },
       creado_en: MARCA_TIEMPO,
+    },
+  },
+
+  asiento_propuesto_reproceso: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      asiento_id: UUID_INTERNO,
+      asiento_nuevo_id: UUID_INTERNO,
+      regla_imputacion_id_anterior: UUID_INTERNO,
+      regla_imputacion_id_nueva: UUID_INTERNO,
+      caso: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Vocabulario de proceso: QUÉ MECANISMO disparó el reproceso (reemplazo_no_revisado vs. ' +
+          'ajuste_ya_entregado), no un hecho del cliente — mismo criterio que hecho_via (0027).',
+      },
+      // 🔴 `reproceso_motivo_codigo`, NUNCA `motivo_codigo` a secas: el registro clasifica por
+      // NOMBRE DE COLUMNA GLOBALMENTE (mismo argumento que ya subió `resolucion_estado` en vez de
+      // `estado` desnudo) — `lote_ingesta.motivo_codigo` es N1 y está en decenas de `logger.*` de
+      // todo el repo; reusar el mismo literal acá en N2 tapaba esos campos con `undefined` en
+      // TODO el codebase (confirmado: rompió `pnpm typecheck` en 6 archivos ajenos a esta tarea,
+      // 2026-09-07, antes de este rename).
+      reproceso_motivo_codigo: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'N2, NO N1 pese al precedente de pendiente_cierre.motivo_codigo (N1) — laudo del ' +
+          'titular, 2026-09-07: dato_tardio_cliente nombra una CONDUCTA atribuible a un tercero ' +
+          'real (el cliente del estudio), a diferencia de pendiente_cierre.motivo_codigo, que ' +
+          'describe estados del propio sistema sin atribuir conducta a nadie. El precedente no ' +
+          'transfiere sin más.',
+      },
+      motivo: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Prosa libre genuina, mismo tier y mismo riesgo ya declarado (sin cerrar) que ' +
+          'regla_imputacion.respaldo (H1, convocatoria de 0030): puede terminar citando un CUIT o ' +
+          'un nombre de tercero para justificar el reproceso. Mitigación mínima: validación en el ' +
+          'límite de escritura (Zod) con heurística de patrones tipo documento, que ADVIERTE al ' +
+          'operador antes de guardar — nunca bloquea en silencio.',
+      },
+      hecho_por: { nivel: 'N1', exportable: true, nota: 'Identidad declarada, mismo tier que hecho_por/decidido_por en toda la base.' },
+      ocurrido_en: { nivel: 'N1', exportable: true },
     },
   },
 } as const satisfies Record<string, ClasificacionTabla>;

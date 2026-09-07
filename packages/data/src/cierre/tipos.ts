@@ -106,6 +106,18 @@ export type TipoAsientoPropuesto = (typeof TIPOS_ASIENTO_PROPUESTO)[number];
 export const ASIENTO_ESTADOS = ['propuesto', 'confirmado', 'superseded'] as const;
 export type AsientoEstado = (typeof ASIENTO_ESTADOS)[number];
 
+/** Dominio cerrado. Lista IDÉNTICA a `asiento_propuesto_reproceso_caso_chk` (migración `0040`).
+ *  Espejo del discriminador de `contador-dominio`: `reemplazo_no_revisado` (Caso A, el asiento
+ *  seguía `'propuesto'`) vs. `ajuste_ya_entregado` (Caso B, el asiento ya era `'confirmado'`). */
+export const CASOS_REPROCESO_ASIENTO = ['reemplazo_no_revisado', 'ajuste_ya_entregado'] as const;
+export type CasoReprocesoAsiento = (typeof CASOS_REPROCESO_ASIENTO)[number];
+
+/** Dominio cerrado. Lista IDÉNTICA a `asiento_propuesto_reproceso_motivo_codigo_chk` (migración
+ *  `0040`). N2 (no N1): `dato_tardio_cliente` nombra una conducta atribuible a un tercero real —
+ *  laudo del titular, 2026-09-07. */
+export const MOTIVOS_REPROCESO_ASIENTO = ['correccion_criterio_estudio', 'dato_tardio_cliente'] as const;
+export type MotivoReprocesoAsiento = (typeof MOTIVOS_REPROCESO_ASIENTO)[number];
+
 /** Catálogo PROVISIONAL — `contador-dominio` cierra la lista completa antes de que Capa D la use. */
 export const ROLES_FUNCIONALES_CUENTA = [
   'generica',

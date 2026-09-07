@@ -344,9 +344,11 @@ const GRANTS_POR_COLUMNA: readonly {
   // NUNCA fueron re-otorgadas — identidad fijada al INSERT. `asiento_estado`/`superseded_by_id` siguen
   // grantables porque son la transición legítima (confirmar, superseder) — la inmutabilidad post-
   // terminal la cierra `trg_asiento_propuesto_inmutable`, no la policy.
-  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
-  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
+  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'corrige_asiento_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
+  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'corrige_asiento_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
   { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'UPDATE', columnas: ['asiento_estado', 'superseded_by_id'] },
+  { tabla: 'asiento_propuesto_reproceso', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_id', 'asiento_nuevo_id', 'caso', 'cliente_id', 'hecho_por', 'id', 'motivo', 'ocurrido_en', 'regla_imputacion_id_anterior', 'regla_imputacion_id_nueva', 'reproceso_motivo_codigo'] },
+  { tabla: 'asiento_propuesto_reproceso', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_id', 'asiento_nuevo_id', 'caso', 'cliente_id', 'hecho_por', 'id', 'motivo', 'ocurrido_en', 'regla_imputacion_id_anterior', 'regla_imputacion_id_nueva', 'reproceso_motivo_codigo'] },
   { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_contraparte_id', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
   { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_contraparte_id', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
   // La vista `asiento_propuesto_totales` (`security_invoker=true`, D-16 de HANDOFF 128): sin este
@@ -406,6 +408,8 @@ const GRANTS_A_NIVEL_TABLA: readonly string[] = [
   'asiento_propuesto|app_request|SELECT',
   'asiento_propuesto_renglon|app_request|INSERT',
   'asiento_propuesto_renglon|app_request|SELECT',
+  'asiento_propuesto_reproceso|app_request|INSERT',
+  'asiento_propuesto_reproceso|app_request|SELECT',
   'asiento_propuesto_totales|app_request|SELECT',
   'banco|app_job|SELECT',
   'banco|app_request|SELECT',

@@ -36,6 +36,8 @@ import {
   ASIENTO_ESTADOS,
   ROLES_FUNCIONALES_CUENTA,
   CUENTA_RESOLUCIONES,
+  CASOS_REPROCESO_ASIENTO,
+  MOTIVOS_REPROCESO_ASIENTO,
 } from '../src/cierre/tipos.ts';
 /**
  * ⚠️ Import **relativo a `packages/ingesta`**, y es deliberado.
@@ -1221,6 +1223,22 @@ const DOMINIOS_CERRADOS: DominioCerrado[] = [
     constante: 'ROLES_FUNCIONALES_CUENTA',
     valores: ROLES_FUNCIONALES_CUENTA,
     migracion: '0027',
+  },
+  {
+    check: 'asiento_propuesto_reproceso_caso_chk',
+    tabla: 'asiento_propuesto_reproceso',
+    columna: 'caso',
+    constante: 'CASOS_REPROCESO_ASIENTO',
+    valores: CASOS_REPROCESO_ASIENTO,
+    migracion: '0040',
+  },
+  {
+    check: 'asiento_propuesto_reproceso_motivo_codigo_chk',
+    tabla: 'asiento_propuesto_reproceso',
+    columna: 'reproceso_motivo_codigo',
+    constante: 'MOTIVOS_REPROCESO_ASIENTO',
+    valores: MOTIVOS_REPROCESO_ASIENTO,
+    migracion: '0040',
   },
   {
     check: 'regla_imputacion_tipo_chk',
