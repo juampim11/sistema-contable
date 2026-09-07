@@ -254,12 +254,12 @@ export async function resolverContrapartidaDeLote(
         const candidatos = (candidatosPorMovimiento.get(ev.movimientoId) ?? []).map(comoCandidatoDeContraparte);
         const resolucion = resolverContraparte(candidatos, padronConsultado, ev.fecha, args.padronCompleto);
         despues = aplicarContrapartida(antes, resolucion);
-        despues = adjuntarEvidenciaDeContraparte(
-          despues,
-          resolucion.estado,
-          normalizar(ev.conceptoBanco ?? ''),
-          patronesDeContraparte,
-        );
+        // 🔴 `0039`: mismo criterio que `reconocer-lote.ts` — las dos glosas candidatas, normalizadas
+        // acá, `conceptoBanco` primero y `descripcion` como fallback.
+        despues = adjuntarEvidenciaDeContraparte(despues, resolucion.estado, {
+          conceptoBanco: normalizar(ev.conceptoBanco ?? ''),
+          descripcion: normalizar(ev.descripcion),
+        }, patronesDeContraparte);
       }
       pares.push({ antes, despues });
     }

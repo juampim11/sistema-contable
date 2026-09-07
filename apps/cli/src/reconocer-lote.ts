@@ -323,23 +323,20 @@ export async function reconocerLote(
         // negativa NUNCA se propone como tercero. Es la posición conservadora, y es la correcta
         // mientras no exista `padron_manifestacion`.
         const resolucion = resolverContraparte(candidatos, padronConsultado, ev.fecha, false);
+        // 🔴 `0039`: las DOS glosas candidatas, normalizadas acá — nunca en `contraparte.ts` (esa
+        // función no normaliza nada). `conceptoBanco` se prueba primero; `descripcion` es el
+        // fallback cuando el segmento de Capa B no llega al nombre (convocatoria 2026-09-06, corpus
+        // real de Bracci: Galicia/Santander cortan antes del nombre, Bancor/ICBC/Nación ni capturan
+        // `concepto_banco`).
+        const glosas = { conceptoBanco: normalizar(ev.conceptoBanco ?? ''), descripcion: normalizar(ev.descripcion) };
         // 🔴 `0038`: se calcula ACÁ, sobre `resolucion.estado` directo — ANTES de que
         // `aplicarContrapartida` pueda promover `final` a `'propuesta'` — porque
         // `reconocimiento.evidenciaContraparte` queda `undefined` en esa rama (ver el comentario de
         // `reconocimiento.ts`). Es la MISMA llamada que hace `adjuntarEvidenciaDeContraparte` puertas
         // adentro; se duplica a propósito para no depender del campo que puede quedar sin llenar.
-        const evidenciaContraparte = resolverEvidenciaDeContraparte(
-          resolucion.estado,
-          normalizar(ev.conceptoBanco ?? ''),
-          patronesDeContraparte,
-        );
+        const evidenciaContraparte = resolverEvidenciaDeContraparte(resolucion.estado, glosas, patronesDeContraparte);
         final = aplicarContrapartida(capaB, resolucion);
-        final = adjuntarEvidenciaDeContraparte(
-          final,
-          resolucion.estado,
-          normalizar(ev.conceptoBanco ?? ''),
-          patronesDeContraparte,
-        );
+        final = adjuntarEvidenciaDeContraparte(final, resolucion.estado, glosas, patronesDeContraparte);
         contrapartida = {
           resolucionEstado: resolucion.estado,
           resueltoAFecha: ev.fecha,
@@ -350,6 +347,12 @@ export async function reconocerLote(
             evidenciaContraparte.estado === 'match' ? [evidenciaContraparte.contraparteId]
             : evidenciaContraparte.estado === 'multiples_patrones' ? evidenciaContraparte.contraparteIds
             : [],
+          // 🔴 `0039`: origen SOLO en match/multiples_patrones — coincide con
+          // contrapartida_patron_origen_coherencia_chk, que rechaza cualquier otra combinación.
+          patronContraparteOrigen:
+            evidenciaContraparte.estado === 'match' || evidenciaContraparte.estado === 'multiples_patrones'
+              ? evidenciaContraparte.origen
+              : null,
         };
       }
 

@@ -155,6 +155,10 @@ type FilaCruda = {
   readonly concepto_banco_estrategia: string | null;
   readonly importe: string;
   readonly fecha: string;
+  /** N2 (0039) — ya viene en `movFilas` (el SELECT del paso 6, línea ~460, ya trae `m.descripcion`
+   *  para la columna "Descripción" de la planilla). Declararla acá no agrega ninguna lectura nueva:
+   *  solo habilita el campo para `GlosasCandidatas.descripcion` en `enriquecer()`. */
+  readonly descripcion: string;
 };
 
 /** Mismo mapeo que `packages/data/src/contabilidad/lecturas.ts` (`leerEvidenciaDeMovimientos`) — no
@@ -232,12 +236,12 @@ async function enriquecer(
       // flag hoy está fijo en false), mismo criterio que `apps/cli/src/resolver-contrapartida.ts`.
       const resolucion = resolverContraparte(candidatos, padronConsultado, f.fecha, false);
       despues = aplicarContrapartida(antes, resolucion);
-      despues = adjuntarEvidenciaDeContraparte(
-        despues,
-        resolucion.estado,
-        normalizar(f.concepto_banco ?? ''),
-        patronesDeContraparte,
-      );
+      // 🔴 `0039`: mismo criterio que `reconocer-lote.ts`/`resolver-contrapartida.ts` — las dos
+      // glosas candidatas, normalizadas acá, `concepto_banco` primero y `descripcion` como fallback.
+      despues = adjuntarEvidenciaDeContraparte(despues, resolucion.estado, {
+        conceptoBanco: normalizar(f.concepto_banco ?? ''),
+        descripcion: normalizar(f.descripcion),
+      }, patronesDeContraparte);
     }
 
     textos.set(f.id, textoDeReconocimiento(despues));
