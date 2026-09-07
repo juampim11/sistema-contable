@@ -108,18 +108,30 @@ describe('P0 — el determinante de la entrada', () => {
   });
 
   // ---------------------------------------------------------------------------
-  it('(6) 🔴 POR EXCLUSIÓN: un campo NUEVO entra al digest SOLO, sin tocar esta función', () => {
-    // Es la prueba de la propiedad, no del caso. Si la construcción fuera por inclusión, agregar una
-    // clave no movería nada y el campo nuevo nacería OLVIDADO — el fail-open que `version.ts` §"POR
-    // EXCLUSIÓN" documenta y que este archivo hereda.
-    const conCampoNuevo = { ...BASE, campoQueTodaviaNoExiste: 'algo' } as unknown as EntradaDelMovimiento;
+  it(
+    '(6) 🔴 GUARDA EN RUNTIME (2026-09-06): un campo NUEVO no entra al digest en silencio — tira, ' +
+      'con el nombre del campo, en la primera corrida',
+    () => {
+      // Hasta el 2026-09-06 esta propiedad se probaba al revés: "un campo nuevo entra SOLO, sin
+      // tocar esta función" — inclusión automática y silenciosa. Fue exactamente esa silenciosidad
+      // la que dejó pasar el bug real de `0039`: `descripcion` entró al hash de TypeScript por
+      // estructura ancha (`ev` compilaba contra `EntradaDelMovimiento` con una clave de más) sin que
+      // NADA lo notara — compiló limpio, cero tests rojos — porque la "gemela" SQL de `0021` no
+      // podía enterarse sola de que el tipo TS había crecido. El fail-open silencioso resultó peor
+      // que el fail-closed ruidoso que reemplaza: `reconocer-lote.ts --aplicar` habría reportado
+      // `entrada_cambio_durante_la_corrida` para el 100% de las corridas futuras, mudo, sin que
+      // nada en el código lo señalara como un cambio de comportamiento. Ver el encabezado de este
+      // archivo y `docs/diseno/10-deuda-declarada.md`.
+      const conCampoNuevo = { ...BASE, campoQueTodaviaNoExiste: 'algo' } as unknown as EntradaDelMovimiento;
 
-    expect(
-      digestDeEntrada(conCampoNuevo),
-      'si falla, la construcción es por INCLUSIÓN de contrabando: el día que el motor lea un campo ' +
-        'nuevo, el determinante no lo va a ver y nadie se va a enterar.',
-    ).not.toBe(digestDeEntrada(BASE));
-  });
+      expect(
+        () => digestDeEntrada(conCampoNuevo),
+        'si NO tira, la construcción volvió a ser silenciosa: el día que el motor lea un campo ' +
+          'nuevo sin que nadie decida explícitamente si entra al digest o se excluye, nadie se va a ' +
+          'enterar hasta que se rompa contra datos reales.',
+      ).toThrow('campoQueTodaviaNoExiste');
+    },
+  );
 
   // ---------------------------------------------------------------------------
   it('(7) el encadenado es INYECTIVO: contenido corrido entre campos ADYACENTES no colisiona', () => {

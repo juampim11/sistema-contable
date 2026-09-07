@@ -80,6 +80,15 @@ import { createHash } from 'node:crypto';
  * que compara las claves de las dos declaraciones como CONJUNTO. Si alguien agrega un campo a la
  * lectura del motor y no acá, la regla se pone roja — que es exactamente la dirección que el diseño
  * por exclusión necesita para no volverse por inclusión de contrabando.
+ *
+ * 🔴 **HASTA 2026-09-06 ESTA REGLA NO EXISTÍA** — el párrafo de arriba describía un control que
+ * nunca se escribió (hallazgo de la convocatoria `dba-data`/`arquitecto-software`/`security-engineer`
+ * de esa fecha, sobre el bug real que produjo: `descripcion` se agregó a `EvidenciaDeMovimientoLeida`
+ * para `0039` sin pasar por acá, `digestDeEntrada()` la hasheó igual —`proyeccionDeEntrada()` recorre
+ * el objeto que LLEGA, no el tipo declarado— y la fórmula SQL gemela (`0021`) no la tiene: las dos
+ * "gemelas" divergieron y `reconocer-lote.ts --aplicar` habría reportado `entrada_cambio_durante_la_
+ * corrida` para el 100% de las corridas futuras, en cualquier cliente. R-L se escribió recién en esa
+ * fecha — ver `docs/diseno/10-deuda-declarada.md` para el expediente completo.
  */
 export type EntradaDelMovimiento = {
   readonly movimientoId: string;
@@ -102,7 +111,8 @@ export type EntradaDelMovimiento = {
 };
 
 /**
- * Las dos claves que NO son entrada, con su motivo. Todo lo demás entra **solo**.
+ * Las dos claves que NUNCA pueden alterar el reconocimiento — motivo "no aplica", no "se decidió no
+ * vigilar". Todo lo demás (salvo `CLAVES_EXCLUIDAS_CON_DEUDA`, abajo) entra **solo**.
  *
  * 🔴 Sacar una clave de acá es barato; agregarla es CARO: cada entrada de esta lista es una promesa de
  * que ese campo no puede alterar el reconocimiento **o** de que ya está cubierto por otro
@@ -118,7 +128,58 @@ export type EntradaDelMovimiento = {
  *   generada de Postgres sólo puede referenciar columnas de la MISMA fila. Incluirlo acá haría
  *   divergir esta función de su gemela en el DDL — que es justo lo que la predicción de P1 mide.
  */
-const CLAVES_QUE_NO_SON_ENTRADA: ReadonlySet<string> = new Set(['movimientoId', 'bancoCodigo']);
+const CLAVES_QUE_NUNCA_SON_ENTRADA: ReadonlySet<string> = new Set(['movimientoId', 'bancoCodigo']);
+
+/**
+ * 🔴 Claves que SÍ PUEDEN alterar el reconocimiento y se excluyen IGUAL, hoy, con deuda abierta —
+ * motivo estructuralmente distinto del de `CLAVES_QUE_NUNCA_SON_ENTRADA`. NUNCA sumar acá con el
+ * mismo criterio que las otras dos: cada entrada necesita su propio párrafo, su propia línea en
+ * `docs/diseno/10-deuda-declarada.md`, y una justificación de por qué el costo de vigilarla HOY es
+ * mayor que el costo de no vigilarla — no "no se me ocurrió cómo".
+ *
+ * - `descripcion` (0039, convocatoria 2026-09-06): alimenta el fallback de
+ *   `resolverEvidenciaDeContraparte()` cuando `concepto_banco` no matchea (`padron_contraparte`,
+ *   `contraparte.ts`) — a diferencia de `movimientoId`/`bancoCodigo`, esto SÍ puede cambiar
+ *   `patron_contraparte_estado`/`patron_contraparte_origen` persistidos en
+ *   `reconocimiento_contrapartida`. Se excluye de todos modos porque sumarla a la columna generada
+ *   de `0021` reescribiría `entrada_digest` para el 100% de las filas del piloto (medido en vivo,
+ *   solo lectura, 2026-09-06: 10.663/10.663 filas de `movimiento_bancario_crudo`, de las cuales
+ *   10.401 con `reconocimiento_movimiento` ya persistido) y dispararía reproceso de Capa C sobre
+ *   resultados YA entregados a la contadora — cambio que necesita su propia convocatoria y
+ *   autorización explícita (`product-owner` + `contador-dominio` + `seguridad-datos-financieros`),
+ *   nunca colado como efecto lateral de otra tarea. **CONSECUENCIA ACEPTADA, no ideal:** un
+ *   movimiento cuya `descripcion` se corrige después de reconocido (glosa reenviada completa donde
+ *   antes venía truncada) NO dispara re-evaluación de Capa C — el match de contraparte queda con la
+ *   respuesta vieja hasta que algo más lo reprocese. Ver `docs/diseno/10-deuda-declarada.md`.
+ */
+const CLAVES_EXCLUIDAS_CON_DEUDA: ReadonlySet<string> = new Set(['descripcion']);
+
+/** Exportada para R-L (`packages/data/tests/reglas-de-codigo.test.ts`): compara este conjunto contra
+ *  las claves reales de `EvidenciaDeMovimientoLeida` (`packages/data/src/contabilidad/lecturas.ts`)
+ *  por barrido de texto, sin poder importar ese tipo (`nucleo/` es puro, R-J). */
+export const CLAVES_QUE_NO_SON_ENTRADA: ReadonlySet<string> = new Set([
+  ...CLAVES_QUE_NUNCA_SON_ENTRADA,
+  ...CLAVES_EXCLUIDAS_CON_DEUDA,
+]);
+
+/**
+ * Espejo textual de R-L (`packages/data/tests/reglas-de-codigo.test.ts`): los campos que SÍ entran
+ * al digest, hoy — idéntico al conjunto de claves de `EntradaDelMovimiento` menos
+ * `CLAVES_QUE_NO_SON_ENTRADA`. Se declara aparte (no se deriva de `EntradaDelMovimiento` en
+ * runtime, un tipo no existe en runtime) para que la guarda de `proyeccionDeEntrada()` tenga contra
+ * qué comparar las claves REALES del objeto que recibe, sin confiar en que el tipo estático baste
+ * (que es exactamente lo que falló con `descripcion`: `ev` compilaba contra `EntradaDelMovimiento`
+ * por estructura ancha, y en runtime traía una clave de más).
+ */
+const CLAVES_DE_ENTRADA_REAL: ReadonlySet<string> = new Set([
+  'conceptoBanco',
+  'conceptoCompleto',
+  'conceptoBancoEstrategia',
+  'conceptoCodigo',
+  'columnaOrigen',
+  'fecha',
+  'contraparteCaptura',
+]);
 
 /**
  * Un campo, con prefijo de longitud. Inyectivo: ver la cabecera.
@@ -148,9 +209,29 @@ function enmarcar(valor: unknown): string {
  */
 export function proyeccionDeEntrada(entrada: EntradaDelMovimiento): string {
   const claves = Object.keys(entrada).sort();
+  const entradaReal = claves.filter((c) => !CLAVES_QUE_NO_SON_ENTRADA.has(c));
+
+  // 🔴 GUARDA EN RUNTIME (2026-09-06, misma convocatoria que escribió R-L) — el tipo estático NO
+  // protege esto: TypeScript es estructural, así que un objeto con una clave de más (como pasó con
+  // `descripcion` en `0039`) sigue siendo asignable a `EntradaDelMovimiento` en compilación. Sin
+  // esta guarda, esa clave de más entra al hash EN SILENCIO — compila limpio, cero tests rojos, y el
+  // único síntoma es `entrada_cambio_durante_la_corrida` perpetuo y mudo contra datos reales. Con
+  // esta guarda, el mismo caso tira acá, en la primera corrida, con el nombre del campo culpable.
+  const declaradas = [...CLAVES_DE_ENTRADA_REAL].sort();
+  const realSorted = [...entradaReal].sort();
+  if (realSorted.length !== declaradas.length || realSorted.some((c, i) => c !== declaradas[i])) {
+    throw new Error(
+      'digestDeEntrada: las claves reales del objeto recibido ' +
+        `(${realSorted.join(', ') || '(ninguna)'}) no coinciden con CLAVES_DE_ENTRADA_REAL ` +
+        `(${declaradas.join(', ')}). Un campo nuevo entró a EvidenciaDeMovimientoLeida sin una ` +
+        'decisión explícita: sumalo a CLAVES_DE_ENTRADA_REAL (entra al digest, y a la columna ' +
+        'generada de 0021 en el mismo release) o a CLAVES_QUE_NO_SON_ENTRADA (se excluye, con su ' +
+        'propio motivo — nunca silencioso). Ver packages/contabilidad/src/nucleo/entrada.ts.',
+    );
+  }
+
   const partes: string[] = [];
-  for (const clave of claves) {
-    if (CLAVES_QUE_NO_SON_ENTRADA.has(clave)) continue;
+  for (const clave of entradaReal) {
     partes.push(enmarcar((entrada as Record<string, unknown>)[clave]));
   }
   return partes.join('|');

@@ -992,6 +992,75 @@ describe('R-K — FilaDeReconocimiento espeja PedidoDePersistirReconocimiento (0
 });
 
 // -----------------------------------------------------------------------------
+describe('R-L — EvidenciaDeMovimientoLeida ↔ EntradaDelMovimiento, conjunto completo (0021/0039)', () => {
+  /**
+   * Escrita el 2026-09-06, sobre un bug REAL: el comentario de `entrada.ts` ya afirmaba que esta
+   * regla existía — no existía. `descripcion` se agregó a `EvidenciaDeMovimientoLeida` (0039) sin
+   * pasar por `entrada.ts`, `digestDeEntrada()` la hasheó igual (`Object.keys()` genérico sobre el
+   * objeto que LLEGA, no sobre el tipo declarado — TypeScript es estructural, `ev` seguía siendo
+   * asignable a `EntradaDelMovimiento` con una clave de más), y la columna generada SQL de `0021`
+   * no la tiene: las dos "gemelas" divergieron. `reconocer-lote.ts --aplicar` habría reportado
+   * `entrada_cambio_durante_la_corrida` para el 100% de las corridas futuras, en cualquier cliente —
+   * confirmado con un E2E real, no simulado. Convocatoria `dba-data` + `arquitecto-software` +
+   * `security-engineer`, 2026-09-06. Expediente completo: `docs/diseno/10-deuda-declarada.md`.
+   *
+   * A diferencia de R-K (lista fija de nombres, `.includes()`), esta regla extrae las claves REALES
+   * de los dos tipos por regex y compara el CONJUNTO — un campo nuevo en cualquiera de los dos lados
+   * la pone roja sola, sin que nadie tenga que acordarse de actualizar una lista.
+   */
+  const ENTRADA = join(RAIZ, 'packages/contabilidad/src/nucleo/entrada.ts');
+  const LECTURAS = join(RAIZ, 'packages/data/src/contabilidad/lecturas.ts');
+
+  /** Extrae los nombres de campo de un bloque `type NombreDelTipo = { ... };`, por regex sobre
+   *  `readonly <campo>` — alcanza acá porque son objetos planos, no uniones discriminadas (a
+   *  diferencia de `FilaDeReconocimiento`, que es justo por qué R-K usa `.includes()` y no esto). */
+  function camposDelTipo(texto: string, nombreDelTipo: string): Set<string> {
+    const inicio = texto.indexOf(`type ${nombreDelTipo} = {`);
+    expect(inicio, `no se encontró "type ${nombreDelTipo} = {" — el tipo se movió o se renombró`).toBeGreaterThan(-1);
+    const cierre = texto.indexOf('\n};', inicio);
+    expect(cierre, `no se encontró el cierre "};" de ${nombreDelTipo}`).toBeGreaterThan(-1);
+    const bloque = texto.slice(inicio, cierre);
+    const campos = new Set<string>();
+    for (const m of bloque.matchAll(/readonly\s+(\w+)\s*:/g)) campos.add(m[1] as string);
+    return campos;
+  }
+
+  it('las claves de EvidenciaDeMovimientoLeida son EXACTAMENTE EntradaDelMovimiento ∪ CLAVES_QUE_NO_SON_ENTRADA', async () => {
+    const { CLAVES_QUE_NO_SON_ENTRADA } = await import('../../contabilidad/src/nucleo/entrada.ts');
+
+    const entrada = readFileSync(ENTRADA, 'utf8');
+    const lecturas = readFileSync(LECTURAS, 'utf8');
+
+    const camposEntrada = camposDelTipo(entrada, 'EntradaDelMovimiento');
+    const camposEvidencia = camposDelTipo(lecturas, 'EvidenciaDeMovimientoLeida');
+
+    const esperado = new Set([...camposEntrada, ...CLAVES_QUE_NO_SON_ENTRADA]);
+
+    const sobranEnEvidencia = [...camposEvidencia].filter((c) => !esperado.has(c));
+    const faltanEnEvidencia = [...esperado].filter((c) => !camposEvidencia.has(c));
+
+    expect(
+      sobranEnEvidencia,
+      'campo(s) nuevo(s) en EvidenciaDeMovimientoLeida sin decisión explícita en entrada.ts: sumalos ' +
+        'a EntradaDelMovimiento (entran al digest) o a CLAVES_QUE_NO_SON_ENTRADA (se excluyen, con ' +
+        'motivo propio) — nunca en silencio.',
+    ).toEqual([]);
+    expect(
+      faltanEnEvidencia,
+      'campo declarado en EntradaDelMovimiento o en CLAVES_QUE_NO_SON_ENTRADA que ya NO existe en ' +
+        'EvidenciaDeMovimientoLeida — la lectura real cambió y entrada.ts quedó con un campo fantasma.',
+    ).toEqual([]);
+  });
+
+  it('la lista de campos no está muda: los dos tipos existen y tienen contenido real', () => {
+    const entrada = readFileSync(ENTRADA, 'utf8');
+    const lecturas = readFileSync(LECTURAS, 'utf8');
+    expect(camposDelTipo(entrada, 'EntradaDelMovimiento').size).toBeGreaterThanOrEqual(7);
+    expect(camposDelTipo(lecturas, 'EvidenciaDeMovimientoLeida').size).toBeGreaterThanOrEqual(8);
+  });
+});
+
+// -----------------------------------------------------------------------------
 describe('R-M — las dos familias de adapters no se conocen (plan 14 §1)', () => {
   /**
    * El Módulo 1 lee **extractos bancarios** (`src/adaptadores/`); el módulo de liquidaciones de
