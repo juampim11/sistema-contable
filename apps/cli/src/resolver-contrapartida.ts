@@ -8,15 +8,22 @@
  * NUNCA escribe: no hay migración `0014` (fuera de alcance de esta etapa, decisión del usuario) —
  * cada corrida recalcula desde cero.
  *
- * ## `--padron-completo`, y por qué es un flag manual y no un dato persistido
+ * ## `--padron-completo`, y por qué SIGUE siendo un flag manual — actualizado en Tanda 3
  *
  * `contador-dominio` (Ronda 1) exige un gate explícito, atestiguado por un humano, antes de que
  * "ningún candidato matchea" se proponga automáticamente como tercero (`04-imputacion-contable.md`:
- * *"sin padrón consultado, 'no es socio' no es una conclusión: es ausencia de control"*). Sin la
- * migración `0014` no hay dónde persistir un atributo del cliente con vigencia — eso es dominio de
- * `plan-cuentas-multicliente` y no existe todavía. En vez de fabricar un lugar de guardado ad-hoc, el
- * gate es un flag que el CONTADOR pasa a mano en CADA corrida: decisión explícita, nunca un "quedó
- * prendido" silencioso. Se revisita cuando exista la tabla real.
+ * *"sin padrón consultado, 'no es socio' no es una conclusión: es ausencia de control"*). Cuando se
+ * escribió este comentario no existía la tabla — hoy SÍ existe (`padron_manifestacion`, migración
+ * `0021`) y tiene productor real desde Tanda 3 (`manifestar-padron.ts`, `leerManifestacionVigente`),
+ * wireado en `reconocer-lote.ts` y `exportar-planilla.ts` (los dos caminos de PRODUCCIÓN).
+ *
+ * Este CLI se dejó A PROPÓSITO sin conectar a esa manifestación real: es una herramienta de
+ * SIMULACIÓN ("¿qué pasaría si el padrón estuviera completo?"), no de estado real — mezclar las dos
+ * cosas en el mismo comando sería la clase de ambigüedad que este repo evita (decisión confirmada al
+ * cerrar Tanda 3). El flag sigue siendo lo que era: una decisión explícita que el operador pasa a
+ * mano en CADA corrida, nunca un "quedó prendido" silencioso, y nunca lo que la base tiene declarado
+ * — para eso está `manifestar-padron.ts --aplicar` seguido de `reconocer:lote --aplicar` (real,
+ * documentado como paso operativo aparte), no este comando.
  *
  * ## Qué imprime
  *

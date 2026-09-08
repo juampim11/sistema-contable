@@ -471,6 +471,64 @@ el caso completo, mecánicamente, sin resto.
 --aplicar` contra los 1680 renglones reales del piloto — deliberadamente fuera de Mitad 1, requiere
 su propia autorización explícita (primero la reconciliación manual de JP vía `confirmar-asientos.ts`
 sobre lo que ya se entregó, después el reproceso). El mecanismo está probado; la corrida real, no |
+| **B.20** | ✅ **MECANISMO CERRADO (2026-09-08, Tanda 3 — `docs/diseno/31-replanteo-hacia-producto.md`,
+migraciones `0041`/`0042`) — la corrida real contra los 9 lotes YA INGERIDOS de Bracci (6) + ROKA (3)
+sigue pendiente, sin dueño para ESE paso.** `padronDeclaradoCompleto` dejó de estar hardcodeado en
+`false`: `manifestar-padron.ts` (CLI nuevo, dry-run por defecto, `--aplicar` explícito — el ÚNICO
+productor de `padron_manifestacion`) escribe la manifestación, y `reconocer-lote.ts`/
+`exportar-planilla.ts` leen la vigente (`leerManifestacionVigente`) en vez de asumir `false`. **Pero
+esto solo afecta corridas NUEVAS** de `reconocer:lote --aplicar`: los 9 lotes de Bracci/ROKA que YA se
+reconocieron (antes de esta tarea) tienen sus filas de `reconocimiento_contrapartida` persistidas con
+el gate viejo (`padron_manifestacion_id = null`, sin promover a `es_tercero_padron_completo`).
+🔴 **Revocar/declarar la manifestación NO ES RETROACTIVO** (mismo criterio que la corrección de
+`regla_imputacion` de B.19: solo aplica hacia adelante) — esas filas ya persistidas siguen citando
+"sin manifestación" hasta que alguien vuelva a correr el reconocimiento sobre esos lotes puntuales.
+`contarCitasDeManifestacion` (`packages/data/src/contabilidad/lecturas.ts`) y el dry-run de
+`manifestar-padron.ts` existen específicamente para que el operador vea ese número ANTES de decidir.
+
+**El paso operativo, documentado pero DELIBERADAMENTE NO EJECUTADO en esta tarea** (alcance explícito
+del punto 6 de Tanda 3: *"esto NO se ejecuta en esta tarea, solo se documenta como el paso siguiente,
+aparte, con su propio backup y autorización"*):
+
+1. **Backup del piloto** — mismo runbook que toda corrida real contra datos reales
+   (`docs/devops/01-entornos.md`), antes de tocar nada.
+2. **Declarar la manifestación real de cada cliente**: `pnpm manifestar:padron --cliente <bracci>
+   --usuario <uuid> --completo-hasta <fecha real que confirme Laura>` — dry-run primero (revisar la
+   vigente actual y, si aplica, el conteo de citas de lo que se va a revocar), recién después
+   `--aplicar`. Repetir para ROKA con su propio `--cliente` y fecha.
+3. **Por cada uno de los 9 lotes** (6 Bracci + 3 ROKA — identificados por `lote_ingesta.id` donde
+   `cliente_id` y `estado` correspondan; la lista exacta se obtiene con una consulta de SOLO LECTURA
+   contra el piloto AL MOMENTO de ejecutar este paso, nunca de una lista congelada en este documento,
+   para no arrastrar un lote agregado o dado de baja mientras tanto): dry-run de `pnpm reconocer:lote
+   --cliente <uuid> --usuario <uuid> --lote-id <uuid>` primero — comparar
+   `manifestacionRevocadaDuranteLaCorrida` (tiene que dar 0, nadie debería estar revocando en paralelo
+   de un runbook controlado) y las promociones nuevas contra la predicción ya medida en la Tanda 0
+   (**1414 Bracci, 3843 ROKA**, `docs/diseno/31-replanteo-hacia-producto.md`) — recién con el número
+   verificado, `--aplicar` lote por lote, nunca "todos de una", mismo criterio que
+   `reprocesar-capa-d.ts`/`confirmar-asientos.ts` (CLAUDE.md §1.9, generalizado más allá de
+   migraciones: la autorización es por unidad, nunca por lote implícito).
+4. **Autorización explícita de JP, POR ESTE PASO** — no "lo pendiente de Tanda 3": mismo criterio que
+   B.19, una corrida real contra el piloto nunca hereda la aprobación del mecanismo que la habilita. | Autorización puntual de JP + backup del piloto, mismo criterio que B.19 |
+| **B.21** | 🟡 **Hallazgo declarado, sin dueño, aislado y confirmado PRE-EXISTENTE a la Tanda 3
+(2026-09-08).** `mutaciones-0038.test.ts` da **7/12 rojo**, siempre el mismo error: `new row for
+relation "reconocimiento_contrapartida" violates check constraint
+"contrapartida_patron_origen_coherencia_chk"`, disparado desde el helper `crearContrapartida` de ese
+mismo archivo (las 3 fallas del bloque C y las 2 del bloque D, más las 2 aserciones "legítimo" que
+esperaban un `23505`/`23503` y en cambio chocan antes, con `23514`). **Confirmado con `git stash`**
+—se guardaron los 14 archivos de la sesión de Tanda 3 y se corrió el mismo archivo contra el commit
+base `09fc13d` (ya mergeado, anterior a esta tarea)—: **falla exactamente igual, mismos 7/12, mismo
+mensaje**. No lo causó ni lo toca ningún cambio de Tanda 3 (`0041`/`0042` no tocan
+`contrapartida_patron_origen_coherencia_chk`, que es de `0039`). **Hipótesis, sin confirmar todavía**:
+drift entre el fixture de `0038` (`patronContraparteEstado`/`patronContraparteOrigen` armados antes de
+que existiera `0039`) y esa constraint, que `0039` agregó o endureció después sin que el fixture de
+`0038` se actualizara — mismo patrón que ya describe la lección de memoria "migración original puede
+estar superada": grep el constraint en TODAS las migraciones antes de asumir cuál la define hoy. **No
+se investigó más a fondo ni se corrigió en esta tarea**: está fuera del alcance de los 7 puntos de
+Tanda 3 (mismo criterio que "no resolver hallazgo adyacente en la misma tarea") | Sin dueño. Grep de
+`contrapartida_patron_origen_coherencia_chk` en `packages/data/migrations/` para confirmar en qué
+migración se definió/modificó por última vez, y ajustar `crearContrapartida` (o el CHECK, según cuál
+mienta) — antes de tocar nada, confirmar con `contador-dominio`/`dba-data` cuál de los dos es el que
+está mal |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
