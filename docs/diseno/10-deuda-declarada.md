@@ -471,44 +471,62 @@ el caso completo, mecánicamente, sin resto.
 --aplicar` contra los 1680 renglones reales del piloto — deliberadamente fuera de Mitad 1, requiere
 su propia autorización explícita (primero la reconciliación manual de JP vía `confirmar-asientos.ts`
 sobre lo que ya se entregó, después el reproceso). El mecanismo está probado; la corrida real, no |
-| **B.20** | ✅ **MECANISMO CERRADO (2026-09-08, Tanda 3 — `docs/diseno/31-replanteo-hacia-producto.md`,
-migraciones `0041`/`0042`) — la corrida real contra los 9 lotes YA INGERIDOS de Bracci (6) + ROKA (3)
-sigue pendiente, sin dueño para ESE paso.** `padronDeclaradoCompleto` dejó de estar hardcodeado en
-`false`: `manifestar-padron.ts` (CLI nuevo, dry-run por defecto, `--aplicar` explícito — el ÚNICO
-productor de `padron_manifestacion`) escribe la manifestación, y `reconocer-lote.ts`/
-`exportar-planilla.ts` leen la vigente (`leerManifestacionVigente`) en vez de asumir `false`. **Pero
-esto solo afecta corridas NUEVAS** de `reconocer:lote --aplicar`: los 9 lotes de Bracci/ROKA que YA se
-reconocieron (antes de esta tarea) tienen sus filas de `reconocimiento_contrapartida` persistidas con
-el gate viejo (`padron_manifestacion_id = null`, sin promover a `es_tercero_padron_completo`).
-🔴 **Revocar/declarar la manifestación NO ES RETROACTIVO** (mismo criterio que la corrección de
-`regla_imputacion` de B.19: solo aplica hacia adelante) — esas filas ya persistidas siguen citando
-"sin manifestación" hasta que alguien vuelva a correr el reconocimiento sobre esos lotes puntuales.
-`contarCitasDeManifestacion` (`packages/data/src/contabilidad/lecturas.ts`) y el dry-run de
-`manifestar-padron.ts` existen específicamente para que el operador vea ese número ANTES de decidir.
+| **B.20** | ✅ **CERRADO (activación real completa, 2026-09-08, Tanda 3 —
+`docs/diseno/31-replanteo-hacia-producto.md`).** `padronDeclaradoCompleto` dejó de estar hardcodeado
+en `false`: `manifestar-padron.ts` (CLI nuevo, dry-run por defecto, `--aplicar` explícito — el ÚNICO
+productor de `padron_manifestacion`) escribió la manifestación real, y `reconocer-lote.ts` (ya leyendo
+`leerManifestacionVigente` en vez de asumir `false`) se re-corrió `--aplicar` sobre los **10 lotes
+reales** de Bracci (6) + ROKA (4) que existen en el piloto. Migraciones `0041`/`0042` **APLICADAS al
+piloto** antes de tocar nada (verificadas por consulta directa: `app.exigir_manifestacion_vigente()`
+con `security_definer` y `errcode P0004` en su cuerpo, trigger habilitado sobre
+`reconocimiento_contrapartida`, índice `uq_padron_manifestacion_revoca_a` con el DDL exacto de
+`0042`). Manifestación declarada para los dos clientes, `completo_hasta = 2026-07-31`.
 
-**El paso operativo, documentado pero DELIBERADAMENTE NO EJECUTADO en esta tarea** (alcance explícito
-del punto 6 de Tanda 3: *"esto NO se ejecuta en esta tarea, solo se documenta como el paso siguiente,
-aparte, con su propio backup y autorización"*):
+**Resultado final, verificado por consulta directa contra el estado terminal de
+`reconocimiento_contrapartida` (no sumado a mano de los reportes de cada corrida):**
 
-1. **Backup del piloto** — mismo runbook que toda corrida real contra datos reales
-   (`docs/devops/01-entornos.md`), antes de tocar nada.
-2. **Declarar la manifestación real de cada cliente**: `pnpm manifestar:padron --cliente <bracci>
-   --usuario <uuid> --completo-hasta <fecha real que confirme Laura>` — dry-run primero (revisar la
-   vigente actual y, si aplica, el conteo de citas de lo que se va a revocar), recién después
-   `--aplicar`. Repetir para ROKA con su propio `--cliente` y fecha.
-3. **Por cada uno de los 9 lotes** (6 Bracci + 3 ROKA — identificados por `lote_ingesta.id` donde
-   `cliente_id` y `estado` correspondan; la lista exacta se obtiene con una consulta de SOLO LECTURA
-   contra el piloto AL MOMENTO de ejecutar este paso, nunca de una lista congelada en este documento,
-   para no arrastrar un lote agregado o dado de baja mientras tanto): dry-run de `pnpm reconocer:lote
-   --cliente <uuid> --usuario <uuid> --lote-id <uuid>` primero — comparar
-   `manifestacionRevocadaDuranteLaCorrida` (tiene que dar 0, nadie debería estar revocando en paralelo
-   de un runbook controlado) y las promociones nuevas contra la predicción ya medida en la Tanda 0
-   (**1414 Bracci, 3843 ROKA**, `docs/diseno/31-replanteo-hacia-producto.md`) — recién con el número
-   verificado, `--aplicar` lote por lote, nunca "todos de una", mismo criterio que
-   `reprocesar-capa-d.ts`/`confirmar-asientos.ts` (CLAUDE.md §1.9, generalizado más allá de
-   migraciones: la autorización es por unidad, nunca por lote implícito).
-4. **Autorización explícita de JP, POR ESTE PASO** — no "lo pendiente de Tanda 3": mismo criterio que
-   B.19, una corrida real contra el piloto nunca hereda la aprobación del mecanismo que la habilita. | Autorización puntual de JP + backup del piloto, mismo criterio que B.19 |
+| Cliente | Lotes | Movimientos | Promociones reales (`es_tercero_padron_completo`) | Residual (`sin_candidatos`) |
+|---|---|---|---|---|
+| Bracci | 6 | 3946 | 1414 | 0 |
+| ROKA | 4 | 6455 | 4879 | 10 |
+| **Total** | **10** | **10401** | **6293** | **10** |
+
+Por lote — Bracci: 86, 84, 73, 363, 387, 421 (suma 1414). ROKA: 1036, 1200, 1348, 1295 (suma 4879).
+`manifestacionRevocadaDuranteLaCorrida = 0` en los 10 lotes — cero carreras de concurrencia; las tres
+protecciones (`0040` supersesión, `0041` vigencia al citar, `0042` unicidad de revocación) sostuvieron
+la corrida real sin ningún incidente.
+
+🔴 **Corrección de alcance, encontrada al arrancar la corrida real**: este documento y
+`31-replanteo-hacia-producto.md` decían "9 lotes (6 Bracci + 3 ROKA)". Contra el piloto real hay
+**10 lotes** (6 Bracci + **4 ROKA**) — entre la medición de la Tanda 0 y esta corrida se ingirió un
+cuarto lote de ROKA (trabajo operativo normal), confirmado por consulta directa contra `lote_ingesta`.
+
+🔴 **Sobre la cifra "3843 ROKA" de la Tanda 0**: esa cifra **nunca quedó escrita en ningún documento
+versionado del repo** (grep completo de `HANDOFF.md`/`docs/`, cero resultados antes de esta entrada)
+— era una proyección de un archivo de plan local de la sesión, no una medición sometida a la misma
+verificación cruzada. Investigadas y descartadas dos hipótesis alternativas antes de aceptar esto: (1)
+¿cambió el padrón de socios de ROKA entre la Tanda 0 y hoy? No — 4 filas en `padron_socio`, todas
+`vigente_desde = 2025-10-20`, sin bajas. (2) ¿cambió el contenido de los 3 lotes originales de ROKA
+entre la Tanda 0 y hoy? El único evento de escritura real sobre `movimiento_bancario_crudo` de ROKA
+(`reclasificar_contraparte`, 569 filas) ocurrió el 2026-09-01, una semana antes de la medición de la
+Tanda 0 — no explica el desvío. **El número real, 4879 (no 3843), quedó verificado por DOS métodos
+independientes que coinciden exacto entre sí sobre los 3 lotes originales** (`resolver-contrapartida.ts
+--padron-completo`, simulación de solo lectura, vs. `reconocer-lote.ts --aplicar`, productor real):
+1036/2, 1200/4, 1348/3 en los dos métodos, sin ninguna diferencia. El desvío es de la proyección de
+planificación, no del mecanismo — el mecanismo se verificó dos veces y coincide consigo mismo.
+
+**Revocar/declarar la manifestación NO ES RETROACTIVO** (mismo criterio que la corrección de
+`regla_imputacion` de B.19: solo aplica hacia adelante) — las filas de `reconocimiento_contrapartida`
+que ya existían con OTRO digest, de antes de esta activación, quedaron supersedidas por la corrida
+real (no hay ninguna fila vieja "sin manifestación" que haya quedado huérfana: los 10 lotes dieron
+`creados=0` y el 100% de sus filas resultó en `supersedido` o `no_op`, nunca en una fila vigente sin
+tocar). `contarCitasDeManifestacion` (`packages/data/src/contabilidad/lecturas.ts`) y el dry-run de
+`manifestar-padron.ts` quedan disponibles para la próxima manifestación/revocación que se declare.
+
+**Residual estructural, sin acción pendiente**: 10 movimientos (todos en ROKA, 0 en Bracci) quedan en
+`decision_humana`/`distinguir_tercero_de_socio` sin ningún candidato en la glosa — ni con el padrón
+completo el motor tiene con qué resolverlos. Categoría ya conocida desde la Tanda 0, estructural, no
+un defecto de esta corrida. | Cerrado — sin acción pendiente. Detalle completo en `HANDOFF.md` (196) |
 | **B.21** | 🟡 **Hallazgo declarado, sin dueño, aislado y confirmado PRE-EXISTENTE a la Tanda 3
 (2026-09-08).** `mutaciones-0038.test.ts` da **7/12 rojo**, siempre el mismo error: `new row for
 relation "reconocimiento_contrapartida" violates check constraint

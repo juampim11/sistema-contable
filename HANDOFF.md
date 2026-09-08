@@ -6,6 +6,153 @@
 
 ---
 
+## 2026-09-08 (196) — Tanda 3: activación real de la manifestación de padrón completo contra el
+piloto. `manifestar-padron.ts` + migraciones `0041`/`0042` aplicadas al piloto + `reconocer:lote
+--aplicar` sobre los 10 lotes reales de Bracci/ROKA. **6293 promociones reales**, verificadas por
+doble método.
+
+**Herramienta:** Claude Code, sesión interactiva, continuación directa de la implementación de los
+7 puntos de Tanda 3 (commits `c3d2f64`..`ea4ff6c`, pusheados a `origin/main`). Cada paso de esta
+activación corrió con confirmación explícita de JP, uno a la vez.
+
+### 0. Backup y estado previo
+
+Backup fresco del piloto: `respaldos/piloto_20260908-144907Z.dump` (4.23 MB, SHA-256
+`292dcbee906efd2c17df13194cf392132d5bbf71f547ab977870db89e934b394`), verificado con `pg_restore -l`
+(866 TOC entries, no truncado).
+
+🔴 **Paso faltante encontrado al arrancar**: `ENV_FILE=.env.piloto pnpm db:migrate --estado` mostró
+`0041`/`0042` **PENDIENTE** contra el piloto — solo estaban aplicadas en LOCAL (constraint explícito
+de la tarea de implementación: "no tocar el piloto"). No era un error de esa tarea, era un paso
+faltante en la secuencia de esta activación. Autorizado por JP, aplicadas las dos con
+`pnpm db:migrate` (cada una en su propia transacción), reverificadas por `--estado` (42/42 aplicada)
+y por consulta estructural directa: `app.exigir_manifestacion_vigente()` existe con
+`security_definer = true` y `errcode P0004` en su cuerpo; el trigger
+`trg_reconocimiento_contrapartida_manifestacion_vigente` está habilitado (`tgenabled = 'O'`) sobre
+`reconocimiento_contrapartida`; `uq_padron_manifestacion_revoca_a` existe con el DDL exacto de
+`0042`. Las dos protecciones están realmente activas, no solo "la migración no falló".
+
+### 1. Manifestación real declarada
+
+`pnpm manifestar:padron --aplicar`, dry-run primero en los dos casos:
+
+- Bracci (`f84d9ecc-6d54-4009-8fb6-b6fa3f8d8579`): `completo_hasta = 2026-07-31`,
+  `manifestacion_id = a7fa4ec6-dbb1-4aa5-a078-43c6ef9a00df`.
+- ROKA (`69479b8f-9b6a-4d6b-bdb2-bff817c2e750`): `completo_hasta = 2026-07-31`,
+  `manifestacion_id = 0f60847b-4278-4cc9-8db5-35d896d79e0d`.
+
+Verificado por consulta directa: exactamente 2 filas en `padron_manifestacion` en toda la base, una
+por cliente, `revoca_a is null` las dos (son las vigentes).
+
+### 2. Corrección de alcance: 10 lotes reales, no 9
+
+El plan de Tanda 0 y los docs de diseño decían "9 lotes (6 Bracci + 3 ROKA)". Consulta directa contra
+`lote_ingesta` con conteo real de `movimiento_bancario_crudo`: **10 lotes** (6 Bracci + **4 ROKA**) —
+entre la medición de la Tanda 0 y esta corrida se ingirió un cuarto lote de ROKA
+(`5d4d2a92-31d6-4694-bff4-692189da7aa2`, 1789 movimientos), ingesta operativa normal. JP confirmó
+correr sobre los 10 lotes reales, reportando el número real sin forzarlo contra la cifra vieja.
+
+### 3. `reconocer:lote --aplicar`, 10 lotes, uno a la vez, dry-run + lectura antes de cada aplicación
+
+**Bracci** (6 lotes, del más chico al más grande):
+
+| Lote | Movimientos | `creados` | `supersedidos` | `noOp` | Promociones reales |
+|---|---|---|---|---|---|
+| `63050700` | 326 | 0 | 86 | 240 | 86 |
+| `98f87beb` | 328 | 0 | 84 | 244 | 84 |
+| `2cf77c67` | 340 | 0 | 73 | 267 | 73 |
+| `a5c7ccaf` | 929 | 0 | 929 | 0 | 363 |
+| `ee11d2e7` | 942 | 0 | 942 | 0 | 387 |
+| `23d91533` | 1081 | 0 | 1081 | 0 | 421 |
+| **Total** | **3946** | **0** | **3195** | **751** | **1414** |
+
+**ROKA** (4 lotes, del más chico al más grande):
+
+| Lote | Movimientos | `creados` | `supersedidos` | `noOp` | Promociones reales | Residual |
+|---|---|---|---|---|---|---|
+| `ae762fda` | 1346 | 0 | 1346 | 0 | 1036 | 2 |
+| `9e568972` | 1567 | 0 | 1567 | 0 | 1200 | 4 |
+| `38a7cf41` | 1753 | 0 | 1753 | 0 | 1348 | 3 |
+| `5d4d2a92` | 1789 | 0 | 1789 | 0 | 1295 | 1 |
+| **Total** | **6455** | **0** | **6455** | **0** | **4879** | **10** |
+
+🔴 **`manifestacionRevocadaDuranteLaCorrida = 0` en los 10 lotes** — cero carreras de concurrencia.
+Las tres protecciones (`0040` supersesión con `for share`/`for update`, `0041` vigencia al citar,
+`0042` unicidad de revocación + el SAVEPOINT por pedido de `persistirReconocimientos`) sostuvieron la
+corrida real completa sin ningún incidente.
+
+🔴 **Autocrítica registrada en el momento**: en el primer lote de Bracci (`63050700`) predije "326
+`noOp`, 0 `supersedidos`" leyendo mal el dry-run — la ausencia de `distinguir_tercero_de_socio` en
+`porQueDecide` no significa "nada que promover", significa "ya resuelto en este mismo cálculo,
+porque el gate ya está activo". El resultado real dio 86 `supersedidos`, no 0. Corregido en el acto,
+confirmado con el lote 2 (predicción correcta, `supersedidos=84`), y desde ahí se usó siempre el
+trío real (`creados`/`supersedidos`/`noOp`) contra `supersedidos > 0` como señal de promoción, nunca
+la ausencia de la categoría en el reporte del dry-run.
+
+### 4. Resultado final consolidado, verificado por consulta directa (no sumado a mano)
+
+| Cliente | Lotes | Movimientos | Promociones reales | Residual |
+|---|---|---|---|---|
+| Bracci | 6 | 3946 | **1414** | 0 |
+| ROKA | 4 | 6455 | **4879** | 10 |
+| **Total** | **10** | **10401** | **6293** | **10** |
+
+Verificado dos veces: (a) sumando los reportes de cada corrida (86+84+73+363+387+421=1414 Bracci;
+1036+1200+1348+1295=4879 ROKA), (b) consulta directa contra el estado terminal de
+`reconocimiento_contrapartida` filtrando por `resolucion_estado='es_tercero_padron_completo'` y
+`padron_manifestacion_id` de cada cliente. Los dos métodos coinciden exacto.
+
+### 5. El desvío contra la Tanda 0 (1414 Bracci + "3843" ROKA) — investigado, explicado, cerrado
+
+Bracci coincide exacto (1414 = 1414, el corpus no cambió). ROKA no: 4879 medido vs. "3843" de la
+Tanda 0. Investigadas, en el orden pedido por JP:
+
+1. **¿Padrón de socios de ROKA distinto entre la Tanda 0 y hoy?** No. `padron_socio` de ROKA tiene 4
+   filas, todas `vigente_desde = 2025-10-20`, sin bajas — estable desde hace casi un año. Descartada.
+2. **¿Cambió el contenido de los 3 lotes originales de ROKA entre la Tanda 0 y hoy?** El único evento
+   real de escritura sobre `movimiento_bancario_crudo` de ROKA es `reclasificar_contraparte:v1:
+   pepper-v1` (569 filas, lote `ae762fda`), ocurrido el **2026-09-01** — una semana antes de la
+   medición de la Tanda 0 (2026-09-08). No hay ningún otro evento de escritura sobre el corpus entre
+   esa fecha y hoy. No explica el desvío.
+3. **¿La medición de la Tanda 0 tenía un error, o era una proyección sin el mismo rigor?** Esta es la
+   explicación que sostiene la evidencia. **La cifra "3843" nunca quedó escrita en ningún documento
+   versionado del repo** — grep completo de `HANDOFF.md` y `docs/`, cero resultados antes de esta
+   entrada. Era una proyección de un archivo de plan local de la sesión (no un doc del repo), y nunca
+   se sometió a la verificación cruzada que sí se le exigió al número de esta entrada. Verificación
+   directa, doble método, sobre los 3 lotes originales, corrida hoy:
+
+   | Lote | `resolver-contrapartida --padron-completo` (simulación) | `reconocer-lote --aplicar` (real) |
+   |---|---|---|
+   | `ae762fda` | 1036 promueven, 2 residual | 1036 promociones, 2 residual |
+   | `9e568972` | 1200 promueven, 4 residual | 1200 promociones, 4 residual |
+   | `38a7cf41` | 1348 promueven, 3 residual | 1348 promociones, 3 residual |
+
+   Los dos métodos coinciden exacto, sin ninguna diferencia. **El desvío es de la proyección de
+   planificación, no del mecanismo** — el mecanismo se verificó dos veces, con dos herramientas
+   independientes, y coincide consigo mismo. `docs/diseno/31-replanteo-hacia-producto.md` y
+   `10-deuda-declarada.md` (B.20) corregidos para no perpetuar la cifra vieja.
+
+### 6. Residual estructural — sin acción pendiente
+
+10 movimientos (0 Bracci, 10 ROKA) quedan en `decision_humana`/`distinguir_tercero_de_socio` sin
+ningún candidato en la glosa (`sin_candidatos`) — ni con el padrón completo el motor tiene con qué
+resolverlos. Categoría ya conocida desde la Tanda 0, estructural, no un defecto de esta corrida.
+
+### 7. Qué NO se hizo en esta activación
+
+Nada de esto tocó ningún dato N2-R en logs; todas las consultas de verificación fueron por
+`count(*)`/booleano o ids, nunca denominación ni CUIT. No se corrigió el desvío de
+`mutaciones-0038.test.ts` (B.21, pre-existente, fuera de alcance). No se tocó `resolver-contrapartida.
+ts` como productor (sigue siendo herramienta de simulación, deliberado).
+
+### 8. Commit
+
+Documentación de cierre — este HANDOFF + correcciones en `10-deuda-declarada.md` (B.20 cerrado) y
+`31-replanteo-hacia-producto.md` (nota de la cifra "3843" corregida). Sin cambios de código: la
+implementación ya estaba commiteada y pusheada (`c3d2f64`..`ea4ff6c`).
+
+---
+
 ## 2026-09-08 (195) — Convocatoria de relevamiento funcional y diseño: replanteo de flujo hacia un
 producto real. Documentación pura — sin código, sin tocar el piloto. 5 dictámenes completos en
 `docs/diseno/31-replanteo-hacia-producto.md`.
