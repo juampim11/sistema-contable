@@ -211,6 +211,13 @@ describe('el error TRADUCIDO no saca nada', () => {
     }
   });
 
+  it('el P0004 de app.exigir_manifestacion_vigente() (0041) traduce a ING_MANIFESTACION_REVOCADA', () => {
+    // No es SQLSTATE estándar: lo levanta a mano el trigger de 0041. Sintético — no hace falta
+    // provocarlo contra la base para probar la traducción, que solo mira `error.code`.
+    const t = traducirErrorDeBase({ code: 'P0004', constraint: undefined });
+    expect(t.codigo).toBe('ING_MANIFESTACION_REVOCADA');
+  });
+
   it('un error que no es de Postgres cae en ING_OTRO, sin filtrar su mensaje', () => {
     const t = traducirErrorDeBase(new Error(`explotó con ${GLOSA_PLANTADA}`));
     expect(t.codigo).toBe('ING_OTRO');

@@ -16,7 +16,7 @@ import { logger } from '@sistema-contable/shared/observabilidad';
 import type { ContextoAuditado } from '../db/auditoria.ts';
 import type { Tx } from '../db/conexion.ts';
 import { conErroresTraducidos, ErrorDeBase } from '../db/errores-pg.ts';
-import { MovimientoAjenoAlClienteError } from './lecturas.ts';
+import { leerManifestacionVigente, MovimientoAjenoAlClienteError } from './lecturas.ts';
 
 export type PedidoDeAltaDeSocio = {
   readonly clienteId: string;
@@ -231,15 +231,24 @@ export type PedidoDePersistirReconocimiento = {
    * `apps/cli/src/reconocer-lote.ts` arma este campo directo desde `resolucion.estado` y una llamada
    * local a `resolverEvidenciaDeContraparte`, ANTES de que `aplicarContrapartida` pueda promover nada.
    *
-   * `padronManifestacionId`/`padronCompletoHasta` van tipados `null` (no `string | null`) a propósito:
-   * es lo que hace IMPOSIBLE, en el tipo, que esta tarea (Mitad 1) toque Mitad 2 por accidente —
-   * cualquier intento de pasar un valor real es un error de compilación, no una revisión de código.
+   * `padronManifestacionId`/`padronCompletoHasta` — ANCHO A `string | null` desde la Tanda 3
+   * (`docs/diseno/31-replanteo-hacia-producto.md`, convocatoria `seguridad-datos-financieros`
+   * 2026-09-08): hasta acá estaban tipados `null` a secas, a propósito, para hacer IMPOSIBLE en el
+   * tipo que Mitad 1 tocara Mitad 2 por accidente. El ensanche es deliberado, no un relajamiento —
+   * sin él, `reconocer-lote.ts` promovería `es_tercero_padron_completo → propuesta` correctamente
+   * pero seguiría persistiendo `padron_manifestacion_id = null`, perdiendo el rastro que `0021`
+   * diseñó para responder "¿qué propuestas se apoyaron en ESTA manifestación?" en O(1). El CHECK de
+   * la base (`contrapartida_manifestacion_chk`, 0021) sigue siendo la autoridad: exige que los dos
+   * campos sean no-nulos exactamente cuando `resolucionEstado = 'es_tercero_padron_completo'`, y
+   * `fk_recon_contrapartida_alcance` exige que `padronCompletoHasta` sea el `completo_hasta` REAL de
+   * la manifestación citada — quien arma este objeto nunca inventa esos dos valores, los toma de
+   * `leerManifestacionVigente` (`lecturas.ts`).
    */
   readonly contrapartida: null | {
     readonly resolucionEstado: string;
     readonly resueltoAFecha: string;
-    readonly padronManifestacionId: null;
-    readonly padronCompletoHasta: null;
+    readonly padronManifestacionId: string | null;
+    readonly padronCompletoHasta: string | null;
     readonly patronContraparteEstado: string;
     readonly patronContraparteIds: readonly string[];
     /**
@@ -700,6 +709,135 @@ export async function bajaDeContraparte(
   return { contraparteId: id };
 }
 
+// -----------------------------------------------------------------------------
+// Manifestación de padrón completo (migración 0021, gap cerrado por 0041/0042 — Tanda 3)
+// -----------------------------------------------------------------------------
+
+export type PedidoDeManifestarPadron = {
+  readonly clienteId: string;
+  readonly completoHasta: string;
+  /** `null` = primera manifestación del cliente. Con valor: tiene que ser EXACTAMENTE la vigente
+   *  actual — nunca "la que el operador cree que es", siempre la que la base tiene en ese instante. */
+  readonly revocaId: string | null;
+};
+
+export type ResultadoDeManifestarPadron = { readonly manifestacionId: string };
+
+/** Se pidió declarar SIN `--revoca` pero ya hay una vigente — nunca se revoca implícito. */
+export class YaExisteManifestacionVigenteError extends Error {
+  readonly codigo = 'YA_EXISTE_MANIFESTACION_VIGENTE' as const;
+  readonly vigenteId: string;
+
+  constructor(vigenteId: string) {
+    super(
+      `Ya existe una manifestación vigente (${vigenteId}) para este cliente. Si la intención es ` +
+        `reemplazarla, volvé a correr con --revoca ${vigenteId}. Nunca se revoca implícito.`,
+    );
+    this.name = 'YaExisteManifestacionVigenteError';
+    this.vigenteId = vigenteId;
+  }
+}
+
+/**
+ * `--revoca <id>` no coincide con la vigente actual — o porque nunca hubo vigente, o porque cambió
+ * mientras el operador decidía (alguien más ya manifestó o revocó). Mismo criterio que
+ * `confirmar-asientos.ts`: nunca "lo que el operador creía", siempre "lo que hay ahora".
+ */
+export class RevocaNoEsLaVigenteError extends Error {
+  readonly codigo = 'REVOCA_NO_ES_LA_VIGENTE' as const;
+  readonly revocaId: string;
+  readonly vigenteActualId: string | null;
+
+  constructor(revocaId: string, vigenteActualId: string | null) {
+    super(
+      vigenteActualId === null
+        ? `Se pidió --revoca ${revocaId} pero no hay ninguna manifestación vigente para este cliente ` +
+            `(alguien ya la revocó, o nunca existió). Volvé a correr sin --revoca para declarar la primera.`
+        : `Se pidió --revoca ${revocaId} pero la vigente ACTUAL es ${vigenteActualId} — alguien la ` +
+            `cambió mientras decidías. Volvé a correr con --revoca ${vigenteActualId}, o sin --revoca ` +
+            `para ver el estado actual antes de decidir de nuevo.`,
+    );
+    this.name = 'RevocaNoEsLaVigenteError';
+    this.revocaId = revocaId;
+    this.vigenteActualId = vigenteActualId;
+  }
+}
+
+/**
+ * La pre-lectura de abajo vio "X es la vigente", pero OTRA corrida de `manifestar-padron.ts --revoca
+ * X` ganó la carrera y comiteó primero — `uq_padron_manifestacion_revoca_a` (0042) es el backstop que
+ * lo detecta (la pre-lectura es check-then-act, sin lock; el índice único es lo que de verdad cierra
+ * la carrera). Nunca "reintentar solo": el operador tiene que VER el estado nuevo antes de decidir.
+ */
+export class RevocacionEnCarreraError extends Error {
+  readonly codigo = 'REVOCACION_EN_CARRERA' as const;
+  readonly revocaId: string;
+
+  constructor(revocaId: string) {
+    super(
+      `Otra corrida revocó ${revocaId} justo antes que esta (carrera detectada por ` +
+        `uq_padron_manifestacion_revoca_a, 0042). Volvé a correr manifestar-padron.ts sin --revoca ` +
+        `para ver el estado actual y decidir de nuevo.`,
+    );
+    this.name = 'RevocacionEnCarreraError';
+    this.revocaId = revocaId;
+  }
+}
+
+/**
+ * Declara (o reemplaza) la manifestación de padrón completo de un cliente. Grant por columna desde
+ * `0021`: solo `cliente_id, completo_hasta, revoca_a` son elegibles — `manifestado_por`/`manifestado_en`
+ * los pone la base (`app.current_user_id()`/`now()`), nunca el escritor (0021: "identidad declarada
+ * no es identidad autenticada").
+ *
+ * La pre-lectura (`leerManifestacionVigente`) es SOLO para el mensaje de error accionable — es
+ * check-then-act, con su propia carrera posible (dos corridas concurrentes, cada una viendo "X es la
+ * vigente"). El control real es `uq_padron_manifestacion_revoca_a` (0042): si la pre-lectura no
+ * alcanzó a detectar la carrera, el índice la detecta en el INSERT y este escritor la traduce a
+ * `RevocacionEnCarreraError` en vez de dejar pasar el `23505` genérico.
+ */
+export async function manifestarPadron(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoDeManifestarPadron,
+): Promise<ResultadoDeManifestarPadron> {
+  const vigente = await leerManifestacionVigente(tx, { clienteId: pedido.clienteId });
+
+  if (pedido.revocaId === null) {
+    if (vigente !== null) throw new YaExisteManifestacionVigenteError(vigente.id);
+  } else if (vigente === null || vigente.id !== pedido.revocaId) {
+    throw new RevocaNoEsLaVigenteError(pedido.revocaId, vigente?.id ?? null);
+  }
+
+  let filas: readonly { readonly id: string }[];
+  try {
+    filas = await conErroresTraducidos(undefined, () =>
+      tx.consultar<{ id: string }>(
+        `insert into padron_manifestacion (cliente_id, completo_hasta, revoca_a)
+         values ($1, $2::date, $3)
+         returning id::text as id`,
+        [pedido.clienteId, pedido.completoHasta, pedido.revocaId],
+      ),
+    );
+  } catch (error) {
+    if (error instanceof ErrorDeBase && error.constraint === 'uq_padron_manifestacion_revoca_a') {
+      // Solo puede dispararse con `revoca_a is not null` (0042: `where revoca_a is not null`) — si
+      // este catch corre, `pedido.revocaId` no puede ser `null`.
+      throw new RevocacionEnCarreraError(pedido.revocaId as string);
+    }
+    throw error;
+  }
+  const id = filas[0]?.id;
+  if (!id) throw new Error('La manifestación no devolvió id.'); // H-14
+
+  logger.info('padron_manifestacion.manifestado', {
+    cliente_id: pedido.clienteId,
+    revoca: pedido.revocaId !== null,
+  });
+
+  return { manifestacionId: id };
+}
+
 export type ResumenDePersistencia = {
   readonly creados: number;
   readonly supersedidos: number;
@@ -720,6 +858,19 @@ export type ResumenDePersistencia = {
    * abortaba la transacción del lote entero; ahora se cuenta y el lote sigue.
    */
   readonly digestYaEnLaCadena: number;
+  /**
+   * 🔴 Tanda 3 (0041/0042). El pedido citaba una `padron_manifestacion_id` que OTRA transacción
+   * revocó entre que este lote la leyó (`leerManifestacionVigente`, una vez al principio) y el
+   * momento de este INSERT — `app.exigir_manifestacion_vigente()` lo rechazó con `P0004`
+   * (`ErrorDeBase.codigo === 'ING_MANIFESTACION_REVOCADA'`). Mismo espíritu que
+   * `entradaCambio`/`digestYaEnLaCadena`: **un valor > 0 no es un error, es una carrera legítima
+   * detectada** — la corrida siguiente, con la manifestación vigente actual, reclasifica este
+   * movimiento sin el gate de padrón completo (o con el de la manifestación nueva, si ya hay una).
+   *
+   * Requiere el SAVEPOINT por pedido de acá abajo: sin él, el `P0004` de UN movimiento dejaría la
+   * transacción entera abortada y el resto del lote (potencialmente miles de filas) sin persistir.
+   */
+  readonly manifestacionRevocadaDuranteLaCorrida: number;
 };
 
 /**
@@ -731,6 +882,18 @@ export type ResumenDePersistencia = {
  * final lleva conteos y el digest (identidad de CÓDIGO, N1); nunca `tipo` ni `concepto`, que son la
  * interpretación del movimiento de un cliente y están clasificados N2.
  */
+/**
+ * 🔴 Nombre FIJO, nunca interpolado con un id de pedido — un `SAVEPOINT` no admite parámetros
+ * ligados y este nombre nunca lleva un valor del pedido adentro (evitar por diseño la clase de
+ * bug de inyección que interpolar un identificador de usuario en SQL abriría).
+ *
+ * Es seguro reusar el mismo nombre en cada vuelta del loop: `RELEASE SAVEPOINT` (camino feliz) y
+ * `ROLLBACK TO SAVEPOINT` + `RELEASE SAVEPOINT` (camino de carrera) sacan el savepoint de la pila
+ * antes de la siguiente vuelta, así que no se acumulan savepoints anidados a lo largo de un lote de
+ * miles de filas.
+ */
+const SAVEPOINT_PERSISTIR_RECONOCIMIENTO = 'sp_persistir_reconocimiento';
+
 export async function persistirReconocimientos(
   tx: Tx,
   ctx: ContextoAuditado,
@@ -742,14 +905,39 @@ export async function persistirReconocimientos(
   let noOp = 0;
   let entradaCambio = 0;
   let digestYaEnLaCadena = 0;
+  let manifestacionRevocadaDuranteLaCorrida = 0;
 
   for (const pedido of pedidos) {
-    const r = await persistirReconocimiento(tx, ctx, pedido);
-    if (r.estado === 'creado') creados += 1;
-    else if (r.estado === 'supersedido') supersedidos += 1;
-    else if (r.estado === 'entrada_cambio_durante_la_corrida') entradaCambio += 1;
-    else if (r.estado === 'digest_ya_en_la_cadena') digestYaEnLaCadena += 1;
-    else noOp += 1;
+    // 🔴 Tanda 3: SAVEPOINT por pedido. Sin esto, un `P0004` de `app.exigir_manifestacion_vigente()`
+    // (0041) —el pedido citaba una manifestación que OTRA transacción revocó mientras corría este
+    // lote— dejaría TODA la transacción del lote en estado abortado (comportamiento estándar de
+    // Postgres: un error dentro de una transacción invalida todo lo que sigue hasta el próximo
+    // ROLLBACK), perdiendo el trabajo de los demás pedidos ya procesados. Con el savepoint, solo se
+    // deshace ESTE pedido y el lote sigue con el siguiente.
+    await tx.consultar(`savepoint ${SAVEPOINT_PERSISTIR_RECONOCIMIENTO}`);
+    try {
+      const r = await persistirReconocimiento(tx, ctx, pedido);
+      await tx.consultar(`release savepoint ${SAVEPOINT_PERSISTIR_RECONOCIMIENTO}`);
+      if (r.estado === 'creado') creados += 1;
+      else if (r.estado === 'supersedido') supersedidos += 1;
+      else if (r.estado === 'entrada_cambio_durante_la_corrida') entradaCambio += 1;
+      else if (r.estado === 'digest_ya_en_la_cadena') digestYaEnLaCadena += 1;
+      else noOp += 1;
+    } catch (error) {
+      // Filtro ESTRICTO por código, no por instancia de Error ni por mensaje: solo `P0004`
+      // (`ING_MANIFESTACION_REVOCADA`, ver `errores-pg.ts`) es una carrera legítima ya conocida.
+      // Cualquier otro error —incluido uno sin traducir, como los `throw new Error(...)` de H-14
+      // adentro de `persistirReconocimiento`— es fail-closed: se relanza y aborta el lote entero.
+      // Elegir el código equivocado acá (por ejemplo, atrapar `ErrorDeBase` en general) taparía
+      // bugs reales del resto del lote detrás de un contador que parece "todo controlado".
+      if (error instanceof ErrorDeBase && error.codigo === 'ING_MANIFESTACION_REVOCADA') {
+        await tx.consultar(`rollback to savepoint ${SAVEPOINT_PERSISTIR_RECONOCIMIENTO}`);
+        await tx.consultar(`release savepoint ${SAVEPOINT_PERSISTIR_RECONOCIMIENTO}`);
+        manifestacionRevocadaDuranteLaCorrida += 1;
+        continue;
+      }
+      throw error;
+    }
   }
 
   logger.info('reconocimiento.persistido', {
@@ -761,7 +949,15 @@ export async function persistirReconocimientos(
     no_op: noOp,
     entrada_cambio: entradaCambio,
     digest_ya_en_la_cadena: digestYaEnLaCadena,
+    manifestacion_revocada_durante_la_corrida: manifestacionRevocadaDuranteLaCorrida,
   });
 
-  return { creados, supersedidos, noOp, entradaCambio, digestYaEnLaCadena };
+  return {
+    creados,
+    supersedidos,
+    noOp,
+    entradaCambio,
+    digestYaEnLaCadena,
+    manifestacionRevocadaDuranteLaCorrida,
+  };
 }

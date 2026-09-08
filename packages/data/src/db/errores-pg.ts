@@ -40,6 +40,7 @@ export const CODIGOS_ERROR_PG = [
   'ING_FK',
   'ING_RLS',
   'ING_DESBORDE_NUMERICO',
+  'ING_MANIFESTACION_REVOCADA',
   'ING_OTRO',
 ] as const;
 export type CodigoErrorPg = (typeof CODIGOS_ERROR_PG)[number];
@@ -80,6 +81,13 @@ const POR_SQLSTATE: Readonly<Record<string, CodigoErrorPg>> = {
   '23503': 'ING_FK', // foreign_key_violation
   '42501': 'ING_RLS', // insufficient_privilege
   '22003': 'ING_DESBORDE_NUMERICO', // numeric_value_out_of_range
+  // `P0004`, no estándar: la levanta a mano `app.exigir_manifestacion_vigente()` (0041) cuando un
+  // `reconocimiento_contrapartida` cita una `padron_manifestacion_id` que otra transacción ya revocó.
+  // Necesita código propio (no `ING_OTRO`) porque Tanda 3 lo usa para distinguir, en
+  // `persistirReconocimientos`, "candidato saltado por revocación concurrente durante la corrida"
+  // (se cuenta y se sigue) de cualquier otro error (se relanza y aborta el lote) — perderlo en el
+  // genérico rompería esa distinción sin avisar.
+  P0004: 'ING_MANIFESTACION_REVOCADA',
 };
 
 /**

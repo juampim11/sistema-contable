@@ -164,6 +164,106 @@ export async function leerPadronDeContrapartes(
 }
 
 // -----------------------------------------------------------------------------
+// leerManifestacionVigente / listarManifestacionesVigentes (0021 §3, gap de vigencia cerrado por
+// 0041) — dos contratos sobre el MISMO predicado SQL (dba-data, convocatoria 2026-09-08).
+// -----------------------------------------------------------------------------
+
+export type ManifestacionVigente = { readonly id: string; readonly completoHasta: string };
+
+/**
+ * Todas las manifestaciones de un cliente que NO tienen una fila con `revoca_a` apuntándolas — el
+ * predicado es `not exists`, nunca `order by completo_hasta desc limit 1`.
+ *
+ * 🔴 `0021`, en el `comment on column padron_manifestacion.revoca_a`, anticipaba que "elegir la
+ * vigente" en esta etapa (P5) sería justo ese `order by ... limit 1`, **"por convención de la
+ * aplicación, no por garantía de la base"**. Esta función NO sigue esa convención — la reemplaza,
+ * a propósito, porque el `order by` es un bug real, no solo menos estricto: nada en el esquema exige
+ * que una manifestación revocadora tenga un `completo_hasta` MAYOR que la que revoca (`revoca_a` es
+ * una FK simple, sin check de fechas entre las dos filas). Si alguien revoca una manifestación
+ * CORRIGIÉNDOLA HACIA ABAJO (una declaración anterior resultó demasiado amplia), la fila vieja
+ * revocada sigue teniendo el `completo_hasta` más alto de la tabla, y un `order by completo_hasta
+ * desc limit 1` la seguiría eligiendo como "vigente" — en single-thread, sin ninguna concurrencia de
+ * por medio (hallazgo de `security-engineer`, misma convocatoria). Quien lea `0021` después de esta
+ * función no debe asumir que esa convención sigue vigente: la reemplaza esta lectura.
+ *
+ * Puede devolver 0 (nadie manifestó), 1 (caso normal) o **más de 1** — `0041` lo dice explícito:
+ * "pueden coexistir varias cadenas de manifestación en el tiempo... eso ni siquiera es la regla de
+ * negocio". Esta función NUNCA falla ante ese caso: lista lo que hay, para que quien la llama decida
+ * (el CLI de alta, para mostrárselo al operador). `leerManifestacionVigente`, abajo, es la que sí
+ * falla — para el motor, que necesita una respuesta binaria y no puede decidir con ambigüedad.
+ */
+export async function listarManifestacionesVigentes(
+  tx: Tx,
+  args: { readonly clienteId: string },
+): Promise<readonly ManifestacionVigente[]> {
+  const filas = await tx.consultar<{ id: string; completo_hasta: string }>(
+    `select id::text as id, completo_hasta::text as completo_hasta
+       from padron_manifestacion pm
+      where cliente_id = $1
+        and not exists (
+          select 1 from padron_manifestacion pm2
+           where pm2.cliente_id = pm.cliente_id and pm2.revoca_a = pm.id
+        )
+      order by completo_hasta desc`,
+    [args.clienteId],
+  );
+  return filas.map((f) => ({ id: f.id, completoHasta: f.completo_hasta }));
+}
+
+/**
+ * La manifestación vigente de un cliente, para el motor (Capa B/C) — `null` si nadie manifestó.
+ *
+ * 🔴 Fail-closed ante `>1` vigente, A PROPÓSITO (`contador-dominio`, misma convocatoria):
+ * `padron_manifestacion` no es un dato descriptivo, es la premisa que convierte silencio en
+ * conclusión ("es tercero"). Si hay dos vigentes simultáneas, el sistema no tiene AUSENCIA de
+ * premisa (caso ya contemplado, gate `false`, inofensivo) sino premisa AMBIGUA — no se sabe con
+ * certeza qué conjunto de socios y qué alcance gobierna. Elegir una por convención (la más reciente,
+ * la de `completo_hasta` más lejano) enmascararía para siempre un bug o una manipulación de base
+ * directa (el único camino por el que esto puede pasar — el CLI de alta nunca lo permite por el
+ * camino normal) detrás de un resultado que parece normal. Mismo criterio que
+ * `trg_reconocimiento_entrada_digest` (0021) y `app.exigir_manifestacion_vigente` (0041): un
+ * invariante violado en un camino que "no debería poder pasar" aborta ruidoso, nunca degrada en
+ * silencio.
+ */
+export async function leerManifestacionVigente(
+  tx: Tx,
+  args: { readonly clienteId: string },
+): Promise<ManifestacionVigente | null> {
+  const vigentes = await listarManifestacionesVigentes(tx, args);
+  if (vigentes.length > 1) {
+    throw new Error(
+      `padron_manifestacion: ${vigentes.length} filas vigentes para cliente ${args.clienteId} — se esperaba 0 o 1.`,
+    );
+  }
+  return vigentes[0] ?? null;
+}
+
+/**
+ * Cuántas filas de `reconocimiento_contrapartida` citan HOY esta manifestación — el número que
+ * `manifestar-padron.ts` (Tanda 3) muestra en su dry-run ANTES de un `--revoca`, para que quien
+ * decide sepa el radio del gesto: no son movimientos que vayan a recalcularse solos.
+ *
+ * 🔴 Revocar NO ES RETROACTIVO, y esta cuenta es la evidencia de eso, no solo el aviso: las filas ya
+ * persistidas siguen citando `padronManifestacionId` con el id de la manifestación VIEJA para
+ * siempre (append-only, `0021`) — `0041` solo impide que una fila NUEVA cite una manifestación YA
+ * revocada; no reabre ni reescribe ninguna fila existente. El único camino para que esas filas
+ * pasen a reflejar la manifestación nueva es volver a correr `reconocer:lote --aplicar` sobre los
+ * lotes que las generaron (documentado como paso operativo aparte, nunca automático).
+ */
+export async function contarCitasDeManifestacion(
+  tx: Tx,
+  args: { readonly clienteId: string; readonly manifestacionId: string },
+): Promise<number> {
+  const filas = await tx.consultar<{ n: string }>(
+    `select count(*)::text as n
+       from reconocimiento_contrapartida
+      where cliente_id = $1 and padron_manifestacion_id = $2`,
+    [args.clienteId, args.manifestacionId],
+  );
+  return Number(filas[0]?.n ?? '0');
+}
+
+// -----------------------------------------------------------------------------
 // leerCandidatosDeContraparte
 // -----------------------------------------------------------------------------
 
