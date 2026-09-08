@@ -559,13 +559,33 @@ describe('R10/R11 — funciones SECURITY DEFINER', () => {
     ).toEqual(['app', 'public']);
   });
 
-  it('R11: las únicas SECURITY DEFINER son las dos que leen tenancía', async () => {
+  /**
+   * 🔴 R11 AMPLIADA A TRES (migración `0041`). Este repo tiene el hábito MEDIDO de esquivar una
+   * tercera `security definer` — `0040:129-136` la evita explícitamente citando R11, y dos
+   * incidentes de `HANDOFF.md` resuelven "R11 no se toca y no hace falta ningún ADR" eligiendo
+   * `invoker` cuando alcanzaba. Acá se intentó IGUAL y no alcanzó, medido: `exigir_manifestacion_
+   * vigente()` (0041, trigger de `reconocimiento_contrapartida`) necesita `select ... for update`
+   * sobre `padron_manifestacion`, y `for update`/`for share` exigen privilegio `UPDATE` en
+   * Postgres — independiente de RLS — que `app_request` NO tiene y NO puede tener sobre esa tabla
+   * (esa ausencia es la premisa de frescura de `0021`, vigilada por R41 en
+   * `grants-conjunto-cerrado.test.ts`). Reproducido en vivo bajo invoker antes de esta migración:
+   * `permission denied for table padron_manifestacion` (42501, `aclcheck_error`), en el `for
+   * update`, antes de tocar una sola policy. La única forma de tomar el lock sin otorgarle ese
+   * privilegio a `app_request` es correr como el dueño del esquema — de ahí la tercera `security
+   * definer`, con su guard replicando `reconocimiento_contrapartida_ins` contra ser oráculo
+   * cross-tenant (ver el `comment on function` en `0041`).
+   */
+  it('R11: las únicas SECURITY DEFINER son las tres que leen tenancía o necesitan un lock que app_request no puede tener', async () => {
     const { rows } = await db.query<{ nombre: string }>(
       `select p.proname as nombre
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
         where p.prosecdef and n.nspname in ('app', 'public') order by 1`,
     );
-    expect(rows.map((f) => f.nombre)).toEqual(['accessible_tenant_ids', 'has_role_on']);
+    expect(rows.map((f) => f.nombre)).toEqual([
+      'accessible_tenant_ids',
+      'exigir_manifestacion_vigente',
+      'has_role_on',
+    ]);
   });
 });
 

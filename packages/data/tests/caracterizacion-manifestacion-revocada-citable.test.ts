@@ -1,18 +1,16 @@
 /**
  * CARACTERIZACIÓN — una manifestación REVOCADA sigue siendo citable por una contrapartida nueva.
  *
- * 🔴 ESTO NO ES UNA MUTACIÓN NI UN BUG A ARREGLAR: es el comportamiento HOY ACEPTADO del DDL de
- * `0021` (`packages/data/migrations/0021_determinante_de_entrada_y_capa_c.sql`, ver el
- * `comment on column padron_manifestacion.revoca_a`), y se fija en un archivo APARTE de
- * `mutaciones-0021.test.ts` a propósito — ese archivo declara en su cabecera un conteo exacto
- * (37 mutaciones + 16 legítimos, 44 `it`) y este caso no es ninguna de las dos cosas: no es una
- * fila defectuosa que el DDL tenga que rechazar, es una fila LEGÍTIMA cuya legitimidad sorprende.
- * Meterlo ahí adentro habría corrompido el conteo sin sumar cobertura real — y por el mismo
- * motivo el nombre de los casos de acá usa el prefijo `CARACT`, nunca `M-` ni `L-`: quien mida
- * cobertura por nombre de test no debe leer esto como "control verificado" cuando es lo opuesto
- * (`seguridad-datos-financieros`, ronda de revisión de este archivo).
+ * 🔴 **CERRADO por `0041_manifestacion_vigente_al_citar.sql`.** Este archivo describía, hasta acá,
+ * el comportamiento ACEPTADO del DDL de `0021` — CARACT-1 esperaba que la fila entrara. `0041`
+ * agrega `trg_reconocimiento_contrapartida_manifestacion_vigente` (`app.exigir_manifestacion_
+ * vigente()`), que verifica VIGENCIA además de existencia + espejo. CARACT-1 se reescribió A
+ * PROPÓSITO —exactamente como este docstring lo pedía desde que se escribió—: la aserción pasó de
+ * "el insert tiene éxito" a "el insert muere con P0004". Queda el resto del docstring histórico
+ * porque el GAP que describe (por qué era un gap, por qué no cruzaba tenant) sigue siendo la
+ * explicación correcta de POR QUÉ hacía falta 0041; sólo cambió el desenlace de CARACT-1.
  *
- * ## El gap, con línea de la migración
+ * ## El gap, con línea de la migración (histórico — ver 0041 para el cierre)
  *
  * `padron_manifestacion` es append-only: una manifestación errónea se SUPERSEDE con una fila
  * nueva que apunta `revoca_a` a la vieja, y no hay policy de `UPDATE` ni de `DELETE` para nadie
@@ -23,12 +21,10 @@
  *   - `fk_recon_contrapartida_alcance`: que el espejo `padron_completo_hasta` coincida con el
  *     `completo_hasta` REAL de esa manifestación — así el espejo es infalsificable.
  *
- * Ninguna de las dos pregunta si esa manifestación sigue siendo la VIGENTE, o si alguien la
- * revocó. Este archivo PINEA eso: si algún día se agrega un control de vigencia (una FK
- * compuesta contra una vista de "no revocadas", un trigger, una unicidad parcial tipo
- * `uq_recon_vigente`), el CARACT-1 de abajo tiene que reescribirse A PROPÓSITO —cambiar la
- * aserción de éxito a rechazo, con su código y su constraint exactos— no romperse por sorpresa
- * en medio de otro cambio, ni relajarse para que vuelva a pasar.
+ * Ninguna de las dos preguntaba si esa manifestación seguía siendo la VIGENTE, o si alguien la
+ * revocó — eso es lo que agrega el trigger de `0041`, replicando el predicado de
+ * `reconocimiento_contrapartida_ins` para no volverse un oráculo cross-tenant (ver el `comment on
+ * function app.exigir_manifestacion_vigente()` en esa migración).
  *
  * ## Por qué NO cruza tenant (CARACT-2)
  *
@@ -186,7 +182,7 @@ async function crearPadrePropuesta(ej: Ejecutar, cuenta: Cuenta): Promise<{ read
 }
 
 describe('0021 — caracterización: manifestación revocada sigue siendo citable (legítimo, NO mutación)', () => {
-  it('CARACT-1 la FK de alcance acepta una manifestación YA REVOCADA (`revoca_a` apunta a ella) porque nunca verifica vigencia, solo existencia + espejo', async () => {
+  it('CARACT-1 🔴 CERRADO por 0041: citar una manifestación YA REVOCADA muere P0004 (antes de 0041 esto entraba — ver el docstring del archivo)', async () => {
     const { manA, seRevoco } = await comoApp(async (ej) => {
       const a = await una(
         ej,
@@ -214,29 +210,28 @@ describe('0021 — caracterización: manifestación revocada sigue siendo citabl
     });
     expect(seRevoco, 'el fixture no armó una revocación real: revisar el insert de la revocadora').toBe(1);
 
-    // Una contrapartida NUEVA cita a la manifestación YA REVOCADA, con su espejo correcto (el
-    // `completo_hasta` REAL de A, no el de la revocadora). Nada en el DDL distingue "vigente" de
-    // "revocada" — las dos FK ven la misma fila existente con el mismo `completo_hasta`.
-    const id = await comoApp(async (ej) => {
-      const padre = await crearPadrePropuesta(ej, escenario.a);
-      const f = await ej(
-        `insert into reconocimiento_contrapartida
-           (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase,
-            padron_manifestacion_id, padron_completo_hasta, resuelto_a_fecha, patron_contraparte_estado)
-         values ($1, $2, 'es_tercero_padron_completo', 'propuesta', $3, $4::date, $5::date, 'no_aplica')
-         returning id::text as id`,
-        [escenario.a.clienteId, padre.reconocimientoId, manA, '2026-06-30', '2026-06-15'],
-      );
-      return f[0]?.['id'];
-    });
+    // Una contrapartida NUEVA intenta citar a la manifestación YA REVOCADA, con su espejo correcto
+    // (el `completo_hasta` REAL de A, no el de la revocadora). Antes de `0041` esto entraba: las
+    // dos FK ven la misma fila existente con el mismo `completo_hasta` y ninguna mira vigencia.
+    // Desde `0041`, `trg_reconocimiento_contrapartida_manifestacion_vigente` la rechaza.
+    const error = await capturar(() =>
+      comoApp(async (ej) => {
+        const padre = await crearPadrePropuesta(ej, escenario.a);
+        return ej(
+          `insert into reconocimiento_contrapartida
+             (cliente_id, reconocimiento_id, resolucion_estado, reconocimiento_clase,
+              padron_manifestacion_id, padron_completo_hasta, resuelto_a_fecha, patron_contraparte_estado)
+           values ($1, $2, 'es_tercero_padron_completo', 'propuesta', $3, $4::date, $5::date, 'no_aplica')`,
+          [escenario.a.clienteId, padre.reconocimientoId, manA, '2026-06-30', '2026-06-15'],
+        );
+      }),
+    );
 
-    // El insert TIENE ÉXITO. Se pinea el comportamiento, no se lo corrige.
-    expect(
-      id,
-      'una contrapartida citando una manifestación YA REVOCADA fue rechazada: si esto se puso ' +
-        'rojo, alguien agregó un control de vigencia — actualizar este test A PROPÓSITO, con su ' +
-        'nueva aserción de rechazo (código y constraint exactos), no relajarlo para que vuelva a pasar.',
-    ).toBeTruthy();
+    // El insert MUERE, con el código exacto que declara `app.exigir_manifestacion_vigente()`
+    // (0041) — nunca un `rejects.toThrow()` pelado, que dejaría pasar que el rechazo lo produjera
+    // otro control. Si esto se puso VERDE con un `id` en vez de este error, alguien RELAJÓ el
+    // control — no ajustar este test para que vuelva a pasar sin entender por qué.
+    expect(error.code, 'citar una manifestación ya revocada tiene que morir por P0004 (0041)').toBe('P0004');
   });
 
   it('CARACT-2 el gap NO CRUZA TENANT: citar la manifestación revocada de A desde una fila de B sigue muriendo por FK', async () => {
