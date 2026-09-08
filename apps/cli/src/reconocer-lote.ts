@@ -35,6 +35,7 @@ import {
   conUsuario,
   escribirConAuditoria,
   leerEvidenciaDeMovimientos,
+  leerManifestacionVigente,
   leerPadronDeContrapartes,
   leerPadronYCandidatosDeContraparte,
   leerReconocimientosActivos,
@@ -44,6 +45,7 @@ import {
   type ContraparteDelPadron,
   type EvidenciaDeMovimientoLeida,
   type PedidoDePersistirReconocimiento,
+  type ManifestacionVigente,
   type SocioDelPadron as SocioDelPadronLeido,
 } from '@sistema-contable/data';
 import {
@@ -253,6 +255,11 @@ export type ReporteDeReconocimiento = {
   readonly entradaCambio: number;
   /** Determinantes que ya figuraban en la cadena. Antes abortaban el lote entero. */
   readonly digestYaEnLaCadena: number;
+  /** 🔴 Tanda 3 (0041/0042): carreras DETECTADAS contra `manifestar-padron.ts --revoca` corriendo en
+   *  paralelo — el pedido citaba una manifestación que otra transacción revocó mientras corría este
+   *  lote (`P0004`). Como `entradaCambio`/`digestYaEnLaCadena`, un valor > 0 no es un error: la
+   *  corrida siguiente reclasifica esos movimientos con el estado de manifestación vigente actual. */
+  readonly manifestacionRevocadaDuranteLaCorrida: number;
 };
 
 export async function reconocerLote(
@@ -281,6 +288,11 @@ export async function reconocerLote(
 
     // padron_contraparte (0037) — leído una vez por lote, mismo criterio que el padrón de socios.
     const patronesDeContraparte = (await leerPadronDeContrapartes(tx, args.cliente)).map(comoPatronDeContraparte);
+
+    // padron_manifestacion (0021/0041, Tanda 3) — leída UNA VEZ por lote, mismo criterio que el
+    // padrón de contrapartes. `null` = nadie manifestó todavía para este cliente: el gate se evalúa
+    // `false` para cada movimiento, mismo comportamiento conservador que regía antes de esta tarea.
+    const manifestacion = await leerManifestacionVigente(tx, { clienteId: args.cliente });
 
     const activos = await leerReconocimientosActivos(tx, {
       clienteId: args.cliente,
@@ -319,10 +331,17 @@ export async function reconocerLote(
       let contrapartida: PedidoDePersistirReconocimiento['contrapartida'] = null;
       if (capaB.clase === 'decision_humana' && capaB.queDecide === 'distinguir_tercero_de_socio') {
         const candidatos = (candidatosPorMovimiento.get(ev.movimientoId) ?? []).map(comoCandidatoDeContraparte);
-        // `padronDeclaradoCompleto: false` — el gate no se persiste hasta 0015, así que acá la rama
-        // negativa NUNCA se propone como tercero. Es la posición conservadora, y es la correcta
-        // mientras no exista `padron_manifestacion`.
-        const resolucion = resolverContraparte(candidatos, padronConsultado, ev.fecha, false);
+        // Tanda 3 (docs/diseno/31-replanteo-hacia-producto.md) — el gate real, por fin. `ev.fecha`
+        // como corte contra `manifestacion.completoHasta`, INCLUSIVE (`<=`, nunca `<`): no es una
+        // elección de este archivo, es lo que ya exige `contrapartida_frescura_chk` (0021:
+        // `padron_completo_hasta >= resuelto_a_fecha`) sobre la fila que se va a insertar — se usa
+        // `ev.fecha` como `resueltoAFecha` más abajo y se deja que el CHECK de la base sea la
+        // autoridad final del corte, nunca una segunda fuente de verdad reimplementada acá
+        // (`contador-dominio`, convocatoria 2026-09-08). Si `manifestacion` es `null` (nadie
+        // manifestó todavía, o el `--completo-hasta` no cubre `ev.fecha`), el gate da `false` — mismo
+        // comportamiento conservador que regía antes de esta tarea.
+        const padronCompleto = manifestacion !== null && ev.fecha <= manifestacion.completoHasta;
+        const resolucion = resolverContraparte(candidatos, padronConsultado, ev.fecha, padronCompleto);
         // 🔴 `0039`: las DOS glosas candidatas, normalizadas acá — nunca en `contraparte.ts` (esa
         // función no normaliza nada). `conceptoBanco` se prueba primero; `descripcion` es el
         // fallback cuando el segmento de Capa B no llega al nombre (convocatoria 2026-09-06, corpus
@@ -337,11 +356,18 @@ export async function reconocerLote(
         const evidenciaContraparte = resolverEvidenciaDeContraparte(resolucion.estado, glosas, patronesDeContraparte);
         final = aplicarContrapartida(capaB, resolucion);
         final = adjuntarEvidenciaDeContraparte(final, resolucion.estado, glosas, patronesDeContraparte);
+        // 🔴 Los dos campos son `null` salvo en la rama `es_tercero_padron_completo` — y en esa
+        // rama, `manifestacion` NUNCA puede ser `null` (`padronCompleto` solo pudo dar `true` si
+        // `manifestacion !== null`, arriba). `contrapartida_manifestacion_chk` (0021) exige
+        // exactamente esta correspondencia; `fk_recon_contrapartida_alcance` exige que
+        // `padronCompletoHasta` sea el `completo_hasta` REAL de la fila citada — nunca un valor
+        // inventado ni recalculado, siempre el que devolvió `leerManifestacionVigente`.
+        const citaManifestacion = resolucion.estado === 'es_tercero_padron_completo';
         contrapartida = {
           resolucionEstado: resolucion.estado,
           resueltoAFecha: ev.fecha,
-          padronManifestacionId: null,
-          padronCompletoHasta: null,
+          padronManifestacionId: citaManifestacion ? (manifestacion as ManifestacionVigente).id : null,
+          padronCompletoHasta: citaManifestacion ? (manifestacion as ManifestacionVigente).completoHasta : null,
           patronContraparteEstado: evidenciaContraparte.estado,
           patronContraparteIds:
             evidenciaContraparte.estado === 'match' ? [evidenciaContraparte.contraparteId]
@@ -406,7 +432,16 @@ export async function reconocerLote(
         total_movimientos: pedidos.length,
         aplicar: false,
       });
-      return { ...base, aplicado: false, creados: 0, supersedidos: 0, noOp: 0, entradaCambio: 0, digestYaEnLaCadena: 0 };
+      return {
+        ...base,
+        aplicado: false,
+        creados: 0,
+        supersedidos: 0,
+        noOp: 0,
+        entradaCambio: 0,
+        digestYaEnLaCadena: 0,
+        manifestacionRevocadaDuranteLaCorrida: 0,
+      };
     }
 
     // Un solo evento de auditoría por LOTE, no por movimiento: `recursoId` es el lote. Auditar cada
@@ -441,6 +476,7 @@ export async function reconocerLote(
       noOp: resumen.noOp,
       entradaCambio: resumen.entradaCambio,
       digestYaEnLaCadena: resumen.digestYaEnLaCadena,
+      manifestacionRevocadaDuranteLaCorrida: resumen.manifestacionRevocadaDuranteLaCorrida,
     };
   });
 }

@@ -40,6 +40,7 @@ import {
   registrarAcceso,
   leerConAuditoria,
   leerIdentificadoresDeCuenta,
+  leerManifestacionVigente,
   leerPadronDeContrapartes,
   leerPadronYCandidatosDeContraparte,
   type Tx,
@@ -225,6 +226,11 @@ async function enriquecer(
   // padron_contraparte (0037) — leído una vez por export, mismo criterio que el padrón de socios.
   const patronesDeContraparte = (await leerPadronDeContrapartes(tx, pedido.clienteId)).map(comoPatronDeContraparte);
 
+  // padron_manifestacion (0021/0041, Tanda 3) — leída UNA VEZ por export, mismo criterio que
+  // `patronesDeContraparte`. `null` = nadie manifestó: el gate da `false` para todo el export, mismo
+  // comportamiento conservador que regía antes de esta tarea.
+  const manifestacion = await leerManifestacionVigente(tx, { clienteId: pedido.clienteId });
+
   const textos = new Map<string, ReturnType<typeof textoDeReconocimiento>>();
   for (const f of movFilas) {
     const antes = reconocer(evidenciaDeMotorDesde(f, bancoCodigo), indice);
@@ -232,9 +238,11 @@ async function enriquecer(
     let despues = antes;
     if (antes.clase === 'decision_humana' && antes.queDecide === 'distinguir_tercero_de_socio') {
       const candidatos = (candidatosPorMovimiento.get(f.id) ?? []).map(comoCandidatoDeContraparte);
-      // padronDeclaradoCompleto: false — espeja la realidad de producción (reconocer-lote.ts:288, el
-      // flag hoy está fijo en false), mismo criterio que `apps/cli/src/resolver-contrapartida.ts`.
-      const resolucion = resolverContraparte(candidatos, padronConsultado, f.fecha, false);
+      // Tanda 3 — espeja la realidad de producción real (`reconocer-lote.ts`, mismo corte
+      // `f.fecha <= manifestacion.completoHasta`, inclusive): la planilla que ve Laura tiene que
+      // mostrar la MISMA clasificación que el motor persistió, nunca una versión desactualizada.
+      const padronCompleto = manifestacion !== null && f.fecha <= manifestacion.completoHasta;
+      const resolucion = resolverContraparte(candidatos, padronConsultado, f.fecha, padronCompleto);
       despues = aplicarContrapartida(antes, resolucion);
       // 🔴 `0039`: mismo criterio que `reconocer-lote.ts`/`resolver-contrapartida.ts` — las dos
       // glosas candidatas, normalizadas acá, `concepto_banco` primero y `descripcion` como fallback.
