@@ -6,6 +6,200 @@
 
 ---
 
+## 2026-09-08 (195) — Convocatoria de relevamiento funcional y diseño: replanteo de flujo hacia un
+producto real. Documentación pura — sin código, sin tocar el piloto. 5 dictámenes completos en
+`docs/diseno/31-replanteo-hacia-producto.md`.
+
+**Herramienta:** Claude Code, sesión nueva, continúa directo de (194). Motivador explícito de JP: tras
+~2 meses de trabajo y una semana entera en `padron_contraparte` (medida, verificada, HANDOFF 183-194),
+el mecanismo funciona técnicamente pero **no reduce el tiempo real de trabajo de Laura** — solo ahorra
+pensar el nombre del proveedor, no el clic de confirmar cada línea de revisión.
+
+### Convocatoria — 5 agentes en paralelo, modelo Fable 5.1 (el más potente disponible en la sesión)
+
+`analista-funcional`, `product-owner`, `arquitecto-software`, `tech-lead`, `contador-dominio`, todos en
+modo solo lectura, con el diagnóstico completo y los números reales del piloto como insumo. Los 5
+dictámenes íntegros y la síntesis quedaron en `docs/diseno/31-replanteo-hacia-producto.md` — acá solo
+el resumen ejecutivo.
+
+### El diagnóstico, unánime entre los 5
+
+1. **`padron_contraparte` no es la palanca.** Techo medido: 5,5% (78 de 1414 `distinguir_tercero_de_
+   socio` en Bracci). Funciona, queda, no se invierte más ahí.
+2. **La palanca real ya está construida y nadie la invoca:** `padron_manifestacion` (migración `0021`,
+   hace meses) + el parámetro `padronDeclaradoCompleto`, hardcodeado `false` en los 3 call sites de
+   Capa B/C. Casi el 100% de los `distinguir_tercero_de_socio` de ambos clientes (1414 Bracci, 3851
+   ROKA) **ya tienen el CUIT capturado y hasheado** (`contrapartidaSinCandidato = 0`) — `padron_socio`
+   los resolvería por HMAC exacto en cuanto Laura declare el padrón de socios completo por cliente y
+   fecha. Es una atestación de ella, no una construcción nuestra.
+3. **Nada persiste lo que Laura decide.** El Excel de revisión vuelve completado y muere — no hay
+   memoria de confirmaciones. `arquitecto-software` la señala como LA pieza faltante estructural
+   (tabla nueva `decision_revision`, ya diseñada con sus siete renglones, sin escribir).
+
+### Las dos ideas de JP — veredicto
+
+- **"200 FORCOR → una línea":** no sirve tal cual (cubre el 5,5% que ya se sabía, y el nombre es
+  evidencia más débil que el CUIT que el gate de padrón completo ya resolvería). Forma que sí sirve:
+  agrupar por (concepto del léxico, lado, cuenta destino) — la unidad real de trabajo de Laura —, nunca
+  por nombre de proveedor.
+- **Alta de proveedor en el momento:** no ahora como prioridad — no cambia ningún asiento (0 sub-cuentas
+  por proveedor en los dos clientes), ahorra 0 clics. Sí vale como pieza barata (hoja "Altas" en la
+  planilla), diferida.
+
+### La pregunta de seguridad (promoción condicionada)
+
+Sin condición segura hoy para promover por nombre — no por prudencia sino porque no existe ninguna
+decisión persistida que pueda contarse como "N confirmaciones sin excepción". El camino, en orden: (1)
+manifestación de padrón completo, ya construida, sin tocar el motor; (2) con memoria de decisiones,
+ratificación en bloque (la `clase` no cambia, cada movimiento sigue con decisión humana registrada);
+(3) solo con ADR nuevo, un tercer constructor de `propuesta` por regla de contraparte, con evidencia
+congelada y reversa en bloque — condicionado a que la ratificación en bloque no alcance.
+
+### El plan en 4 tandas (aprobado por JP sin ajustes, detalle completo en el doc 31)
+
+0 medir (solo lectura, 1 día) → 1 agrupar y preguntar (sin migraciones, el primer entregable real:
+julio de Bracci de 563 filas a ≤40 líneas + excepciones) → 2 memoria (`decision_revision`, 1 migración)
+→ 3 promoción real (reproceso de corpus, sin bump) → 4 decidir la superficie (`apps/web`, solo si el
+round-trip por planilla demostró que Laura completa las hojas).
+
+### Qué NO se construye
+
+Más `padron_contraparte` (techo ya medido), `apps/web` antes de validar el round-trip por planilla,
+fusión PDF+Excel fila a fila (`fila_hash` no cruza formatos — la regla es una fuente vigente por
+cuenta-período), promoción por heurística de N apariciones dentro del motor (bump + reproceso total).
+
+### Decisiones que solo JP puede tomar, consolidadas
+
+Pedirle a Laura la manifestación de padrón de socios completo por cliente y fecha; aceptar la meta del
+próximo entregable ("≤40 líneas + excepciones", no "más movimientos clasificados"); política PDF/Excel
+("gana el que cuadra"); tres preguntas para Laura (socios que también facturan honorarios, sistema de
+importación que usa, si acepta N=3 y tope ×2 como criterio de recurrencia).
+
+### Qué sigue
+
+Sin push a `origin/main`. `ADR-0003` (memoria de decisiones) y `ADR-0004` (una fuente vigente por
+cuenta-período) a escribir antes de tocar código de la Tanda 2 en adelante. Nada de lo de arriba tiene
+código todavía — es la convocatoria previa al plan de implementación, que se autoriza aparte.
+
+---
+
+## 2026-09-07 (194) — 🔒 CIERRE: primera corrida real de `--aplicar` de `reconocer-lote.ts` con
+`padron_contraparte`/`0039` activos — 994 movimientos reprocesados en 3 lotes reales de Bracci
+(Cta Cte, mayo/junio/julio), 78 matches contra proveedores conocidos, 0 cambios de clasificación,
+0 fallidos. Cuenta especial queda sin tocar, a propósito.
+
+**Herramienta:** Claude Code, misma sesión que (192)/(193), continúa directo. Modo plan obligatorio
+(§3.2) por tratarse de un motor que ya corre contra datos reales de dos clientes — plan aprobado por
+JP, con dos correcciones de fondo encontradas ANTES de tocar el piloto.
+
+### El pedido original y las dos correcciones que lo reencuadraron
+
+JP pidió reconstruir el "77,5%" (estado "antes" del paquete del 2/9) y medir cuántos movimientos
+`decision_humana` pasan a `propuesta` gracias a `padron_contraparte`. Investigación de solo lectura,
+antes de tocar nada:
+
+1. **El "77,5%" no es este corpus.** Es de HANDOFF (93), 2026-08-21 — un corpus de 1830 movimientos,
+   3 lotes, **anterior** a la ingesta real de Bracci/ROKA, y significa "% de `decision_humana`
+   atribuible a `distinguir_tercero_de_socio`", no "% del total que es `decision_humana`". El estado
+   real del 2/9, medido contra el piloto: Bracci 3946 movimientos (1640 propuesta/1871
+   decision_humana/435 sin_reconocer, de los cuales 1414 `distinguir_tercero_de_socio`); ROKA (3
+   meses) 5109 movimientos, 3851 `distinguir_tercero_de_socio`.
+2. **`padron_contraparte` NUNCA reclasifica `decision_humana` → `propuesta`** — verificado contra
+   `adjuntarEvidenciaDeContraparte` (`motor.ts:199-214`): solo agrega metadata, nunca toca `clase`. Es
+   diseño ya cerrado (HANDOFF 185). La pregunta original ("cuántos pasan a propuesta") tiene respuesta
+   estructural: cero, siempre. El número real es otro: cuántos `distinguir_tercero_de_socio` ahora
+   tienen el nombre del proveedor confirmado en la cola de revisión (medido con el matcher real,
+   `resolverEvidenciaDeContraparte`, contra el corpus real: **79 de 1414 en todo Bracci**, 0 en ROKA
+   — sin ningún proveedor cargado ahí).
+
+### Alcance acotado por convocatoria — ROKA fuera, "cuenta especial" fuera
+
+5 convocatorias en paralelo (`seguridad-datos-financieros`, `security-engineer`,
+`motor-conciliacion-contable`, `contador-dominio`, `dba-data`), ninguna bloqueante:
+
+- `motor-conciliacion-contable` objetó incluir a ROKA en esta ronda — 0 proveedores cargados ahí,
+  re-persistir sus lotes sería puro costo de cadena sin ninguna mejora informativa. Aceptado: **ROKA
+  queda diferido** hasta que tenga proveedores.
+- El mismo agente corrigió el diseño de la satélite: `reconocimiento_contrapartida_patron_match`
+  **no tiene columna `estado`** — solo recibe fila en los matches reales (nunca una fila por
+  `sin_match`). El padre (`reconocimiento_contrapartida.patron_contraparte_estado`) sí lleva el estado
+  completo, siempre.
+- `security-engineer`: sin drift, con un hallazgo operativo no bloqueante (ausencia de advisory lock
+  entre corridas concurrentes de escritores sobre el mismo cliente — recomendación para el runbook,
+  no para esta tarea).
+- `seguridad-datos-financieros`: aislamiento Bracci/ROKA verificado en 3 capas; clasificación N2 de
+  las columnas nuevas ya correcta con datos reales en la mano.
+- `contador-dominio`: sin objeción — el `id` de `reconocimiento_movimiento` nunca llegó a Laura (ni
+  agregado), y `asiento_propuesto` no tiene ninguna FK real hacia esa tabla. "Validar con profesional
+  matriculado."
+- `dba-data`: sin drift de esquema, `EXPLAIN ANALYZE` limpio (sin `Seq Scan`), volumen muy por debajo
+  de lo que `0021` ya midió y aceptó.
+
+**Nota de limpieza:** el primer intento de `dba-data` se colgó (timeout 600s) y dejó 3 archivos
+temporales sin trackear en `packages/data/scripts/` (con salida de consultas reales contra el piloto)
+— borrados antes de seguir.
+
+### La lección del primer lote — predicción incompleta, no falla del mecanismo
+
+El primer `--aplicar` (lote de mayo, 328 movimientos) dio `reconocimiento_contrapartida = 89`, no los
+84 predichos. Investigado antes de seguir: 84 = 28 match + 56 sin_match (exacto contra lo predicho);
+los 5 restantes son `patron_contraparte_estado = 'no_aplica'` — movimientos que Capa C resolvió como
+"es socio confirmado" (promovidos a `propuesta`), para los cuales el código IGUAL calcula y persiste
+el payload de contrapartida, a propósito (`reconocer-lote.ts:332-336`, evita depender de un campo que
+queda vacío en esa rama). Mi predicción original solo contaba el universo que se queda en
+`decision_humana` — no un fallo del mecanismo. Corregido el método de predicción para los 2 lotes
+siguientes (repliqué el pipeline real —`reconocer()` + `resolverContraparte()` +
+`resolverEvidenciaDeContraparte()`— de solo lectura, contando también `no_aplica`): los 2 lotes
+siguientes dieron **exacto**, sin un solo desvío.
+
+### Los 3 lotes reales aplicados — resumen consolidado
+
+Backup fresco antes de cada uno (`piloto_20260907-205629Z.dump`,`piloto_20260908-001101Z.dump`,
+`piloto_20260908-001903Z.dump`,`piloto_20260908-002521Z.dump` — uno de más al principio, de la
+verificación previa a la primera corrida). Un lote a la vez, verificado por consulta directa contra
+la base (no solo el JSON del CLI) antes de seguir con el siguiente:
+
+| Lote | Movimientos | `propuesta` | `decision_humana` | `sin_reconocer` | Matches (`padron_contraparte`) | Fallidos |
+|---|---|---|---|---|---|---|
+| mayo (`98f87beb`, Cta Cte) | 328 | 76 | 211 | 41 | 28 | 0 |
+| junio (`63050700`, Cta Cte) | 326 | 73 | 213 | 40 | 26 | 0 |
+| julio (`2cf77c67`, Cta Cte) | 340 | 80 | 208 | 52 | 24 | 0 |
+| **Total** | **994** | **229** | **632** | **133** | **78** | **0** |
+
+`porClase` idéntico al "antes" en los 994 movimientos, sin una sola excepción — confirma que
+`padron_contraparte`/`0039` no cambió ninguna clasificación, solo agregó evidencia informativa.
+`reconocimiento_contrapartida`: 257 filas nuevas (78 match + 165 sin_match + 14 no_aplica).
+`reconocimiento_contrapartida_patron_match`: 78 filas (solo los matches reales).
+
+### Cuenta especial — sin tocar, a propósito
+
+Decisión explícita de JP: **los 3 lotes de "cuenta especial" (mayo/junio/julio, 1171 movimientos
+`distinguir_tercero_de_socio` combinados) quedan sin aplicar.** Medido de solo lectura antes de
+decidir: dan **1 solo match adicional** (0 en junio y julio, 1 en mayo) — **77 de los 79 matches
+posibles de Bracci ya están cubiertos en Cta Cte; el 1 match restante en cuenta especial no justifica
+re-persistir 1171 movimientos.** Nada aplicado ahí. Queda para el fin de este pequeño alcance —no
+"pendiente de una tarea futura", cerrado en contra por costo/beneficio, mismo criterio que Mitad 2 de
+`0040` (188).
+
+### Evidencia para Laura
+
+994 movimientos de Bracci reprocesados con el padrón de proveedores activo, 78 con el proveedor real
+ya identificado en la cola de revisión (antes de esta semana: 0, HANDOFF 187) — este es el número
+concreto que muestra que su feedback (carga de proveedores + el hallazgo del patrón de Galicia) tuvo
+efecto medible. ROKA sigue sin ningún proveedor cargado — 0 matches posibles ahí todavía,
+estructuralmente, hasta que se le cargue un padrón propio.
+
+### Qué sigue
+
+Sin push a `origin/main`. Deuda declarada, sin dueño: la heurística de patrones sensibles para
+`--motivo`/prosa libre (hallazgo de `seguridad-datos-financieros`, mismo tier que H1/`0030`); la
+ausencia de advisory lock entre escritores concurrentes del mismo cliente (`security-engineer`).
+ROKA y "cuenta especial" de Bracci quedan diferidos, con su motivo de costo/beneficio ya declarado
+acá — no hace falta reabrir la pregunta sin nueva información (proveedores de ROKA cargados, o un
+caso real que justifique tocar cuenta especial).
+
+---
+
 ## 2026-09-07 (193) — 🔒 CIERRE: primera corrida real de `--aplicar` del reproceso de Capa D contra
 el piloto (0039/0040 aplicadas, Bracci + ROKA reprocesados) — 0 fallidos, 0 anómalos, todo exacto
 contra la predicción falsable.
