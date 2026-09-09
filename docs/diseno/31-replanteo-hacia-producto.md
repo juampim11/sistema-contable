@@ -637,22 +637,42 @@ existe y es seguro con menos fricción, en orden:
 | **3 — promoción real (reproceso)** | Cerrar gap manifestación + `manifestar-padron.ts` + wiring + 2 `regla_imputacion` por cliente + corrida por lote | 6-10 commits + ~9 `--aplicar` | 1 / no | El salto de `propuesta` por cliente, medido contra la predicción de la Tanda 0 |
 | **4 — decidir la superficie** | ADR de auth + vista de solo lectura, solo si Laura completó las hojas | ADR + 4-8 commits | — | — |
 
-> 🔴 **Corrección (2026-09-08, corrida real de Tanda 3):** el "~9 `--aplicar`" de la fila de arriba y
-> la cifra **"3843 ROKA promoviendo"** que circuló como "predicción de la Tanda 0" **nunca quedaron
-> escritas en ningún documento versionado del repo** — un grep completo de `HANDOFF.md` y `docs/`
-> no encuentra "3843" en ninguna entrada anterior a esta corrección. Era una proyección de
-> planificación (de un archivo de plan local de la sesión, no de un doc del repo), calculada sobre
-> el corpus de ROKA de ese momento (**3 lotes**), y **nunca se sometió a la misma verificación
-> cruzada** que sí se le exigió al número final de esta entrada.
+> 🔴 **Corrección final (2026-09-09 — reemplaza la corrección del 2026-09-08 de más abajo en el
+> historial de este bloque, que llegó a una conclusión equivocada sobre el origen de "3843").** La
+> corrida real de Tanda 3 se ejecutó primero sobre 10 lotes (6 Bracci + 4 ROKA), pero uno de los 4 de
+> ROKA (`ae762fda-8822-459f-a061-31d7ce26c785`, fechas 2025-10-20/11-28) resultó ser **dato de
+> prueba de desarrollo** — el archivo usado para validar el adaptador de Macro, nunca un extracto
+> real, mezclado en el piloto desde `2026-08-19` por descuido (HANDOFF 164 ya lo había identificado
+> como tal el 2026-09-01, pero nunca se eliminó). Se confirmó que ningún otro cliente del piloto
+> tiene el mismo problema, se midió el impacto, y **se eliminó del piloto** el 2026-09-09 (backup
+> previo, borrado verificado en una transacción de 11 tablas con `ROLLBACK` automático si algo no
+> coincidía — los 11 conteos coincidieron, `COMMIT` aplicado).
 >
-> El corpus de ROKA creció a **4 lotes** entre esa proyección y la corrida real (ingesta operativa
-> normal). La corrida real corrió sobre los **10 lotes que existen hoy** (6 Bracci + 4 ROKA), no
-> sobre 9. **El número real y verificado es 4879 promociones en ROKA** (1414 Bracci + 4879 ROKA =
-> 6293 total), confirmado el 2026-09-08 por DOS métodos independientes que coinciden exacto entre
-> sí — `resolver-contrapartida.ts --padron-completo` (simulación de solo lectura) y
-> `reconocer-lote.ts --aplicar` (productor real) — sobre los 10 lotes, sin ninguna discrepancia.
-> Detalle completo, lote por lote, y la investigación que descartó un padrón de socios distinto o
-> un corpus alterado como causa del desvío: `10-deuda-declarada.md` (B.20) y `HANDOFF.md` (196).
+> **La cifra "3843 ROKA promoviendo" de la Tanda 0 era correcta desde el principio** — la corrección
+> del 2026-09-08 (más abajo) concluyó lo contrario porque, al recalcular, se tomaron por error "los 3
+> lotes originales de ROKA" incluyendo el de prueba, en vez de los 3 lotes reales (mayo/junio/julio
+> 2026). Verificado por TRES vías independientes que coinciden exacto: la medición limpia post-
+> borrado (3843 promociones + 8 residual), una medición de HANDOFF anterior e independiente
+> (2026-09-02: "ROKA 3 meses, 5109 movimientos, 3851 `distinguir_tercero_de_socio`" — `3851 =
+> 3843+8`), y esta misma síntesis del documento ("1414 Bracci, 3851 ROKA"). **El número real y final
+> es 5257** (1414 Bracci + 3843 ROKA), sobre 9055 movimientos, 9 lotes (6+3) — no 6293/10401/10.
+> Detalle completo paso a paso: `HANDOFF.md` (199, la corrección) y `10-deuda-declarada.md` (B.20
+> actualizado, B.22 cerrado).
+>
+> <details><summary>Corrección del 2026-09-08 (histórica, su conclusión sobre el origen de "3843"
+> quedó reemplazada arriba — se deja sin borrar por disciplina de no reescribir lo que se creyó en su
+> momento)</summary>
+>
+> El "~9 `--aplicar`" de la fila de arriba y la cifra "3843 ROKA promoviendo" que circuló como
+> "predicción de la Tanda 0" nunca quedaron escritas en ningún documento versionado del repo — un
+> grep completo de `HANDOFF.md` y `docs/` no encuentra "3843" en ninguna entrada anterior a esta
+> corrección. Era una proyección de planificación (de un archivo de plan local de la sesión, no de un
+> doc del repo), calculada sobre el corpus de ROKA de ese momento (3 lotes), y nunca se sometió a la
+> misma verificación cruzada que sí se le exigió al número final de esta entrada. El corpus de ROKA
+> creció a 4 lotes entre esa proyección y la corrida real (ingesta operativa normal). El número real
+> y verificado es 4879 promociones en ROKA (1414 Bracci + 4879 ROKA = 6293 total).
+>
+> </details>
 
 **Precondiciones de seguridad para toda la línea** (unánimes, no negociables): ninguna migración nueva
 toca el piloto antes de cerrar el guard de `sembrar()` por DSN real (10-deuda-declarada, 0039);

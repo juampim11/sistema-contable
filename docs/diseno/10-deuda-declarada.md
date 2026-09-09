@@ -488,45 +488,49 @@ con `security_definer` y `errcode P0004` en su cuerpo, trigger habilitado sobre
 | Cliente | Lotes | Movimientos | Promociones reales (`es_tercero_padron_completo`) | Residual (`sin_candidatos`) |
 |---|---|---|---|---|
 | Bracci | 6 | 3946 | 1414 | 0 |
-| ROKA | 4 | 6455 | 4879 | 10 |
-| **Total** | **10** | **10401** | **6293** | **10** |
+| ROKA | 3 | 5109 | 3843 | 8 |
+| **Total** | **9** | **9055** | **5257** | **8** |
 
-Por lote — Bracci: 86, 84, 73, 363, 387, 421 (suma 1414). ROKA: 1036, 1200, 1348, 1295 (suma 4879).
-`manifestacionRevocadaDuranteLaCorrida = 0` en los 10 lotes — cero carreras de concurrencia; las tres
+Por lote — Bracci: 86, 84, 73, 363, 387, 421 (suma 1414). ROKA: 1200, 1348, 1295 (suma 3843).
+`manifestacionRevocadaDuranteLaCorrida = 0` en las corridas — cero carreras de concurrencia; las tres
 protecciones (`0040` supersesión, `0041` vigencia al citar, `0042` unicidad de revocación) sostuvieron
 la corrida real sin ningún incidente.
 
-🔴 **Corrección de alcance, encontrada al arrancar la corrida real**: este documento y
-`31-replanteo-hacia-producto.md` decían "9 lotes (6 Bracci + 3 ROKA)". Contra el piloto real hay
-**10 lotes** (6 Bracci + **4 ROKA**) — entre la medición de la Tanda 0 y esta corrida se ingirió un
-cuarto lote de ROKA (trabajo operativo normal), confirmado por consulta directa contra `lote_ingesta`.
+🔴 **CORRECCIÓN (2026-09-09, ver HANDOFF 199 para el detalle completo — esta sección queda
+actualizada, no la versión original).** La tabla y los números de arriba **ya reflejan la corrección**.
+La corrida real original efectivamente incluyó un cuarto lote de ROKA (`ae762fda-8822-459f-a061-
+31d7ce26c785`) — pero ese lote **no era corpus real**: era el archivo usado para validar el
+adaptador de Macro durante el desarrollo (fechas 2025-10-20/11-28, un año antes que el resto del
+corpus), mezclado en el piloto desde `2026-08-19` por descuido, nunca por decisión documentada (ya
+identificado como tal en HANDOFF 164, 2026-09-01, pero nunca eliminado). Se confirmó que ningún otro
+de los 6 clientes del piloto tiene el mismo problema, se midió el impacto exacto de eliminarlo, y se
+**eliminó del piloto** (backup previo, borrado verificado en una transacción de 11 tablas — 3 más de
+las anticipadas inicialmente — con `ROLLBACK` automático si algún conteo no coincidía; los 11
+coincidieron, `COMMIT` aplicado). Cero filas de `asiento_propuesto` dependían de ese lote.
 
-🔴 **Sobre la cifra "3843 ROKA" de la Tanda 0**: esa cifra **nunca quedó escrita en ningún documento
-versionado del repo** (grep completo de `HANDOFF.md`/`docs/`, cero resultados antes de esta entrada)
-— era una proyección de un archivo de plan local de la sesión, no una medición sometida a la misma
-verificación cruzada. Investigadas y descartadas dos hipótesis alternativas antes de aceptar esto: (1)
-¿cambió el padrón de socios de ROKA entre la Tanda 0 y hoy? No — 4 filas en `padron_socio`, todas
-`vigente_desde = 2025-10-20`, sin bajas. (2) ¿cambió el contenido de los 3 lotes originales de ROKA
-entre la Tanda 0 y hoy? El único evento de escritura real sobre `movimiento_bancario_crudo` de ROKA
-(`reclasificar_contraparte`, 569 filas) ocurrió el 2026-09-01, una semana antes de la medición de la
-Tanda 0 — no explica el desvío. **El número real, 4879 (no 3843), quedó verificado por DOS métodos
-independientes que coinciden exacto entre sí sobre los 3 lotes originales** (`resolver-contrapartida.ts
---padron-completo`, simulación de solo lectura, vs. `reconocer-lote.ts --aplicar`, productor real):
-1036/2, 1200/4, 1348/3 en los dos métodos, sin ninguna diferencia. El desvío es de la proyección de
-planificación, no del mecanismo — el mecanismo se verificó dos veces y coincide consigo mismo.
+**Sobre la cifra "3843 ROKA" de la Tanda 0 — la conclusión anterior de esta sección estaba
+equivocada.** Se había concluido que "nunca se sometió a la misma verificación cruzada" — en
+realidad **era correcta desde el principio**, medida contra los 3 lotes reales de ROKA (sin el de
+prueba). El error fue de esta sesión, no de la Tanda 0: al recomputar el desvío se tomaron "los 3
+lotes originales" por orden de identificador (incluyendo por error el de prueba) en vez de por
+cuáles son realmente el corpus de negocio. Confirmado por TRES vías independientes que coinciden
+exacto: la medición limpia de hoy (3843/8), una medición de HANDOFF anterior e independiente
+(2026-09-02: "ROKA 3 meses, 5109 movimientos, 3851 `distinguir_tercero_de_socio`" — `3851 = 3843+8`),
+y la síntesis de la Tanda 0 misma ("1414 Bracci, 3851 ROKA"). El número final, correcto: **5257**
+(1414+3843), no 6293.
 
 **Revocar/declarar la manifestación NO ES RETROACTIVO** (mismo criterio que la corrección de
 `regla_imputacion` de B.19: solo aplica hacia adelante) — las filas de `reconocimiento_contrapartida`
 que ya existían con OTRO digest, de antes de esta activación, quedaron supersedidas por la corrida
-real (no hay ninguna fila vieja "sin manifestación" que haya quedado huérfana: los 10 lotes dieron
-`creados=0` y el 100% de sus filas resultó en `supersedido` o `no_op`, nunca en una fila vigente sin
-tocar). `contarCitasDeManifestacion` (`packages/data/src/contabilidad/lecturas.ts`) y el dry-run de
-`manifestar-padron.ts` quedan disponibles para la próxima manifestación/revocación que se declare.
+real (no hay ninguna fila vieja "sin manifestación" que haya quedado huérfana). `contarCitasDeManifestacion`
+(`packages/data/src/contabilidad/lecturas.ts`) y el dry-run de `manifestar-padron.ts` quedan
+disponibles para la próxima manifestación/revocación que se declare.
 
-**Residual estructural, sin acción pendiente**: 10 movimientos (todos en ROKA, 0 en Bracci) quedan en
+**Residual estructural, sin acción pendiente**: 8 movimientos (todos en ROKA, 0 en Bracci) quedan en
 `decision_humana`/`distinguir_tercero_de_socio` sin ningún candidato en la glosa — ni con el padrón
 completo el motor tiene con qué resolverlos. Categoría ya conocida desde la Tanda 0, estructural, no
-un defecto de esta corrida. | Cerrado — sin acción pendiente. Detalle completo en `HANDOFF.md` (196) |
+un defecto de esta corrida. | Cerrado — sin acción pendiente. Detalle completo en `HANDOFF.md` (196,
+198, 199 — 199 es la corrección) |
 | **B.21** | 🟡 **Hallazgo declarado, sin dueño, aislado y confirmado PRE-EXISTENTE a la Tanda 3
 (2026-09-08).** `mutaciones-0038.test.ts` da **7/12 rojo**, siempre el mismo error: `new row for
 relation "reconocimiento_contrapartida" violates check constraint
@@ -547,6 +551,54 @@ Tanda 3 (mismo criterio que "no resolver hallazgo adyacente en la misma tarea") 
 migración se definió/modificó por última vez, y ajustar `crearContrapartida` (o el CHECK, según cuál
 mienta) — antes de tocar nada, confirmar con `contador-dominio`/`dba-data` cuál de los dos es el que
 está mal |
+| **B.22** | 🟡 **Lote de prueba ELIMINADO del piloto (2026-09-09) — hallazgo cerrado; criterio
+estructural hacia adelante sigue sin dueño.** Encontrado al mapear el hueco de Capa D de la Tanda 3:
+el lote `ae762fda-8822-459f-a061-31d7ce26c785` (ROKA, banco Macro, movimientos fechados
+2025-10-20/2025-11-28) es DATO DE PRUEBA — el archivo usado para validar el adaptador de Macro
+durante el desarrollo, nunca un extracto real entregado por un cliente — mezclado en el piloto desde
+`2026-08-19` (mismo día que la carga inicial de Bracci y de `CLIENTE PILOTO 02`, confirmado por
+`acceso_auditoria`).** Ya identificado como tal en HANDOFF (164, 2026-09-01: *"ae762fda (nov-2025)
+era la prueba técnica del adaptador, no el material real de Capa D"*) y consistentemente excluido de
+todo trabajo real desde entonces (HANDOFF 170: *"El lote ae762fda no se tocó"*) — pero **nunca se
+llegó a eliminar del piloto**, y ninguna entrada posterior lo declara guardado a propósito como
+fixture de regresión. Es un olvido de limpieza, no una decisión documentada.
+
+**Consecuencia real, no solo higiene**: al incluirlo sin querer en el alcance "los 10 lotes reales"
+de la activación de Tanda 3 (B.20/HANDOFF 196), infló el número reportado de ROKA de **3843 a 4879**
+promociones — la cifra "3843" de la Tanda 0 (que la entrada 196 había concluido, incorrectamente,
+que "nunca se sometió a la misma verificación cruzada") en realidad **sí era correcta**: coincide
+exacto con la medición limpia de los 3 lotes reales de ROKA, y también con una medición
+independiente y anterior (HANDOFF, 2026-09-02: *"ROKA (3 meses) 5109 movimientos, 3851
+`distinguir_tercero_de_socio`"* — `5109 = 6455 - 1346`, `3851 = 3843 + 8` residual, exacto). El
+error no estaba en la proyección de Tanda 0: estaba en no haber excluido el dato de prueba de la
+corrida real de hoy.
+
+**Resuelto (2026-09-09):** JP confirmó la eliminación. Backup fresco del piloto, impacto medido antes
+de borrar (0 filas de `asiento_propuesto` dependían del lote — verificado dos veces), borrado
+ejecutado en una sola transacción sobre **11 tablas** (3 más de las anticipadas al planear el
+borrado: `movimiento_origen_crudo`, `movimiento_contraparte_identificador`, `anexo_extracto` —
+encontradas al chocar contra sus FK reales en el primer y segundo intento, confirmadas exhaustivas
+contra `information_schema` antes del tercero), con `ROLLBACK` automático si algún conteo no
+coincidía exacto — los 11 coincidieron, `COMMIT` aplicado. `acceso_auditoria` intacto (una sola FK
+real, `cliente_id → tenant_node`; `recurso_id` es referencia libre, sin FK — no se rompe nada al
+borrar lo que registró). Verificación post-borrado: ROKA da exacto 5109 movimientos / 3843
+promociones / 8 residual — coincide con la Tanda 0 original. Detalle completo, paso a paso, con los
+11 conteos: `HANDOFF.md` (199). `HANDOFF.md` (196)/(198) y esta misma sección (B.20) actualizados
+para reflejar el número correcto (5257, no 6293) — sin reescribir (196)/(198) como si el error nunca
+hubiera pasado.
+
+**Criterio que falta, hacia adelante — para que esto no se cuele de nuevo**: el piloto no tiene hoy
+ninguna marca explícita en el esquema (columna, tabla satélite, o convención de `origen`) que
+distinga "extracto real entregado por un cliente" de "fixture/dato de prueba de desarrollo". La
+señal que permitió encontrar este caso fue enteramente heurística y manual (fecha de los
+movimientos muy anterior al resto del corpus del mismo cliente, cruzada con `acceso_auditoria` para
+la fecha de ingesta real) — no hay ningún chequeo automático que lo hubiera marcado antes de que
+contaminara una medición real. Decisión pendiente de JP/`dba-data`/`arquitecto-software`: ¿una
+columna `lote_ingesta.es_dato_real` (boolean, con default explícito y sin default implícito que
+permita colarse), un valor de `origen` reservado (`'fixture_desarrollo'`, distinto de `'archivo'`),
+o un proceso de alta de cliente que impida cargar nada al piloto real sin ese chequeo? Cualquiera
+de las tres cierra el hueco; ninguna está construida hoy | El lote ya se eliminó (2026-09-09,
+HANDOFF 199) — sin dueño para lo que queda: diseño del criterio estructural, con `dba-data` |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 

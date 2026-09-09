@@ -6,6 +6,119 @@
 
 ---
 
+## 2026-09-09 (199) — 🔴 CORRECCIÓN: el número reportado en (196)/(198) incluía por error un lote de
+prueba de desarrollo mezclado con el corpus real de ROKA. Lote eliminado del piloto, backup previo,
+borrado verificado en una transacción con 11 tablas y rollback automático. **El número real y
+correcto es 5257** (1414 Bracci + 3843 ROKA), coincidiendo exacto con la Tanda 0 original —
+confirmado por triple vía independiente. (196) y (198) NO se reescriben — quedan como el registro de
+lo que realmente se hizo y se creyó en su momento; esta entrada es la corrección, no un reemplazo.
+
+**Herramienta:** Claude Code, misma línea de trabajo, continuación directa de (196)/(198). Motivador:
+JP, al revisar el mapeo de Capa D del hueco de asientos, identificó que uno de los 4 lotes de ROKA
+contados en la activación real (`ae762fda-8822-459f-a061-31d7ce26c785`, fechas 2025-10-20/11-28) no
+es corpus de negocio — es el archivo que se usó para validar el adaptador de Macro durante el
+desarrollo, mezclado en el piloto desde `2026-08-19` por descuido, nunca por decisión documentada.
+
+### El error, con la causa raíz exacta
+
+Al medir el desvío contra la Tanda 0 (entrada 196, punto 5), tomé "los 3 lotes originales de ROKA"
+como los 3 primeros por orden de identificador/procesamiento (`ae762fda`, `9e568972`, `38a7cf41`) —
+sin cuestionar si esos 3 eran realmente el corpus de negocio legítimo. No lo eran: los 3 lotes reales
+son los de mayo/junio/julio 2026 (`9e568972`, `38a7cf41`, `5d4d2a92`); `ae762fda` nunca fue parte del
+corpus real, ni entonces ni ahora. Esa selección incorrecta me llevó a concluir, incorrectamente, que
+"la cifra 3843 de la Tanda 0 nunca se sometió a la misma verificación cruzada" — **la cifra era
+correcta desde el principio**. Verificado por TRES vías independientes que coinciden exacto:
+
+1. **Medición limpia de hoy** (los 3 lotes reales de ROKA, sin `ae762fda`): 3843 promociones
+   reales, 8 residuales `sin_candidatos` — exacto.
+2. **HANDOFF, entrada del 2026-09-02** (una medición anterior e independiente, ver línea ~491 de
+   este archivo): *"ROKA (3 meses) 5109 movimientos, 3851 `distinguir_tercero_de_socio`"* —
+   `5109 = 6455 - 1346` (movimientos totales de ROKA con 4 lotes menos los de `ae762fda`),
+   `3851 = 3843 + 8` (elegibles = promovidos + residual). Exacto.
+3. **El plan de Tanda 0 mismo** (`docs/diseno/31-replanteo-hacia-producto.md`, síntesis): "1414
+   Bracci, 3851 ROKA" `distinguir_tercero_de_socio`, con residuales conocidos. Exacto.
+
+### Investigación previa al borrado (solo lectura)
+
+1. **¿Había alguna razón documentada para mantener el lote?** No. HANDOFF (164, 2026-09-01) ya lo
+   había identificado como "prueba técnica del adaptador, no el material real de Capa D", y (170)
+   confirma que nunca se tocó desde entonces — pero ninguna entrada dice que se conservó a
+   propósito. Es un olvido de limpieza, no una decisión.
+2. **¿El mismo problema en otro lado?** No. Revisados los 6 clientes del piloto completos — todos
+   los demás lotes caen en el rango real 2026-04/2026-07; `ae762fda` es el único con fechas de 2025.
+3. **Impacto del borrado, medido antes de tocar nada**: `movimiento_bancario_crudo` (1346),
+   `reconocimiento_movimiento` (2692, toda la cadena histórica), `reconocimiento_contrapartida`
+   (1039, de las cuales 1036 citaban la manifestación real de HOY), `reconocimiento_candidato` (28),
+   `movimiento_contraparte_identificador` (1279), `movimiento_origen_crudo` (1346), `anexo_extracto`
+   (6), `lote_ingesta_cuenta` (3), `lote_ingesta` (1). **0 filas de `asiento_propuesto`/
+   `asiento_propuesto_renglon`** — Capa D nunca dependió de este lote, verificado por consulta
+   directa dos veces (antes del borrado y de nuevo justo antes de ejecutar).
+
+### El borrado
+
+Backup fresco (`respaldos/piloto_20260909-031221Z.dump`, 4.96 MB, SHA-256
+`6994608882082c3a2797016d8602acea1be2563f5887284981ed9cc8083f142b`, verificado con `pg_restore -l`,
+873 TOC entries) antes de tocar nada.
+
+🔴 **El árbol de dependencias real tenía 3 tablas más que el orden inicial propuesto** —
+encontradas recién al ejecutar, no por adivinanza: `movimiento_origen_crudo` (satélite N2-R 1:1,
+bloqueó el primer intento con `23503`), `movimiento_contraparte_identificador` (candidatos HMAC por
+movimiento, bloqueó el segundo intento), y `anexo_extracto` (hija directa de `lote_ingesta`, nunca
+bloqueó pero es dependencia real). Confirmado exhaustivamente contra `information_schema` —todas las
+FK reales hacia cada tabla de la cadena, de forma recursiva— antes del tercer intento, para no
+toparse con una cuarta sorpresa. `acceso_auditoria` se verificó aparte: **una sola FK real**
+(`cliente_id → tenant_node`), `recurso_id` es un `uuid` sin FK — referencia libre por diseño, no se
+rompe ni queda huérfana al borrar lo que registró.
+
+Ejecutado en **una sola transacción, 11 tablas**, cada `DELETE` con `RETURNING` para contar filas
+reales, comparación contra el conteo esperado, `COMMIT` solo si las 11 coinciden exacto, `ROLLBACK`
+automático si no — dos intentos anteriores fallaron por las tablas no anticipadas y revirtieron
+limpio (confirmado por consulta directa que no quedó nada a medio borrar). El tercer intento: **las
+11 tablas coincidieron exacto, `COMMIT` confirmado.**
+
+| Tabla | Borradas |
+|---|---|
+| `reconocimiento_contrapartida_patron_match` | 0 |
+| `reconocimiento_contrapartida_match` | 0 |
+| `reconocimiento_candidato` | 28 |
+| `reconocimiento_contrapartida` | 1039 |
+| `reconocimiento_movimiento` | 2692 |
+| `movimiento_contraparte_identificador` | 1279 |
+| `movimiento_origen_crudo` | 1346 |
+| `movimiento_bancario_crudo` | 1346 |
+| `anexo_extracto` | 6 |
+| `lote_ingesta_cuenta` | 3 |
+| `lote_ingesta` | 1 |
+
+`acceso_auditoria` intacto — los 17 eventos que referencian este lote quedan como rastro histórico
+permanente de que existió y se eliminó.
+
+### Verificación post-borrado — los 4 números, exactos
+
+1. Total de movimientos de ROKA: **5109** (esperado 5109).
+2. Promociones reales por manifestación: **3843** (esperado 3843).
+3. Total combinado Bracci + ROKA: **1414 + 3843 = 5257** (esperado 5257).
+4. `asiento_propuesto` de ROKA: **267 `propuesto` + 139 `superseded` = 406**, sin cambios (Capa D
+   nunca dependió de este lote).
+
+### El número final, correcto, de la Tanda 3
+
+**5257 promociones reales** (1414 Bracci + 3843 ROKA), sobre **9055 movimientos totales** (3946
+Bracci + 5109 ROKA), residual **8** (0 Bracci + 8 ROKA `sin_candidatos`) — reemplaza el 6293/4879 de
+(196)/(198), que incluía por error el lote de prueba. `docs/diseno/10-deuda-declarada.md` (B.20) y
+`docs/diseno/31-replanteo-hacia-producto.md` actualizados para reflejar esto — ver el diff de esta
+misma fecha.
+
+### Criterio pendiente hacia adelante — consolidado en B.22
+
+El piloto no tiene hoy ninguna marca en el esquema que distinga "extracto real de un cliente" de
+"fixture de desarrollo" — la señal que encontró este caso fue enteramente heurística (fecha
+anómala + `acceso_auditoria` para la fecha de ingesta real), no un chequeo automático. Queda
+consolidado en B.22 de `10-deuda-declarada.md`, sin dueño: decisión pendiente entre una columna
+`lote_ingesta.es_dato_real`, un valor de `origen` reservado, o un guard en el alta de cliente.
+
+---
+
 ## 2026-09-08 (196) — Tanda 3: activación real de la manifestación de padrón completo contra el
 piloto. `manifestar-padron.ts` + migraciones `0041`/`0042` aplicadas al piloto + `reconocer:lote
 --aplicar` sobre los 10 lotes reales de Bracci/ROKA. **6293 promociones reales**, verificadas por
@@ -150,6 +263,131 @@ ts` como productor (sigue siendo herramienta de simulación, deliberado).
 Documentación de cierre — este HANDOFF + correcciones en `10-deuda-declarada.md` (B.20 cerrado) y
 `31-replanteo-hacia-producto.md` (nota de la cifra "3843" corregida). Sin cambios de código: la
 implementación ya estaba commiteada y pusheada (`c3d2f64`..`ea4ff6c`).
+
+---
+
+## 2026-09-08 (198) — Tanda 3: implementación completa de los 7 puntos del plan de activación
+(SAVEPOINT, índice `0042`, wiring de producción, CLI `manifestar-padron.ts`). Commits `c3d2f64`..
+`ea4ff6c`, pusheados a `origin/main`. Nota de numeración: esta entrada documenta trabajo que ocurrió
+**antes** de (196) en la misma sesión — se escribe después, al cerrar el registro completo del día, y
+queda numerada al final para no reescribir una entrada ya pusheada.
+
+**Herramienta:** Claude Code, misma sesión, continúa directo de (197) — con `0041` ya cerrado y el
+gap de vigencia resuelto, el plan de Tanda 3 pasa a los 7 puntos concretos que conectan
+`padronDeclaradoCompleto` (hardcodeado `false`) con una manifestación real.
+
+### Diseño previo — convocatoria de 5 agentes en paralelo, antes de escribir código
+
+Disparada por CLAUDE.md §3.1/§3.2 (toca esquema, seguridad, y modifica un adaptador que ya corre
+contra datos reales de dos clientes — dispara modo plan obligatorio sin importar cantidad de
+archivos). `seguridad-datos-financieros` revisó el diseño completo (lector, escritor/CLI, wiring) y
+encontró un hallazgo real de trazabilidad, no de fuga: `PedidoDePersistirReconocimiento['contrapartida']`
+tipaba `padronManifestacionId`/`padronCompletoHasta` como literal `null` a propósito (Mitad 1, para
+hacer imposible tocar Mitad 2 por accidente) — sin ensancharlo a `string | null`, las filas nuevas
+promoverían bien la `clase` pero seguirían persistiendo el FK a la manifestación en `null`, perdiendo
+el rastro que `0021` diseñó para responder "¿qué se apoyó en ESTA manifestación?" en O(1). Cerrado en
+el punto 2 de abajo. Recomendación adicional, no vinculante: no agregar a `manifestar-padron.ts` un
+campo de texto libre para citar el respaldo externo de la manifestación (`contador-dominio` ya había
+recomendado que esa prueba viva FUERA del sistema — un documento/mail que Laura firma, nunca una fila
+de la base, porque `manifestado_por` no prueba autoría por diseño de `0021`) — si hiciera falta, que
+sea un campo acotado y validado, nunca prosa libre sin guard (mismo hueco sin cerrar que
+`reprocesar-capa-d.ts --motivo`, deuda ya declarada en (193)/(194), sin dueño). **No se agregó ningún
+campo así** — decisión seguida en la implementación real.
+
+`dba-data` + `security-engineer` diseñaron y verificaron en vivo el índice `uq_padron_manifestacion_
+revoca_a` (0042) — detalle completo, con la evidencia de las dos convocatorias y el hallazgo del
+oráculo cross-tenant por orden de evaluación de constraints, en el propio `comment on index` de
+`packages/data/migrations/0042_revocacion_padron_manifestacion_unica.sql`.
+
+### Los 7 puntos, en orden de menor riesgo primero (pedido explícito de JP)
+
+1. **Lectores** (`packages/data/src/contabilidad/lecturas.ts`): `leerManifestacionVigente` (falla
+   ruidoso ante >1 vigente — `contador-dominio`: premisa ambigua, no ausente) +
+   `listarManifestacionesVigentes` (nunca falla, para el CLI). Predicado `not exists`, nunca `order by
+   completo_hasta desc limit 1` — ese `order by` era un bug real en single-thread, no solo una carrera
+   (hallazgo de `security-engineer`: una revocación que corrige HACIA ABAJO el alcance dejaría la fila
+   vieja con el `completo_hasta` más alto, y el `order by` la seguiría eligiendo como vigente).
+2. **Ensanche de tipo** en `escrituras.ts` — `padronManifestacionId`/`padronCompletoHasta` de `null` a
+   `string | null`, deliberado (hallazgo de `seguridad-datos-financieros`, arriba).
+3. **Migración `0042`** — índice único `(cliente_id, revoca_a)`, convocatoria real a `dba-data` +
+   `security-engineer`, mutation-tested (`mutaciones-0042.test.ts`, 5/5) y verificado independientemente
+   rompiendo el índice real en LOCAL.
+4. **SAVEPOINT por pedido** en `persistirReconocimientos` — un `P0004` (manifestación revocada
+   concurrentemente, 0041) ya no aborta el lote entero. Nuevo código `ING_MANIFESTACION_REVOCADA` en
+   `errores-pg.ts` para no perder la señal en `ING_OTRO` genérico. Convocatoria real a `tester`
+   (`mutaciones-savepoint-reconocimientos.test.ts`) — hallazgo real: el `FOR UPDATE` de `0041` retiene
+   su lock por el resto de la transacción del lote, así que la ventana de carrera protegida es, como
+   mucho, la del PRIMER citador de cada manifestación por lote, no cualquier pedido.
+5. **CLI `manifestar-padron.ts`** — único productor de `padron_manifestacion`. Dry-run con conteo de
+   citas existentes (`contarCitasDeManifestacion`) + aviso explícito de que revocar no es retroactivo.
+   Nunca revoca implícito (`YaExisteManifestacionVigenteError`/`RevocaNoEsLaVigenteError`); el `23505`
+   de `0042` se traduce a `RevocacionEnCarreraError`. 12/12 tests, incluida la carrera real con dos
+   conexiones (hallazgo: el ganador puede resolverse por cualquiera de las dos capas de protección —
+   la pre-lectura o el índice — según timing, las dos fail-closed).
+6. **Wiring de producción** — `reconocer-lote.ts`/`exportar-planilla.ts` leen la manifestación real en
+   vez de `false` hardcodeado; corte de fecha delegado a `contrapartida_frescura_chk` (0021), nunca
+   reimplementado en TypeScript (`contador-dominio`).
+7. **Comentario obsoleto actualizado** en `resolver-contrapartida.ts` (ya no dice "se revisita cuando
+   exista la tabla real") + documentación del paso operativo pendiente (B.20, cerrado en (196)).
+
+### Hallazgo adyacente, documentado y NO resuelto en esta tarea
+
+`mutaciones-0038.test.ts` da 7/12 rojo — confirmado PRE-EXISTENTE a esta tarea (`git stash` contra el
+commit base, mismo error exacto). Documentado como B.21 en `10-deuda-declarada.md`, sin dueño.
+
+### Verificación y cierre
+
+Batería completa (0021/0038/0039/0040/0041/0042/savepoint/aislamiento/errores-pg/caracterización/CLI
+nuevo): 136/143 verde, los 7 rojos son el hallazgo de arriba. Typecheck limpio en todo momento. 6
+commits (`c3d2f64` lectores+escritor+SAVEPOINT, `025dd1f` migración 0042, `81a4459` prueba de
+mutación del SAVEPOINT, `f00b8a7` wiring de producción, `d3a4aba` CLI `manifestar-padron.ts`,
+`ea4ff6c` docs), pusheados a `origin/main` tras revisar los 21 commits locales sin sorpresas.
+
+---
+
+## 2026-09-08 (197) — Cierre del gap de vigencia de `padron_manifestacion`: migración `0041`, con
+prueba de mutación en vivo. Precondición de seguridad para la Tanda 3. Nota de numeración: esta
+entrada documenta trabajo anterior a (196)/(198) en la misma sesión, escrita al completar el registro.
+
+**Herramienta:** Claude Code, misma sesión, continúa de (195). Commits `1e62bb0`/`09fc13d`.
+
+### El gap, y por qué dejó de ser tolerable
+
+`padron_manifestacion` (0021) es append-only: revocar nunca borra ni edita, solo inserta una fila
+nueva que referencia la vieja por `revoca_a`. Las dos FK que protegen
+`reconocimiento_contrapartida.padron_manifestacion_id` verifican existencia + espejo de alcance,
+nunca vigencia — gap conocido y pineado desde `0021` (`caracterizacion-manifestacion-revocada-
+citable.test.ts`), tolerable mientras nadie escribiera la tabla en producción. Con la Tanda 3 a punto
+de mover ~5257 movimientos reales de Bracci+ROKA, `contador-dominio` ratificó que el gap ya no es
+tolerable — el radio de un error deja de ser un caso aislado y pasa a ser un lote completo apoyado en
+una referencia mal validada.
+
+### Diseño, con una corrección real en el camino
+
+`security-engineer` + `dba-data` convocados sobre el mecanismo de vigencia. La primera versión del
+diseño no tenía lock explícito, apoyada en el argumento de que READ COMMITTED alcanzaba —
+`security-engineer` cuestionó esto y pidió una prueba real antes de fijar el diseño. Convocado
+`tester`, con dos conexiones reales: **sin lock, la carrera se cuela** (A lee "no revocada", duerme,
+B revoca y commitea durante el sleep de A, A cita a X igual). Reconvocado `dba-data` con la evidencia:
+propuso `FOR SHARE` como alternativa más liviana — probado también, **tampoco alcanza** (no
+conflictúa con el `FOR KEY SHARE` que toma la FK del lado que revoca). Solo `FOR UPDATE` cierra la
+carrera, confirmado con la misma prueba (`L2`, mismo `pg_sleep`, B queda bloqueado hasta que A
+termina). Como `app_request` no puede tomar ningún lock de fila sobre `padron_manifestacion` (a
+propósito, premisa de frescura de `0021`), el `FOR UPDATE` corre dentro de una función nueva
+`app.exigir_manifestacion_vigente()`, `SECURITY DEFINER`, con guard replicando la policy de INSERT
+real para no volverse un oráculo cross-tenant.
+
+### Resultado
+
+Migración `0041_manifestacion_vigente_al_citar.sql` aplicada a LOCAL. `mutaciones-0041.test.ts`
+prueba las dos formas de que esto falle (sin lock, con el lock equivocado) contra el archivo de la
+migración tal como quedó aplicado — 4/4 verde. Ripple effect: `catalogo.test.ts` (R11) amplía su
+`toEqual` literal de dos a tres funciones `SECURITY DEFINER` del esquema, con el motivo citado in situ
+para que no se lea como una relajación arbitraria. `caracterizacion-manifestacion-revocada-citable.
+test.ts` (CARACT-1) reescrita de "el insert entra" a "el insert muere P0004", tal como su propio
+docstring pedía desde que se escribió; CARACT-2 (el gap nunca cruzó tenant) no cambió.
+
+Migración aplicada al piloto recién en la activación real — ver (196).
 
 ---
 
