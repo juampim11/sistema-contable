@@ -664,6 +664,15 @@ algún mes el PDF viene roto o escaneado, caso que no se dio todavía con Macro.
 desde PDF | Sin dueño. Si se necesita comparar contra Excel en el futuro (PDF roto/escaneado, o un
 segundo caso real de discrepancia): agregar `xlsx`/SheetJS con convocatoria a `security-engineer`
 primero — o pedirle a Laura/al banco un export en XLSX/CSV, que evita agregar la dependencia |
+| **B.26** | 🟡 **`reglas-de-codigo.test.ts` (R-F) en rojo — hallazgo nuevo, encontrado corriendo la
+suite completa después del fix de idempotencia de Capa D (2026-09-09), sin relación con ese fix
+(confirmado con `git stash`: falla igual sin los cambios de hoy).** Dos archivos construyen
+`{clase: 'propuesta', ...}` a mano, fuera de la allowlist de R-F (`nucleo/motor.ts` es la única
+función permitida): `packages/data/tests/mutaciones-savepoint-reconocimientos.test.ts` y
+`packages/ingesta/tests/relevamiento-laura.test.ts`. No investigado a fondo — no se toca en esta
+tarea (hallazgo adyacente, no se resuelve "ya que estamos") | Sin dueño. Confirmar si son
+construcciones legítimas de fixture (agregar a la allowlist, con motivo) o un salteo real de la
+degradación que R-F existe para evitar — antes de decidir, no asumir ninguna de las dos |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 

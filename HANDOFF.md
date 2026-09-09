@@ -6,6 +6,132 @@
 
 ---
 
+## 2026-09-09 (202) — 🔒 CIERRE del gap de Capa D sobre los 9 lotes históricos (6 Bracci + 3 ROKA,
+mayo-julio): dos bugs reales de idempotencia encontrados y corregidos con convocatoria completa,
+mutación en vivo, y verificación final — **8509/8509 movimientos `propuesta` resueltos, 0 sin
+resolver, 0 duplicados.** Con esto, Bracci y ROKA quedan al día en los 4 meses (mayo-agosto), sin
+ninguna deuda de asientos pendientes de generar.
+
+**Herramienta:** Claude Code, sesión interactiva, continuación directa de (201). Motivador: armar el
+paquete completo para Laura (mayo-agosto) exigía que Capa D estuviera cerrada sobre los 4 meses —
+medido al empezar: solo 1927 de 8509 movimientos `propuesta` (23%) tenían `asiento_propuesto` o
+`pendiente_cierre`; el resto, los 6582 que la Tanda 3 y agosto promovieron, nunca pasaron por
+`conciliar:lote` porque re-correrlo sobre los 9 lotes viejos duplicaba lo ya imputado (hallazgo
+original, turnos previos de esta misma sesión, nunca resuelto hasta ahora).
+
+### 1. Convocatoria completa (5 dictámenes reales) sobre el diseño del fix
+
+`dba-data`, `security-engineer`, `seguridad-datos-financieros`, `motor-conciliacion-contable`,
+`contador-dominio` — los 5 convocados en paralelo, con el mismo contexto exacto. Ninguno aprobó el
+diseño original sin cambios:
+
+- `motor-conciliacion-contable` **no aprobó tal como estaba redactado**: excluir `pendiente_cierre`
+  sin condición era demasiado agresivo (congelaba para siempre un pendiente `'abierto'` que merece
+  reintentar si se carga la `regla_imputacion` que le faltaba) — corregido a excluir solo estados
+  terminales (`pendiente_estado <> 'abierto'`). Marcó además, como fuera de alcance declarado a
+  propósito, la supersesión de `reconocimiento_movimiento` sobre un movimiento ya imputado (sin
+  camino de reproceso hoy).
+- `dba-data` + `security-engineer`, de forma independiente, encontraron el mismo problema
+  estructural: el `NOT EXISTS` sin más no cierra la carrera de dos corridas CONCURRENTES de
+  `conciliar:lote --aplicar` sobre el mismo lote (bajo `READ COMMITTED`, ninguna ve los `INSERT` no
+  comprometidos de la otra) — `asiento_propuesto_renglon` no tiene ningún `UNIQUE` de respaldo.
+  Corregido con `lockearMovimientosDelLote` (`FOR UPDATE` sobre el lote, antes de leer).
+- `seguridad-datos-financieros`: riesgo real pero acotado a integridad intra-cliente, nunca fuga
+  entre clientes. Pidió que el reporte muestre explícito cuántos movimientos se excluyeron
+  (`yaImputadosExcluidos`), nunca un número más chico sin explicar.
+- `contador-dominio`: confirmó que no hay ninguna defensa aguas abajo si se confirmara un duplicado
+  (duplicaría el resultado, descuadraría el banco), y pidió verificar el `cierre_id` correcto por
+  lote y un barrido previo de duplicados ya confirmados antes de aplicar sobre el piloto real.
+
+### 2. Fix implementado y probado en LOCAL antes de tocar el piloto
+
+`packages/data/src/cierre/lecturas.ts`: `leerReconocimientosParaImputar` excluye lo ya imputado (los
+dos `NOT EXISTS` de arriba) y devuelve `{filas, yaImputadosExcluidos}`; `lockearMovimientosDelLote`
+nueva. `apps/cli/src/conciliar-lote.ts`: llama al lock antes de leer, suma `yaImputadosExcluidos` al
+reporte. Prueba de mutación en vivo con dos conexiones reales
+(`apps/cli/tests/mutaciones-idempotencia-conciliar-lote.test.ts`): **L1** (secuencial, real) — 0
+duplicados, exclusión contada explícita; **M1** 🔴 (sin el lock, dos conexiones reales) — la carrera
+se coló, 4 renglones confirmados para el mismo movimiento; **L2** (con `lockearMovimientosDelLote`,
+mismo entrelazado que M1) — la segunda corrida queda bloqueada, 2 renglones, nunca 4. Typecheck
+limpio.
+
+### 3. Segundo bug real, encontrado recién al aplicar contra el piloto — no en LOCAL ni en la convocatoria
+
+Al aplicar el primer lote real (Bracci julio CtaCte, `2cf77c67`), la corrida abortó en la fila 21/78
+con `25P02` ("transacción abortada"). Piloto verificado intacto (rollback limpio, sin fila de
+auditoría del intento fallido). Diagnóstico fila por fila: `escribirPendienteDeImputacion`
+(`packages/data/src/cierre/escrituras.ts`) tenía un "centinela de idempotencia" que el propio
+docstring ya prometía (`uq_pendiente_cierre_natural` es la red, no el mecanismo primario) pero que
+**nunca funcionó de verdad** — el `SELECT` de recuperación tras un choque de constraint corría
+DESPUÉS del `INSERT` fallido, sin `SAVEPOINT`; en Postgres cualquier statement después de uno
+fallido en la misma transacción muere con `25P02` hasta el `ROLLBACK`. Nunca se había ejercitado
+porque, hasta este fix, ningún camino real reprocesaba un movimiento con un `pendiente_cierre`
+`'abierto'` preexistente.
+
+**Corregido** con el mismo idiom que `persistirReconocimientos`/`SAVEPOINT_PERSISTIR_RECONOCIMIENTO`
+(`SAVEPOINT_PENDIENTE_DE_IMPUTACION`). Prueba de mutación
+(`packages/data/tests/mutaciones-savepoint-pendiente-cierre.test.ts`): rojo confirmado revirtiendo
+solo `escrituras.ts` (`git stash`, mismo `25P02` exacto); verde con el fix, verificando además que
+una consulta cualquiera DESPUÉS de la recuperación sigue funcionando (prueba de que la transacción
+se despoisona de verdad, no solo que no lanza). Typecheck limpio.
+
+### 4. Corrida real — 9 lotes, backup fresco, uno a la vez, verificado contra la predicción
+
+Backup fresco antes de aplicar: `respaldos/piloto_20260909-191959Z.dump` (SHA-256
+`07c436360dab8b685bd579c8efefb30464d9716c44c460d2c000ead6ef1d8bbd`, 883 TOC entries). Orden
+ascendente por tamaño. Los 9 coincidieron EXACTO contra el dry-run del fix (medido hoy mismo, sin
+comparar contra ninguna cifra de turnos anteriores — primera medición válida de este fix):
+
+| Cliente | Lote | Total nuevo | `yaImputadosExcluidos` | Automáticos | Pendientes creados | Pendientes ya existentes |
+|---|---|---|---|---|---|---|
+| Bracci | julio CtaCte (`2cf77c67`) | 78 | 75 | 0 | 73 | 5 |
+| Bracci | mayo CtaCte (`98f87beb`) | 89 | 71 | 0 | 84 | 5 |
+| Bracci | junio CtaCte (`63050700`) | 90 | 69 | 0 | 86 | 4 |
+| Bracci | junio especial (`a5c7ccaf`) | 363 | 443 | 0 | 363 | 0 |
+| Bracci | mayo especial (`ee11d2e7`) | 387 | 450 | 0 | 387 | 0 |
+| Bracci | julio especial (`23d91533`) | 421 | 518 | 0 | 421 | 0 |
+| ROKA | mayo (`9e568972`) | 1208 | 85 | 0 | 1200 | 8 |
+| ROKA | julio (`5d4d2a92`) | 1300 | 92 | 0 | 1295 | 5 |
+| ROKA | junio (`38a7cf41`) | 1355 | 90 | 0 | 1348 | 7 |
+| **Total** | | **5291** | **1893** | **0** | **5257** | **34** |
+
+**`automaticos: 0` en los 9 lotes, sin excepción** — ninguno de los 5291 movimientos nuevos genera
+asiento automático: son mayormente `cobranza_de_cliente` (de `distinguir_tercero_de_socio`), y ni
+Bracci ni ROKA tienen `regla_imputacion` cargada para ese tipo todavía. Correctamente clasificados en
+`pendiente_cierre`, no un defecto de este fix — deuda ya conocida (B.3), sin dueño nuevo por esto.
+
+### 5. Verificación final, por consulta directa — el número que cierra la tarea
+
+```
+total_propuesta | resueltos | sin_resolver | movimientos_con_mas_de_1_asiento | movimientos_con_mas_de_1_pendiente
+            8509 |      8509 |            0 |                                0 |                                  0
+```
+
+**8509 de 8509 movimientos `propuesta` de Bracci y ROKA (mayo-agosto) están resueltos — 0 sin
+resolver, 0 duplicados de ninguna clase.** Coincide exacto con la medición del gap original. Con
+esto, los dos clientes reales del piloto quedan al día en los 4 meses, sin ninguna deuda de asientos
+pendientes de generar — lo que queda pendiente (los 5257+34 en `pendiente_cierre`, y los 238+131 de
+agosto de HANDOFF 201) es cola de revisión conocida (B.3), no un resto de este fix.
+
+### 6. Qué queda fuera, explícito
+
+- Las `regla_imputacion` de `cobranza_de_cliente` para Bracci y ROKA — sin dueño, es la próxima
+  palanca real para que estos 5257+34 pendientes generen asiento automático.
+- El hallazgo de `security-engineer` sobre `referencia_origen` sin FK/CHECK de forma (vector de
+  denegación de servicio silenciosa si alguien escribe basura ahí) — declarado, sin dueño.
+- La supersesión de `reconocimiento_movimiento` sobre un movimiento ya imputado — declarada fuera de
+  alcance en el propio comentario de `leerReconocimientosParaImputar`, sin camino de reproceso hoy.
+- El acumulado por cuenta (mayo-agosto) para el paquete de Laura, con el diseño y salvedad de
+  `contador-dominio` — retomar ahora que Capa D está completa.
+
+### 7. Commits
+
+Tres, separados por preocupación: (1) idempotencia + concurrencia (`lecturas.ts`,
+`conciliar-lote.ts`, su prueba), (2) el `SAVEPOINT` de `escribirPendienteDeImputacion` (bug
+encontrado en el camino, su propia prueba), (3) esta documentación (B.26 + este HANDOFF).
+
+---
+
 ## 2026-09-09 (201) — 🔒 CIERRE: agosto de ROKA ingerido y clasificado en producción continua —
 **1255 de 1257 `distinguir_tercero_de_socio` resueltos solos** en el primer mes nuevo desde que se
 activó la manifestación de padrón completo (Tanda 3), sin intervención humana. Manifestación de
