@@ -6,6 +6,110 @@
 
 ---
 
+## 2026-09-09 (201) — 🔒 CIERRE: agosto de ROKA ingerido y clasificado en producción continua —
+**1255 de 1257 `distinguir_tercero_de_socio` resueltos solos** en el primer mes nuevo desde que se
+activó la manifestación de padrón completo (Tanda 3), sin intervención humana. Manifestación de
+ROKA extendida a `completo_hasta = 2026-08-31` antes de procesar el lote.
+
+**Herramienta:** Claude Code, sesión interactiva, continuación de (200). Motivador: Laura mandó el
+extracto de agosto de ROKA (Banco Macro, PDF + Excel), primer mes a ingerir después de Tanda 3 —
+oportunidad de medir si el mecanismo sostiene sin reproceso puntual.
+
+### 0. Guard PDF/Excel — decisión puntual, no el mecanismo formal de Tanda 2
+
+El guard "una fuente vigente por (cuenta, mes)" completo (pieza 4a del plan) vive formalmente en la
+Tanda 2, detrás de `ADR-0004` (sin escribir todavía) — no se adelantó. Para esta ingesta puntual: el
+PDF de agosto se verificó con capa de texto completa (`extraerTexto()`, `packages/ingesta/src/
+texto-pdf.ts` — 57 páginas, 0 sin texto, `requiereOcr: false`), y resultó que **el Excel de ROKA
+(`.xls` legacy OLE2/97-2003, generado por JasperReports) no se puede leer hoy** — `exceljs` (única
+librería de Excel del proyecto) solo lee XLSX, y no hay `soffice`/`libreoffice`/`ssconvert`
+instalado. Agregar un lector nuevo (`xlsx`/SheetJS) es una dependencia nueva, fuera de alcance de
+esta tarea puntual — declarado como **B.24** en `10-deuda-declarada.md`. Se ingirió directo desde
+PDF, sin comparar contra Excel (no bloqueó nada: el PDF ya venía verificado y es la misma fuente que
+mayo/junio/julio usaron sin problema).
+
+### 1. Backup + ingesta (Módulo 1) — sin dry-run, `ingestar.ts` no lo tiene
+
+Backup fresco antes de tocar nada: `respaldos/piloto_20260909-151930Z.dump` (SHA-256
+`a88ccc45b8f760b7a86321cb8938dce6ac18b442039c85356a6e71435dde2ac9`, 883 TOC entries, verificado con
+`pg_restore -l`). `pnpm ingesta --cliente <ROKA> --archivo ".../2026-08 CTA CTE- ESP Y DOLAR.pdf"
+--banco macro --usuario <socio>`: lote `11f06c03-e6dc-4a79-85c5-35fdb4b5fb1c`, **1694 filas
+aceptadas, 0 rechazadas**, `procesado_con_observaciones` (12 líneas no interpretadas, 9 filas con
+`EST_FECHA_FUERA_DE_PERIODO`). 3 cuentas detectadas en el mismo PDF (`multiCuenta: true`, ya
+soportado por el adapter, no una novedad — las 3 combinaciones ya venían desde mayo/junio/julio):
+94f817b3 (ARS, 1683 filas), a61bda31 (ARS, 11 filas), 6d4a3c4d (USD, 0 filas — sin actividad en
+agosto).
+
+**Verificado antes de seguir: las 9 filas con fecha de julio no son duplicados del lote de julio**
+(`5d4d2a92`) — 0 coincidencias `(fecha, importe)` contra lo ya persistido, confirmado por consulta
+directa. Dato nuevo legítimo (probable corte de extracto que no coincide exacto con fin de mes), no
+un error de re-ingesta.
+
+### 2. Manifestación de ROKA extendida a agosto — atestación de JP, no del sistema
+
+La manifestación vigente (`0f60847b...`, `completo_hasta = 2026-07-31`) no cubre agosto —
+`contrapartida_frescura_chk` (`0021`) exige `padron_completo_hasta >= resuelto_a_fecha` **por
+movimiento**, no por lote. Confirmado con JP: **sin socios nuevos de ROKA entre julio y agosto** —
+misma composición que Laura ya proveyó, sin cambios. Con esa base:
+
+- Dry-run de `manifestar-padron.ts --revoca 0f60847b...`: **3843 citas** de la manifestación vieja
+  (exacto, coincide con la Tanda 3) — confirmado que revocar NO es retroactivo, esas filas siguen
+  citando la vieja para siempre.
+- Backup fresco antes de aplicar: mismo dump de arriba (sin escritura entre medio).
+- `--aplicar`: manifestación nueva `aa204d4a-4540-47f6-a9fe-717bcc2cd1ee`, `completo_hasta =
+  2026-08-31`, `revoca_a = 0f60847b...`. Verificado por consulta directa: **exactamente 2 filas** en
+  `padron_manifestacion` para ROKA, la vieja (`revoca_a` null, nunca se edita) y la nueva (`revoca_a`
+  apuntando a la vieja) — cadena append-only correcta.
+
+### 3. `reconocer:lote --aplicar` sobre el lote de agosto
+
+Backup fresco (`respaldos/piloto_20260909-154650Z.dump`, SHA-256
+`03696861a1ce4ea6c28b58a41a8a5d51cebd21d64358f539fd79cae99b80bb01`, 883 TOC entries). Dry-run final
+(con la manifestación ya extendida) vs. `--aplicar`, y contra consulta independiente — los tres
+coinciden exacto:
+
+| | Dry-run | `--aplicar` (reporte CLI) | Consulta directa independiente |
+|---|---|---|---|
+| `propuesta` | 1325 | 1325 | 1325 |
+| `decision_humana` | 238 | 238 | 238 |
+| `sin_reconocer` | 131 | 131 | 131 |
+
+`creados: 1694, supersedidos: 0, noOp: 0` (lote nunca antes procesado — todo "creado", nada
+"supersedido"). **`manifestacionRevocadaDuranteLaCorrida: 0`** — confirmado, ninguna carrera de
+concurrencia durante la corrida.
+
+**El número clave, verificado por consulta directa contra `reconocimiento_contrapartida.
+resolucion_estado`** (no contra el agregado del reporte): de los 1257 `distinguir_tercero_de_socio`
+del dry-run original (antes de extender la manifestación), **1255 resolvieron a
+`es_tercero_padron_completo`** citando la manifestación nueva (`aa204d4a...`, confirmado — no la
+vieja), y **2 quedaron `sin_candidatos`** (residual estructural, ningún identificador extraíble de
+la glosa — misma categoría ya conocida de Bracci/ROKA desde la Tanda 0, no un defecto de esta
+corrida).
+
+### 4. Por qué esto importa más que el reproceso puntual de esta semana
+
+La Tanda 3 (HANDOFF 196-199) demostró que el mecanismo funciona **reprocesando** 9 lotes ya
+existentes, con toda la inversión humana de esa semana (confirmar padrón, corregir el número, etc.)
+todavía fresca. Esta entrada demuestra algo distinto y más valioso para el producto: **un mes
+completamente nuevo, ingerido por primera vez, con la única intervención humana siendo la
+declaración de la manifestación** (un acto de Laura/JP, no una corrección de sistema) — 1255 de 1257
+movimientos de un tipo que antes exigía revisar uno por uno resolvieron solos. Es la primera prueba
+real de operación mes a mes, no de reproceso.
+
+### 5. Qué queda fuera, explícito
+
+- Los 238 `decision_humana` restantes y los 131 `sin_reconocer` de agosto no se tocaron — misma cola
+  de revisión pendiente que ya existe para los meses anteriores (B.3, sin cambios).
+- Capa D (`conciliar:lote`, generar `asiento_propuesto` para agosto) — **no se corrió**, fuera de
+  alcance de esta tarea. Sigue pendiente el hallazgo de idempotencia de Capa D (que un re-`--aplicar`
+  sobre un lote ya conciliado duplica asientos) para cuando se retome ese frente — este lote de
+  agosto es nuevo, nunca conciliado, así que no lo dispara, pero el hallazgo en sí sigue sin cerrar.
+- El guard formal de "una fuente por período" (4a, Tanda 2, `ADR-0004`) sigue sin construir — B.24
+  documenta la deuda puntual del Excel de Macro para cuando se retome.
+- Tanda 1 y Tanda 2 del plan del doc 31: sin tocar, como se pidió explícitamente.
+
+---
+
 ## 2026-09-09 (200) — Investigación de los 13 casos de IIBB Córdoba (ROKA): cambio de `catalogo.ts`
 frenado en modo plan por objeción real de `contador-dominio` — cerrado como B.23,
 bloqueado-por-dato-externo, no por diseño ni por código.

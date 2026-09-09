@@ -647,6 +647,23 @@ confirmación puntual sobre esta retención; (2) con eso, `fiscal-ingresos-bruto
 dictamina el régimen si es Convenio Multilateral y carga la fuente; (3) `plan-cuentas-multicliente`
 completa `knowledge/clientes/<id-real-de-ROKA>/jurisdicciones-activas.md` desde la plantilla; (4)
 recién ahí `contador-dominio` puede confirmar sin objeción, y se retoma el cambio de `catalogo.ts` |
+| **B.24** | 🟡 **El Excel legacy de Macro (ROKA) no se puede comparar contra el PDF hoy — no hay
+lector para ese formato en el proyecto (2026-09-09).** Al diseñar el guard puntual de "una fuente
+vigente" para la ingesta de agosto de ROKA, se verificó que `2026-08 bco macro.xls`
+(`privado/piloto_capa_d/ROKA/`) es Excel **binario legacy** (OLE2/Composite Document, formato
+97-2003, generado por JasperReports) — no XLSX. `exceljs` (única librería de Excel del proyecto,
+usada para exportar, `packages/ingesta/package.json`) solo lee XLSX. No hay `soffice`/`libreoffice`/
+`ssconvert` instalado para convertirlo. Agregar un lector (ej. `xlsx`/SheetJS) es una dependencia
+nueva, con su propia convocatoria a `security-engineer` (matriz CLAUDE.md §3.1) — no se hizo, no era
+el alcance de la tarea puntual.
+
+**No bloqueó nada**: el PDF de agosto se verificó con capa de texto completa (`extraerTexto()`,
+`packages/ingesta/src/texto-pdf.ts` — 57 páginas, 0 sin texto, `requiereOcr: false`) y es la misma
+fuente que ya se usó sin problema en mayo/junio/julio — la comparación PDF/Excel solo se justifica si
+algún mes el PDF viene roto o escaneado, caso que no se dio todavía con Macro. Se ingirió directo
+desde PDF | Sin dueño. Si se necesita comparar contra Excel en el futuro (PDF roto/escaneado, o un
+segundo caso real de discrepancia): agregar `xlsx`/SheetJS con convocatoria a `security-engineer`
+primero — o pedirle a Laura/al banco un export en XLSX/CSV, que evita agregar la dependencia |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
