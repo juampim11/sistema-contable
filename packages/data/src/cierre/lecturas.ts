@@ -40,6 +40,41 @@ export type FilaReconocimientoParaImputar = {
   readonly cuentaBancariaId: string;
 };
 
+export type ResultadoReconocimientosParaImputar = {
+  readonly filas: readonly FilaReconocimientoParaImputar[];
+  /** Movimientos que YA tenían un `asiento_propuesto_renglon` o un `pendiente_cierre` terminal
+   *  (`pendiente_estado <> 'abierto'`) citándolos — excluidos del `WHERE`, nunca del conteo. Sin
+   *  este número, un reproceso de un lote ya conciliado antes reporta un `totalMovimientos` más
+   *  chico sin que quede dicho por qué (hallazgo de la convocatoria del fix de idempotencia,
+   *  2026-09-09: `seguridad-datos-financieros` + `motor-conciliacion-contable`). */
+  readonly yaImputadosExcluidos: number;
+};
+
+/**
+ * Lockea (`FOR UPDATE`) todas las filas de `movimiento_bancario_crudo` del lote — tiene que correr
+ * ANTES de `leerReconocimientosParaImputar`, en la MISMA transacción. Sin esto, dos corridas
+ * concurrentes de `conciliar:lote --aplicar` sobre el mismo lote pueden, cada una, leer "todavía sin
+ * imputar" bajo READ COMMITTED (ninguna ve los INSERT no comprometidos de la otra) y duplicar el
+ * asiento igual — el `NOT EXISTS` de abajo cierra el reproceso en SERIE, esto cierra el reproceso en
+ * PARALELO. Hallazgo real de la convocatoria del fix de idempotencia (2026-09-09), `dba-data` +
+ * `security-engineer` de forma independiente. No hace falta un índice nuevo: el lock es sobre la
+ * PK/scan ya cubierto por `idx_mov_crudo_lote`.
+ */
+export async function lockearMovimientosDelLote(
+  tx: Tx,
+  args: { readonly clienteId: string; readonly loteIngestaId: string },
+): Promise<number> {
+  const filas = await tx.consultar<{ id: string }>(
+    `select id::text as id
+       from movimiento_bancario_crudo
+      where cliente_id = $1 and lote_ingesta_id = $2
+      order by fila_numero
+        for update`,
+    [args.clienteId, args.loteIngestaId],
+  );
+  return filas.length;
+}
+
 /**
  * Solo `clase = 'propuesta'` — `decision_humana`/`sin_reconocer` quedan fuera de alcance de esta
  * versión del motor (D-28, bloqueado: no está resuelto qué `motivo_codigo` les corresponde). Filtrar
@@ -48,11 +83,29 @@ export type FilaReconocimientoParaImputar = {
  *
  * Solo reconocimientos VIGENTES (`superseded_por is null`) — mismo criterio que
  * `leerReconocimientosActivos`.
+ *
+ * **Excluye lo ya imputado** (fix de idempotencia, 2026-09-09 — hallazgo real: re-correr
+ * `conciliar:lote --aplicar` sobre un lote ya conciliado antes reprocesaba TAMBIÉN los movimientos
+ * viejos y generaba `asiento_propuesto` duplicados):
+ * - `asiento_propuesto_renglon`: excluye SIN condición — es terminal, es la fila que causa la
+ *   duplicación real (`escribirAsientoAutomatico` no tiene centinela ni constraint de respaldo).
+ * - `pendiente_cierre`: excluye solo si `pendiente_estado <> 'abierto'` (terminal:
+ *   `resuelto`/`superseded`/`dispensado`). Un pendiente `'abierto'` NO se excluye a propósito
+ *   (hallazgo de `motor-conciliacion-contable`): merece volver a intentar resolverse la próxima vez
+ *   que se corra `conciliar:lote` (por ejemplo, si se cargó la `regla_imputacion` que le faltaba) —
+ *   `escribirPendienteDeImputacion` ya es idempotente en escritura (`uq_pendiente_cierre_natural` +
+ *   centinela), así que dejarlo pasar de nuevo no duplica nada.
+ *
+ * **Fuera de alcance, declarado a propósito, no un agujero silencioso** (hallazgo de
+ * `motor-conciliacion-contable`): la supersesión de `reconocimiento_movimiento` sobre un movimiento
+ * YA imputado (bump de léxico/catálogo, `recapturar-conceptos.ts`, `backfill-contraparte.ts`) no
+ * tiene, hoy, ningún camino de reproceso equivalente a `reprocesar-capa-d.ts` — un asiento así queda
+ * citando la clasificación vieja. No se resuelve en este fix.
  */
 export async function leerReconocimientosParaImputar(
   tx: Tx,
   args: { readonly clienteId: string; readonly loteIngestaId: string },
-): Promise<readonly FilaReconocimientoParaImputar[]> {
+): Promise<ResultadoReconocimientosParaImputar> {
   const filas = await tx.consultar<{
     id: string;
     movimiento_id: string;
@@ -79,28 +132,51 @@ export async function leerReconocimientosParaImputar(
          on m.cliente_id = r.cliente_id and m.id = r.movimiento_id
       where r.cliente_id = $1 and m.lote_ingesta_id = $2
         and r.superseded_por is null and r.clase = 'propuesta'
+        and not exists (
+          select 1 from asiento_propuesto_renglon apr
+           where apr.cliente_id = r.cliente_id and apr.referencia_origen = r.movimiento_id::text
+        )
+        and not exists (
+          select 1 from pendiente_cierre pc
+           where pc.cliente_id = r.cliente_id and pc.referencia_origen = r.movimiento_id::text
+             and pc.pendiente_estado <> 'abierto'
+        )
       order by m.fila_numero`,
     [args.clienteId, args.loteIngestaId],
   );
 
-  return filas.map((f) => ({
-    reconocimientoId: f.id,
-    movimientoId: f.movimiento_id,
-    clase: f.clase,
-    // `clase = 'propuesta'` en el WHERE garantiza que estos campos nunca son NULL — los propios
-    // CHECK de `0014` (`reconocimiento_forma_chk`) lo exigen para esa clase.
-    tipo: f.tipo as string,
-    concepto: f.concepto as string,
-    polaridad: f.polaridad as string,
-    lado: f.lado as string,
-    via: f.via as string,
-    evidenciaEntradaLexicoId: f.evidencia_entrada_lexico_id as string,
-    evidenciaCaracteresMatcheados: f.evidencia_caracteres_matcheados as number,
-    evidenciaHuboCola: f.evidencia_hubo_cola as boolean,
-    fecha: f.fecha,
-    importe: f.importe,
-    cuentaBancariaId: f.cuenta_bancaria_id,
-  }));
+  const totalFilas = await tx.consultar<{ total: string }>(
+    `select count(*)::text as total
+       from reconocimiento_movimiento r
+       join movimiento_bancario_crudo m
+         on m.cliente_id = r.cliente_id and m.id = r.movimiento_id
+      where r.cliente_id = $1 and m.lote_ingesta_id = $2
+        and r.superseded_por is null and r.clase = 'propuesta'`,
+    [args.clienteId, args.loteIngestaId],
+  );
+  const total = Number(totalFilas[0]?.total ?? '0');
+
+  return {
+    filas: filas.map((f) => ({
+      reconocimientoId: f.id,
+      movimientoId: f.movimiento_id,
+      clase: f.clase,
+      // `clase = 'propuesta'` en el WHERE garantiza que estos campos nunca son NULL — los propios
+      // CHECK de `0014` (`reconocimiento_forma_chk`) lo exigen para esa clase.
+      tipo: f.tipo as string,
+      concepto: f.concepto as string,
+      polaridad: f.polaridad as string,
+      lado: f.lado as string,
+      via: f.via as string,
+      evidenciaEntradaLexicoId: f.evidencia_entrada_lexico_id as string,
+      evidenciaCaracteresMatcheados: f.evidencia_caracteres_matcheados as number,
+      evidenciaHuboCola: f.evidencia_hubo_cola as boolean,
+      fecha: f.fecha,
+      importe: f.importe,
+      cuentaBancariaId: f.cuenta_bancaria_id,
+    })),
+    yaImputadosExcluidos: total - filas.length,
+  };
 }
 
 // -----------------------------------------------------------------------------

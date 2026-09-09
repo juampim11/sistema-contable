@@ -38,6 +38,7 @@ import {
   leerPlanDeCuentasCompleto,
   leerReconocimientosParaImputar,
   leerReglasDeImputacionVigentes,
+  lockearMovimientosDelLote,
   escribirAsientoAutomatico,
   escribirPendienteDeImputacion,
   verificarCredencialDeRequest,
@@ -196,6 +197,10 @@ export type ReporteDeConciliacion = {
   readonly estado: 'reportado';
   readonly aplicado: boolean;
   readonly totalMovimientos: number;
+  /** Movimientos `clase='propuesta'` del lote que YA tenían asiento o pendiente terminal — nunca
+   *  entraron al resolver. Sin este número, un reproceso de un lote ya conciliado antes reporta un
+   *  `totalMovimientos` más chico sin decir por qué (CLAUDE.md §1.8). */
+  readonly yaImputadosExcluidos: number;
   readonly automaticos: number;
   readonly pendientesPorMotivo: Record<string, number>;
   readonly asientosCreados: number;
@@ -216,11 +221,22 @@ export async function conciliarLote(
   }
 
   return conUsuario(args.usuario, async (tx) => {
+    // Lockea el lote ANTES de leer qué falta imputar — cierra la carrera de dos corridas
+    // concurrentes de `conciliar:lote --aplicar` sobre el mismo lote (hallazgo real de la
+    // convocatoria del fix de idempotencia, 2026-09-09: `dba-data` + `security-engineer`). La
+    // segunda corrida queda bloqueada en este `FOR UPDATE` hasta que la primera haga commit —
+    // recién ahí ve, bajo READ COMMITTED, los `asiento_propuesto_renglon`/`pendiente_cierre` que la
+    // primera ya escribió, y el `NOT EXISTS` de `leerReconocimientosParaImputar` los excluye.
+    await lockearMovimientosDelLote(tx, { clienteId: args.cliente, loteIngestaId: args.loteId });
+
     // Secuencial, NUNCA `Promise.all` sobre el mismo `tx`: un cliente de `pg` no admite más de una
     // consulta concurrente sobre la misma conexión — `Promise.all` las dispara todas a la vez y el
     // driver las intercala/serializa con un warning de deprecación, más allá de que hoy no haya
     // fallado el resultado. Encontrado corriendo el test de integración real, no en la convocatoria.
-    const reconocimientos = await leerReconocimientosParaImputar(tx, { clienteId: args.cliente, loteIngestaId: args.loteId });
+    const { filas: reconocimientos, yaImputadosExcluidos } = await leerReconocimientosParaImputar(tx, {
+      clienteId: args.cliente,
+      loteIngestaId: args.loteId,
+    });
     const reglasData = await leerReglasDeImputacionVigentes(tx, { clienteId: args.cliente });
     const planData = await leerPlanDeCuentasCompleto(tx, { clienteId: args.cliente });
     const mapeoBanco = await leerMapeoCuentasBancarias(tx, { clienteId: args.cliente });
@@ -271,6 +287,7 @@ export async function conciliarLote(
     const base = {
       estado: 'reportado' as const,
       totalMovimientos: resultados.length,
+      yaImputadosExcluidos,
       automaticos,
       pendientesPorMotivo,
     };
