@@ -313,16 +313,30 @@ export type ResultadoPendienteDeImputacion =
   | { readonly estado: 'ya_pendiente'; readonly pendienteCierreId: string }
   | { readonly estado: 'creado'; readonly pendienteCierreId: string };
 
+const SAVEPOINT_PENDIENTE_DE_IMPUTACION = 'sp_pendiente_de_imputacion';
+
 /**
  * Centinela de idempotencia EXPLÍCITO antes de insertar — mismo patrón que
  * `backfillDocumentoIngerido`: `uq_pendiente_cierre_natural` es la red, no el mecanismo primario.
  * Reprocesar el mismo lote dos veces con el mismo resultado no debe duplicar la cola de revisión.
+ *
+ * 🔴 **`SAVEPOINT` por llamada (fix de idempotencia de Capa D, 2026-09-09) — mismo idiom que
+ * `persistirReconocimientos`/`SAVEPOINT_PERSISTIR_RECONOCIMIENTO`.** Sin esto, la "red" de arriba
+ * nunca funcionó de verdad: un error de Postgres deja TODA la transacción abortada hasta el próximo
+ * `ROLLBACK` — el `SELECT` de "carrera" del catch, que necesita seguir leyendo DESPUÉS del `INSERT`
+ * fallido, moría con `25P02` antes de poder devolver `'ya_pendiente'`. Bug real, encontrado
+ * corriendo el fix de idempotencia de Capa D contra el piloto real (LOCAL, con un solo movimiento
+ * por test, nunca lo ejercitó — hacía falta un lote real con un `pendiente_cierre` `'abierto'`
+ * preexistente). Es seguro reusar el mismo nombre en cada llamada: se libera (camino feliz) o se
+ * hace `ROLLBACK TO` + se libera (camino de carrera) antes de retornar, así que no se acumulan
+ * savepoints anidados a lo largo de un lote.
  */
 export async function escribirPendienteDeImputacion(
   tx: Tx,
   _ctx: ContextoAuditado,
   pedido: PedidoPendienteDeImputacion,
 ): Promise<ResultadoPendienteDeImputacion> {
+  await tx.consultar(`savepoint ${SAVEPOINT_PENDIENTE_DE_IMPUTACION}`);
   try {
     const insertado = await conErroresTraducidos(undefined, () =>
       tx.consultar<{ id: string }>(
@@ -332,11 +346,14 @@ export async function escribirPendienteDeImputacion(
         [pedido.clienteId, pedido.cierreId, pedido.movimientoId, pedido.motivoCodigo, JSON.stringify(pedido.evidencia)],
       ),
     );
+    await tx.consultar(`release savepoint ${SAVEPOINT_PENDIENTE_DE_IMPUTACION}`);
     const id = insertado[0]?.id;
     if (!id) throw new Error('El alta de pendiente_cierre no devolvió id.'); // H-14
     return { estado: 'creado', pendienteCierreId: id };
   } catch (error) {
     if (error instanceof ErrorDeBase && error.constraint === 'uq_pendiente_cierre_natural') {
+      await tx.consultar(`rollback to savepoint ${SAVEPOINT_PENDIENTE_DE_IMPUTACION}`);
+      await tx.consultar(`release savepoint ${SAVEPOINT_PENDIENTE_DE_IMPUTACION}`);
       const carrera = await tx.consultar<{ id: string }>(
         `select id::text as id
            from pendiente_cierre
