@@ -599,6 +599,54 @@ permita colarse), un valor de `origen` reservado (`'fixture_desarrollo'`, distin
 o un proceso de alta de cliente que impida cargar nada al piloto real sin ese chequeo? Cualquiera
 de las tres cierra el hueco; ninguna está construida hoy | El lote ya se eliminó (2026-09-09,
 HANDOFF 199) — sin dueño para lo que queda: diseño del criterio estructural, con `dba-data` |
+| **B.23** | 🟡 **13 casos de ROKA (`retencion_iibb_cordoba_renta_financiera`, literal `RETENCION
+IIBB CORDOBA RENTA FINANC`, banco Macro) bloqueados en `decision_humana` — bloqueado por dato
+externo, no por diseño ni por código (2026-09-09).** Investigado a fondo antes de declararlo así: dos
+convocatorias a `contador-dominio` y una a `plan-cuentas-multicliente`, más lectura directa de
+`privado/laura-respuestas-2026-08.md`, `privado/laura-transcript.txt` y `privado/02-Consultas-
+Laura-2026-08-21.md`.
+
+**Qué falta, exactamente dos datos, ninguno de código:**
+1. **Constancia de inscripción de IIBB de ROKA** — si es contribuyente unilateral (solo Córdoba) o
+   de Convenio Multilateral, y si es de Convenio, el desglose real de jurisdicciones activas (formulario
+   CM01/CM02 o equivalente). Sin esto, `contador-dominio` no puede confirmar si alcanza una cuenta
+   específica de Córdoba o si la cuenta tiene que nacer como sub-cuenta por jurisdicción (`04-
+   imputacion-contable.md` §3 fila 5: *"una cuenta que mezcla jurisdicciones cuadra y la rechaza el
+   fisco"*).
+2. **Confirmación explícita de Laura sobre ESTA retención bancaria puntual** (una retención que el
+   banco practica automáticamente sobre renta financiera — intereses ganados en la cuenta —, no un
+   pago activo del cliente). El único texto de Laura sobre IIBB en todo `privado/` es un ejemplo de
+   asiento para "cobro con tarjeta de crédito" (liquidación del adquirente, un hecho económico
+   distinto), donde "retención IIBB 300" aparece como una línea del neteo — no es una regla general
+   ("todo pago de IIBB a la misma cuenta") y no se puede extender por analogía a esta retención sin
+   que ella lo confirme para este caso puntual.
+
+**Por qué no se resuelve con código ni con más investigación de agentes**: ninguno de los dos datos
+existe hoy en el repo, en `knowledge/` (`knowledge/clientes/ROKA/` no existe; `knowledge/provincial/`
+no tiene Córdoba cargada; `knowledge/interjurisdiccional/convenio-multilateral/` sin contenido
+normativo), ni en `privado/` accesible a un agente (el plan de cuentas real de ROKA está en
+`privado/`, prohibido para todo agente sin excepción — `plan-cuentas-multicliente` lo intentó y el
+clasificador de permisos lo bloqueó, sin reintentar sortearlo). Es información de cliente real que
+solo JP o Laura pueden proveer — ninguna convocatoria adicional a un agente de dominio va a producir
+un resultado distinto mientras estos dos datos no existan.
+
+**Estado técnico**: prueba de mutación escrita y confirmada en rojo contra el código actual
+(`packages/contabilidad/tests/corpus-macro.test.ts`, describe `RETENCION IIBB CORDOBA (precedente
+decide_una_persona → propone)`), documentando el comportamiento objetivo correcto (`clase:
+'propuesta'`, sin `queDecide`) para cuando se destrabe. `catalogo.ts` **sin tocar** — la entrada
+`retencion_iibb_cordoba_renta_financiera` sigue con `resuelve: 'decide_una_persona'`. Piloto sin
+tocar.
+
+**Confirmado, sin objeción, y no bloqueado**: la distinción entre este concepto (literal publica la
+jurisdicción — "CORDOBA" está en el texto) y `retencion_sircreb` (Santander, mismo `tipo`, mismo
+`queDecide`, literal SIN jurisdicción publicada) es correcta y ya es el criterio de diseño del
+producto (`04-imputacion-contable.md` §6/§9, comentario de `tipos.ts` sobre `elegir_jurisdiccion_de_
+la_retencion`). `retencion_sircreb` no se toca, y no hace falta tocarlo | Sin dueño para conseguir el
+dato — no es una tarea técnica. Camino: (1) JP/Laura consiguen la constancia IIBB de ROKA y la
+confirmación puntual sobre esta retención; (2) con eso, `fiscal-ingresos-brutos-convenio-multilateral`
+dictamina el régimen si es Convenio Multilateral y carga la fuente; (3) `plan-cuentas-multicliente`
+completa `knowledge/clientes/<id-real-de-ROKA>/jurisdicciones-activas.md` desde la plantilla; (4)
+recién ahí `contador-dominio` puede confirmar sin objeción, y se retoma el cambio de `catalogo.ts` |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 

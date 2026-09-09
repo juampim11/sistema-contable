@@ -6,6 +6,77 @@
 
 ---
 
+## 2026-09-09 (200) — Investigación de los 13 casos de IIBB Córdoba (ROKA): cambio de `catalogo.ts`
+frenado en modo plan por objeción real de `contador-dominio` — cerrado como B.23,
+bloqueado-por-dato-externo, no por diseño ni por código.
+
+**Herramienta:** Claude Code, sesión interactiva, continuación de (199). Motivador: revisar si los 13
+movimientos `decision_humana`/`elegir_jurisdiccion_de_la_retencion` de ROKA (`retencion_iibb_cordoba_
+renta_financiera`) podían cerrarse cambiando `resuelve: 'decide_una_persona'` → `'propone'` en el
+catálogo canónico, con la cuenta que Laura supuestamente ya había confirmado.
+
+### 0. Corrección de alcance sobre el pedido original
+
+El número de casos y la fuente del criterio se verificaron varias veces en esta misma sesión antes de
+llegar a esta tarea (cifras de 937/283/1246/26 no coincidían con la base real en ningún corte medido)
+— el número real y estable, confirmado repetidas veces, es **13**, un solo literal
+(`RETENCION IIBB CORDOBA RENTA FINANC`), 100% ROKA.
+
+### 1. Modo plan (CLAUDE.md §3.2) — plan de 5 puntos aprobado por JP
+
+Dispara por criterio (c): modifica `packages/contabilidad/src/nucleo/catalogo.ts`, que ya corre
+contra datos reales de ROKA. Plan completo (alcance, medición, predicción falsable, convocatorias,
+paso revertible) presentado y aprobado antes de tocar nada.
+
+### 2. Ejecución, en el orden pedido
+
+1. **Prueba de mutación, rojo primero**: test nuevo en `packages/contabilidad/tests/corpus-macro.
+   test.ts` (describe `RETENCION IIBB CORDOBA (precedente decide_una_persona → propone)`), hardcodeado
+   a propósito (no derivado de `claseEsperadaDe`, para no ser circular). Corrido contra el código
+   actual: **rojo confirmado** — el motor devuelve `decision_humana`/`elegir_jurisdiccion_de_la_
+   retencion`, tal como predice el código sin tocar.
+2. **Convocatoria real a `contador-dominio`** (`Agent()`, una vez): **no confirma el cambio.**
+   Objeción de fondo con dos partes — (a) el criterio de Laura citado ("todo pago de IIBB a la misma
+   cuenta") no está verificado contra la fuente original, y aunque lo estuviera, una retención
+   sufrida (activo/anticipo) no es el mismo hecho económico que un pago activo (pasivo cancelado); (b)
+   `04-imputacion-contable.md` §3 fila 5 ya exige que la cuenta de `retencion_iibb_bancaria` sea **por
+   jurisdicción** — una cuenta única sin saber si ROKA es unilateral o de Convenio Multilateral
+   contradice el propio diseño del producto. Confirmó, sin objeción, que la distinción Córdoba
+   (jurisdicción publicada) vs. `retencion_sircreb` (Santander, no publicada) es correcta — ese
+   concepto no se toca.
+3. **Investigación directa (no una convocatoria de agente) sobre `privado/`**: grep de "IIBB" en
+   `laura-respuestas-2026-08.md` (0 resultados), `laura-transcript.txt` (0 resultados) y `02-
+   Consultas-Laura-2026-08-21.md` (1 resultado). El único texto de Laura sobre IIBB es un asiento de
+   ejemplo para "cobro con tarjeta de crédito" (liquidación del adquirente — el tema de B.14/doc 14,
+   un hecho económico distinto), donde "retención IIBB 300" es una línea del neteo, no una regla
+   general. **No hay ninguna fuente que respalde el criterio citado para este caso puntual.**
+4. **Convocatoria real a `plan-cuentas-multicliente`** (`Agent()`, una vez): régimen de IIBB de ROKA
+   (unilateral vs. Convenio Multilateral) — **"no tengo esa fuente cargada"**. Intentó leer el plan de
+   cuentas real de ROKA en `privado/` para buscar vocabulario contable genérico; el clasificador de
+   permisos lo bloqueó (correcto — `privado/` prohibido para todo agente), y no reintentó sortearlo.
+   Aclaró que el literal "CORDOBA" en el movimiento no prueba unilateralidad — un banco retiene por
+   jurisdicción de la cuenta en ambos regímenes.
+
+### 3. Cierre — bloqueado por dato externo
+
+Los dos datos que faltan (constancia de inscripción IIBB de ROKA; confirmación puntual de Laura sobre
+ESTA retención) no existen hoy en el repo, en `knowledge/`, ni en `privado/` accesible a un agente —
+es información de cliente real que solo JP o Laura pueden proveer. Ninguna convocatoria adicional a
+un agente de dominio va a cambiar esto mientras esos dos datos no aparezcan. Declarado como **B.23**
+en `docs/diseno/10-deuda-declarada.md`, con el camino de desbloqueo en orden.
+
+**`catalogo.ts` sin tocar. Piloto sin tocar.** El test de mutación queda commiteado en rojo,
+documentando el objetivo correcto para cuando se resuelva.
+
+### 4. Corrección sobre el propio pedido de esta entrada
+
+JP pidió registrar "contador-dominio convocado 2 veces" — verificado contra las llamadas reales de
+esta sesión: fue **una vez**. La segunda "investigación" fue la lectura directa de `privado/` (punto
+3 arriba), hecha por quien conducía, no una convocatoria de agente — se corrige acá para no dejar un
+conteo de convocatorias equivocado en la bitácora.
+
+---
+
 ## 2026-09-09 (199) — 🔴 CORRECCIÓN: el número reportado en (196)/(198) incluía por error un lote de
 prueba de desarrollo mezclado con el corpus real de ROKA. Lote eliminado del piloto, backup previo,
 borrado verificado en una transacción con 11 tablas y rollback automático. **El número real y

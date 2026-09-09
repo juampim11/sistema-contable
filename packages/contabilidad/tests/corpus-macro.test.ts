@@ -192,3 +192,30 @@ describe('corpus de Macro — ING TRANSF: (hallazgo ROKA-2026)', () => {
   // No-regresión de TPUSH/TRANSF: ya cubierta por `it.each(TABLA_ESPERADA)` arriba (líneas 118-126),
   // que sigue corriendo sobre esos dos literales sin cambios — no se duplica acá.
 });
+
+/**
+ * `retencion_iibb_cordoba_renta_financiera` — precedente nuevo: primer concepto que pasa de
+ * `resuelve: 'decide_una_persona'` a `'propone'` sin que cambie la evidencia disponible, solo el
+ * criterio de negocio (confirmado por `contador-dominio`, HANDOFF pendiente de esta tarea). A
+ * diferencia de `retencion_sircreb` (Santander, misma familia `retencion_iibb_bancaria`, mismo
+ * `queDecide: 'elegir_jurisdiccion_de_la_retencion'`), acá el literal SÍ publica la jurisdicción
+ * ("CORDOBA", en el propio texto) — es la asimetría que habilita este cambio sin tocar SIRCREB.
+ *
+ * Hardcodeado a propósito (no derivado de `claseEsperadaDe`, que lee del catálogo): este test tiene
+ * que fallar ANTES del cambio de catálogo y pasar DESPUÉS — si derivara del catálogo sería circular
+ * y nunca discriminaría nada.
+ */
+describe('corpus de Macro — RETENCION IIBB CORDOBA (precedente decide_una_persona → propone)', () => {
+  it('el motor clasifica "RETENCION IIBB CORDOBA RENTA FINANC" como propuesta, sin queDecide', () => {
+    const r = reconocerMacro('RETENCION IIBB CORDOBA RENTA FINANC', 'debito');
+    expect(r, `el motor devolvió ${JSON.stringify(r)}`).toEqual(
+      expect.objectContaining({ clase: 'propuesta', tipo: 'retencion_iibb_bancaria', concepto: 'retencion_iibb_cordoba_renta_financiera' }),
+    );
+    expect(r).not.toHaveProperty('queDecide');
+  });
+
+  // No-regresión de retencion_sircreb (Santander, misma familia, literal SIN jurisdicción publicada):
+  // no se toca su entrada del catálogo en esta tarea, así que `corpus-santander.test.ts` (que deriva
+  // la clase esperada del catálogo, igual que este archivo) sigue verificándolo sin cambios — no se
+  // duplica acá.
+});
