@@ -48,7 +48,9 @@ El ciclo de hoy es: Capa D genera asientos → se exporta a Excel (`exportar-rel
 3. **Carga de documentos desde la UI.** Que el extracto bancario / resumen de tarjeta / liquidación de
    FCI entre al sistema por una pantalla de subida, no por un CLI (`ingestar.ts`) que corre JP contra
    `privado/`. Es la fase que más se acerca a "producto que un cliente real usaría sin depender de
-   alguien con acceso a la terminal".
+   alguien con acceso a la terminal". **Visión de producto para esta pantalla, ya registrada:** ver
+   `docs/diseno/31-replanteo-hacia-producto.md`, nota sobre la Tanda 4 (2026-09-09) — nivel visual
+   alto, no un dropdown de texto plano (ej. logo real de cada banco al elegir cuál extracto se sube).
 
 Ninguna de las tres tiene ni siquiera un `docs/diseno/` de arquitectura propio todavía — `apps/web` no
 existe en el repo (el roster de agentes ya tiene `frontend-dev`/`ux-designer` previstos para cuando

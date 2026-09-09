@@ -637,6 +637,17 @@ existe y es seguro con menos fricción, en orden:
 | **3 — promoción real (reproceso)** | Cerrar gap manifestación + `manifestar-padron.ts` + wiring + 2 `regla_imputacion` por cliente + corrida por lote | 6-10 commits + ~9 `--aplicar` | 1 / no | El salto de `propuesta` por cliente, medido contra la predicción de la Tanda 0 |
 | **4 — decidir la superficie** | ADR de auth + vista de solo lectura, solo si Laura completó las hojas | ADR + 4-8 commits | — | — |
 
+> **Visión explícita de JP para la Tanda 4 (2026-09-09), a preservar hasta que le llegue el turno.**
+> No es una pantalla funcional genérica: tiene que tener un **nivel visual alto**. Ejemplo concreto
+> que dio JP: al subir un extracto, la selección de banco muestra el **logo real de cada banco**
+> (Galicia, Macro, Santander, etc.), no un dropdown de texto plano. La experiencia de carga y revisión
+> tiene que sentirse cuidada y profesional desde el primer contacto visual — es un diferenciador real
+> para mostrarle a Laura o a cualquier cliente potencial nuevo, no un detalle cosmético de último
+> momento. Queda pendiente de una **convocatoria propia a `ux-designer`** (nunca usado en este
+> proyecto todavía) cuando la Tanda 4 se habilite — condicionada, como ya dice la tabla de arriba, a
+> que el flujo por planilla (Tandas 1-2) demuestre primero que Laura completa las hojas. No se
+> convoca ni se diseña nada de esto ahora.
+
 > 🔴 **Corrección final (2026-09-09 — reemplaza la corrección del 2026-09-08 de más abajo en el
 > historial de este bloque, que llegó a una conclusión equivocada sobre el origen de "3843").** La
 > corrida real de Tanda 3 se ejecutó primero sobre 10 lotes (6 Bracci + 4 ROKA), pero uno de los 4 de
