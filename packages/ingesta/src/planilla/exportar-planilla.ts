@@ -56,6 +56,8 @@ import {
   reconocer,
   resolverContraparte,
   textoDeReconocimiento,
+  type QueDecide,
+  type Reconocimiento,
 } from '@sistema-contable/contabilidad';
 import { comoCandidatoDeContraparte, comoPatronDeContraparte, comoSocioDelPadron } from '../contraparte-adaptadores.ts';
 import { normalizar } from '@sistema-contable/shared/texto';
@@ -65,6 +67,7 @@ import {
   MAX_FILAS,
   MOTIVOS_LIBRO,
   type CabeceraCuenta,
+  type CategoriaEspecial,
   type EstadoEnriquecimiento,
   type FilaPlanilla,
 } from './armar-libro.ts';
@@ -180,8 +183,34 @@ function evidenciaDeMotorDesde(f: FilaCruda, bancoCodigo: string) {
   };
 }
 
+/**
+ * "Tarjeta pendiente" (Tanda 1) — SOLO por `que_decide`, nunca por `tipo`. Verificado contra
+ * `catalogo.ts` (`contador-dominio`): `tipo: 'acreditacion_tarjeta'` también puede resolver
+ * `queDecide: 'confirmar_hipotesis_del_lexico'` (`acreditacion_tarjeta_getnet`) — filtrar por `tipo`
+ * metería ese caso en la categoría equivocada. Los `sin_reconocer` de tarjeta (compra con débito,
+ * tarjeta corporativa sin liquidación) quedan afuera a propósito: es otra espera contable (falta el
+ * Libro IVA Compras, no la liquidación del adquirente) y esas filas tienen `tipo = NULL` en la base
+ * (CHECK de `0014_reconocimiento_persistido.sql`) — un filtro por `tipo` ni siquiera las alcanzaría.
+ *
+ * Exportada para el test unitario (`planilla-agrupacion.test.ts`) — no para uso externo.
+ */
+const QUE_DECIDE_TARJETA_PENDIENTE: ReadonlySet<QueDecide> = new Set([
+  'completar_con_liquidacion_del_adquirente',
+  'completar_con_liquidacion_de_la_tarjeta',
+]);
+
+export function categoriaEspecialDe(r: Reconocimiento): CategoriaEspecial | null {
+  return r.clase === 'decision_humana' && QUE_DECIDE_TARJETA_PENDIENTE.has(r.queDecide)
+    ? 'tarjeta_pendiente'
+    : null;
+}
+
+type TextoConCategoria = ReturnType<typeof textoDeReconocimiento> & {
+  readonly categoriaEspecial: CategoriaEspecial | null;
+};
+
 type ResultadoEnriquecimiento = {
-  readonly textos: ReadonlyMap<string, ReturnType<typeof textoDeReconocimiento>>;
+  readonly textos: ReadonlyMap<string, TextoConCategoria>;
   readonly estadoEnriquecimiento: EstadoEnriquecimiento;
   readonly motorDigest: string | null;
 };
@@ -201,7 +230,7 @@ async function enriquecer(
   bancoCodigo: string,
   movFilas: readonly FilaCruda[],
 ): Promise<ResultadoEnriquecimiento> {
-  const vacio = { textos: new Map<string, ReturnType<typeof textoDeReconocimiento>>() };
+  const vacio = { textos: new Map<string, TextoConCategoria>() };
 
   if (!DESTINATARIOS_QUE_ENRIQUECEN.has(pedido.destinatarioCodigo)) {
     return { ...vacio, estadoEnriquecimiento: 'no_destinatario', motorDigest: null };
@@ -231,7 +260,7 @@ async function enriquecer(
   // comportamiento conservador que regía antes de esta tarea.
   const manifestacion = await leerManifestacionVigente(tx, { clienteId: pedido.clienteId });
 
-  const textos = new Map<string, ReturnType<typeof textoDeReconocimiento>>();
+  const textos = new Map<string, TextoConCategoria>();
   for (const f of movFilas) {
     const antes = reconocer(evidenciaDeMotorDesde(f, bancoCodigo), indice);
 
@@ -252,7 +281,7 @@ async function enriquecer(
       }, patronesDeContraparte);
     }
 
-    textos.set(f.id, textoDeReconocimiento(despues));
+    textos.set(f.id, { ...textoDeReconocimiento(despues), categoriaEspecial: categoriaEspecialDe(despues) });
   }
 
   return { textos, estadoEnriquecimiento: 'si', motorDigest };
@@ -519,6 +548,7 @@ export async function exportarPlanillaDeLote(
       confianza: texto?.confianza ?? null,
       pendiente: texto?.pendiente ?? null,
       contraparteConocida: texto?.contraparteConocida ?? null,
+      categoriaEspecial: texto?.categoriaEspecial ?? null,
     };
   });
 

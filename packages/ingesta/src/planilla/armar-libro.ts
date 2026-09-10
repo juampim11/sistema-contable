@@ -57,6 +57,12 @@ export type FilaPlanilla = {
    *  matcheado — decisión de JP, 2026-09-06 (ver `textoDeContraparteConocida`,
    *  `@sistema-contable/contabilidad`). */
   readonly contraparteConocida: string | null;
+  /** Vocabulario cerrado (`CategoriaEspecial`, más abajo) — calculado en `exportar-planilla.ts` a
+   *  partir de `que_decide` (nunca de `tipo`: `contador-dominio`, Tanda 1 — un filtro por `tipo`
+   *  metería `acreditacion_tarjeta_getnet` en la categoría equivocada, y las filas `sin_reconocer`
+   *  de tarjeta ni siquiera tienen `tipo` en la base). `null` salvo `tarjeta_pendiente`, y también
+   *  `null` cuando el enriquecimiento no corrió — mismo gate/degradación que `identificacion`. */
+  readonly categoriaEspecial: CategoriaEspecial | null;
 };
 
 /**
@@ -66,6 +72,15 @@ export type FilaPlanilla = {
  */
 export const ESTADOS_ENRIQUECIMIENTO = ['si', 'no_destinatario', 'no_tope_superado', 'no_sin_lexico'] as const;
 export type EstadoEnriquecimiento = (typeof ESTADOS_ENRIQUECIMIENTO)[number];
+
+/**
+ * Categoría especial de presentación (Tanda 1, `docs/diseno/31-replanteo-hacia-producto.md`) —
+ * vocabulario cerrado, nunca texto libre. Hoy cubre un solo caso: el hueco medido en
+ * `docs/diseno/14-liquidaciones-tarjeta-plan.md` (plan aprobado, sin implementar) — movimientos de
+ * tarjeta cuyo asiento queda incompleto hasta contar con la liquidación del adquirente/de la tarjeta.
+ */
+export const CATEGORIAS_ESPECIALES = ['tarjeta_pendiente'] as const;
+export type CategoriaEspecial = (typeof CATEGORIAS_ESPECIALES)[number];
 
 export type CabeceraCuenta = {
   readonly cuentaBancariaId: string;
