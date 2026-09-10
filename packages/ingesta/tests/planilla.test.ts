@@ -135,6 +135,7 @@ function filaDePrueba(over: Partial<FilaPlanilla> = {}): FilaPlanilla {
     pendiente: null,
     contraparteConocida: null,
     categoriaEspecial: null,
+    agrupable: true,
     ...over,
   };
 }
@@ -165,8 +166,16 @@ async function releer(libro: ExcelJS.Workbook): Promise<ExcelJS.Workbook> {
   return releido;
 }
 
+/** La hoja de movimientos de la (única) cuenta del fixture — nunca `worksheets[1]` a secas: desde
+ *  Tanda 1, "Grupos" puede colarse entre "Control de saldos" y la primera cuenta. Filtra por los
+ *  nombres reservados en vez de asumir una posición fija. */
+function hojaDeMovimientos(libro: ExcelJS.Workbook): ExcelJS.Worksheet | undefined {
+  const reservados = new Set(['Control de saldos', 'Grupos', 'Tarjeta pendiente']);
+  return libro.worksheets.find((w) => !reservados.has(w.name));
+}
+
 describe('armarLibro — camino feliz', () => {
-  it('arma dos hojas: Control de saldos + una por cuenta', async () => {
+  it('arma tres hojas: Control de saldos + Grupos + una por cuenta', async () => {
     const r = armarLibro(datosDePrueba());
     expect(r.estado).toBe('armado');
     if (r.estado !== 'armado') return;
@@ -174,7 +183,11 @@ describe('armarLibro — camino feliz', () => {
 
     const releido = await releer(r.libro);
     expect(releido.getWorksheet('Control de saldos')).toBeDefined();
-    expect(releido.worksheets.length).toBe(2);
+    // Grupos: la única fila del fixture cae en un grupo propio (Tanda 1) — Control de saldos +
+    // Grupos + la hoja de la cuenta. "Tarjeta pendiente" no se arma: 0 grupos de esa categoría.
+    expect(releido.getWorksheet('Grupos')).toBeDefined();
+    expect(releido.getWorksheet('Tarjeta pendiente')).toBeUndefined();
+    expect(releido.worksheets.length).toBe(3);
   });
 
   it('el buffer serializado es un zip real (magic PK)', async () => {
@@ -189,7 +202,7 @@ describe('armarLibro — camino feliz', () => {
     const r = armarLibro(datosDePrueba());
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     if (!hoja) throw new Error('falta la hoja de movimientos');
 
     const filaEncabezados = hoja.getRow(7).values as unknown[];
@@ -209,7 +222,7 @@ describe('armarLibro — camino feliz', () => {
     );
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     if (!hoja) throw new Error('falta la hoja');
     const headers = hoja.getRow(7).values as unknown[];
     const colDebito = headers.findIndex((v) => v === 'Débito (sale de la cuenta)');
@@ -227,7 +240,7 @@ describe('armarLibro — camino feliz', () => {
     const r = armarLibro(datosDePrueba({ filas: [filaDePrueba({ saldo: null })] }));
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     if (!hoja) throw new Error('falta la hoja');
     const headers = hoja.getRow(7).values as unknown[];
     const colSaldo = headers.findIndex((v) => v === 'Saldo');
@@ -238,7 +251,7 @@ describe('armarLibro — camino feliz', () => {
   it('pagina_pdf todo-NULL: la columna se omite del todo', () => {
     const r = armarLibro(datosDePrueba({ filas: [filaDePrueba({ paginaPdf: null })] }));
     if (r.estado !== 'armado') throw new Error('no armó');
-    const hoja = r.libro.worksheets[1];
+    const hoja = hojaDeMovimientos(r.libro);
     if (!hoja) throw new Error('falta la hoja');
     const headers = (hoja.getRow(7).values as unknown[]).filter(Boolean);
     expect(headers).not.toContain('Pág. del PDF');
@@ -248,7 +261,7 @@ describe('armarLibro — camino feliz', () => {
     const r = armarLibro(datosDePrueba({ filas: [filaDePrueba({ descripcion: '=SUM(A1)' })] }));
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     if (!hoja) throw new Error('falta la hoja');
     const headers = hoja.getRow(7).values as unknown[];
     const colDescripcion = headers.findIndex((v) => v === 'Descripción');
@@ -263,7 +276,7 @@ describe('armarLibro — camino feliz', () => {
       const r = armarLibro(datosDePrueba({ filas: [filaDePrueba({ descripcion: glosa })] }));
       if (r.estado !== 'armado') throw new Error('no armó');
       const releido = await releer(r.libro);
-      const hoja = releido.worksheets[1];
+      const hoja = hojaDeMovimientos(releido);
       if (!hoja) throw new Error('falta la hoja');
       const headers = hoja.getRow(7).values as unknown[];
       const colDescripcion = headers.findIndex((v) => v === 'Descripción');
@@ -274,7 +287,7 @@ describe('armarLibro — camino feliz', () => {
   it('panel congelado y autofiltro cubren el rango correcto', () => {
     const r = armarLibro(datosDePrueba());
     if (r.estado !== 'armado') throw new Error('no armó');
-    const hoja = r.libro.worksheets[1];
+    const hoja = hojaDeMovimientos(r.libro);
     if (!hoja) throw new Error('falta la hoja');
     expect(hoja.views[0]).toMatchObject({ state: 'frozen', xSplit: 2, ySplit: 7 });
     expect(hoja.autoFilter).toMatchObject({ from: { row: 7, column: 1 } });
@@ -289,7 +302,7 @@ describe('armarLibro — camino feliz', () => {
     );
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     if (!hoja) throw new Error('falta la hoja');
     const headers = hoja.getRow(7).values as unknown[];
     expect(headers).not.toContain('Cuenta contable');
@@ -312,7 +325,7 @@ describe('armarLibro — camino feliz', () => {
     );
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     if (!hoja) throw new Error('falta la hoja');
     const headers = hoja.getRow(7).values as unknown[];
     const colTipo = headers.findIndex((v) => v === 'Tipo de movimiento');
@@ -343,7 +356,7 @@ describe('armarLibro — camino feliz', () => {
     );
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     if (!hoja) throw new Error('falta la hoja');
     const headers = hoja.getRow(7).values as unknown[];
     const colTipo = headers.findIndex((v) => v === 'Tipo de movimiento');
@@ -406,7 +419,9 @@ describe('armarLibro — desambiguación de hojas sin alias (ajuste 1)', () => {
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
     const nombresDeHoja = releido.worksheets.map((w) => w.name);
-    expect(nombresDeHoja).toEqual(['Control de saldos', 'ARS macro Cta.Cte', 'ARS macro Cta.Esp']);
+    // Las dos filas comparten banco+concepto (fixture default) → un solo grupo, "Grupos" se arma
+    // entre "Control de saldos" y las hojas por cuenta (Tanda 1).
+    expect(nombresDeHoja).toEqual(['Control de saldos', 'Grupos', 'ARS macro Cta.Cte', 'ARS macro Cta.Esp']);
     // Ninguna pestaña lleva el "(2)" de colisión ciega — la desambiguación real evitó que hiciera falta.
     expect(nombresDeHoja.some((n) => n.includes('(2)'))).toBe(false);
 
@@ -424,7 +439,7 @@ describe('armarLibro — desambiguación de hojas sin alias (ajuste 1)', () => {
     );
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     expect(hoja?.name).not.toContain('1234');
     expect(hoja?.getCell('A1').value).toContain('····1234');
   });
@@ -439,7 +454,7 @@ describe('armarLibro — desambiguación de hojas sin alias (ajuste 1)', () => {
     );
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     expect(hoja?.getCell('A1').value).toContain('Cuenta operativa');
     expect(hoja?.getCell('A1').value).not.toContain('9999');
   });
@@ -455,7 +470,7 @@ describe('armarLibro — color de encabezado por origen del dato (ajuste 2)', ()
     const r = armarLibro(datosDePrueba());
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     if (!hoja) throw new Error('falta la hoja');
     const headers = hoja.getRow(7).values as unknown[];
     const argbDe = (header: string): string | undefined => {
@@ -496,7 +511,7 @@ describe('armarLibro — columnas de feedback de Laura', () => {
     const r = armarLibro(datosDePrueba());
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     if (!hoja) throw new Error('falta la hoja');
     const headers = (hoja.getRow(7).values as unknown[]).filter((v): v is string => typeof v === 'string');
     const iQueFalta = headers.indexOf('Qué falta');
@@ -526,7 +541,7 @@ describe('armarLibro — columnas de feedback de Laura', () => {
     );
     if (r.estado !== 'armado') throw new Error('no armó');
     const releido = await releer(r.libro);
-    const hoja = releido.worksheets[1];
+    const hoja = hojaDeMovimientos(releido);
     if (!hoja) throw new Error('falta la hoja');
     const headers = hoja.getRow(7).values as unknown[];
     const colPrincipal = headers.findIndex((v) => v === 'Corrección / Identidad');

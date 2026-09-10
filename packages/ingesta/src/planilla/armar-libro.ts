@@ -63,6 +63,13 @@ export type FilaPlanilla = {
    *  de tarjeta ni siquiera tienen `tipo` en la base). `null` salvo `tarjeta_pendiente`, y también
    *  `null` cuando el enriquecimiento no corrió — mismo gate/degradación que `identificacion`. */
   readonly categoriaEspecial: CategoriaEspecial | null;
+  /** `false` SOLO para `distinguir_tercero_de_socio` (`decision_humana`) — esa fila nunca se agrupa
+   *  con otra aunque comparta `(bancoCodigo, conceptoBanco)`: dos contrapartes distintas pueden
+   *  compartir el mismo texto genérico del banco, y agruparlas arriesgaría aprobar en bloque "son
+   *  terceros" sobre un movimiento que en realidad es de un socio no declarado
+   *  (`seguridad-datos-financieros`, Tanda 1). `true` por default, incluido cuando el enriquecimiento
+   *  no corrió — sin ese dato no hay nada que excluir. */
+  readonly agrupable: boolean;
 };
 
 /**
@@ -741,6 +748,215 @@ function armarHojaMovimientos(
 }
 
 // -----------------------------------------------------------------------------
+// Agrupación (Tanda 1) — dos hojas nuevas: "Grupos" y "Tarjeta pendiente".
+// -----------------------------------------------------------------------------
+
+export type GrupoDeMovimientos = {
+  readonly clave: string;
+  readonly bancoCodigo: string;
+  readonly conceptoBanco: string | null;
+  readonly cantidad: number;
+  readonly totalDebito: number;
+  readonly totalCredito: number;
+  /** `identificacion` compartida por todas las filas del grupo, o `'Mixto — ver detalle'` si divergen.
+   *  No es hipotético: `motor.ts` puede resolver el mismo `(banco, texto)` distinto según `lado`
+   *  (matcheo por prefijo truncado, o el chequeo de `ladoEsperado` que corre DESPUÉS de que el léxico
+   *  ya resolvió una entrada) — ver el test con el par real de `catalogo.ts` (`galicia` /
+   *  `ACREDITAMIENTO`). */
+  readonly tipoDeMovimiento: string;
+  /** `null` salvo que TODAS las filas del grupo compartan la misma `categoriaEspecial` no nula —
+   *  unanimidad, nunca mayoría (`tech-lead` + `contador-dominio`, Tanda 1: un grupo mixto nunca rutea
+   *  silenciosamente a "Tarjeta pendiente"). */
+  readonly categoriaEspecial: CategoriaEspecial | null;
+  readonly ejemplo: FilaPlanilla;
+  readonly ejemploCuentaEtiqueta: string;
+};
+
+function totalesDelGrupo(miembros: readonly FilaPlanilla[]): { totalDebito: number; totalCredito: number } {
+  let totalDebito = 0;
+  let totalCredito = 0;
+  for (const m of miembros) {
+    const importe = importeCanonicoANumeroExcel(m.importe) ?? 0;
+    if (importe < 0) totalDebito += -importe;
+    else totalCredito += importe;
+  }
+  return { totalDebito, totalCredito };
+}
+
+/** El miembro más antiguo del grupo (fecha, después `filaNumero` para desempatar) — determinístico,
+ *  no depende del orden de llegada de `datos.filas`. */
+function ejemploDelGrupo(miembros: readonly FilaPlanilla[]): FilaPlanilla {
+  const [primero] = [...miembros].sort((a, b) =>
+    a.fecha === b.fecha ? a.filaNumero - b.filaNumero : a.fecha < b.fecha ? -1 : 1,
+  );
+  // `miembros` nunca está vacío (invariante de `agruparFilas`) — el `!` documenta esa garantía, no la
+  // reemplaza: si algún día deja de cumplirse, es preferible un `TypeError` acá a un `undefined`
+  // silencioso más abajo en `armarHojaGrupos`.
+  return primero!;
+}
+
+function construirGrupo(
+  clave: string,
+  miembros: readonly FilaPlanilla[],
+  cabecerasPorCuenta: ReadonlyMap<string, CabeceraCuenta>,
+): GrupoDeMovimientos {
+  const primero = miembros[0];
+  if (!primero) throw new Error('construirGrupo: grupo vacío — invariante de agruparFilas rota');
+  const bancoCodigo = cabecerasPorCuenta.get(primero.cuentaBancariaId)?.bancoCodigo ?? '(banco desconocido)';
+
+  const identificaciones = new Set(miembros.map((m) => m.identificacion));
+  const categorias = new Set(miembros.map((m) => m.categoriaEspecial));
+  const homogeneo = identificaciones.size <= 1 && categorias.size <= 1;
+
+  const ejemplo = ejemploDelGrupo(miembros);
+  const cabeceraEjemplo = cabecerasPorCuenta.get(ejemplo.cuentaBancariaId);
+
+  return {
+    clave,
+    bancoCodigo,
+    conceptoBanco: primero.conceptoBanco,
+    cantidad: miembros.length,
+    ...totalesDelGrupo(miembros),
+    tipoDeMovimiento: homogeneo ? (primero.identificacion ?? 'Indeterminado') : 'Mixto — ver detalle',
+    categoriaEspecial: homogeneo ? primero.categoriaEspecial : null,
+    ejemplo,
+    ejemploCuentaEtiqueta: cabeceraEjemplo ? etiquetaCuenta(cabeceraEjemplo) : '(cuenta desconocida)',
+  };
+}
+
+/**
+ * Agrupa TODAS las filas del lote (no solo las que piden decisión) por `claveDeAgrupacion` —
+ * `distinguir_tercero_de_socio` (`!agrupable`) queda afuera: cada una de esas filas es su propio
+ * grupo de 1, nominada individualmente, nunca agrupada con otra (ver el comentario de `agrupable` en
+ * `FilaPlanilla`). Sin umbral mínimo, sin carpeta "Varios" — todo grupo se muestra (decisión de JP).
+ * Orden: cantidad descendente (`ux-designer`, mismo criterio que `relevamiento-laura.ts`).
+ */
+export function agruparFilas(
+  filas: readonly FilaPlanilla[],
+  cabecerasPorCuenta: ReadonlyMap<string, CabeceraCuenta>,
+): readonly GrupoDeMovimientos[] {
+  const porClave = new Map<string, FilaPlanilla[]>();
+  const singulares: FilaPlanilla[] = [];
+
+  for (const fila of filas) {
+    if (!fila.agrupable) {
+      singulares.push(fila);
+      continue;
+    }
+    const bancoCodigo = cabecerasPorCuenta.get(fila.cuentaBancariaId)?.bancoCodigo ?? '(banco desconocido)';
+    const clave = claveDeAgrupacion(bancoCodigo, fila.conceptoBanco);
+    const arr = porClave.get(clave) ?? [];
+    arr.push(fila);
+    porClave.set(clave, arr);
+  }
+
+  const grupos: GrupoDeMovimientos[] = [];
+  for (const [clave, miembros] of porClave) {
+    grupos.push(construirGrupo(clave, miembros, cabecerasPorCuenta));
+  }
+  // Cada singular con una clave propia (sufijo `individual:<filaNumero>`) — nunca colisiona con el
+  // grupo "real" del mismo banco+concepto, ni entre dos singulares con el mismo texto.
+  singulares.forEach((fila) => {
+    const bancoCodigo = cabecerasPorCuenta.get(fila.cuentaBancariaId)?.bancoCodigo ?? '(banco desconocido)';
+    const claveIndividual = `${claveDeAgrupacion(bancoCodigo, fila.conceptoBanco)}::individual:${fila.filaNumero}`;
+    grupos.push(construirGrupo(claveIndividual, [fila], cabecerasPorCuenta));
+  });
+
+  return grupos.sort((a, b) => b.cantidad - a.cantidad);
+}
+
+const ARGB_TARJETA_PENDIENTE = 'FFCFC1E8';
+
+/** Reusa el mismo hecho contable que ya explica `packages/contabilidad/src/nucleo/texto-humano.ts`
+ *  para `completar_con_liquidacion_del_adquirente`/`completar_con_liquidacion_de_la_tarjeta` — sin
+ *  importar ese paquete acá (`armar-libro.ts` es puro y sin esa dependencia, `tech-lead`, Tanda 1):
+ *  esto es una decisión de PRESENTACIÓN del export, no un concepto nuevo del núcleo. Si el texto de
+ *  origen cambia, este banner puede quedar desactualizado — riesgo aceptado, es una etiqueta
+ *  informativa, no una fuente de verdad contable. */
+const BANNER_TARJETA_PENDIENTE =
+  'Estos son movimientos de tarjeta que el sistema ya identificó (cobro con tarjeta o pago de ' +
+  'tarjeta corporativa), pero el asiento queda incompleto hasta contar con la liquidación del ' +
+  'adquirente o de la tarjeta — un documento que hoy el sistema no procesa ' +
+  '(docs/diseno/14-liquidaciones-tarjeta-plan.md, plan aprobado, sin implementar). ' +
+  'No hace falta que revises estos grupos todavía: no hay nada para aprobar.';
+
+const COLUMNAS_GRUPOS: readonly ColumnaMov[] = [
+  { header: 'Tipo de movimiento', key: 'tipoDeMovimiento', width: 30 },
+  { header: 'Concepto del banco', key: 'conceptoBanco', width: 26 },
+  { header: 'Banco', key: 'bancoCodigo', width: 10 },
+  { header: 'Cantidad de movimientos', key: 'cantidad', width: 14 },
+  { header: 'Total débito (sale)', key: 'totalDebito', width: 16, numFmt: FMT_MONEDA },
+  { header: 'Total crédito (entra)', key: 'totalCredito', width: 16, numFmt: FMT_MONEDA },
+  { header: 'Ejemplo — Fecha', key: 'ejemploFecha', width: 12, numFmt: FMT_FECHA },
+  { header: 'Ejemplo — Débito', key: 'ejemploDebito', width: 14, numFmt: FMT_MONEDA },
+  { header: 'Ejemplo — Crédito', key: 'ejemploCredito', width: 14, numFmt: FMT_MONEDA },
+  { header: 'Ejemplo — Descripción', key: 'ejemploDescripcion', width: 50 },
+  { header: 'Cuenta (del ejemplo)', key: 'ejemploCuenta', width: 22 },
+];
+
+const FILA_ENCABEZADOS_GRUPOS = 3;
+const PRIMERA_FILA_DATOS_GRUPOS = 4;
+
+/** Hoja "Grupos" (`tabColorArgb` ausente) o "Tarjeta pendiente" (`tabColorArgb` presente, quinta
+ *  categoría visual — `ux-designer`: no reusa gris/azul/dorado porque cada uno ya significa otra cosa,
+ *  y rojo/naranja connotan error, que esto no es). Sin umbral mínimo: se llama con `grupos.length ===
+ *  0` nunca — el caller decide si la hoja se arma o no. */
+function armarHojaGrupos(
+  libro: ExcelJS.Workbook,
+  nombreDeHoja: string,
+  titulo: string,
+  grupos: readonly GrupoDeMovimientos[],
+  tabColorArgb?: string,
+): void {
+  const hoja = libro.addWorksheet(nombreDeHoja, { views: [{ state: 'frozen', ySplit: FILA_ENCABEZADOS_GRUPOS }] });
+  if (tabColorArgb) hoja.properties.tabColor = { argb: tabColorArgb };
+
+  hoja.getCell('A1').value = titulo;
+  hoja.getCell('A1').font = { bold: true };
+  hoja.getCell('A1').alignment = { wrapText: true, vertical: 'middle' };
+  hoja.mergeCells(1, 1, 1, COLUMNAS_GRUPOS.length);
+  if (tabColorArgb) hoja.getRow(1).height = 60;
+
+  COLUMNAS_GRUPOS.forEach((c, i) => {
+    const celda = hoja.getCell(FILA_ENCABEZADOS_GRUPOS, i + 1);
+    celda.value = c.header;
+    hoja.getColumn(i + 1).width = c.width;
+    if (c.numFmt) hoja.getColumn(i + 1).numFmt = c.numFmt;
+    if (tabColorArgb) celda.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tabColorArgb } };
+  });
+  hoja.getRow(FILA_ENCABEZADOS_GRUPOS).font = { bold: true };
+  hoja.getRow(FILA_ENCABEZADOS_GRUPOS).alignment = { vertical: 'middle', wrapText: true };
+
+  grupos.forEach((g, indice) => {
+    const fila = hoja.getRow(PRIMERA_FILA_DATOS_GRUPOS + indice);
+    const ejemploImporte = importeCanonicoANumeroExcel(g.ejemplo.importe) ?? 0;
+    const registro: Record<string, ExcelJS.CellValue> = {
+      tipoDeMovimiento: g.tipoDeMovimiento,
+      conceptoBanco: g.conceptoBanco ?? '(sin concepto)',
+      bancoCodigo: g.bancoCodigo,
+      cantidad: g.cantidad,
+      totalDebito: g.totalDebito || null,
+      totalCredito: g.totalCredito || null,
+      ejemploFecha: fechaIsoASerialExcel(g.ejemplo.fecha),
+      ejemploDebito: ejemploImporte < 0 ? -ejemploImporte : null,
+      ejemploCredito: ejemploImporte > 0 ? ejemploImporte : null,
+      ejemploDescripcion: g.ejemplo.descripcion,
+      ejemploCuenta: g.ejemploCuentaEtiqueta,
+    };
+    COLUMNAS_GRUPOS.forEach((c, i) => {
+      fila.getCell(i + 1).value = registro[c.key] ?? null;
+    });
+  });
+
+  if (grupos.length > 0) {
+    hoja.autoFilter = {
+      from: { row: FILA_ENCABEZADOS_GRUPOS, column: 1 },
+      to: { row: FILA_ENCABEZADOS_GRUPOS - 1 + grupos.length, column: COLUMNAS_GRUPOS.length },
+    };
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Punto de entrada
 // -----------------------------------------------------------------------------
 
@@ -755,6 +971,22 @@ export function armarLibro(datos: DatosPlanilla): ResultadoLibro {
 
   armarHojaControl(libro, datos);
 
+  // Agrupación (Tanda 1) — ANTES de las hojas por cuenta, para que "Grupos" quede segunda en el
+  // libro (`ux-designer`: Control de saldos → Grupos → una por cuenta → Tarjeta pendiente al final).
+  const cabecerasPorCuenta = new Map(datos.cabeceras.map((c) => [c.cuentaBancariaId, c] as const));
+  const grupos = agruparFilas(datos.filas, cabecerasPorCuenta);
+  const gruposTarjeta = grupos.filter((g) => g.categoriaEspecial === 'tarjeta_pendiente');
+  const gruposNormales = grupos.filter((g) => g.categoriaEspecial !== 'tarjeta_pendiente');
+
+  if (gruposNormales.length > 0) {
+    armarHojaGrupos(
+      libro,
+      'Grupos',
+      `Grupos por banco + concepto · Lote ${datos.loteId} · Generado ${datos.generadoEn}`,
+      gruposNormales,
+    );
+  }
+
   const filasPorCuenta = new Map<string, FilaPlanilla[]>();
   for (const f of datos.filas) {
     const arr = filasPorCuenta.get(f.cuentaBancariaId) ?? [];
@@ -762,12 +994,18 @@ export function armarLibro(datos: DatosPlanilla): ResultadoLibro {
     filasPorCuenta.set(f.cuentaBancariaId, arr);
   }
 
-  const nombresUsados = new Set<string>();
+  // "Grupos"/"Tarjeta pendiente" reservados de antemano: una cuenta real sin alias nunca puede
+  // colisionar con estos nombres (mismo mecanismo de `nombreHoja`, minúsculas).
+  const nombresUsados = new Set<string>(['grupos', 'tarjeta pendiente']);
   let totalFilas = 0;
   for (const cabecera of datos.cabeceras) {
     const filasDeCuenta = filasPorCuenta.get(cabecera.cuentaBancariaId) ?? [];
     const nombre = nombreHoja(cabecera, nombresUsados);
     totalFilas += armarHojaMovimientos(libro, cabecera, filasDeCuenta, nombre);
+  }
+
+  if (gruposTarjeta.length > 0) {
+    armarHojaGrupos(libro, 'Tarjeta pendiente', BANNER_TARJETA_PENDIENTE, gruposTarjeta, ARGB_TARJETA_PENDIENTE);
   }
 
   return { estado: 'armado', libro, filas: totalFilas };

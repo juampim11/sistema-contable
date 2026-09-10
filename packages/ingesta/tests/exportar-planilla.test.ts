@@ -567,9 +567,9 @@ describe('exportarPlanillaDeLote — aislamiento', () => {
 
     const releido = new ExcelJS.Workbook();
     await releido.xlsx.load(Buffer.from(r.libro) as unknown as ExcelJS.Buffer);
-    // Control de saldos + 2 hojas de movimientos, ninguna mezclada.
-    expect(releido.worksheets.length).toBe(3);
-    const hojasMov = releido.worksheets.filter((w) => w.name !== 'Control de saldos');
+    // Control de saldos + Grupos (Tanda 1) + 2 hojas de movimientos, ninguna mezclada.
+    expect(releido.worksheets.length).toBe(4);
+    const hojasMov = releido.worksheets.filter((w) => w.name !== 'Control de saldos' && w.name !== 'Grupos');
     const conteos = hojasMov
       .map((h) => {
         let n = 0;
@@ -658,7 +658,9 @@ describe('exportarPlanillaDeLote — identificador de cuenta (ajuste 1, base rea
     // específico) y no puede serlo: el desempate de la consulta es `cuenta_bancaria_id`, un uuid
     // generado al azar por cuenta de prueba — afirmar un orden fijo acá haría el test dependiente
     // de qué uuid salió "menor" en esta corrida (confirmado con 6 corridas sueltas: falló en 4/6).
-    const nombresDeHoja = releido.worksheets.map((w) => w.name).filter((n) => n !== 'Control de saldos');
+    const nombresDeHoja = releido.worksheets
+      .map((w) => w.name)
+      .filter((n) => n !== 'Control de saldos' && n !== 'Grupos' && n !== 'Tarjeta pendiente');
     expect(nombresDeHoja.slice().sort()).toEqual(['ARS bancoexport12 Cta.Cte', 'ARS bancoexport12 Cta.Esp']);
     expect(nombresDeHoja.some((n) => n.includes('(2)'))).toBe(false);
 

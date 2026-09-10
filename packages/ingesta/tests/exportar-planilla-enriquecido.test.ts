@@ -17,6 +17,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { inflateRawSync } from 'node:zlib';
+import ExcelJS from 'exceljs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { altaDeSocio, conUsuario, cerrarConexiones, escribirConAuditoria } from '@sistema-contable/data';
 import {
@@ -435,4 +436,83 @@ describe('exportarPlanillaDeLote — enriquecimiento contra los tres bancos del 
     expect(texto).toContain(`Motor de reconocimiento — versión ${digestDeBanco(lexico)}`);
     expect(texto).toContain('Indeterminado');
   });
+});
+
+// -----------------------------------------------------------------------------
+// Bloque F (Tanda 1) — `categoriaEspecial` ("tarjeta_pendiente") nunca sale fuera de `estudio_interno`,
+// aunque el `tipo`/`que_decide` real del movimiento sea de tarjeta. Condición bloqueante de
+// `seguridad-datos-financieros`, verificada por `security-engineer`: se calcula EXCLUSIVAMENTE dentro
+// del camino ya gateado por `DESTINATARIOS_QUE_ENRIQUECEN` — nunca fuera de él.
+// -----------------------------------------------------------------------------
+
+describe('exportarPlanillaDeLote — categoriaEspecial "tarjeta_pendiente" (Tanda 1, Bloque F)', () => {
+  it('estudio_interno: la hoja "Tarjeta pendiente" se arma para el literal real de acreditación de tarjeta', async () => {
+    await registrarBanco('galicia');
+    const cuentaBancariaId = await registrarCuenta(s.clienteA, 'galicia');
+    const base = extractoSintetico({
+      semilla: 9301,
+      cantidadMovimientos: 6,
+      saldoInicialCentavos: 80_000_00n,
+      periodoDesde: '2026-06-01',
+      periodoHasta: '2026-06-30',
+      bancoCodigo: 'galicia',
+    });
+    // 'ACREDITAMIENTO' por 'credito' (lado 'haber') es el literal REAL de `catalogo.ts`
+    // (`galicia.acreditamiento`) que resuelve `completar_con_liquidacion_del_adquirente`.
+    const cuenta = conConceptosForzados(base, [{ columnaOrigen: 'credito', literal: 'ACREDITAMIENTO' }]);
+    const loteId = await crearLotePersistido({ clienteId: s.clienteA, bancoCodigo: 'galicia', cuenta, cuentaBancariaId });
+
+    const r = await conUsuario(USUARIOS.contadorA, (tx) =>
+      exportarPlanillaDeLote(tx, {
+        clienteId: s.clienteA,
+        loteId,
+        motivoCodigo: 'demo_contadora',
+        destinatarioCodigo: 'estudio_interno',
+        generadoEn: '2026-08-21T00:00:00.000Z',
+      }),
+    );
+    expect(r.estado).toBe('armada');
+    if (r.estado !== 'armada') return;
+
+    const releido = new ExcelJS.Workbook();
+    await releido.xlsx.load(Buffer.from(r.libro) as unknown as ExcelJS.Buffer);
+    expect(releido.getWorksheet('Tarjeta pendiente')).toBeDefined();
+  });
+
+  it.each(['cliente_titular', 'organismo'] as const)(
+    '🔴 destinatario=%s: la hoja "Tarjeta pendiente" NUNCA se arma, aunque el movimiento real sea de tarjeta',
+    async (destinatarioCodigo) => {
+      await registrarBanco('galicia');
+      const cuentaBancariaId = await registrarCuenta(s.clienteA, 'galicia');
+      const base = extractoSintetico({
+        semilla: destinatarioCodigo === 'organismo' ? 9303 : 9302,
+        cantidadMovimientos: 6,
+        saldoInicialCentavos: 80_000_00n,
+        periodoDesde: '2026-06-01',
+        periodoHasta: '2026-06-30',
+        bancoCodigo: 'galicia',
+      });
+      // Mismo literal real que el test de arriba — el punto es que, para estos destinatarios, capa B/C
+      // ni siquiera corre (`DESTINATARIOS_QUE_ENRIQUECEN`), así que `categoriaEspecial` tiene que
+      // degradar a `null` para TODAS las filas, sin importar el `tipo`/`que_decide` real.
+      const cuenta = conConceptosForzados(base, [{ columnaOrigen: 'credito', literal: 'ACREDITAMIENTO' }]);
+      const loteId = await crearLotePersistido({ clienteId: s.clienteA, bancoCodigo: 'galicia', cuenta, cuentaBancariaId });
+
+      const r = await conUsuario(USUARIOS.contadorA, (tx) =>
+        exportarPlanillaDeLote(tx, {
+          clienteId: s.clienteA,
+          loteId,
+          motivoCodigo: 'demo_contadora',
+          destinatarioCodigo,
+          generadoEn: '2026-08-21T00:00:00.000Z',
+        }),
+      );
+      expect(r.estado).toBe('armada');
+      if (r.estado !== 'armada') return;
+
+      const releido = new ExcelJS.Workbook();
+      await releido.xlsx.load(Buffer.from(r.libro) as unknown as ExcelJS.Buffer);
+      expect(releido.getWorksheet('Tarjeta pendiente')).toBeUndefined();
+    },
+  );
 });

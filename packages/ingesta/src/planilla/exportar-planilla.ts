@@ -205,8 +205,15 @@ export function categoriaEspecialDe(r: Reconocimiento): CategoriaEspecial | null
     : null;
 }
 
+/** `false` SOLO para `distinguir_tercero_de_socio` — ver el comentario de `agrupable` en
+ *  `FilaPlanilla` (`armar-libro.ts`) para el motivo (`seguridad-datos-financieros`, Tanda 1). */
+function agrupableDe(r: Reconocimiento): boolean {
+  return !(r.clase === 'decision_humana' && r.queDecide === 'distinguir_tercero_de_socio');
+}
+
 type TextoConCategoria = ReturnType<typeof textoDeReconocimiento> & {
   readonly categoriaEspecial: CategoriaEspecial | null;
+  readonly agrupable: boolean;
 };
 
 type ResultadoEnriquecimiento = {
@@ -281,7 +288,11 @@ async function enriquecer(
       }, patronesDeContraparte);
     }
 
-    textos.set(f.id, { ...textoDeReconocimiento(despues), categoriaEspecial: categoriaEspecialDe(despues) });
+    textos.set(f.id, {
+      ...textoDeReconocimiento(despues),
+      categoriaEspecial: categoriaEspecialDe(despues),
+      agrupable: agrupableDe(despues),
+    });
   }
 
   return { textos, estadoEnriquecimiento: 'si', motorDigest };
@@ -549,6 +560,10 @@ export async function exportarPlanillaDeLote(
       pendiente: texto?.pendiente ?? null,
       contraparteConocida: texto?.contraparteConocida ?? null,
       categoriaEspecial: texto?.categoriaEspecial ?? null,
+      // Sin enriquecimiento no hay `que_decide` conocido, así que no hay nada que excluir de la
+      // agrupación — degrada a `true` (agrupable), mismo criterio "columnas en blanco, comportamiento
+      // de hoy" que sus hermanos.
+      agrupable: texto?.agrupable ?? true,
     };
   });
 
