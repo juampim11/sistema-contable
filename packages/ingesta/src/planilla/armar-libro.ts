@@ -158,6 +158,26 @@ export function importeCanonicoANumeroExcel(canonico: string): number | null {
   return Number(centavos) / 100;
 }
 
+/**
+ * Clave de agrupación — ÚNICA para la cola de revisión (Tanda 1, `docs/diseno/
+ * 31-replanteo-hacia-producto.md`). Por MOVIMIENTO, no por decisión: nunca lee `clase`/`que_decide`/
+ * `motivo_codigo` — es una propiedad del banco y del texto que publicó, no del estado de la decisión
+ * que el motor resolvió (decisión de JP, confirmada tres veces en la sesión que diseñó esto).
+ *
+ * Normalización LIVIANA (trim + colapsar espacios + mayúsculas) — nunca `normalizarParaLexico` del
+ * motor: esta clave se calcula AGUAS ABAJO del reconocimiento, sobre `FilaPlanilla` ya reducida, nunca
+ * sobre el objeto de evidencia — usar la normalización del léxico acá mezclaría el bug del digest
+ * (HANDOFF 187) por la puerta de atrás.
+ */
+function normalizarParaAgrupar(texto: string): string {
+  return texto.trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+export function claveDeAgrupacion(bancoCodigo: string, conceptoBanco: string | null): string {
+  const concepto = conceptoBanco === null ? '(sin concepto)' : normalizarParaAgrupar(conceptoBanco);
+  return `${bancoCodigo}::${concepto}`;
+}
+
 const EPOCH_EXCEL_UTC = Date.UTC(1899, 11, 30);
 const MS_POR_DIA = 86_400_000;
 const RE_FECHA_ISO = /^(\d{4})-(\d{2})-(\d{2})$/;
