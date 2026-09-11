@@ -6,6 +6,299 @@
 
 ---
 
+## 2026-09-11 (209) — 🔒 CIERRE del día: del hallazgo del gate de vías calificadas al segundo
+paquete enviado a Laura — commiteado y pusheado a `origin/main`. Números finales: **Bracci 79,0%
+automático / ROKA 80,6%** (sobre el total, sin FCI), y **99,5% / 99,5%** de eso ya con cuenta
+contable real (antes de hoy: 0% en los dos).
+
+**Herramienta:** Claude Code, sesión interactiva completa del día (204→209). Esta entrada
+consolida el arco completo — 204-208 quedan como el detalle línea por línea, esta es el resumen
+para quien no tenga tiempo de leer las cinco.
+
+### El arco completo del día
+
+1. **(204)** — `regla_imputacion` fija cargada para `cobranza_de_cliente`/
+   `pago_a_proveedor_transferencia` en los dos clientes. Bracci cerró, ROKA quedó bloqueado por un
+   hallazgo nuevo: la vía `texto_prefijo_con_cola` no calificaba en D-31. Convocatoria dual
+   (`motor-conciliacion-contable` + `contador-dominio`) la promovió con 3 condiciones, las 3
+   implementadas con prueba de mutación.
+2. **(205)** — los 4 lotes de ROKA aplicados con la vía promovida: **6.512/6.512** movimientos
+   (Bracci + ROKA) con asiento real, Σdebe=Σhaber exacto — cierra el "susto" de 6.512 movimientos
+   sin evidencia de manifestación que había abierto (203) el día anterior.
+3. **(206)** — checkpoint intermedio: Frente 2 (el paquete final en sí) seguía en curso, 6 archivos
+   sin commitear.
+4. **(207)** — Frente 2 implementado: alias real cargado en las 5 cuentas bancarias (con
+   investigación completa del alias previo de Bracci antes de sobrescribirlo), convocatoria de 4
+   agentes (`contador-dominio`, `seguridad-datos-financieros`, `security-engineer`, `ux-designer`)
+   sobre el diseño del desplegable de cuentas y las preguntas del instructivo, descarte de un número
+   ("93,7%/95,6%") que JP citó como verificado pero no existía en ningún lado del repo.
+5. **(208)** — 5 hallazgos reales de JP revisando el `.xlsx` completo (no solo el diseño): la
+   contradicción "pendiente"/"no aplica", FCI mezclado con el resto, un literal de léxico sin
+   reconocer (documentado como deuda, no corregido), confirmación de que 10 grupos de ROKA NO eran
+   un bug, y una columna huérfana en "Ejemplos de asiento real".
+6. **Hoy, después de (208)** — 2 ajustes finales de contenido (tarjeta de crédito agregada a "qué
+   NO cubre", frase de "validar con profesional matriculado" sacada del Acumulado y del instructivo
+   por redundante/inapropiada hacia la propia contadora matriculada), conversión del instructivo a
+   `.docx`, y el cierre de repo de esta entrada.
+
+### Los 2 incidentes de la sesión — los dos contenidos, ninguno llegó a Laura
+
+- **`errorStyle: 'error'` en `dataValidation`** — valor inválido de OOXML (la spec exige `'stop'`
+  en minúscula; el tipo de ExcelJS no lo valida, lo pasa derecho al XML). Excel de escritorio lo
+  tolera y corrige en silencio al abrir — por eso pasó typecheck, tests, y la corrida real sin que
+  nadie lo notara. Lo encontró JP abriendo los archivos con `openpyxl` (Python), no con Excel de
+  escritorio. Era un bug preexistente en `armar-libro-laura.ts` (de antes de esta sesión), copiado
+  de ahí a `armar-libro.ts` al construir el desplegable nuevo — corregido en los dos archivos,
+  verificado por inspección del XML crudo (`errorStyle="stop"`, un solo valor) y por
+  `openpyxl.load_workbook()` sin excepción en los 2 `.xlsx` finales.
+- **Artifact publicado por error** — el instructivo (datos reales de clientes, `privado/`) se
+  publicó una vez como Artifact de Claude, subiéndolo a la infraestructura de Anthropic con una URL
+  propia — exactamente el tipo de exposición que `privado/` existe para evitar. Autodetectado y
+  reportado a JP en el momento, sin esperar a que lo notara; quedó privado (nunca compartido ni
+  público), y no se volvió a usar Artifact para contenido de `privado/` el resto de la sesión — el
+  instructivo se mostró íntegro en el chat y se convirtió a `.docx` con `pandoc`, siempre dentro del
+  repo.
+
+### Verificación final antes del commit
+
+`pnpm typecheck` limpio. `pnpm vitest run` sobre los archivos tocados: verde (69/69 en
+`packages/ingesta`; los 9 fallos de `packages/data`/`apps/cli` y los 4 de
+`aislamiento-modulo-1.test.ts` son preexistentes, declarados en (203)/(207)/(208), no de esta
+sesión). Los 2 `.xlsx` finales abren con `openpyxl.load_workbook()` sin excepción. Σdebe=Σhaber
+diferencia `0` en los dos clientes. El paquete completo para Laura —
+`privado/piloto_capa_d/paquete-final-2026-05-a-08/`: `paquete-final-bracci-2026-05-a-08.xlsx`,
+`paquete-final-roka-2026-05-a-08.xlsx`, `instructivo-cierre-mayo-agosto.docx` (+ su fuente `.md`)
+— confirmado por JP, listo para que lo envíe.
+
+### Commits del día (este cierre)
+
+`aa023df` (CLI de alias), `a1a03ea` (nota `catalogo.ts`), `a87ce1c` (fix `errorStyle`
+`armar-libro-laura.ts`), `6ee9cd1` (hoja Grupos + desplegable, el grueso del cambio),
+`1cc971d` (script del paquete, renombrado de `_tmp-` a nombre real) — más este mismo commit de
+HANDOFF. Push a `origin/main` inmediatamente después.
+
+### Qué queda pendiente, explícito
+
+- El literal `'IMP. DEB. LEY 25413'` en `galicia.impuesto_25413_sobre_debitos` — deuda de (208),
+  33 movimientos Bracci, sin dueño.
+- La deuda de `aislamiento-modulo-1.test.ts` (`TABLAS_M1` sin `asiento_propuesto_reproceso`/
+  `reconocimiento_contrapartida_patron_match`) — de (208), sin dueño.
+- El campo `esImputable`/equivalente en `cuenta_atributo` — deuda de `contador-dominio` en (208),
+  migración nueva fuera de alcance.
+- Ningún test del repo abre un `.xlsx` generado con una librería estricta — deuda de (208).
+- Generalizar `paquete-cierre-bracci-roka-2026-05-a-08.ts` a un CLI real (flags de fecha/cliente)
+  si vuelve a hacer falta un paquete de este tipo — declarado en el propio header del archivo.
+- Las 5 preguntas del instructivo, sin responder — normal, es lo que el instructivo pide.
+
+---
+
+## 2026-09-11 (208) — 🟡 Frente 2: 5 hallazgos reales de JP revisando el `.xlsx` completo,
+corregidos 4/5 (el 5º queda declarado como deuda) — sigue faltando la confirmación de JP, sin commitear.
+
+**Herramienta:** Claude Code, sesión interactiva, continuación directa de (207).
+
+### Los 5 hallazgos y qué se hizo con cada uno
+
+1. **Contradicción real, confirmada y corregida en los DOS clientes** (JP la vio en Bracci, también
+   estaba en ROKA): un grupo `clase: 'propuesta'` sin regla de imputación (`retiro_de_socio`, Bracci,
+   14 mov.; `pago_de_haberes`, ROKA, 26 mov.) mostraba "Sin cuenta asignada — pendiente" en una
+   columna y "— no aplica —" en la de al lado — dos señales contradictorias sobre el mismo hecho.
+   `GrupoDeMovimientos.requiereRevision` (`armar-libro.ts`) ahora se deriva del mismo valor que ya
+   arma `cuentaAsignada` (constante compartida `CUENTA_PENDIENTE`, nunca un segundo cálculo): `true`
+   si algún miembro es genuinamente `decision_humana`/`sin_reconocer`, **o** si el grupo no tiene
+   cuenta real todavía. Verificado en los 2 archivos regenerados: las dos filas tienen el desplegable
+   activo ahora.
+2. **FCI (SUSCRIPCION/RESCATE FIMA) excluido del universo completo del paquete** — no solo de
+   "Grupos": si quedaran en los totales sin aparecer en ninguna hoja sería la misma inconsistencia de
+   (207) §6. Identificado por `evidencia_entrada_lexico_id` (`<banco>.rescate_fci`/
+   `<banco>.suscripcion_fci`), estructural, nunca por texto (`ilike '%FIMA%'` — de hecho **ROKA/Macro
+   no usa "FIMA"**: sus literales son "10 Sol.Resc"/"10 Liq.Susc", `macro.ts`, invisibles a una
+   búsqueda de texto por "FIMA" pero SÍ capturados por el filtro estructural). Impacto real medido:
+   **79 movimientos Bracci + 32 ROKA** — JP solo había visto los de Bracci; el filtro estructural
+   agarró los de ROKA también, que no eran visibles a simple vista en la hoja. Declarado en el propio
+   título del Resumen ejecutivo ("no incluye N movimientos de FCI... ver instructivo") — texto dentro
+   del Excel, el instructivo en sí no se tocó (pedido explícito de JP, se revisa aparte).
+   - 🔴 **Bug propio encontrado en el camino, antes de entregar**: la primera versión del filtro
+     (`where ... and not (ES_FCI)`) rompía en SQL para toda fila con `evidencia_entrada_lexico_id is
+     null` — `not (NULL or NULL)` es `NULL`, no `true`, y una `WHERE` con `NULL` excluye la fila. Bracci
+     pasó de 3946 a 3613 (−333) en vez de −79; medido, no asumido "está bien" — 254 filas de más
+     resultaron ser exactamente las que tienen esa columna en `NULL` (la mayoría de las filas: solo
+     3692 de 3946 la tienen poblada). Corregido con `coalesce(..., '')`. Re-verificado: Bracci
+     3946−79=3867 exacto, ROKA 6801−32=6769 exacto.
+3. **"IMP. DEB. LEY 25413" — documentado como deuda, no corregido esta ronda** (decisión de JP).
+   Impacto real medido: **33 movimientos, solo Bracci** (ROKA no tiene ningún caso), todos
+   `concepto_completo = true`. Causa: el motor nunca cae a coincidencia por prefijo cuando el texto es
+   completo (evita adivinar, `matcher.ts` línea ~38) — el literal exacto no está cargado en
+   `galicia.impuesto_25413_sobre_debitos` (que sí tiene `'IMP. DEB. LEY 25413 GRAL.'` y `'IMPUESTO
+   DEB.LEY 25413'`, mismo concepto, dos variantes). Fix identificado y NO aplicado: agregar el tercer
+   literal — toca el léxico del motor real, pide convocar `motor-conciliacion-contable` y prueba de
+   mutación, fuera de alcance de esta corrección de Excel.
+4. **ROKA, 10 grupos de 1 movimiento — confirmado que NO es un bug**, sin cambios. Los 10 son
+   `deposito_cheques_terceros`/`distinguir_tercero_de_socio` (concepto real: "ACREDITACION CHEQUE
+   REMESAS") — el mismo mecanismo intencional (`agrupable: false`, decisión de Tanda 1 de
+   `seguridad-datos-financieros`) que ya explica el bug de conteo 15→25 de (207) §6. Forzar el
+   agrupamiento sería la regresión que esa decisión de diseño existe para evitar.
+5. **Columna huérfana en "Ejemplos de asiento real" — sacada.** `COLUMNAS_EJEMPLOS` ya no tiene "Si es
+   NO: cuenta que hubieras usado" (no había ninguna pregunta OK/NO que la precediera en esa hoja — son
+   ejemplos ya resueltos). Queda solo "Comentarios".
+
+### Verificado
+
+`pnpm typecheck` limpio. `pnpm vitest run` sobre `planilla.test.ts`/`planilla-agrupacion.test.ts`/
+`armar-libro-laura.test.ts`: 69/69 verdes. Corrida real contra el piloto, los 2 archivos regenerados:
+Σdebe=Σhaber diferencia `0` en los dos. **Los 2 `.xlsx` abren con `openpyxl.load_workbook()` sin
+excepción** (exit code 0 — pedido explícito de JP después del bug de `errorStyle` de la ronda
+anterior). Copiados a `privado/piloto_capa_d/paquete-final-2026-05-a-08/` (misma carpeta de siempre),
+sobrescribiendo la versión anterior.
+
+### Qué queda pendiente
+
+- **La confirmación de JP** — palabras de JP: "salvo que aparezca algo del calibre de un archivo
+  roto, confirmo el envío a Laura hoy". No se envía a Laura hasta esa confirmación explícita.
+- El literal `'IMP. DEB. LEY 25413'` en `galicia.impuesto_25413_sobre_debitos` — deuda declarada en
+  (3) de arriba, sin dueño, requiere convocatoria propia cuando se retome.
+- Todo lo demás de (207) §7 sigue igual (commit pendiente, deuda de `aislamiento-modulo-1.test.ts`,
+  campo `esImputable`, ningún test que abra un `.xlsx` con librería estricta).
+
+---
+
+## 2026-09-11 (207) — 🟡 Frente 2 (tarea 203) implementado y verificado contra el piloto — falta la
+confirmación de JP abriendo los 2 `.xlsx` en Excel real, todavía sin commitear.
+
+**Herramienta:** Claude Code, sesión interactiva, continuación directa de (206).
+
+### 1. Punto 1 (alias) — aplicado y verificado
+
+CLI nuevo `apps/cli/src/actualizar-alias-cuenta.ts` (dry-run + `--aplicar`, resuelve la cuenta por
+`(moneda, tipo del identificador vigente)`, nunca por uuid a mano) + `actualizarAliasDeCuentaBancaria`
+(`packages/data/src/ingesta/escrituras.ts`). Backup fresco (`piloto_20260911-171551Z.dump`), 5 dry-run
++ 5 `--aplicar`, verificado por consulta directa: Bracci → "Cuenta Corriente en Pesos"/"Cuenta
+Corriente Especial en Pesos" (el alias previo, `"1.1.2.100/300 Banco galicia..."`, investigado contra
+HANDOFF (97): vino literal del pedido de esa sesión de alta, sin dependencia funcional — confirmado
+por grep completo, nada en el repo parsea el formato del alias); ROKA → "Cuenta Corriente
+Bancaria"/"Cuenta Corriente Especial en Pesos"/"Cuenta Corriente Especial en Dólares".
+`pnpm vitest run packages/data apps/cli`: 0 fallos nuevos (los 9 que muestra la corrida son
+preexistentes, declarados en (203) — allowlist de `reglas-de-codigo.test.ts` R26/R-F desactualizada).
+
+### 2. Premisa del pedido corregida por JP — los "93,7%/95,6%" no existen en el repo
+
+Búsqueda completa (HANDOFF incluido): cero matches. JP los descartó explícitamente. Números correctos,
+medidos hoy contra el piloto real: **77,4% Bracci / 80,2% ROKA** automático sobre el total de
+movimientos (sin cambio — Capa D no toca esta clasificación) y, **medida aparte, nunca mezclada**,
+**99,5% / 99,5%** de eso YA automático que ahora tiene cuenta contable real asignada (antes de las 4
+reglas de (204): 0%). El número de grupos `decision_humana` se recalculó corriendo el script real:
+**24 (Bracci) / 25 (ROKA)** — ver el bug de (3) más abajo sobre por qué ROKA no es 15.
+
+### 3. Convocatoria completa (4 dictámenes) antes de tocar el diseño del entregable
+
+`contador-dominio` + `seguridad-datos-financieros` + `security-engineer` + `ux-designer`, en paralelo,
+sobre el diseño concreto (columna condicional de "Grupos", desplegable de cuentas, instructivo). Los
+4 con hallazgos reales, todos incorporados:
+
+- **`contador-dominio`**: `cuenta_atributo` no tiene hoy un campo para distinguir cuenta imputable de
+  cuenta título/agrupación (agregarlo es una migración nueva, fuera de alcance) — JP confirmó filtro
+  mínimo (`activa && vigenteHasta === null`) con la limitación declarada, sin migración esta ronda.
+  Encontró además una **5ª pregunta de fondo** que faltaba: los ~1.414 movimientos de "pago a
+  proveedor" ya clasificados automáticamente (regla fija de (204)) asumen una presunción de
+  cancelación que el sistema no puede verificar — si alguno fue un anticipo, la cuenta es otra (activo,
+  no pasivo). JP la agregó al instructivo (pasa de 4 a 5 preguntas). Las 4 originales quedaron con el
+  texto de JP tal cual, sin las precisiones técnicas que sugirió (decisión de JP).
+- **`seguridad-datos-financieros`**: 2 hallazgos de código en `_tmp-paquete-final-laura.ts` — H-1
+  (media, `console.error` con `error.message` crudo del driver) y H-2 (baja, agregado monetario de un
+  solo cliente a consola) — más los 4 requisitos de la hoja oculta del plan de cuentas (banner "es de
+  ida", lectura de base nunca hardcodeada, solo código+denominación, sin `rol_funcional`/
+  `padron_socio_id`).
+- **`security-engineer`**: encontró un bloqueante MÁS serio que H-1 — **H-3**, el catch de tope de
+  `main()` (`console.error(e)` crudo) es el que de verdad atrapa todo, incluido un fallo de
+  `registrarAcceso()` que se escapaba del catch específico de H-1. Más: nombre definido (no fórmula
+  armada a mano) para el rango del desplegable, `state: 'veryHidden'`, `errorStyle: 'error'` (Stop), y
+  filtrar/auditar la lectura de `cuenta_atributo` aparte de la de `movimiento_bancario_crudo`.
+- **`ux-designer`**: gris + texto literal `"— no aplica —"` (nunca celda vacía) en los grupos ya
+  resueltos, cuarto swatch en la leyenda de color ya existente, banner explicativo en el título de
+  "Grupos", instructivo en tabla (Pregunta / Para qué la necesito / Mientras no contestes / Tu
+  respuesta) agrupada por cliente.
+
+### 4. Implementado
+
+- `packages/ingesta/src/planilla/armar-libro.ts`: `FilaPlanilla.requiereDecisionHumana` +
+  `GrupoDeMovimientos.requiereRevision` (`some(m => m.requiereDecisionHumana)`);
+  `COLUMNAS_GRUPOS_EXTENDIDO` reemplaza "Comentarios"/"Si es NO..." por "¿A qué cuenta contable va?"
+  (desplegable condicional) + "Comentario libre"; `armarHojaGrupos` acepta
+  `nombreDefinidoPlanDeCuentas` y escribe `TEXTO_NO_APLICA`/`ARGB_NO_APLICA` en los grupos ya resueltos
+  (mismo gris ahora también en "Ejemplos de asiento real", antes sin nombrar); función nueva
+  `armarHojaPlanDeCuentasOculta` (hoja `veryHidden` + `definedNames.add`).
+- `_tmp-paquete-final-laura.ts`: `comoFilaPlanilla` computa `requiereDecisionHumana = clase !==
+  'propuesta'`; lectura + auditoría aparte de `cuenta_atributo` (filtrada por vigencia); Resumen
+  ejecutivo con los 2 números separados y el aviso "es de ida"; H-1/H-2/H-3 + Hallazgo B corregidos —
+  todo el logging pasa por `loggerAcotado`, nunca `error.message`/`error`/totales crudos a consola.
+- **Bug real encontrado en el chequeo cruzado** (el punto 5 del pedido original — verificado, no
+  saltado): el conteo de "grupos que piden decisión" del Resumen ejecutivo se calculaba con un tercer
+  conteo manual (banco+concepto sobre `crudas`) que **excluía** los movimientos `distinguir_tercero_de_
+  socio` (nunca se agrupan, cada uno es su propia fila en "Grupos" — `agrupable: false`). Corrida
+  real: ROKA mostraba "15 decisiones" en el Resumen mientras "Grupos" tenía 25 filas pidiendo revisión
+  (10 singulares sin contar). Bracci no lo mostró (0 singulares en el período) — por eso pasó
+  desapercibido. Corregido: el Resumen usa ahora `gruposNormales.filter(g =>
+  g.requiereRevision).length` — el mismo cálculo que arma la hoja real, nunca un cálculo aparte.
+- Instructivo nuevo: `privado/piloto_capa_d/entregas-laura/instructivo-cierre-mayo-agosto.md` (el
+  `instructivo.md` existente ahí es del relevamiento de 2026-09-02, otro alcance — no se tocó).
+
+### 5. Verificado contra el piloto (solo lectura, sin escribir nada además del punto 1)
+
+`pnpm typecheck` limpio. `pnpm vitest run packages/ingesta`: 973 pasan / 4 fallan — los 4 son
+preexistentes (`aislamiento-modulo-1.test.ts`, `TABLAS_M1` desactualizada: 2 tablas de las migraciones
+`0038`/`0040` con `cliente_id` sin declarar ni cargadas ni excluidas — deuda real, sin dueño, no
+relacionada con esta tarea). Corrida real del script contra el piloto: Bracci Σdebe=Σhaber diferencia
+`0`, ROKA ídem; 227/219 cuentas en la hoja oculta del plan; 24/25 grupos con desplegable real
+(coincide exacto con el Resumen); leyenda con los 4 swatches.
+
+### 6. Dos correcciones DESPUÉS de reportar (5) como cerrado — ninguna detectada por este agente
+
+- **Entrega:** los 2 `.xlsx` + el instructivo se mandaron primero por `SendUserFile` — **no llegaron**
+  (esa herramienta no entrega adjuntos reales en esta sesión de terminal). JP lo detectó porque nunca
+  vio los archivos. Corregido: se copiaron a la ruta real que ya se venía usando,
+  `privado/piloto_capa_d/paquete-final-2026-05-a-08/` (la misma del 2026-09-10) — la primera corrida
+  había ido al directorio temporal de la sesión (efímero) por error, no a esa carpeta.
+- **`errorStyle: 'error'` es un valor inválido de OOXML** (la spec, ECMA-376 §18.18.33, exige
+  `'stop'`/`'warning'`/`'information'` en minúscula — `error?: string` en el tipo de ExcelJS no valida
+  nada, pasa lo que sea derecho al atributo XML). JP lo detectó abriendo los archivos con `openpyxl`
+  (Python), no con Excel de escritorio — **Excel tolera el XML inválido y lo corrige en silencio al
+  abrir**, sin avisar, lo que puede alterar la validación al reguardar. El mismo bug **ya existía antes
+  de esta sesión** en `armar-libro-laura.ts` (2 lugares, `exportar-relevamiento-laura.ts`) — se copió
+  de ahí a `armar-libro.ts` en el punto 4. Corregido en los 3 lugares. Verificado, no solo con
+  `openpyxl.load_workbook()` sin excepción (exit code 0 en los 2 archivos), sino además inspeccionando
+  el XML real (`unzip` + `grep 'errorStyle='` sobre `xl/worksheets/*.xml`): `errorStyle="stop"`, un
+  solo valor, en los dos archivos regenerados.
+
+**Por qué importa más que un typo:** los 2 archivos se habían dado por verificados en (5) — typecheck,
+tests, corrida real, Σdebe=Σhaber — y ninguno de esos chequeos toca la validez del XML que ExcelJS
+serializa. `pnpm verificar` no habría atrapado esto tampoco: no hay ningún test en el repo que abra un
+`.xlsx` generado con una librería de terceros y confirme que carga. Deuda declarada, sin dueño.
+
+### 7. Qué queda pendiente
+
+- **La confirmación de JP** abriendo los 2 archivos (ya corregidos y re-verificados con `openpyxl`) en
+  Excel real — no se da la tarea por cerrada antes de eso (pedido explícito).
+- Commitear todo el changeset de esta entrada (sigue sin commitear: `actualizar-alias-cuenta.ts`,
+  `escrituras.ts`, `armar-libro.ts`, `armar-libro-laura.ts`, `exportar-planilla.ts`, sus tests,
+  `_tmp-paquete-final-laura.ts` si JP pide trackearlo, este HANDOFF).
+- La deuda de `aislamiento-modulo-1.test.ts` (`TABLAS_M1` sin `asiento_propuesto_reproceso`/
+  `reconocimiento_contrapartida_patron_match`) — encontrada esta sesión, sin dueño, no es de esta tarea.
+- El campo `esImputable`/equivalente en `cuenta_atributo` (para que el desplegable no ofrezca cuentas
+  título/agrupación) — deuda declarada por `contador-dominio`, migración nueva fuera de alcance de hoy.
+- Ningún test del repo verifica que un `.xlsx` generado abra con una librería estricta (`openpyxl` u
+  otra) — deuda nueva declarada en (6), sin dueño.
+- Las 5 preguntas del instructivo quedan sin responder — normal, es lo que el instructivo pide.
+
+---
+
+## 2026-09-11 (206) — 🟡 ESTADO: tarea 203 (paquete final Laura, Frente 1/2) sigue EN CURSO —
+working tree tiene 6 archivos modificados/sin trackear sin commitear: `catalogo.ts`,
+`armar-libro.ts`, `exportar-planilla.ts`, `planilla-agrupacion.test.ts`, `planilla.test.ts`,
+`_tmp-paquete-final-laura.ts`. **NO descartar** — retomar en la próxima sesión. Deliberadamente
+fuera del alcance de (204)/(205), que ya cerraron y commitearon aparte (commits `1d6b7c4`..`c012bea`).
+
+---
+
 ## 2026-09-11 (205) — 🔒 CIERRE: los 4 lotes de ROKA aplicados con la vía promovida — 6.512/6.512
 movimientos (Bracci + ROKA, `cobranza_de_cliente` + `pago_a_proveedor_transferencia`) con asiento real,
 Σdebe=Σhaber exacto en los dos clientes. Cierra el arco completo abierto en (203)/(204): el mismo
