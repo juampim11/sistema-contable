@@ -212,7 +212,12 @@ function escribirFilaHoja1(
     allowBlank: true,
     formulae: [listaNombre],
     showErrorMessage: true,
-    errorStyle: 'error', // "Stop" — nunca "Warning": Laura no puede dejar un valor fuera de la lista.
+    // `'stop'` en minúscula — valor real de la spec OOXML (ECMA-376 §18.18.33), nunca `'error'`: el
+    // tipo de ExcelJS no lo valida, pasa lo que sea derecho al XML. `'error'` produce un atributo
+    // inválido que Excel de escritorio tolera y corrige en silencio, pero una librería estricta
+    // (openpyxl) lo rechaza de entrada (hallazgo de JP, 2026-09-11, sobre el mismo bug en
+    // `armar-libro.ts`, copiado de acá). Nunca "Warning": Laura no puede dejar un valor fuera de la lista.
+    errorStyle: 'stop',
     errorTitle: 'Opción inválida',
     error: 'Elegí una opción de la lista desplegable.',
     showInputMessage: true,
@@ -480,7 +485,8 @@ function armarHojaAsientos(libro: ExcelJS.Workbook, datos: ResultadoRelevamiento
       allowBlank: true,
       formulae: ['"OK,NO"'],
       showErrorMessage: true,
-      errorStyle: 'error',
+      // `'stop'` en minúscula — mismo motivo que la validación de arriba (línea ~215).
+      errorStyle: 'stop',
       errorTitle: 'Opción inválida',
       error: 'Elegí "OK" o "NO" de la lista desplegable.',
       showInputMessage: true,
