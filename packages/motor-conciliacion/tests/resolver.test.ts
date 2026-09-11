@@ -262,14 +262,50 @@ describe('familia socio — veto duro de D-31, sin importar candidatas', () => {
   });
 });
 
-describe('vía no calificada — D-31: solo 4 de 6 vías califican para automático', () => {
+describe('vía no calificada — D-31: 5 de 6 vías califican para automático', () => {
   it('cuenta resuelve perfecto pero la vía no califica → via_no_calificada, no cuenta_ambigua', () => {
+    // texto_con_codigo_no_catalogado: la única vía SIN ancla de texto (código sin catalogar), sin
+    // PROP-2/PROP-3 que la respalde — sigue afuera de VIAS_QUE_CALIFICAN a propósito.
     const resultado = resolverAsiento(
-      entrada({ reconocimiento: propuesta({ via: 'texto_prefijo_con_cola' }) }),
+      entrada({ reconocimiento: propuesta({ via: 'texto_con_codigo_no_catalogado' }) }),
     );
     expect(resultado.tipo).toBe('pendiente');
     if (resultado.tipo !== 'pendiente') return;
     expect(resultado.motivoCodigo).toBe('via_no_calificada');
+  });
+
+  /**
+   * PROMOCIÓN — HANDOFF correspondiente: convocatoria dual `motor-conciliacion-contable` +
+   * `contador-dominio`, 0 ambigüedad real medida sobre ROKA, respaldada en CI por PROP-2/PROP-3
+   * (`packages/contabilidad/tests/mutacion-lexico.test.ts`, objetivos 5 y 6). Antes de esta
+   * promoción, este mismo escenario caía en `via_no_calificada` (era, de hecho, el fixture del test
+   * de arriba) — ahora resuelve automático igual que las otras 4 vías de anclaje.
+   */
+  it('texto_prefijo_con_cola con 1 candidata y sin veto de socio → automático (vía recién promovida)', () => {
+    const resultado = resolverAsiento(
+      entrada({ reconocimiento: propuesta({ via: 'texto_prefijo_con_cola' }) }),
+    );
+    expect(resultado.tipo).toBe('automatico');
+    if (resultado.tipo !== 'automatico') return;
+    const [banco, contrapartida] = resultado.renglones;
+    expect(banco.cuentaId).toBe('cuenta-banco');
+    expect(contrapartida.cuentaId).toBe('cuenta-gastos-bancarios');
+  });
+
+  it('CONTROL: texto_prefijo_con_cola + familia socio sigue vetado — el mode-gate no cede con la vía adentro', () => {
+    const resultado = resolverAsiento(
+      entrada({
+        reconocimiento: propuesta({ via: 'texto_prefijo_con_cola' }),
+        reglasImputacion: [reglaFija({ cuentaId: 'cuenta-retiro-socio' })],
+      }),
+    );
+    expect(resultado.tipo).toBe('pendiente');
+    if (resultado.tipo !== 'pendiente') return;
+    expect(
+      resultado.motivoCodigo,
+      'si esto diera via_no_calificada o automatico, el veto de familia socio dejó de evaluarse ' +
+        'antes que la calificación de vía — el orden defensivo documentado en resolver.ts se rompió',
+    ).toBe('resolucion_manual_obligatoria_socio');
   });
 });
 
@@ -373,6 +409,62 @@ describe('cuenta_ambigua — defensivo, dos reglas de la misma especificidad a l
     if (resultado.tipo !== 'pendiente') return;
     expect(resultado.motivoCodigo).toBe('cuenta_ambigua');
     expect(resultado.evidencia.candidatosContrapartida).toHaveLength(2);
+  });
+});
+
+describe('verificacionHeredada — presunción de cancelación declarada (JP, 2026-09-10, HANDOFF 203/204)', () => {
+  it('cobranza_de_cliente con regla fija: SOLO la contrapartida lleva estado:"aproximada", banco nunca', () => {
+    const resultado = resolverAsiento(
+      entrada({
+        reconocimiento: propuesta({ tipo: 'cobranza_de_cliente', concepto: 'acreditamiento', lado: 'haber' }),
+        reglasImputacion: [reglaFija({ tipoMovimiento: 'cobranza_de_cliente', concepto: null })],
+      }),
+    );
+    expect(resultado.tipo).toBe('automatico');
+    if (resultado.tipo !== 'automatico') return;
+    const [banco, contrapartida] = resultado.renglones;
+    expect(contrapartida.verificacionHeredada).toEqual({
+      estado: 'aproximada',
+      motivo: expect.stringContaining('no verificado contra'),
+    });
+    expect(banco.verificacionHeredada).toBeUndefined();
+  });
+
+  it('pago_a_proveedor_transferencia con regla fija: mismo tratamiento', () => {
+    const resultado = resolverAsiento(
+      entrada({
+        reconocimiento: propuesta({ tipo: 'pago_a_proveedor_transferencia', concepto: 'pago_a_proveedor_inmediato' }),
+        reglasImputacion: [reglaFija({ tipoMovimiento: 'pago_a_proveedor_transferencia', concepto: null })],
+      }),
+    );
+    expect(resultado.tipo).toBe('automatico');
+    if (resultado.tipo !== 'automatico') return;
+    const [, contrapartida] = resultado.renglones;
+    expect(contrapartida.verificacionHeredada?.estado).toBe('aproximada');
+  });
+
+  /**
+   * PRUEBA DE MUTACIÓN — el lookup `TIPOS_CON_PRESUNCION_DECLARADA` es deliberadamente CHICO
+   * (cobranza_de_cliente, pago_a_proveedor_transferencia): `pago_de_haberes` queda afuera a
+   * propósito (falta confirmar con Laura si hay adelantos) y los 3 tipos ya automáticos
+   * (comisión bancaria, extracción de efectivo, impuesto a los débitos y créditos) NUNCA deben
+   * llevar esta marca — no hay ninguna ambigüedad de anticipo/cancelación en esos 3.
+   *
+   * Mutación de referencia: agregar 'comision_bancaria' al lookup, o borrar el filtro y marcar
+   * TODA regla 'fija'. El escenario de abajo usa el fixture por defecto de `propuesta()`
+   * (`comision_bancaria`) exactamente para detectar esa mutación — con el código real,
+   * `verificacionHeredada` tiene que estar AUSENTE; con la mutación, aparecería.
+   */
+  it('MUTACIÓN: comision_bancaria (ya automática) NUNCA lleva verificacionHeredada, aunque la regla sea "fija"', () => {
+    const resultado = resolverAsiento(entrada()); // fixture por defecto: tipo comision_bancaria
+    expect(resultado.tipo).toBe('automatico');
+    if (resultado.tipo !== 'automatico') return;
+    const [banco, contrapartida] = resultado.renglones;
+    expect(
+      contrapartida.verificacionHeredada,
+      'si esto está definido, el lookup de tipos con presunción se generalizó de más — regresión real sobre 3 tipos ya en producción',
+    ).toBeUndefined();
+    expect(banco.verificacionHeredada).toBeUndefined();
   });
 });
 

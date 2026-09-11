@@ -44,14 +44,59 @@ export const CUENTA_RESOLUCIONES_MOTOR = ['fija', 'por_socio', 'por_jurisdiccion
 export type CuentaResolucionMotor = (typeof CUENTA_RESOLUCIONES_MOTOR)[number];
 
 /**
- * De las 6 `ViaEvidencia` de Capa C, solo estas 4 califican para automático (D-31 §3). Duplicado
+ * Cita congelada de `asiento_propuesto_renglon.verificacion_heredada` (`0027`) — claves en
+ * snake_case a propósito, IDÉNTICAS a las que exige `asiento_renglon_verificacion_chk`: este valor
+ * viaja tal cual hasta el `JSON.stringify` de `escrituras.ts`, nunca se remapea desde camelCase (no
+ * hay ningún camino existente que haga esa conversión — se verificó antes de escribir esto). NO es
+ * el mismo objeto (aunque comparta forma) que `VerificacionHeredada` de
+ * `packages/data/src/cierre/tipos.ts` — ese paquete no se puede importar acá (ver cabecera).
+ */
+export type VerificacionHeredadaMotor = Readonly<{ estado: 'aproximada'; motivo: string }>;
+
+/**
+ * Tipos cuya regla `'fija'` resuelve una AMBIGÜEDAD real que el extracto bancario solo no puede
+ * cerrar (anticipo vs. cancelación) — `contador-dominio`, doc 31 Dictamen 4/5 §B, HANDOFF 203/204.
+ * Deliberadamente CHICO y explícito, no un flag en `regla_imputacion` (no hay columna para esto,
+ * `0030`) — agregar un tipo acá es una decisión de dominio nueva, nunca automática por ser `'fija'`.
+ * `pago_de_haberes` NO entra todavía: falta confirmar con Laura si hay adelantos (JP, 2026-09-10).
+ */
+const TIPOS_CON_PRESUNCION_DECLARADA: readonly TipoMovimiento[] = [
+  'cobranza_de_cliente',
+  'pago_a_proveedor_transferencia',
+];
+
+const MOTIVO_PRESUNCION_CANCELACION =
+  'Presunción de cancelación de saldo por relación comercial recurrente — no verificado contra ' +
+  'factura/comprobante (contador-dominio, doc 31 Dictamen 4/5 §B; HANDOFF 203/204).';
+
+/**
+ * De las 6 `ViaEvidencia` de Capa C, estas 5 califican para automático (D-31 §3). Duplicado
  * literal — mismo argumento de sincronía que el resto del vocabulario de este archivo.
+ *
+ * `texto_prefijo_con_cola` se sumó acá (HANDOFF correspondiente a esta promoción) tras convocatoria
+ * dual `motor-conciliacion-contable` + `contador-dominio`: 0 casos de ambigüedad real medidos sobre
+ * ROKA (~4.868 movimientos), y dos garantías que la sostienen sin depender de que el corpus se
+ * quede igual:
+ * 1. **Mode-gate estructural**: el veto de familia socio (`estaVetadaPorFamiliaSocio`, más abajo) se
+ *    evalúa ANTES que esta lista — aunque la vía califique, un movimiento de familia socio nunca
+ *    llega a `automático` por acá, con o sin esta vía adentro.
+ * 2. **Invariantes de CI, no "0 medido"**: `packages/contabilidad/tests/propiedades.ts` PROP-2
+ *    (literal duplicado) y PROP-3 (ancla prefijo de otra) ya iteran TODAS las entradas de TODOS los
+ *    modos de matcheo, sin filtrar por `prefijo_con_cola` — la garantía de no-ambigüedad para esta
+ *    vía corre en cada commit (`packages/contabilidad/tests/mutacion-lexico.test.ts`, objetivos 5 y
+ *    6), igual que para las otras 4 vías de anclaje. Un alta futura de literal que genere ambigüedad
+ *    real pone rojo el gate antes de llegar a producción — "0 hoy" nunca se convierte en "cualquier
+ *    ambigüedad futura pasa desapercibida".
+ *
+ * `texto_con_codigo_no_catalogado` sigue afuera: es la única vía sin ancla de texto (código sin
+ * catalogar), no tiene un PROP-2/PROP-3 equivalente que la respalde.
  */
 const VIAS_QUE_CALIFICAN: readonly ViaEvidencia[] = [
   'codigo_y_texto_concordantes',
   'codigo_concepto',
   'texto_literal_exacto',
   'texto_prefijo_unico',
+  'texto_prefijo_con_cola',
 ];
 
 /**
@@ -142,6 +187,11 @@ export type RenglonPropuesto = Readonly<{
   cuentaRef: CuentaRefMotor;
   lado: Lado;
   importe: string;
+  /** Solo en el renglón de CONTRAPARTIDA, y solo para `TIPOS_CON_PRESUNCION_DECLARADA` — el renglón
+   *  de banco nunca lleva esto (el banco no es lo que está en duda). `undefined` para todo lo demás,
+   *  cero cambio respecto de los 3 tipos ya automáticos hoy (comisión bancaria, extracción de
+   *  efectivo, impuesto a los débitos y créditos). */
+  verificacionHeredada?: VerificacionHeredadaMotor;
 }>;
 
 export type EvidenciaResolucion = Readonly<{
@@ -253,7 +303,7 @@ export function resolverAsiento(entrada: EntradaResolver): ResultadoResolver {
   const ganadora = reglaGanadora(reglasImputacion, reconocimiento.tipo, reconocimiento.concepto, movimiento.fecha);
 
   let contrapartidaResuelta:
-    | Readonly<{ cuenta: CuentaDelPlan; evidenciaParcial: EvidenciaResolucion }>
+    | Readonly<{ cuenta: CuentaDelPlan; evidenciaParcial: EvidenciaResolucion; verificacionHeredada?: VerificacionHeredadaMotor }>
     | null = null;
   let motivoSiContrapartidaFalla: MotivoQueProduceElResolver | null = null;
   let evidenciaContrapartidaFallo: EvidenciaResolucion = { via: reconocimiento.via };
@@ -295,7 +345,13 @@ export function resolverAsiento(entrada: EntradaResolver): ResultadoResolver {
         // si pasara (error de carga), el veto de D-31 igual aplica — evaluado antes que la vía.
         return { tipo: 'pendiente', motivoCodigo: 'resolucion_manual_obligatoria_socio', evidencia: evidenciaRegla };
       } else {
-        contrapartidaResuelta = { cuenta, evidenciaParcial: evidenciaRegla };
+        contrapartidaResuelta = {
+          cuenta,
+          evidenciaParcial: evidenciaRegla,
+          ...(TIPOS_CON_PRESUNCION_DECLARADA.includes(reconocimiento.tipo)
+            ? { verificacionHeredada: { estado: 'aproximada', motivo: MOTIVO_PRESUNCION_CANCELACION } as VerificacionHeredadaMotor }
+            : {}),
+        };
       }
     }
   }
@@ -357,6 +413,9 @@ export function resolverAsiento(entrada: EntradaResolver): ResultadoResolver {
         cuentaRef: aCuentaRef(contrapartidaResuelta.cuenta),
         lado: ladoContrapartida,
         importe: movimiento.importe,
+        ...(contrapartidaResuelta.verificacionHeredada
+          ? { verificacionHeredada: contrapartidaResuelta.verificacionHeredada }
+          : {}),
       },
     ],
     evidencia: {
