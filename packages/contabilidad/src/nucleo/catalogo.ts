@@ -340,6 +340,16 @@ export const CATALOGO_CANONICO = {
   },
 
   // === pago_a_proveedor_transferencia ===================================================================
+  //
+  // 🔴 NOTA — vale para TODA entrada de este archivo con `queDecide: 'distinguir_tercero_de_socio'`
+  // (pago_a_proveedor_transferencia, cobranza_de_cliente, pago_con_cheque_propio,
+  // deposito_cheques_terceros — 19 entradas en total, JP 2026-09-10): esta decisión PUEDE resolverse
+  // SIN intervención humana si existe una `padron_manifestacion` vigente para el cliente que declare
+  // el padrón de socios completo — `motor.ts::aplicarContrapartida`, casos `es_socio` (promueve a
+  // `retiro_de_socio`/`aporte_de_socio`) y `es_tercero_padron_completo` (promueve manteniendo el
+  // `tipo` de acá). El `queDecide` de esta entrada describe el comportamiento SIN esa ayuda —
+  // confirmado no-bug, dictamen completo en HANDOFF y `docs/diseno/31-replanteo-hacia-producto.md`
+  // (Dictamen 4/5 §C, `contador-dominio`).
   pago_a_proveedor_inmediato: {
     // No fusionado con pago_con_transferencia_generico (mismo tipo, más abajo) pese a ser
     // económicamente similares: literales distintos ("inmediata" vs "con transferencia" genérico)
@@ -439,6 +449,8 @@ export const CATALOGO_CANONICO = {
   },
 
   // === cobranza_de_cliente =============================================================================
+  // Ver nota sobre `distinguir_tercero_de_socio` y la promoción sin intervención humana en
+  // `pago_a_proveedor_transferencia` más arriba (línea ~342).
   acreditamiento: {
     // Confirmado por Laura (privado/laura-respuestas-2026-08.md, sección C, 2026-08-18/19): ES
     // adquirente de tarjetas (Visa/Master vía Prisma/FirstData) — cierra la pregunta que quedaba
@@ -519,6 +531,8 @@ export const CATALOGO_CANONICO = {
   },
 
   // === pago_con_cheque_propio ===========================================================================
+  // Ver nota sobre `distinguir_tercero_de_socio` y la promoción sin intervención humana en
+  // `pago_a_proveedor_transferencia` más arriba (línea ~342).
   pago_cheque_propio: {
     polaridad: 'normal',
     ladoEsperado: 'debe',
@@ -771,6 +785,8 @@ export const CATALOGO_CANONICO = {
   },
 
   // === cobranza_de_cliente ==============================================================================
+  // Ver nota sobre `distinguir_tercero_de_socio` y la promoción sin intervención humana en
+  // `pago_a_proveedor_transferencia` más arriba (línea ~342).
   credito_transferencia_online_banking: {
     polaridad: 'normal',
     ladoEsperado: 'haber',
@@ -939,6 +955,8 @@ export const CATALOGO_CANONICO = {
   },
 
   // === pago_a_proveedor_transferencia ===================================================================
+  // Ver nota sobre `distinguir_tercero_de_socio` y la promoción sin intervención humana más arriba
+  // (línea ~342).
   // Los cuatro conceptos de Santander de acá abajo (transferencia_realizada_generica, pago_de_honorarios,
   // snp_debito_directo, transferencia_inmediata_generica) comparten tipo y régimen, y podrían leerse
   // como el mismo hecho — se mantienen separados por el mismo criterio conservador que
@@ -1035,6 +1053,8 @@ export const CATALOGO_CANONICO = {
   // ══ Macro (P8) ═══════════════════════════════════════════════════════════════════════════════════
 
   // === pago_a_proveedor_transferencia ===================================================================
+  // Ver nota sobre `distinguir_tercero_de_socio` y la promoción sin intervención humana más arriba
+  // (línea ~342).
   transferencia_macronline_debito: {
     polaridad: 'normal',
     ladoEsperado: 'debe',
@@ -1063,6 +1083,8 @@ export const CATALOGO_CANONICO = {
   },
 
   // === pago_con_cheque_propio ===========================================================================
+  // Ver nota sobre `distinguir_tercero_de_socio` y la promoción sin intervención humana más arriba
+  // (línea ~342).
   pago_cheque_de_camara: {
     polaridad: 'normal',
     ladoEsperado: 'debe',
@@ -1189,6 +1211,8 @@ export const CATALOGO_CANONICO = {
   },
 
   // === deposito_cheques_terceros =========================================================================
+  // Ver nota sobre `distinguir_tercero_de_socio` y la promoción sin intervención humana en
+  // `pago_a_proveedor_transferencia` más arriba (línea ~342).
   acreditacion_cheque_remesas: {
     polaridad: 'normal',
     ladoEsperado: 'haber',
