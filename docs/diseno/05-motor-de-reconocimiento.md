@@ -137,6 +137,15 @@ Por qué esto y no un `0..1`:
 ahí `texto_prefijo_con_cola` es la única vía posible. Se extiende `CapacidadesAdaptador`:
 `conceptoEsCampoPropio`, `conceptoTruncadoEn`, `conceptoOrigenDato`.
 
+> **Corrección post-implementación (HANDOFF correspondiente a la promoción de `texto_prefijo_con_cola`
+> en D-31):** este párrafo anticipaba, en diseño, que Bancor sería el caso que forzara esta vía. En la
+> implementación real terminó siendo **Macro** (`packages/contabilidad/src/lexico/macro.ts`, 3
+> entradas con `matcheo.modo: 'prefijo_con_cola'`) — confirmado por grep: la vía no aparece ni una vez
+> en `galicia.ts`/`santander.ts` (Santander usa `estrategiaDelAdaptador: 'segmento_de_glosa'`), y
+> Bancor no tiene archivo de léxico todavía (solo adaptador de ingesta, sin Capa C). Se deja el
+> razonamiento original arriba, sin reescribirlo, porque explica POR QUÉ existe la vía; el hecho que
+> cambió es cuál banco la usa hoy.
+
 ---
 
 ## 3. El texto libre sin volverse un pantano de regex
@@ -168,8 +177,10 @@ Encima de `normalizar()` de `parseo-ar.ts`:
    guardas: (a) es prefijo de **exactamente un** literal del léxico; (b) longitud ≥ `prefijoMinimo`; (c) el corte
    cae en **borde de token**, nunca a mitad de palabra; (d) el `ladoEsperado` del concepto **coincide con el
    lado del movimiento**. Prefijo de dos o más → `ambiguo` con los candidatos. **Nunca "el más probable".**
-3. **`prefijo_con_cola`** — obligatorio para Santander y Bancor. **La cola no es evidencia de tipo**: es la
-   contraparte, y va a la imputación.
+3. **`prefijo_con_cola`** — anticipado en diseño para Santander y Bancor; en la implementación real es
+   **Macro** el banco que la usa (ver corrección más arriba, §2). **La cola no es evidencia de tipo**:
+   es la contraparte, y va a la imputación. Calificada para automático en D-31 desde la promoción de
+   HANDOFF correspondiente.
 
 ### 3.3. El peligro del prefijo, resuelto mecánicamente
 

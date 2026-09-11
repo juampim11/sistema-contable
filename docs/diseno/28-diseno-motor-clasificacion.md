@@ -196,7 +196,8 @@ C: "la confianza ES la vía"):
 ```
 automático  ⟺  clase = 'propuesta'
              ∧  via ∈ {codigo_y_texto_concordantes, codigo_concepto,
-                        texto_literal_exacto, texto_prefijo_unico}
+                        texto_literal_exacto, texto_prefijo_unico,
+                        texto_prefijo_con_cola}
              ∧  resolución de cuenta con EXACTAMENTE 1 candidata
              ∧  rol_funcional resultante ∉ {retiro_de_socio, aporte_de_socio,
                                               cuenta_particular_socio}
@@ -211,6 +212,20 @@ candidata perfecta — mismo criterio que ya aplicó `seguridad-datos-financiero
 exposición de `retiro_de_socio`/`aporte_de_socio` fila por fila en el export enriquecido
 (`packages/ingesta/src/planilla/exportar-planilla.ts:84-90`). Resolver la cuenta automáticamente acá
 es la misma afirmación de relación societaria, un paso más adelante en el pipeline.
+
+**`texto_prefijo_con_cola` se sumó a la lista** (HANDOFF correspondiente a esta promoción) tras
+convocatoria dual `motor-conciliacion-contable` + `contador-dominio`: 0 casos de ambigüedad real
+medidos sobre el corpus de ROKA (~4.868 movimientos por esta vía). La vía se sostiene sin depender
+de que el corpus se quede igual, por dos garantías, no por la medición sola:
+1. **Mode-gate estructural**: el veto de familia socio se evalúa en `resolver.ts` ANTES que la
+   calificación de vía — aunque la vía califique, un movimiento de familia socio nunca llega a
+   automático por acá, con o sin esta vía en la lista.
+2. **Invariantes de CI**: `packages/contabilidad/tests/propiedades.ts` (PROP-2, literal duplicado
+   entre entradas del mismo banco; PROP-3, ancla prefijo de otra) ya iteran todas las entradas de
+   todos los modos de matcheo, sin filtro por `prefijo_con_cola` — la garantía de no-ambigüedad
+   corre en cada commit (`packages/contabilidad/tests/mutacion-lexico.test.ts`, objetivos 5 y 6),
+   igual que para las otras 4 vías. `texto_con_codigo_no_catalogado` sigue afuera de la lista: es la
+   única vía sin ancla de texto, sin un PROP-2/PROP-3 equivalente que la respalde.
 
 **Con H y J**: el % no es un criterio útil sobre este caso — `N=1` es degenerado (solo puede dar 0%
 o 100%, y da 100% por construcción, no por calidad del criterio: no hay plan de cuentas, así que
