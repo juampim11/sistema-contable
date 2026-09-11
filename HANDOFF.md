@@ -6,6 +6,253 @@
 
 ---
 
+## 2026-09-11 (205) — 🔒 CIERRE: los 4 lotes de ROKA aplicados con la vía promovida — 6.512/6.512
+movimientos (Bracci + ROKA, `cobranza_de_cliente` + `pago_a_proveedor_transferencia`) con asiento real,
+Σdebe=Σhaber exacto en los dos clientes. Cierra el arco completo abierto en (203)/(204): el mismo
+universo de 6.512 que disparó el "susto" original queda 100% resuelto.
+
+**Herramienta:** Claude Code, sesión interactiva, continuación directa de (204).
+
+### 1. Backup + 4 dry-run + 4 `--aplicar`, sin desviación
+
+Backup fresco (`pnpm respaldar:piloto`, `piloto_20260911-130731Z.dump`, 5.53 MB) antes de tocar nada.
+
+Dry-run de los 4 lotes de ROKA contra el resolver ya actualizado (promoción de `texto_prefijo_con_cola`,
+entrada 204): **coincidencia EXACTA** con el número original, previo al hallazgo de `via_no_calificada`
+— no solo "se acerca", es el mismo número:
+
+| Lote (mes) | Predicho (= original) | Real (dry-run y luego `--aplicar`) |
+|---|---|---|
+| mayo (`9e568972`) | 1.200 | **1.200** |
+| junio (`38a7cf41`) | 1.348 | **1.348** |
+| julio (`5d4d2a92`) | 1.295 | **1.295** |
+| agosto (`11f06c03`) | 1.255 | **1.255** |
+
+`--aplicar` de los 4 en secuencia (mismo `usuario` operador de siempre, `11111111-...`, rol `socio`
+en `ESTUDIO PILOTO`), cada uno verificado contra la predicción antes de seguir con el siguiente —
+0/4 con desviación, no hizo falta frenar ninguno. Residual de cada lote (8/7/5/6,
+`motivo_codigo: 'tipo_sin_regla_imputacion'`) es de otros tipos sin regla cargada, sin relación con
+esta tarea.
+
+### 2. Verificación final consolidada, por consulta directa (no por lo que reportó el CLI)
+
+Identificación de clientes reales del piloto corregida en el camino: NO son solo Bracci/ROKA con
+varios bancos — hay 6 clientes reales, cada uno con su propio banco (Bracci=Galicia, ROKA=Macro,
+Contenedores Paoluc S.A.S.=Bancor, H y J Servicios y Obras S.A.S.=Nación, MEB Integración y Montaje
+S.A.S.=ICBC, Cliente Piloto 02=Santander) — identificados por `tenant_node.tipo='cliente'` real, no
+por una suposición previa de "banco≠macro ⇒ Bracci".
+
+`reconocimiento_movimiento` ⋈ `asiento_propuesto_renglon` (vía `referencia_origen`, con el cast
+`text`/`uuid` que hizo falta porque `referencia_origen` es `text`), con la credencial real de un
+socio (nunca la de `conJob`, que no tiene grant sobre estas tablas N2):
+
+| Cliente | Tipo | Universo | Con asiento |
+|---|---|---|---|
+| Bracci (Galicia) | cobranza_de_cliente | 1.177 | **1.177** |
+| Bracci (Galicia) | pago_a_proveedor_transferencia | 237 | **237** |
+| ROKA (Macro) | cobranza_de_cliente | 4.879 | **4.879** |
+| ROKA (Macro) | pago_a_proveedor_transferencia | 219 | **219** |
+
+Σdebe=Σhaber exacto en los dos: Bracci **$267.002.743,46** (2.828 renglones), ROKA
+**$561.109.120,65** (10.196 renglones). `verificacion_heredada.estado`: exactamente la mitad
+`'aproximada'` (contrapartida) y la mitad `'(vacío)'` (banco) en ambos — 1.414 y 5.098
+respectivamente, threading correcto sin excepciones. **Total: 6.512/6.512 — el mismo universo exacto
+que abrió (203).** Los otros 4 clientes reales del piloto no tienen movimientos de estos 2 tipos —
+fuera de alcance, sin tocar.
+
+### 3. Qué queda pendiente
+
+- Recalcular el % real de "automático" del paquete final de Laura con estos números (ya no debería
+  seguir en 77,4%/80,2% — sube significativamente para ambos clientes).
+- Commitear el changeset completo de (204)+(205) — sigue sin commitear.
+- Todo lo demás de (203)/(204) sigue igual de pendiente (Frente 2, paquete final .xlsx, instructivo
+  de Laura, `pago_de_haberes` pendiente de la respuesta de Laura sobre adelantos).
+
+---
+
+## 2026-09-11 (204) — `regla_imputacion` fija cargada y aplicada (Bracci cerrado, ROKA destrabado):
+`cobranza_de_cliente`→`1.2.1.100 Deudores por Ventas` y `pago_a_proveedor_transferencia`→
+`2.1.1.100 Proveedores`, con presunción de cancelación declarada en `verificacion_heredada`. ROKA
+quedó bloqueado por un hallazgo NUEVO y no relacionado (`via_no_calificada` sobre
+`texto_prefijo_con_cola`); convocatoria dual `motor-conciliacion-contable` + `contador-dominio`
+dictaminó promoverla a D-31 con 3 condiciones, las 3 implementadas y verificadas en LOCAL esta
+entrada — el piloto NO se tocó todavía.
+
+**Herramienta:** Claude Code, sesión interactiva, continuación directa de (203).
+
+### 1. `alta-regla-imputacion.ts` (CLI nuevo) + aplicación real
+
+Dictamen de `contador-dominio` (doc 31, verificado letra por letra contra el plan de cuentas real de
+cada cliente): las 2 cuentas de arriba, con la salvedad de que "anticipo vs. cancelación" es
+indistinguible desde el extracto solo — de ahí `verificacionHeredada: {estado:'aproximada', motivo:
+'Presunción de cancelación...'}` en `resolver.ts`, poblada SOLO en el renglón de contrapartida,
+verificado con prueba de mutación (caso de control `comision_bancaria`: sin cambios).
+
+CLI nuevo `apps/cli/src/alta-regla-imputacion.ts` (no existía ninguno de escritura sobre
+`regla_imputacion`): dry-run por defecto, `--aplicar` explícito, sin modo batch. 4 filas cargadas al
+piloto, una por una, con backup fresco antes: Bracci/cobranza, Bracci/pago_a_proveedor,
+ROKA/cobranza, ROKA/pago_a_proveedor.
+
+`conciliar-lote.ts --aplicar` sobre los 6 lotes de Bracci (mayo-agosto): **1.177/1.177**
+`cobranza_de_cliente` y **237/237** `pago_a_proveedor_transferencia` con asiento nuevo, verificado por
+consulta directa post-aplicar — Σdebe = Σhaber = **$267.002.743,46** exacto, 0 desbalanceados.
+
+### 2. ROKA no aplicado — descubrimiento nuevo, no un bug de lo de arriba
+
+Dry-run de ROKA mostró un número de "pasa a automático" muy por debajo del predicho. Causa: la
+mayoría de sus movimientos de estos 2 tipos resuelven vía `texto_prefijo_con_cola`
+(`reconocimiento_movimiento.via`), que **no** estaba entre las 4 vías calificadas de D-31
+(`resolver.ts`) — gate completamente independiente de la carga de `regla_imputacion` (esa funciona
+perfecto, como probó Bracci). Medición empírica sobre ~4.868 movimientos de ROKA por esta vía: **0
+casos de ambigüedad real** (mismo prefijo nunca resuelve a más de un resultado).
+
+Antes de tocar D-31: convocatoria formal `motor-conciliacion-contable` + `contador-dominio` (paralelo,
+vía `Agent`) sobre si corresponde promoverla. Dictamen combinado: **sí, segura, con 3 condiciones**
+(mutación en CI sobre PROP-2/PROP-3, documentar el mode-gate estructural en vez de "0 medido",
+corregir doc 05 §2.1). Salvedad cruzada de `contador-dominio` (¿la cola segmentada degrada el
+detector de socio?) cerrada con evidencia de código, sin reconvocar:
+`packages/ingesta/src/persistir.ts:264` prueba que el detector de socio
+(`extraerCandidatosDeContraparte`) lee siempre `depurarGlosa(m.descripcion)` —el texto crudo
+completo— nunca la versión segmentada (`m.conceptoBanco`, línea 286) que usa el léxico. La cola que
+`anclaDePrefijo` descarta en `conceptoBanco` nunca le faltó al detector de socio.
+
+### 3. Las 3 condiciones, implementadas y verificadas en LOCAL
+
+1. **`packages/contabilidad/tests/mutacion-lexico.test.ts`** — objetivos 5 (PROP-3) y 6 (PROP-2)
+   nuevos, sobre vocabulario real de `packages/contabilidad/src/lexico/macro.ts` (literal sintético
+   "TRANSF A CCDO" colisiona por ancla con el "TRANSF" real de
+   `macro.transferencia_recibida_de_terceros"; duplicado exacto de "TRANSF:", el literal real de
+   `macro.transferencia_con_token`). Rojo→verde confirmado desactivando cada chequeo de
+   `propiedades.ts` a mano y restaurándolo — sin esto, ambos tests fallaban con el mensaje esperado.
+   Helper `reemplazarEntradaGalicia` generalizado a `reemplazarEntradaDeBanco` (mecánico, sin cambio
+   de comportamiento en el objetivo 1).
+2. **`packages/motor-conciliacion/src/resolver.ts`** — `texto_prefijo_con_cola` sumada a
+   `VIAS_QUE_CALIFICAN` (D-31), con el argumento real documentado en el comentario: el veto de
+   familia socio se evalúa ANTES que la calificación de vía (mode-gate estructural, no depende de
+   esta lista), y PROP-2/PROP-3 ya cubren `prefijo_con_cola` en cada commit. `resolver.test.ts`: el
+   test de `via_no_calificada` que usaba esta vía como ejemplo se reparó (pasa a usar
+   `texto_con_codigo_no_catalogado`, la única vía que sigue sin calificar), más 2 tests nuevos —
+   promoción (`automático` con 1 candidata) y control (familia socio sigue vetando con la vía
+   adentro). Rojo→verde confirmado revirtiendo la promoción a mano: el test de promoción fallaba
+   exactamente como se esperaba (`pendiente` en vez de `automatico`), el de control seguía verde
+   (correcto: el veto no depende de la promoción). 24/24 tests verdes con el fix restaurado.
+3. **Docs** — `docs/diseno/28-diseno-motor-clasificacion.md` §3: fórmula de automático actualizada +
+   nota del mode-gate/invariantes. `docs/diseno/05-motor-de-reconocimiento.md` §2/§3.2: corregida la
+   afirmación "obligatorio para Santander y Bancor" — confirmado por grep que la vía aparece 10/10
+   veces solo en `macro.ts` (Santander usa `segmento_de_glosa`; Bancor no tiene léxico todavía) — se
+   preserva el razonamiento de diseño original con una nota de qué cambió y por qué.
+
+**Medido:** `pnpm typecheck` limpio. `packages/contabilidad/tests/`: 420/422 verdes (2 fallos
+preexistentes en HEAD limpio, confirmados con `git stash` — `corpus-macro.test.ts` IIBB Córdoba y
+`version-del-motor.test.ts`, sin relación con esta tarea, no tocados). `packages/motor-conciliacion/tests/resolver.test.ts`:
+24/24 verdes.
+
+### 4. Qué queda pendiente
+
+- **El piloto no se tocó en esta entrada** — todo lo del punto 3 es motor/tests en LOCAL.
+- Re-correr los 4 dry-run de ROKA (mayo/junio/julio/agosto) contra el resolver actualizado, con nueva
+  predicción explícita, mostrada a JP antes de `--aplicar` — próximo paso, ya autorizado en principio
+  ("recién con esto probado en LOCAL retomamos los 4 lotes de ROKA").
+- Recalcular el % real de "automático" del paquete final de Laura una vez ROKA esté resuelto (sigue
+  por debajo del 77,4%/80,2% de referencia hasta entonces).
+- Commitear este changeset (sigue sin commitear: `resolver.ts`, `resolver.test.ts`,
+  `mutacion-lexico.test.ts`, `catalogo.ts`, `escrituras.ts`, `lecturas.ts`, `armar-libro.ts`,
+  `exportar-planilla.ts` y sus tests, `alta-regla-imputacion.ts` + su test, docs 05/28, este HANDOFF).
+- Todo lo demás de (203) sigue igual de pendiente (Frente 2, paquete final .xlsx, instructivo de
+  Laura).
+
+---
+
+## 2026-09-10 (203) — Susto de "6.512 movimientos sin evidencia de manifestación": investigado a
+fondo, confirmado que NO es un bug — es el mecanismo real de Tanda 3 funcionando, sin ningún residuo
+de un camino anterior. Cero cambios de código en el motor; un comentario nuevo en `catalogo.ts` para
+que la próxima persona no repita la misma alarma.
+
+**Herramienta:** Claude Code, sesión interactiva, durante el armado del paquete final de cierre
+(mayo-agosto) para Laura. Motivador: al diseñar la corrección de fondo del Excel (columna "Cuenta
+contable asignada" en la hoja Grupos), una consulta directa mostró 1.177 (Bracci) + 4.879 (ROKA)
+movimientos `tipo='cobranza_de_cliente'` y 237+219 `tipo='pago_a_proveedor_transferencia'` con
+`clase='propuesta'` — pese a que **ningún** catálogo (`packages/contabilidad/src/nucleo/catalogo.ts`)
+con esos `tipo` tiene `resuelve: 'propone'`. Primera lectura: parecía un bug real o reproceso
+pendiente.
+
+### 1. Primera ronda — el mecanismo real, no un bug
+
+Lectura de `packages/contabilidad/src/nucleo/motor.ts:136-177` (`aplicarContrapartida`) mostró el
+"segundo constructor" de `clase:'propuesta'`, documentado y con sign-off de dominio ya escrito
+(`contrapartida.ts:176`, citando `contador-dominio` Ronda 1): cuando `resolverContraparte()` devuelve
+`estado: 'es_tercero_padron_completo'` (el padrón de socios está declarado completo por
+`padron_manifestacion` y el candidato no matchea a ningún socio), el motor promueve
+`decision_humana → propuesta` **conservando el `tipo` original** — resolver "¿socio o tercero?" no
+cambia qué ES el movimiento.
+
+Convocatoria en paralelo (`tech-lead` + `motor-conciliacion-contable`) confirmó: (a) no hay un tercer
+camino de promoción en todo el repo (grep completo, más el test de mutación de
+`reglas-de-codigo.test.ts` que ya cubre esta regla); (b) el wiring a producción real
+(`leerManifestacionVigente`, dejar de hardcodear `false`) es el commit `f00b8a7` (2026-09-08
+11:37:34) — Tanda 3, no un antecesor; (c) `contador-dominio` ya había dictaminado esto exacto en
+`docs/diseno/31-replanteo-hacia-producto.md` (Dictamen 4/5 §B/C), incluida la cifra "79 de 1414 en
+Bracci, 0 en ROKA" para el mecanismo hermano de `padron_contraparte" — coincide EXACTO con lo medido
+esta sesión, sin relación causal (son mecanismos independientes que llegaron al mismo número).
+
+Verificación empírica directa: el 100% de las 6.512 filas tiene `resolucion_estado =
+'es_tercero_padron_completo'` en `reconocimiento_contrapartida`, respaldadas por una
+`padron_manifestacion` real (Bracci: 1 manifestación, `completo_hasta='2026-07-31'`; ROKA: 2,
+extendida a `'2026-08-31'` el 2026-09-09) — y **0 filas fuera del alcance declarado** (verificado mes
+por mes).
+
+### 2. Segunda ronda — la hipótesis "camino experimental previo a Tanda 3", refutada con 3 capas
+
+JP pidió un nivel más de rigor: ¿la evidencia de manifestación se agregó DESPUÉS de que estas filas
+se crearan (gap de versión), o es un bug de ejecución puntual? Encontrado con evidencia, no por
+inferencia:
+
+- **Git**: `created_at` real de las filas — Bracci 2026-09-08 20:42:07, ROKA 2026-09-09 16:00:30 —
+  ambas POSTERIORES al wiring (`f00b8a7`, 09-08 11:37:34) y a la capacidad de persistir la evidencia
+  (`335309045`, 09-06 17:33:24). Cero commits sobre `reconocer-lote.ts`/`motor.ts`/`contrapartida.ts`/
+  `escrituras.ts` entre el wiring y la creación de ninguna de las dos tandas — el código estuvo
+  quieto.
+- **Esquema**: 4 constraints de la migración `0021` (`contrapartida_manifestacion_chk`,
+  `contrapartida_frescura_chk`, `fk_recon_contrapartida_manifestacion`,
+  `fk_recon_contrapartida_alcance` — esta última de TRES columnas contra
+  `padron_manifestacion(cliente_id, id, completo_hasta)`) hacen **estructuralmente imposible** que
+  una fila cite una manifestación inexistente, de otro alcance, o sin cubrir la fecha real del
+  movimiento — la garantía vive en la base, no en qué tan reciente es el código de aplicación.
+- **El propio commit**: `f00b8a7` dice en su mensaje *"Tanda 3, punto 1/2 del plan de 7"* — no hay
+  ambigüedad de que sea la formalización, no un antecesor de ella.
+
+Con esto, JP retiró la hipótesis del "camino experimental viejo" y confirmó sin reservas: no hay nada
+que reprocesar, los números de los dos Excel (Bracci 77,4% / ROKA 80,2% "identificados
+automáticamente") quedan confirmados tal cual estaban.
+
+### 3. Único cambio de código: documentación, no comportamiento
+
+`packages/contabilidad/src/nucleo/catalogo.ts` — comentario nuevo en las 19 entradas con
+`queDecide: 'distinguir_tercero_de_socio'` (`pago_a_proveedor_transferencia`, `cobranza_de_cliente`,
+`pago_con_cheque_propio`, `deposito_cheques_terceros`): aclara que esta decisión PUEDE resolverse sin
+intervención humana si existe una `padron_manifestacion` vigente (casos `es_socio`/
+`es_tercero_padron_completo` de `motor.ts`) — el `queDecide` de la entrada describe el comportamiento
+SIN esa ayuda. Objetivo: que la próxima persona que mida `clase='propuesta'` contra estos tipos no
+repita esta misma alarma. Cero cambio de comportamiento — typecheck limpio, sin nuevos fallos de test
+atribuibles a este cambio (el único test rojo tocado, `reglas-de-codigo.test.ts` R-F, es preexistente
+y no relacionado — allowlist de dos archivos de test desactualizada, sin tocar por esta tarea).
+
+### 4. Qué queda fuera / pendiente
+
+- Commitear: el comentario de `catalogo.ts` de este hallazgo, más la corrección de fondo del paquete
+  final (columnas nuevas de Grupos, hoja "Ejemplos de asiento real", Bloque C de Acumulado —
+  `armar-libro.ts`/`exportar-planilla.ts`/sus tests) — todo sigue sin commitear al cierre de esta
+  entrada.
+- El script `packages/ingesta/scripts/_tmp-paquete-final-laura.ts` sigue TEMPORAL, sin trackear.
+- La allowlist desactualizada de `reglas-de-codigo.test.ts` (R-F) — dos archivos de test nuevos que
+  construyen `clase:'propuesta'` como fixture legítimo, sin agregar a la lista permitida. Sin dueño.
+- Frente 1 (candidatos a `regla_imputacion` fija para `cobranza_de_cliente`/
+  `pago_a_proveedor_transferencia`/`pago_de_haberes`, con la salvedad de anticipo-vs-cancelación
+  pendiente de contador-dominio) y Frente 2 (rehacer columnas de feedback de Grupos, alias de cuenta
+  bancaria) — ambos retomados, sin cerrar todavía.
+
+---
+
 ## 2026-09-09 (202) — 🔒 CIERRE del gap de Capa D sobre los 9 lotes históricos (6 Bracci + 3 ROKA,
 mayo-julio): dos bugs reales de idempotencia encontrados y corregidos con convocatoria completa,
 mutación en vivo, y verificación final — **8509/8509 movimientos `propuesta` resueltos, 0 sin
