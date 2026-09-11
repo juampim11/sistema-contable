@@ -213,3 +213,57 @@ export async function altaDeCuentaBancaria(
 
   return { cuentaBancariaId, identificadorId, cbuUltimos4: ultimos4, pepperId };
 }
+
+/** No hay ninguna cuenta bancaria con ese id para ese cliente — nunca "actualizó 0 filas" en silencio. */
+export class CuentaBancariaNoEncontradaError extends Error {
+  constructor(cuentaBancariaId: string) {
+    super(`No hay ninguna cuenta bancaria con id ${cuentaBancariaId} para este cliente.`);
+    this.name = 'CuentaBancariaNoEncontradaError';
+  }
+}
+
+export type PedidoDeActualizarAlias = {
+  readonly clienteId: string;
+  readonly cuentaBancariaId: string;
+  readonly aliasNuevo: string;
+};
+
+export type ResultadoActualizarAlias = {
+  readonly cuentaBancariaId: string;
+  readonly aliasAnterior: string | null;
+};
+
+/**
+ * Actualiza SOLO el alias (etiqueta humana, nunca la razón social — mismo régimen que `alta`) de una
+ * cuenta bancaria ya dada de alta. Exige `ContextoAuditado`, mismo criterio que toda escritura N2-R de
+ * este archivo, aunque `alias` en sí sea N2 (no R): es el mismo camino de escritura sobre la misma
+ * tabla, y separarlo en dos regímenes de auditoría distintos según la columna sería más confuso que
+ * consistente.
+ */
+export async function actualizarAliasDeCuentaBancaria(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoDeActualizarAlias,
+): Promise<ResultadoActualizarAlias> {
+  const previa = await tx.consultar<{ alias: string | null }>(
+    `select alias from cuenta_bancaria where cliente_id = $1 and id = $2`,
+    [pedido.clienteId, pedido.cuentaBancariaId],
+  );
+  const fila = previa[0];
+  if (!fila) throw new CuentaBancariaNoEncontradaError(pedido.cuentaBancariaId);
+
+  await conErroresTraducidos(undefined, () =>
+    tx.consultar(`update cuenta_bancaria set alias = $3 where cliente_id = $1 and id = $2`, [
+      pedido.clienteId,
+      pedido.cuentaBancariaId,
+      pedido.aliasNuevo,
+    ]),
+  );
+
+  logger.info('actualizar_alias_cuenta.aplicado', {
+    cliente_id: pedido.clienteId,
+    cuenta_bancaria_id: pedido.cuentaBancariaId,
+  });
+
+  return { cuentaBancariaId: pedido.cuentaBancariaId, aliasAnterior: fila.alias };
+}
