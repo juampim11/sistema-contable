@@ -57,6 +57,28 @@ export type FilaPlanilla = {
    *  matcheado — decisión de JP, 2026-09-06 (ver `textoDeContraparteConocida`,
    *  `@sistema-contable/contabilidad`). */
   readonly contraparteConocida: string | null;
+  /** `asiento_propuesto_renglon.cuenta_ref` (Capa D) para el movimiento — SOLO cuando la clase es
+   *  `propuesta` y Capa D ya generó un asiento real. `null` para todo lo demás (pendiente de regla de
+   *  imputación, o el enriquecimiento no corrió). Provisto por el LLAMADOR (paquete de cierre
+   *  multi-mes); `exportar-planilla.ts` no lo calcula hoy — mismo patrón de campo opcional que ya usan
+   *  `confianza`/`pendiente` para no forzar un join nuevo en el export mensual de un solo lote. */
+  readonly cuentaContable: { readonly codigo: string; readonly denominacion: string } | null;
+  /** `padron_contraparte` real matcheado (0037/0038, vía `reconocimiento_contrapartida_patron_match`)
+   *  — a diferencia de `contraparteConocida` (solo clasificación, decisión de JP 2026-09-06), este
+   *  campo SÍ lleva el nombre: pedido explícito de JP para la vista agrupada de "Grupos"
+   *  (corrección de fondo del paquete final, 2026-09-10) — reversión puntual de aquella decisión,
+   *  documentada acá para que no se lea como tácita. `null` sin match o sin evaluar. */
+  readonly contraparte: { readonly patron: string; readonly clasificacion: string } | null;
+  /** `true` cuando el movimiento sigue pidiendo una decisión genuina de la persona (`clase !==
+   *  'propuesta'` en `reconocimiento_movimiento`) — decide, por grupo, si la columna "¿A qué cuenta
+   *  contable va?"/"Comentario libre" de la hoja "Grupos" lleva validación real o queda en blanco
+   *  ("— no aplica —", `ux-designer`, corrección de fondo 2026-09-11): un grupo 100% `propuesta` ya
+   *  está resuelto, no tiene sentido pedirle a Laura que elija una cuenta que el sistema ya puso. `null`
+   *  cuando el enriquecimiento no corrió — mismo criterio que `identificacion`, sin dato no hay nada
+   *  que declarar pendiente. Provisto por el LLAMADOR, igual que `cuentaContable`/`contraparte`:
+   *  `exportar-planilla.ts` no tiene la `clase` cruda disponible hoy (lee de la vista enriquecida, no
+   *  de `reconocimiento_movimiento` directo) — mismo patrón de campo opcional que sus dos hermanos. */
+  readonly requiereDecisionHumana: boolean | null;
   /** Vocabulario cerrado (`CategoriaEspecial`, más abajo) — calculado en `exportar-planilla.ts` a
    *  partir de `que_decide` (nunca de `tipo`: `contador-dominio`, Tanda 1 — un filtro por `tipo`
    *  metería `acreditacion_tarjeta_getnet` en la categoría equivocada, y las filas `sin_reconocer`
@@ -290,6 +312,12 @@ function validar(datos: DatosPlanilla): Extract<ResultadoLibro, { estado: 'abort
 
 const FMT_MONEDA = '#,##0.00;[Red]-#,##0.00';
 const FMT_FECHA = 'dd/mm/yyyy';
+/** Con signo de pesos — solo para las hojas agregadas nuevas (Grupos/Tarjeta pendiente/Acumulado):
+ *  un total de varios meses sin ningún símbolo de moneda se lee como un número cualquiera, no como
+ *  plata (hallazgo real, corrida contra el piloto — "126668464" sin formato). `FMT_MONEDA` (sin "$")
+ *  queda sin tocar para `armarHojaMovimientos`/`armarHojaControl`: son las hojas del export mensual
+ *  ya en uso, fuera de alcance de este ajuste puntual de presentación. */
+export const FMT_MONEDA_CON_SIGNO = '"$" #,##0.00;[Red]-"$" #,##0.00';
 
 function textoConcepto(f: FilaPlanilla): string {
   const base =
@@ -768,9 +796,47 @@ export type GrupoDeMovimientos = {
    *  unanimidad, nunca mayoría (`tech-lead` + `contador-dominio`, Tanda 1: un grupo mixto nunca rutea
    *  silenciosamente a "Tarjeta pendiente"). */
   readonly categoriaEspecial: CategoriaEspecial | null;
+  /** "Sin cuenta asignada — pendiente" (ningún miembro tiene `cuentaContable`), el texto único
+   *  "código · denominación" (todos comparten la MISMA cuenta real), o "N cuentas distintas — ver
+   *  detalle" (mezcla — contando "pendiente" como una cuenta distinta más). Nunca un valor inventado
+   *  ni una celda vacía (JP, corrección de fondo 2026-09-10). */
+  readonly cuentaAsignada: string;
+  /** "No identificada", "Sí — PATRÓN (clasificación)" (todos matchean al mismo patrón), o "Varias
+   *  contrapartes — ver detalle" (mezcla). Mismo criterio de unanimidad que `cuentaAsignada`. */
+  readonly contraparteIdentificada: string;
+  /** `true` si AL MENOS UN miembro tiene `requiereDecisionHumana === true` — un solo movimiento sin
+   *  resolver alcanza para que el grupo entero siga pidiendo revisión (nunca "la mayoría ya está
+   *  resuelta, no hace falta mirar"). Gobierna si "¿A qué cuenta contable va?"/"Comentario libre"
+   *  llevan validación real o "— no aplica —" en `armarHojaGrupos`. */
+  readonly requiereRevision: boolean;
   readonly ejemplo: FilaPlanilla;
   readonly ejemploCuentaEtiqueta: string;
 };
+
+/** Constante compartida con `construirGrupo` (nunca un segundo literal): un grupo con esta cuenta
+ *  todavía no tiene un asiento real, sea cual sea su `clase` — `requiereRevision` se deriva de esto
+ *  mismo, no de un cálculo aparte (hallazgo de JP, 2026-09-11: un grupo `clase: 'propuesta'' sin
+ *  regla de imputación mostraba "Sin cuenta asignada — pendiente" y a la vez "— no aplica —" en el
+ *  feedback — dos señales contradictorias sobre el mismo hecho). */
+const CUENTA_PENDIENTE = 'Sin cuenta asignada — pendiente';
+
+function cuentaAsignadaDelGrupo(miembros: readonly FilaPlanilla[]): string {
+  const codigos = new Set(miembros.map((m) => m.cuentaContable?.codigo ?? null));
+  if (codigos.size === 1) {
+    const unico = miembros[0]!.cuentaContable;
+    return unico === null ? CUENTA_PENDIENTE : `${unico.codigo} · ${unico.denominacion}`;
+  }
+  return `${codigos.size} cuentas distintas — ver detalle`;
+}
+
+function contraparteDelGrupo(miembros: readonly FilaPlanilla[]): string {
+  const patrones = new Set(miembros.map((m) => m.contraparte?.patron ?? null));
+  if (patrones.size === 1) {
+    const unico = miembros[0]!.contraparte;
+    return unico === null ? 'No identificada' : `Sí — ${unico.patron} (${unico.clasificacion})`;
+  }
+  return 'Varias contrapartes — ver detalle';
+}
 
 function totalesDelGrupo(miembros: readonly FilaPlanilla[]): { totalDebito: number; totalCredito: number } {
   let totalDebito = 0;
@@ -810,6 +876,7 @@ function construirGrupo(
 
   const ejemplo = ejemploDelGrupo(miembros);
   const cabeceraEjemplo = cabecerasPorCuenta.get(ejemplo.cuentaBancariaId);
+  const cuentaAsignada = cuentaAsignadaDelGrupo(miembros);
 
   return {
     clave,
@@ -819,6 +886,14 @@ function construirGrupo(
     ...totalesDelGrupo(miembros),
     tipoDeMovimiento: homogeneo ? (primero.identificacion ?? 'Indeterminado') : 'Mixto — ver detalle',
     categoriaEspecial: homogeneo ? primero.categoriaEspecial : null,
+    cuentaAsignada,
+    contraparteIdentificada: contraparteDelGrupo(miembros),
+    // Genuinamente decision_humana/sin_reconocer, O ya "propuesta" pero sin cuenta real todavía
+    // (pendiente de regla de imputación) — las dos son "esto sigue pidiendo algo de Laura", nunca
+    // solo la primera (hallazgo de JP: `retiro_de_socio`/`pago_de_haberes` son `clase: 'propuesta'`
+    // sin regla cargada, y mostraban "— no aplica —" pese a decir "Sin cuenta asignada — pendiente"
+    // en la columna de al lado).
+    requiereRevision: miembros.some((m) => m.requiereDecisionHumana === true) || cuentaAsignada === CUENTA_PENDIENTE,
     ejemplo,
     ejemploCuentaEtiqueta: cabeceraEjemplo ? etiquetaCuenta(cabeceraEjemplo) : '(cuenta desconocida)',
   };
@@ -881,18 +956,98 @@ const BANNER_TARJETA_PENDIENTE =
   'No hace falta que revises estos grupos todavía: no hay nada para aprobar.';
 
 const COLUMNAS_GRUPOS: readonly ColumnaMov[] = [
-  { header: 'Tipo de movimiento', key: 'tipoDeMovimiento', width: 30 },
-  { header: 'Concepto del banco', key: 'conceptoBanco', width: 26 },
-  { header: 'Banco', key: 'bancoCodigo', width: 10 },
+  { header: 'Tipo de movimiento', key: 'tipoDeMovimiento', width: 32 },
+  { header: 'Concepto del banco', key: 'conceptoBanco', width: 28 },
+  { header: 'Banco', key: 'bancoCodigo', width: 12 },
   { header: 'Cantidad de movimientos', key: 'cantidad', width: 14 },
-  { header: 'Total débito (sale)', key: 'totalDebito', width: 16, numFmt: FMT_MONEDA },
-  { header: 'Total crédito (entra)', key: 'totalCredito', width: 16, numFmt: FMT_MONEDA },
-  { header: 'Ejemplo — Fecha', key: 'ejemploFecha', width: 12, numFmt: FMT_FECHA },
-  { header: 'Ejemplo — Débito', key: 'ejemploDebito', width: 14, numFmt: FMT_MONEDA },
-  { header: 'Ejemplo — Crédito', key: 'ejemploCredito', width: 14, numFmt: FMT_MONEDA },
-  { header: 'Ejemplo — Descripción', key: 'ejemploDescripcion', width: 50 },
-  { header: 'Cuenta (del ejemplo)', key: 'ejemploCuenta', width: 22 },
+  { header: 'Total débito (sale)', key: 'totalDebito', width: 18, numFmt: FMT_MONEDA_CON_SIGNO },
+  { header: 'Total crédito (entra)', key: 'totalCredito', width: 18, numFmt: FMT_MONEDA_CON_SIGNO },
+  { header: 'Ejemplo — Fecha', key: 'ejemploFecha', width: 14, numFmt: FMT_FECHA },
+  { header: 'Ejemplo — Débito', key: 'ejemploDebito', width: 16, numFmt: FMT_MONEDA_CON_SIGNO },
+  { header: 'Ejemplo — Crédito', key: 'ejemploCredito', width: 16, numFmt: FMT_MONEDA_CON_SIGNO },
+  { header: 'Ejemplo — Descripción', key: 'ejemploDescripcion', width: 55 },
+  { header: 'Cuenta (del ejemplo)', key: 'ejemploCuenta', width: 24 },
 ];
+
+/** Columnas nuevas de la corrección de fondo (JP, 2026-09-10) — solo para la hoja "Grupos" del
+ *  paquete de cierre multi-mes, que sí tiene `cuentaContable`/`contraparte` provistos. "Tarjeta
+ *  pendiente" y el export mensual de un solo lote siguen con `COLUMNAS_GRUPOS` sin extender: ninguno
+ *  de los dos tiene ese dato hoy, y agregar la columna igual mostraría "pendiente"/"no identificada"
+ *  en el 100% de las filas sin aportar nada. */
+export const COLUMNAS_GRUPOS_EXTENDIDO: readonly ColumnaMov[] = [
+  // "Cuenta (del ejemplo)" (banco+alias+moneda) se saca a propósito de esta variante — con
+  // `cuentaAsignada` real al lado, la columna vieja mostraba siempre el mismo valor (una sola cuenta
+  // bancaria por hoja) y generaba confusión real ("¿la corrección se aplicó?", JP 2026-09-10). El
+  // dato de banco sigue disponible en la columna "Banco". Sigue existiendo en `COLUMNAS_GRUPOS` (sin
+  // extender) para "Tarjeta pendiente"/el export mensual, que no tienen `cuentaAsignada` como
+  // reemplazo.
+  ...COLUMNAS_GRUPOS.filter((c) => c.key !== 'ejemploCuenta'),
+  { header: 'Cuenta contable asignada', key: 'cuentaAsignada', width: 34 },
+  { header: 'Contraparte identificada', key: 'contraparteIdentificada', width: 34 },
+  // Las 2 de acá abajo reemplazan "Comentarios"/"Si es NO: cuenta que hubieras usado" (corrección de
+  // fondo, JP + convocatoria contador-dominio/seguridad-datos-financieros/ux-designer, 2026-09-11):
+  // esas eran fijas en TODAS las filas, incluidas las ya resueltas solas. Estas dos solo llevan
+  // contenido/validación en los grupos con `requiereRevision === true` — en el resto, `armarHojaGrupos`
+  // escribe `TEXTO_NO_APLICA` en gris, nunca una celda vacía (mismo motivo que ya vale para
+  // `totalDebito`/`totalCredito`: un hueco se lee como "me olvidé", no como "no aplica").
+  { header: '¿A qué cuenta contable va?', key: 'cuentaElegida', width: 36 },
+  { header: 'Comentario libre', key: 'comentarioLibre', width: 30 },
+];
+
+/** Origen del dato por columna (extracto del banco / calculado por el sistema / aporte de Laura) —
+ *  mismo eje que `COLOR_POR_COLUMNA` de la hoja de movimientos, para que la leyenda de color sea
+ *  consistente en todo el archivo. Las claves ausentes (columnas no listadas acá) no reciben color
+ *  de origen — hoy no hay ninguna en `COLUMNAS_GRUPOS`/`_EXTENDIDO` sin clasificar. */
+const ORIGEN_POR_COLUMNA_GRUPOS: Readonly<Record<string, string>> = {
+  tipoDeMovimiento: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
+  conceptoBanco: ARGB_EXTRAIDO_DEL_BANCO,
+  bancoCodigo: ARGB_EXTRAIDO_DEL_BANCO,
+  cantidad: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
+  totalDebito: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
+  totalCredito: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
+  ejemploFecha: ARGB_EXTRAIDO_DEL_BANCO,
+  ejemploDebito: ARGB_EXTRAIDO_DEL_BANCO,
+  ejemploCredito: ARGB_EXTRAIDO_DEL_BANCO,
+  ejemploDescripcion: ARGB_EXTRAIDO_DEL_BANCO,
+  ejemploCuenta: ARGB_EXTRAIDO_DEL_BANCO,
+  cuentaAsignada: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
+  contraparteIdentificada: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
+  cuentaElegida: ARGB_APORTE_DE_LAURA,
+  comentarioLibre: ARGB_APORTE_DE_LAURA,
+};
+
+/** Gris de "esto ya está resuelto, no hace falta que lo mires" — mismo tono que ya usaba
+ *  `armarHojaEjemplosDeAsiento` sin nombrar (hallazgo `ux-designer`, 2026-09-11: un cuarto tono de
+ *  gris sin nombre ni leyenda es indistinguible de los otros dos que ya tiene el archivo). Texto
+ *  literal, nunca celda vacía — mismo motivo que `totalDebito`/`totalCredito` en cero. */
+const ARGB_NO_APLICA = 'FFE0E0E0';
+const TEXTO_NO_APLICA = '— no aplica —';
+
+/** Leyenda de color visible ANTES de la tabla (JP, ajuste 2026-09-10: "el color solo no alcanza para
+ *  comunicarlo") — un swatch real con el mismo ARGB que el encabezado, no un emoji que pueda
+ *  contradecir el color real de la columna. `incluirNoAplica`: cuarto swatch para el gris de "ya
+ *  resuelto" (`ux-designer`, 2026-09-11) — solo en las hojas que de verdad usan ese gris. */
+function escribirLeyendaColor(hoja: ExcelJS.Worksheet, fila: number, incluirNoAplica = false): void {
+  const swatch = (col: number, argb: string, texto: string): void => {
+    const celdaColor = hoja.getCell(fila, col);
+    celdaColor.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } };
+    celdaColor.border = BORDE_FINO;
+    const celdaTexto = hoja.getCell(fila, col + 1);
+    celdaTexto.value = texto;
+    celdaTexto.font = { italic: true, size: 9 };
+  };
+  swatch(1, ARGB_EXTRAIDO_DEL_BANCO, 'Dato del extracto bancario');
+  swatch(4, ARGB_IDENTIFICADO_POR_EL_SISTEMA, 'Calculado por el sistema');
+  swatch(7, ARGB_APORTE_DE_LAURA, 'Para que completes vos');
+  if (incluirNoAplica) swatch(10, ARGB_NO_APLICA, 'Ya resuelto — no hace falta que mires');
+}
+
+const BORDE_FINO: Partial<ExcelJS.Borders> = {
+  top: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+  left: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+  bottom: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+  right: { style: 'thin', color: { argb: 'FFBFBFBF' } },
+};
 
 const FILA_ENCABEZADOS_GRUPOS = 3;
 const PRIMERA_FILA_DATOS_GRUPOS = 4;
@@ -900,60 +1055,296 @@ const PRIMERA_FILA_DATOS_GRUPOS = 4;
 /** Hoja "Grupos" (`tabColorArgb` ausente) o "Tarjeta pendiente" (`tabColorArgb` presente, quinta
  *  categoría visual — `ux-designer`: no reusa gris/azul/dorado porque cada uno ya significa otra cosa,
  *  y rojo/naranja connotan error, que esto no es). Sin umbral mínimo: se llama con `grupos.length ===
- *  0` nunca — el caller decide si la hoja se arma o no. */
-function armarHojaGrupos(
+ *  0` nunca — el caller decide si la hoja se arma o no.
+ *
+ *  Exportada (además de por `armarLibro`) para reusarse tal cual en reportes que agregan más de un
+ *  lote (ej. el paquete de cierre multi-mes a Laura) — mismo formato exacto, cero duplicación.
+ *
+ *  `nombreDefinidoPlanDeCuentas`: nombre definido del libro (`Workbook.definedNames`) que apunta al
+ *  rango de la hoja oculta del plan de cuentas real del cliente — solo hace falta cuando `columnas`
+ *  incluye `cuentaElegida` (`COLUMNAS_GRUPOS_EXTENDIDO`); ignorado si no. Sin este argumento, esa
+ *  columna se escribe siempre como "— no aplica —" (nunca una celda editable sin desplegable real). */
+export function armarHojaGrupos(
   libro: ExcelJS.Workbook,
   nombreDeHoja: string,
   titulo: string,
   grupos: readonly GrupoDeMovimientos[],
   tabColorArgb?: string,
+  columnas: readonly ColumnaMov[] = COLUMNAS_GRUPOS,
+  nombreDefinidoPlanDeCuentas?: string,
 ): void {
   const hoja = libro.addWorksheet(nombreDeHoja, { views: [{ state: 'frozen', ySplit: FILA_ENCABEZADOS_GRUPOS }] });
   if (tabColorArgb) hoja.properties.tabColor = { argb: tabColorArgb };
 
+  const esExtendida = columnas === COLUMNAS_GRUPOS_EXTENDIDO;
+
   hoja.getCell('A1').value = titulo;
   hoja.getCell('A1').font = { bold: true };
   hoja.getCell('A1').alignment = { wrapText: true, vertical: 'middle' };
-  hoja.mergeCells(1, 1, 1, COLUMNAS_GRUPOS.length);
-  if (tabColorArgb) hoja.getRow(1).height = 60;
+  hoja.mergeCells(1, 1, 1, columnas.length);
+  hoja.getRow(1).height = tabColorArgb ? 60 : esExtendida ? 48 : 30;
 
-  COLUMNAS_GRUPOS.forEach((c, i) => {
+  // Leyenda de color (fila 2) — solo cuando el encabezado usa el código de color real (Grupos, sin
+  // `tabColorArgb`). "Tarjeta pendiente" pinta TODO el encabezado de violeta a propósito (quinta
+  // categoría, no mezcla gris/azul) — una leyenda gris/azul ahí sería directamente falsa. El cuarto
+  // swatch ("ya resuelto") solo en la variante extendida, que es la única que de verdad pinta gris.
+  if (!tabColorArgb) escribirLeyendaColor(hoja, 2, esExtendida);
+
+  // Encabezado con color de fondo — por columna (origen real del dato) cuando es "Grupos"; un único
+  // color de tarjeta cuando es "Tarjeta pendiente". Antes esta hoja era la única del archivo con
+  // encabezado sin ningún color (hallazgo real, corrida contra el piloto): bold solo, sin fondo, se
+  // leía como una tabla de datos crudos.
+  columnas.forEach((c, i) => {
     const celda = hoja.getCell(FILA_ENCABEZADOS_GRUPOS, i + 1);
     celda.value = c.header;
     hoja.getColumn(i + 1).width = c.width;
     if (c.numFmt) hoja.getColumn(i + 1).numFmt = c.numFmt;
-    if (tabColorArgb) celda.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tabColorArgb } };
+    const argb = tabColorArgb ?? ORIGEN_POR_COLUMNA_GRUPOS[c.key] ?? ARGB_IDENTIFICADO_POR_EL_SISTEMA;
+    celda.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } };
+    celda.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    celda.border = BORDE_FINO;
   });
-  hoja.getRow(FILA_ENCABEZADOS_GRUPOS).font = { bold: true };
   hoja.getRow(FILA_ENCABEZADOS_GRUPOS).alignment = { vertical: 'middle', wrapText: true };
 
   grupos.forEach((g, indice) => {
     const fila = hoja.getRow(PRIMERA_FILA_DATOS_GRUPOS + indice);
     const ejemploImporte = importeCanonicoANumeroExcel(g.ejemplo.importe) ?? 0;
+    // `totalDebito`/`totalCredito` son un AGREGADO del grupo — 0 es un valor real (el grupo no tuvo
+    // movimientos de ese lado), nunca "sin dato": se muestra el cero, no una celda vacía (hallazgo
+    // real, corrida contra el piloto — se leía como una fila rota). Los `ejemplo*` SÍ siguen en
+    // `null` cuando no aplican: ahí es un movimiento puntual, débito XOR crédito por diseño, igual
+    // que ya hace `armarHojaMovimientos`.
     const registro: Record<string, ExcelJS.CellValue> = {
       tipoDeMovimiento: g.tipoDeMovimiento,
       conceptoBanco: g.conceptoBanco ?? '(sin concepto)',
       bancoCodigo: g.bancoCodigo,
       cantidad: g.cantidad,
-      totalDebito: g.totalDebito || null,
-      totalCredito: g.totalCredito || null,
+      totalDebito: g.totalDebito,
+      totalCredito: g.totalCredito,
       ejemploFecha: fechaIsoASerialExcel(g.ejemplo.fecha),
       ejemploDebito: ejemploImporte < 0 ? -ejemploImporte : null,
       ejemploCredito: ejemploImporte > 0 ? ejemploImporte : null,
       ejemploDescripcion: g.ejemplo.descripcion,
       ejemploCuenta: g.ejemploCuentaEtiqueta,
+      cuentaAsignada: g.cuentaAsignada,
+      contraparteIdentificada: g.contraparteIdentificada,
+      // `null` acá — las dos se escriben aparte, abajo, porque su tratamiento (validación real vs.
+      // "— no aplica —") depende de `g.requiereRevision`, no es un valor fijo del registro.
+      cuentaElegida: null,
+      comentarioLibre: null,
     };
-    COLUMNAS_GRUPOS.forEach((c, i) => {
-      fila.getCell(i + 1).value = registro[c.key] ?? null;
+    const esColumnaFeedback = (clave: string): boolean => clave === 'cuentaElegida' || clave === 'comentarioLibre';
+    columnas.forEach((c, i) => {
+      const celda = fila.getCell(i + 1);
+      const esFeedbackNoAplica = esColumnaFeedback(c.key) && !g.requiereRevision;
+      celda.value = esFeedbackNoAplica ? TEXTO_NO_APLICA : (registro[c.key] ?? null);
+      celda.border = BORDE_FINO;
+      if (esFeedbackNoAplica) {
+        celda.font = { italic: true, color: { argb: 'FF808080' } };
+        celda.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ARGB_NO_APLICA } };
+      } else if (indice % 2 === 1) {
+        celda.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F7F7' } };
+      }
+      // Desplegable real — SOLO en el grupo que sigue pidiendo revisión, y SOLO si el caller trajo el
+      // nombre definido del plan de cuentas real (sin él, la celda queda en blanco y editable, nunca
+      // con una lista inventada). `errorStyle: 'stop'` — minúscula, valor real de la spec OOXML
+      // (ECMA-376 §18.3.1.32/18.18.33): `stop`/`warning`/`information`, nunca `'error'`/`'Stop'`. El
+      // tipo de ExcelJS (`errorStyle?: string`) no lo valida — pasa lo que sea derecho al XML, y
+      // `'error'` produce un atributo inválido que Excel de escritorio tolera y corrige en silencio
+      // (puede alterar la validación al reguardar) pero una librería estricta (openpyxl) rechaza de
+      // entrada. Hallazgo de JP, 2026-09-11 — corregido acá y en `armar-libro-laura.ts` (mismo bug
+      // preexistente, HANDOFF (97)/(sesión Laura), no introducido en esta tarea).
+      if (c.key === 'cuentaElegida' && g.requiereRevision && nombreDefinidoPlanDeCuentas) {
+        celda.dataValidation = {
+          type: 'list',
+          allowBlank: true,
+          formulae: [nombreDefinidoPlanDeCuentas],
+          showErrorMessage: true,
+          errorStyle: 'stop',
+          errorTitle: 'Cuenta inválida',
+          error: 'Elegí una cuenta de la lista desplegable (plan de cuentas real del cliente).',
+          showInputMessage: true,
+          promptTitle: 'Cuenta contable',
+          prompt: '¿A qué cuenta contable va este grupo de movimientos?',
+        };
+      }
     });
   });
 
   if (grupos.length > 0) {
     hoja.autoFilter = {
       from: { row: FILA_ENCABEZADOS_GRUPOS, column: 1 },
-      to: { row: FILA_ENCABEZADOS_GRUPOS - 1 + grupos.length, column: COLUMNAS_GRUPOS.length },
+      to: { row: FILA_ENCABEZADOS_GRUPOS - 1 + grupos.length, column: columnas.length },
     };
   }
+}
+
+// -----------------------------------------------------------------------------
+// Hoja oculta del plan de cuentas — fuente del desplegable de "¿A qué cuenta contable va?" de
+// "Grupos" (corrección de fondo, JP + convocatoria contador-dominio/seguridad-datos-
+// financieros/security-engineer/ux-designer, 2026-09-11).
+// -----------------------------------------------------------------------------
+
+export type CuentaParaDesplegable = { readonly codigo: string; readonly denominacion: string };
+
+/**
+ * `state: 'veryHidden'` — mismo criterio que `armar-libro-laura.ts::armarHojaListas`: no es un
+ * control de seguridad (`security-engineer`: se destapa editando el XML o desde el editor VBA, sin
+ * dejar rastro), pero evita el destape accidental desde el menú estándar de Excel. Un nombre
+ * definido del LIBRO (`Workbook.definedNames.add`), nunca un string de fórmula armado a mano en cada
+ * celda de "Grupos" — un nombre de hoja con espacios/paréntesis mal escrito ahí produce un Excel que
+ * pide "reparar" el archivo, no un error de TypeScript.
+ *
+ * `cuentas` tiene que venir YA filtrada por vigencia (`activa && vigenteHasta === null`) — esta
+ * función no filtra nada, solo vuelca lo que recibe (mismo contrato que `armarHojaGrupos` con sus
+ * grupos ya armados). Devuelve el nombre definido, para pasarlo tal cual a `armarHojaGrupos`.
+ */
+export function armarHojaPlanDeCuentasOculta(
+  libro: ExcelJS.Workbook,
+  nombreDeHoja: string,
+  nombreDefinido: string,
+  cuentas: readonly CuentaParaDesplegable[],
+): string {
+  const hoja = libro.addWorksheet(nombreDeHoja, { state: 'veryHidden' });
+  cuentas.forEach((c, i) => {
+    hoja.getCell(i + 1, 1).value = `${c.codigo} · ${c.denominacion}`;
+  });
+  // Rango de al menos 1 fila aunque `cuentas` venga vacío — un nombre definido `$A$1:$A$0` es un
+  // rango inválido, Excel lo rechaza al abrir el archivo. Con 0 cuentas el desplegable queda vacío
+  // (sin opciones), nunca un archivo corrupto.
+  const filas = Math.max(cuentas.length, 1);
+  libro.definedNames.add(`'${nombreDeHoja}'!$A$1:$A$${filas}`, nombreDefinido);
+  return nombreDefinido;
+}
+
+// -----------------------------------------------------------------------------
+// "Ejemplos de asiento real" (corrección de fondo, JP 2026-09-10) — formato diario, un bloque por
+// (tipo, variante de cuenta). Nunca inventa un asiento: cada bloque es un movimiento REAL con sus
+// renglones reales de `asiento_propuesto_renglon`, provisto por el llamador (paquete de cierre).
+// -----------------------------------------------------------------------------
+
+export type RenglonDeEjemplo = {
+  readonly cuentaCodigo: string;
+  readonly cuentaDenominacion: string;
+  readonly debe: number;
+  readonly haber: number;
+};
+
+export type BloqueDeEjemplo = {
+  readonly tipoTexto: string;
+  /** Cuántos movimientos reales del período caen en esta MISMA variante (mismo tipo + misma
+   *  combinación de cuentas) — nunca el total del tipo cuando hay más de una variante. */
+  readonly cantidadEnVariante: number;
+  readonly fecha: string;
+  readonly descripcionBanco: string;
+  readonly renglones: readonly RenglonDeEjemplo[];
+  /** `null` cuando el tipo es homogéneo (una sola variante real en el período). Cuando hay más de
+   *  una, una frase breve que identifique la condición si es identificable (ej. "según el banco de
+   *  origen"), o el fallback honesto "este tipo tiene más de una cuenta posible según el caso" si no
+   *  es simple de resumir (JP, ajuste 2026-09-10 — nunca ocultar la otra variante mostrando una sola
+   *  como si fuera la única). */
+  readonly notaVariante: string | null;
+};
+
+// "Si es NO: cuenta que hubieras usado" (JP, 2026-09-11): sacada — esta hoja son ejemplos YA
+// resueltos (el propio `BANNER_EJEMPLOS_DE_ASIENTO` dice "no necesitan tu revisión"), sin ninguna
+// pregunta OK/NO que la preceda. La columna quedaba huérfana, sin sentido propio. Queda solo
+// "Comentarios", para que Laura marque algo si le parece que no está bien — sin forzar un formato
+// de respuesta que esta hoja no pide.
+const COLUMNAS_EJEMPLOS: readonly ColumnaMov[] = [
+  { header: 'Fecha', key: 'fecha', width: 12, numFmt: FMT_FECHA },
+  { header: 'Cuenta', key: 'cuenta', width: 42 },
+  { header: 'Debe', key: 'debe', width: 16, numFmt: FMT_MONEDA_CON_SIGNO },
+  { header: 'Haber', key: 'haber', width: 16, numFmt: FMT_MONEDA_CON_SIGNO },
+  { header: 'Concepto del banco (ejemplo)', key: 'concepto', width: 40 },
+  { header: 'Comentarios', key: 'comentarios', width: 24 },
+];
+const ORIGEN_POR_COLUMNA_EJEMPLOS: Readonly<Record<string, string>> = {
+  fecha: ARGB_EXTRAIDO_DEL_BANCO,
+  cuenta: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
+  debe: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
+  haber: ARGB_IDENTIFICADO_POR_EL_SISTEMA,
+  concepto: ARGB_EXTRAIDO_DEL_BANCO,
+  comentarios: ARGB_APORTE_DE_LAURA,
+};
+
+export const BANNER_EJEMPLOS_DE_ASIENTO =
+  'Ejemplos reales de asientos que el sistema ya arma solo — no necesitan tu revisión. Si alguno no ' +
+  'te parece correcto, decilo en "Comentarios".';
+
+/** Formato diario clásico: la cuenta que debita va primero sin sangría, la que acredita debajo con
+ *  el prefijo "a " (ux-designer + contador-dominio, ajuste 2026-09-10). El `orden` que trae la base
+ *  (`asiento_propuesto_renglon.orden`) NO se usa para decidir esto — no está garantizado que el
+ *  renglón 1 sea siempre el debe (verificado contra un caso real: no lo es) —, se reordena acá por
+ *  `debe > 0` primero. */
+export function armarHojaEjemplosDeAsiento(libro: ExcelJS.Workbook, titulo: string, bloques: readonly BloqueDeEjemplo[]): void {
+  const hoja = libro.addWorksheet('Ejemplos de asiento real', { views: [{ state: 'frozen', ySplit: 3 }] });
+
+  hoja.getCell('A1').value = titulo;
+  hoja.getCell('A1').font = { bold: true };
+  hoja.getCell('A1').alignment = { wrapText: true, vertical: 'middle' };
+  hoja.mergeCells(1, 1, 1, COLUMNAS_EJEMPLOS.length);
+  hoja.getRow(1).height = 30;
+
+  escribirLeyendaColor(hoja, 2, true);
+
+  COLUMNAS_EJEMPLOS.forEach((c, i) => {
+    const celda = hoja.getCell(3, i + 1);
+    celda.value = c.header;
+    hoja.getColumn(i + 1).width = c.width;
+    if (c.numFmt) hoja.getColumn(i + 1).numFmt = c.numFmt;
+    celda.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ORIGEN_POR_COLUMNA_EJEMPLOS[c.key] ?? ARGB_IDENTIFICADO_POR_EL_SISTEMA } };
+    celda.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    celda.border = BORDE_FINO;
+  });
+  hoja.getRow(3).alignment = { vertical: 'middle', wrapText: true };
+
+  let fila = 5;
+  hoja.getCell(4, 1).value = BANNER_EJEMPLOS_DE_ASIENTO;
+  hoja.mergeCells(4, 1, 4, COLUMNAS_EJEMPLOS.length);
+  hoja.getCell(4, 1).font = { italic: true };
+  hoja.getCell(4, 1).alignment = { wrapText: true };
+
+  bloques.forEach((b) => {
+    const encabezadoBloque = `Tipo de movimiento: ${b.tipoTexto} — ${b.cantidadEnVariante} movimientos así en el período — ejemplo real del ${b.fecha}${b.notaVariante ? ` (${b.notaVariante})` : ''}`;
+    const celdaCaption = hoja.getCell(fila, 1);
+    celdaCaption.value = encabezadoBloque;
+    celdaCaption.font = { bold: true };
+    celdaCaption.alignment = { wrapText: true };
+    hoja.mergeCells(fila, 1, fila, COLUMNAS_EJEMPLOS.length);
+    fila += 1;
+
+    // Debe primero, haber después — nunca el `orden` crudo de la base (ver comentario de la función).
+    const ordenados = [...b.renglones].sort((r1, r2) => (r1.debe > 0 ? 0 : 1) - (r2.debe > 0 ? 0 : 1));
+    ordenados.forEach((r, i) => {
+      const esHaber = r.debe === 0 && r.haber > 0;
+      const cuentaTexto = esHaber ? `  a ${r.cuentaDenominacion} (${r.cuentaCodigo})` : `${r.cuentaDenominacion} (${r.cuentaCodigo})`;
+      const registro: Record<string, ExcelJS.CellValue> = {
+        fecha: i === 0 ? fechaIsoASerialExcel(b.fecha) : null,
+        cuenta: cuentaTexto,
+        debe: r.debe > 0 ? r.debe : null,
+        haber: r.haber > 0 ? r.haber : null,
+        concepto: i === 0 ? b.descripcionBanco : null,
+        comentarios: null,
+      };
+      const esColumnaFeedback = (clave: string): boolean => clave === 'comentarios';
+      COLUMNAS_EJEMPLOS.forEach((c, ci) => {
+        const celda = hoja.getCell(fila, ci + 1);
+        const esNoAplica = esColumnaFeedback(c.key) && i > 0;
+        celda.value = esNoAplica ? TEXTO_NO_APLICA : (registro[c.key] ?? null);
+        celda.border = BORDE_FINO;
+        if (c.key === 'cuenta' && esHaber) celda.alignment = { indent: 2 };
+        // El feedback de Laura va SOLO en la línea del debe (i === 0) — la del haber es el mismo
+        // asiento, escribir en las dos duplicaría o confundiría a qué línea se refiere el comentario.
+        if (esNoAplica) {
+          celda.font = { italic: true, color: { argb: 'FF808080' } };
+          celda.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ARGB_NO_APLICA } };
+        }
+      });
+      fila += 1;
+    });
+    fila += 1; // separador entre bloques
+  });
 }
 
 // -----------------------------------------------------------------------------

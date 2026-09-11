@@ -560,6 +560,14 @@ export async function exportarPlanillaDeLote(
       pendiente: texto?.pendiente ?? null,
       contraparteConocida: texto?.contraparteConocida ?? null,
       categoriaEspecial: texto?.categoriaEspecial ?? null,
+      // Cuenta contable real (Capa D) y contraparte con nombre — export mensual de un solo lote no
+      // hace ese join hoy (solo el paquete de cierre multi-mes lo provee, `armar-libro.ts`
+      // `FilaPlanilla.cuentaContable`/`.contraparte`). `null` acá, siempre.
+      cuentaContable: null,
+      contraparte: null,
+      // Mismo motivo que `cuentaContable`/`contraparte`: el export mensual de un solo lote no trae la
+      // `clase` cruda de `reconocimiento_movimiento`. `null`, siempre.
+      requiereDecisionHumana: null,
       // Sin enriquecimiento no hay `que_decide` conocido, así que no hay nada que excluir de la
       // agrupación — degrada a `true` (agrupable), mismo criterio "columnas en blanco, comportamiento
       // de hoy" que sus hermanos.

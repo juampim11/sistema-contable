@@ -76,6 +76,9 @@ function filaDePrueba(over: Partial<FilaPlanilla> = {}): FilaPlanilla {
     pendiente: null,
     contraparteConocida: null,
     categoriaEspecial: null,
+    cuentaContable: null,
+    contraparte: null,
+    requiereDecisionHumana: null,
     agrupable: true,
     ...over,
   };
