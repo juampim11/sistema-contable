@@ -102,6 +102,24 @@ export async function lockearMovimientosDelLote(
  * tiene, hoy, ningún camino de reproceso equivalente a `reprocesar-capa-d.ts` — un asiento así queda
  * citando la clasificación vieja. No se resuelve en este fix.
  */
+/**
+ * El criterio de "ya imputado" (fix de idempotencia, 2026-09-09) — extraído a una sola constante
+ * para que `leerReconocimientosParaImputar` (por lote) y `contarPropuestaSinAsientoPorTipo` (por
+ * tipo, para el dry-run de `alta-regla-imputacion.ts`) NUNCA puedan divergir en silencio. Asume el
+ * alias `r` para `reconocimiento_movimiento` — quien la usa tiene que nombrar así su FROM.
+ */
+const CONDICION_SIN_ASIENTO_NI_PENDIENTE_TERMINAL = `
+  not exists (
+    select 1 from asiento_propuesto_renglon apr
+     where apr.cliente_id = r.cliente_id and apr.referencia_origen = r.movimiento_id::text
+  )
+  and not exists (
+    select 1 from pendiente_cierre pc
+     where pc.cliente_id = r.cliente_id and pc.referencia_origen = r.movimiento_id::text
+       and pc.pendiente_estado <> 'abierto'
+  )
+`;
+
 export async function leerReconocimientosParaImputar(
   tx: Tx,
   args: { readonly clienteId: string; readonly loteIngestaId: string },
@@ -132,15 +150,7 @@ export async function leerReconocimientosParaImputar(
          on m.cliente_id = r.cliente_id and m.id = r.movimiento_id
       where r.cliente_id = $1 and m.lote_ingesta_id = $2
         and r.superseded_por is null and r.clase = 'propuesta'
-        and not exists (
-          select 1 from asiento_propuesto_renglon apr
-           where apr.cliente_id = r.cliente_id and apr.referencia_origen = r.movimiento_id::text
-        )
-        and not exists (
-          select 1 from pendiente_cierre pc
-           where pc.cliente_id = r.cliente_id and pc.referencia_origen = r.movimiento_id::text
-             and pc.pendiente_estado <> 'abierto'
-        )
+        and ${CONDICION_SIN_ASIENTO_NI_PENDIENTE_TERMINAL}
       order by m.fila_numero`,
     [args.clienteId, args.loteIngestaId],
   );
@@ -177,6 +187,28 @@ export async function leerReconocimientosParaImputar(
     })),
     yaImputadosExcluidos: total - filas.length,
   };
+}
+
+/**
+ * Cuántos movimientos `propuesta` de UN tipo, en TODO el corpus del cliente (no un lote puntual),
+ * siguen sin `asiento_propuesto_renglon` ni `pendiente_cierre` terminal — el "radio del gesto" que
+ * `alta-regla-imputacion.ts` muestra en su dry-run, ANTES de dar de alta la regla. Mismo criterio
+ * EXACTO de exclusión que `leerReconocimientosParaImputar` (`CONDICION_SIN_ASIENTO_NI_PENDIENTE_
+ * TERMINAL`, arriba) — JP, 2026-09-10: "reusá la misma consulta/criterio, no una tercera versión".
+ */
+export async function contarPropuestaSinAsientoPorTipo(
+  tx: Tx,
+  args: { readonly clienteId: string; readonly tipoMovimiento: string },
+): Promise<number> {
+  const filas = await tx.consultar<{ total: string }>(
+    `select count(*)::text as total
+       from reconocimiento_movimiento r
+      where r.cliente_id = $1 and r.superseded_por is null and r.clase = 'propuesta'
+        and r.tipo = $2
+        and ${CONDICION_SIN_ASIENTO_NI_PENDIENTE_TERMINAL}`,
+    [args.clienteId, args.tipoMovimiento],
+  );
+  return Number(filas[0]?.total ?? '0');
 }
 
 // -----------------------------------------------------------------------------

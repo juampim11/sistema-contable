@@ -122,6 +122,78 @@ export async function altaPlanDeCuentas(
 }
 
 // -----------------------------------------------------------------------------
+// Alta de `regla_imputacion` (`0030`, D-29 pata "contrapartida") — `cuenta_resolucion: 'fija'`
+// ÚNICAMENTE (JP, 2026-09-10): las otras 3 resoluciones ('por_socio'/'por_jurisdiccion'/
+// 'por_impuesto') necesitan su propio diseño y sign-off, fuera de alcance de esta alta.
+// -----------------------------------------------------------------------------
+
+export type PedidoAltaReglaImputacion = {
+  readonly clienteId: string;
+  readonly tipoMovimiento: string;
+  /** `null` = regla general del tipo — el único caso que usa esta tarea (contador-dominio, doc 31
+   *  Dictamen 4/5 §B: "el mismo caso" es el tipo entero, no un concepto puntual). */
+  readonly concepto: string | null;
+  /** YA resuelto por el caller (`leerPlanDeCuentasCompleto` + código real) — esta función nunca
+   *  busca ni inventa una cuenta. */
+  readonly cuentaId: string;
+  readonly vigenteDesde: string;
+  readonly respaldo: string;
+  readonly decididoPor: string;
+};
+
+export type ResultadoAltaReglaImputacion = { readonly reglaImputacionId: string };
+
+/** Traduce `uq_regla_imputacion_vigente` (`0030`) — este CLI es solo ALTA, nunca reemplazo; cerrar
+ *  una vigencia abierta es un gesto aparte, fuera de esta función. */
+export class YaExisteReglaVigenteError extends Error {
+  constructor(tipoMovimiento: string, concepto: string | null) {
+    super(
+      `Ya existe una regla_imputacion vigente para (${tipoMovimiento}, ${concepto ?? 'sin concepto'}) — ` +
+        `este alta es solo para reglas NUEVAS. Para reemplazar una vigente, hay que cerrarla primero.`,
+    );
+    this.name = 'YaExisteReglaVigenteError';
+  }
+}
+
+export async function altaReglaImputacion(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoAltaReglaImputacion,
+): Promise<ResultadoAltaReglaImputacion> {
+  try {
+    const insertado = await conErroresTraducidos(undefined, () =>
+      tx.consultar<{ id: string }>(
+        `insert into regla_imputacion
+           (cliente_id, tipo_movimiento, concepto, cuenta_resolucion, cuenta_id, vigente_desde,
+            respaldo, decidido_por)
+         values ($1, $2, $3, 'fija', $4, $5::date, $6, $7)
+         returning id::text as id`,
+        [
+          pedido.clienteId,
+          pedido.tipoMovimiento,
+          pedido.concepto,
+          pedido.cuentaId,
+          pedido.vigenteDesde,
+          pedido.respaldo,
+          pedido.decididoPor,
+        ],
+      ),
+    );
+    const id = insertado[0]?.id;
+    if (!id) throw new Error('El alta de regla_imputacion no devolvió id.'); // H-14
+    // `tipo_movimiento` es N2+ en el registro de clasificación (revela patrón de actividad del
+    // cliente) — no viaja al log, mismo criterio que el resto del repo (R27).
+    logger.info('regla_imputacion.alta', { cliente_id: pedido.clienteId });
+    return { reglaImputacionId: id };
+  } catch (error) {
+    if (error instanceof ErrorDeBase && error.constraint === 'uq_regla_imputacion_vigente') {
+      throw new YaExisteReglaVigenteError(pedido.tipoMovimiento, pedido.concepto);
+    }
+    throw error;
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Backfill de `documento_ingerido` — 3 lotes reales de Capa 1 (Sesión 2a, `27-roadmap-capa-d.md`)
 // -----------------------------------------------------------------------------
 
@@ -235,6 +307,11 @@ export type RenglonParaEscribir = {
   readonly cuentaRef: CuentaRef;
   readonly lado: 'debe' | 'haber';
   readonly importe: string;
+  /** Cita congelada, claves snake_case IDÉNTICAS a `asiento_renglon_verificacion_chk` (`0027`) — el
+   *  servicio de I/O la copia tal cual del resolver de Capa D, sin remapear nada. `undefined`/
+   *  ausente ⟹ se persiste `{}` (default de la columna) — mismo comportamiento de siempre para lo
+   *  que no la usa. */
+  readonly verificacionHeredada?: Readonly<{ estado: 'aproximada'; motivo: string }>;
 };
 
 export type PedidoAsientoAutomatico = {
@@ -275,8 +352,8 @@ export async function escribirAsientoAutomatico(
       tx.consultar(
         `insert into asiento_propuesto_renglon
            (cliente_id, asiento_id, orden, cuenta_id, cuenta_ref, debe, haber, fecha_imputacion,
-            referencia_origen)
-         values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::date, $9)`,
+            referencia_origen, verificacion_heredada)
+         values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::date, $9, $10::jsonb)`,
         [
           pedido.clienteId,
           asientoId,
@@ -287,6 +364,7 @@ export async function escribirAsientoAutomatico(
           renglon.lado === 'haber' ? renglon.importe : '0',
           pedido.fechaImputacion,
           pedido.movimientoId,
+          JSON.stringify(renglon.verificacionHeredada ?? {}),
         ],
       ),
     );
