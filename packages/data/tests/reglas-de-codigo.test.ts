@@ -358,6 +358,32 @@ describe('las dependencias entre paquetes no pueden hacer ciclo', () => {
         'argumento de una función pura.',
     ).toEqual([]);
   });
+
+  /**
+   * R-B (espejo para `armar-libro.ts`/`armar-libro-laura.ts`) — la capa de EXPORTACIÓN pura de la
+   * planilla tampoco puede importar `data`. A diferencia del resto de `packages/ingesta/src/` (los
+   * adaptadores, `exportar-planilla.ts`, `relevamiento-laura.ts` SÍ hacen I/O, a propósito, y por eso
+   * quedan AFUERA de esta regla), estos dos archivos son donde vive `claveDeAgrupacion()` — la clave
+   * que `confirmacion_grupo` (`0043`) usa para pre-llenar `cuentaContable` sin tocar el núcleo. Ajuste
+   * agregado al escribir `0043` (JP, 2026-09-12): si `armar-libro.ts` empezara a leer la base, el
+   * riesgo que evita el diseño de esa tabla (todo en memoria, aguas abajo) se reabriría en silencio —
+   * el mismo argumento que ya cerró el bug del digest (HANDOFF 187) para el léxico del motor.
+   */
+  it('`armar-libro.ts`/`armar-libro-laura.ts` no importan `@sistema-contable/data`', () => {
+    const archivos = FUENTES.filter(
+      (r) => rel(r) === 'packages/ingesta/src/planilla/armar-libro.ts' || rel(r) === 'packages/ingesta/src/planilla/armar-libro-laura.ts',
+    );
+    expect(archivos.length, 'no se está barriendo armar-libro.ts/armar-libro-laura.ts — revisar el glob de FUENTES').toBe(2);
+
+    const infractores = archivos.filter((ruta) => /@sistema-contable\/data/.test(readFileSync(ruta, 'utf8')));
+
+    expect(
+      infractores.map(rel),
+      'armar-libro.ts/armar-libro-laura.ts son la capa de exportación PURA (reciben FilaPlanilla ya ' +
+        'armada del llamador, mismo patrón que cuentaContable/requiereDecisionHumana) — si necesitan un ' +
+        'dato de la base, lo reciben como argumento, no lo van a buscar (mismo argumento que R-B).',
+    ).toEqual([]);
+  });
 });
 // -----------------------------------------------------------------------------
 describe('aislamiento entre bancos: un adaptador no puede romper a otro', () => {

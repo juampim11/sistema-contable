@@ -48,6 +48,7 @@ import {
   verificarCredencialDeRequest,
   registrarAcceso,
   leerPlanDeCuentasCompleto,
+  leerConfirmacionesGrupoVigentes,
   type Tx,
 } from '@sistema-contable/data';
 import { textoDeTipo, TEXTO_SIN_TIPO, type TipoMovimiento } from '@sistema-contable/contabilidad';
@@ -56,6 +57,7 @@ import {
   armarHojaGrupos,
   armarHojaEjemplosDeAsiento,
   armarHojaPlanDeCuentasOculta,
+  claveDeAgrupacion,
   COLUMNAS_GRUPOS_EXTENDIDO,
   serializarLibro,
   MAX_FILAS,
@@ -199,6 +201,14 @@ type ResultadoLectura =
        *  declarar el recorte en el Resumen ejecutivo (JP, 2026-09-11: FCI está fuera de alcance de
        *  este paquete, así que el "Total de movimientos" tiene que decirlo, no dejarlo implícito). */
       readonly cantidadFciExcluida: number;
+      /** `confirmacion_grupo` (`0043`, doc 31 Tanda 2) VIGENTES del cliente, YA resueltas contra el
+       *  plan de cuentas real y YA indexadas por `claveDeAgrupacion()` — memoria de lo que Laura
+       *  confirmó en una ronda anterior. Capa de EXPORTACIÓN pura: se usa solo para PRE-LLENAR
+       *  `cuentaContable` cuando Capa D no lo resolvió (`cuentaContableDelMovimiento` devuelve
+       *  `null`) — nunca escribe `reconocimiento_movimiento` ni `asiento_propuesto` (D-28 sigue
+       *  bloqueado, decisión de JP 2026-09-12). Una confirmación cuya `cuentaId` ya no está
+       *  activa/vigente en el plan se DESCARTA (nunca se muestra una cuenta dada de baja). */
+      readonly confirmacionesGrupoPorClave: ReadonlyMap<string, { readonly codigo: string; readonly denominacion: string }>;
     }
   | { readonly estado: 'abortado'; readonly motivoCodigo: string };
 
@@ -351,8 +361,42 @@ async function leerCliente(tx: Tx, clienteId: string): Promise<ResultadoLectura>
       .map((c) => ({ codigo: c.codigo, denominacion: c.denominacion }))
       .sort((a, b) => a.codigo.localeCompare(b.codigo));
 
+    // `confirmacion_grupo` (`0043`) — mismo criterio de "primero el rastro" que el plan de cuentas de
+    // arriba: recurso aparte, auditado aparte. Solo LECTURA: esta corrida nunca escribe acá.
+    await registrarAcceso(tx, {
+      clienteId,
+      accion: 'export',
+      recurso: 'confirmacion_grupo',
+      motivo: `paquete_cierre_4meses|dest:estudio_interno|pre_llenado_cuenta_contable`,
+    });
+    const confirmacionesGrupo = await leerConfirmacionesGrupoVigentes(tx, { clienteId });
+    // Resuelve cuentaId → {codigo, denominacion} contra el plan REAL (activa && vigenteHasta===null,
+    // mismo filtro que `cuentasDelPlan` arriba) — una confirmación que apunta a una cuenta ya dada de
+    // baja se DESCARTA, nunca se muestra. Indexado por `claveDeAgrupacion()`, el único árbitro de "es
+    // el mismo grupo" (nunca una clave recalculada acá).
+    const planVigentePorId = new Map(
+      planCompleto.filter((c) => c.activa && c.vigenteHasta === null).map((c) => [c.cuentaId, c]),
+    );
+    const confirmacionesGrupoPorClave = new Map(
+      confirmacionesGrupo.flatMap((c) => {
+        const cuenta = planVigentePorId.get(c.cuentaId);
+        if (!cuenta) return [];
+        return [[claveDeAgrupacion(c.bancoCodigo, c.conceptoBanco), { codigo: cuenta.codigo, denominacion: cuenta.denominacion }] as const];
+      }),
+    );
+
     await tx.consultar(`release savepoint ${SAVEPOINT_LECTURA}`);
-    return { estado: 'ok', crudas, renglones, contrapartes, cabeceras, lotes, cuentasDelPlan, cantidadFciExcluida };
+    return {
+      estado: 'ok',
+      crudas,
+      renglones,
+      contrapartes,
+      cabeceras,
+      lotes,
+      cuentasDelPlan,
+      cantidadFciExcluida,
+      confirmacionesGrupoPorClave,
+    };
   } catch (error) {
     // La fila de auditoría YA insertada sobrevive: se despoisona la tx y se retorna un estado
     // controlado — NUNCA relanzar acá, o `conUsuario` haría rollback de toda la transacción.
@@ -397,8 +441,17 @@ function comoFilaPlanilla(
   f: FilaCruda,
   renglonesPorMovimiento: RenglonesPorMovimiento,
   contrapartesPorMovimiento: ReadonlyMap<string, ContraparteReal>,
+  cabeceras: ReadonlyMap<string, CabeceraLigera>,
+  confirmacionesGrupoPorClave: ReadonlyMap<string, { readonly codigo: string; readonly denominacion: string }>,
 ): FilaPlanilla {
   const contraparte = contrapartesPorMovimiento.get(f.movimiento_id);
+  const deCapaD = cuentaContableDelMovimiento(renglonesPorMovimiento.get(f.movimiento_id));
+  // `confirmacion_grupo` (`0043`) SOLO rellena lo que Capa D dejó en `null` — nunca pisa un valor
+  // real. Clave EXACTA de `claveDeAgrupacion()`, con el bancoCodigo resuelto por `cuentaBancariaId`
+  // (la misma cabecera que ya usa el resto de este script, nunca un segundo lookup).
+  const bancoCodigo = cabeceras.get(f.cuenta_bancaria_id)?.bancoCodigo;
+  const cuentaContable =
+    deCapaD ?? (bancoCodigo !== undefined ? confirmacionesGrupoPorClave.get(claveDeAgrupacion(bancoCodigo, f.concepto_banco)) ?? null : null);
   return {
     filaNumero: f.fila_numero,
     cuentaBancariaId: f.cuenta_bancaria_id,
@@ -420,7 +473,7 @@ function comoFilaPlanilla(
     pendiente: null,
     contraparteConocida: null,
     categoriaEspecial: categoriaEspecialDe(f.clase, f.que_decide),
-    cuentaContable: cuentaContableDelMovimiento(renglonesPorMovimiento.get(f.movimiento_id)),
+    cuentaContable,
     contraparte: contraparte ? { patron: contraparte.patron, clasificacion: contraparte.clasificacion } : null,
     requiereDecisionHumana: f.clase !== 'propuesta',
     agrupable: esAgrupable(f.clase, f.que_decide),
@@ -906,7 +959,9 @@ async function armarLibroCliente(cliente: ClienteCfg, resultado: Extract<Resulta
 
   const renglonesPorMovimiento = agruparRenglonesPorMovimiento(resultado.renglones);
   const contrapartesPorMovimiento = new Map(resultado.contrapartes.map((c) => [c.movimiento_id, c] as const));
-  const filasPlanilla = resultado.crudas.map((f) => comoFilaPlanilla(f, renglonesPorMovimiento, contrapartesPorMovimiento));
+  const filasPlanilla = resultado.crudas.map((f) =>
+    comoFilaPlanilla(f, renglonesPorMovimiento, contrapartesPorMovimiento, resultado.cabeceras, resultado.confirmacionesGrupoPorClave),
+  );
   const grupos = agruparFilas(filasPlanilla, cabecerasPorCuenta);
   const gruposTarjeta = grupos.filter((g) => g.categoriaEspecial === 'tarjeta_pendiente');
   const gruposNormales = grupos.filter((g) => g.categoriaEspecial !== 'tarjeta_pendiente');
