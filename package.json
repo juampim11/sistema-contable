@@ -47,6 +47,7 @@
     "resolver:contrapartida": "node apps/cli/src/resolver-contrapartida.ts",
     "confirmar:asientos": "node apps/cli/src/confirmar-asientos.ts",
     "manifestar:padron": "node apps/cli/src/manifestar-padron.ts",
+    "confirmar:grupo": "node apps/cli/src/confirmar-grupo.ts",
     "reprocesar:capa-d": "node apps/cli/src/reprocesar-capa-d.ts",
     "reconocer:lote": "node apps/cli/src/reconocer-lote.ts",
     "conciliar:lote": "node apps/cli/src/conciliar-lote.ts",
