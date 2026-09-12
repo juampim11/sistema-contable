@@ -159,7 +159,8 @@ export async function sembrar(): Promise<Sembrado> {
       // arreglo de un fallo—, pero nombrarlas es lo único que hace que la próxima tabla del Módulo 2
       // se note acá. Es literal la lección que este bloque ya documenta para `membership_historia`:
       // `0019` la agregó y esta lista no se enteró.
-      'truncate reconocimiento_contrapartida_match, reconocimiento_contrapartida, ' +
+      'truncate confirmacion_grupo, ' +
+        'reconocimiento_contrapartida_match, reconocimiento_contrapartida, ' +
         'padron_manifestacion, reconocimiento_candidato, reconocimiento_movimiento, ' +
         'movimiento_contraparte_identificador, padron_socio_documento, padron_socio, ' +
         'movimiento_origen_crudo, movimiento_bancario_crudo, lote_ingesta_cuenta, ' +

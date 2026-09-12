@@ -1222,6 +1222,48 @@ export const CLASIFICACION = {
     },
   },
 
+  confirmacion_grupo: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      id: UUID_INTERNO,
+      cliente_id: UUID_INTERNO,
+      cuenta_id: UUID_INTERNO,
+      banco_codigo: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Vocabulario cerrado de catálogo de bancos, no identifica a nadie — mismo tier que ' +
+          'lote_ingesta.banco_codigo/documento_ingerido.banco_codigo.',
+      },
+      concepto_banco: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Hereda la clasificación ya registrada para esta columna (ver movimiento_bancario_crudo, ' +
+          'claveDeAgrupacion) — el registro clasifica por nombre de columna GLOBALMENTE.',
+      },
+      concepto_normalizado: {
+        nivel: 'N2',
+        exportable: false,
+        nota: 'Clave interna derivada (columna generada, gemela de normalizarParaAgrupar() en TS) — ' +
+          'mismo tier que entrada_digest: identifica un grupo, no se expone tal cual.',
+      },
+      respaldo: {
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Prosa libre escrita por una persona, mismo criterio y mismo RIESGO CONOCIDO sin ' +
+          'mecanismo cerrado que regla_imputacion.respaldo/cuenta_atributo.respaldo (incidente #14): ' +
+          'puede terminar citando un CUIT o un nombre de socio. A diferencia de esos dos, NOT NULL + ' +
+          'piso de longitud (15) — un piso, no una solución (decisión de JP, 2026-09-12).',
+      },
+      confirmado_por: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'Identidad declarada ≠ autenticada — mismo patrón y mismo tier que manifestado_por/decidido_por.',
+      },
+      confirmado_en: MARCA_TIEMPO,
+      vigente_hasta: { nivel: 'N2', exportable: true },
+    },
+  },
+
   documento_ingerido: {
     columnaTenant: 'cliente_id',
     campos: {

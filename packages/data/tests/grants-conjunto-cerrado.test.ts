@@ -288,6 +288,12 @@ const GRANTS_POR_COLUMNA: readonly {
   { tabla: 'regla_imputacion', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'concepto', 'creada_en', 'cuenta_id', 'cuenta_resolucion', 'decidido_por', 'id', 'respaldo', 'rol_funcional_objetivo', 'tipo_movimiento', 'vigente_desde', 'vigente_hasta'] },
   { tabla: 'regla_imputacion', rol: 'app_request', privilegio: 'SELECT', columnas: ['cliente_id', 'concepto', 'creada_en', 'cuenta_id', 'cuenta_resolucion', 'decidido_por', 'id', 'respaldo', 'rol_funcional_objetivo', 'tipo_movimiento', 'vigente_desde', 'vigente_hasta'] },
   { tabla: 'regla_imputacion', rol: 'app_request', privilegio: 'UPDATE', columnas: ['vigente_hasta'] },
+  // `0043`. `concepto_normalizado` es GENERATED ALWAYS — no se puede proveer un valor en el INSERT real
+  // — pero Postgres SÍ registra el privilegio de columna igual (verificado contra
+  // `information_schema.column_privileges`, no supuesto): el grant de tabla no discrimina generadas.
+  { tabla: 'confirmacion_grupo', rol: 'app_request', privilegio: 'INSERT', columnas: ['banco_codigo', 'cliente_id', 'concepto_banco', 'concepto_normalizado', 'confirmado_en', 'confirmado_por', 'cuenta_id', 'id', 'respaldo', 'vigente_hasta'] },
+  { tabla: 'confirmacion_grupo', rol: 'app_request', privilegio: 'SELECT', columnas: ['banco_codigo', 'cliente_id', 'concepto_banco', 'concepto_normalizado', 'confirmado_en', 'confirmado_por', 'cuenta_id', 'id', 'respaldo', 'vigente_hasta'] },
+  { tabla: 'confirmacion_grupo', rol: 'app_request', privilegio: 'UPDATE', columnas: ['vigente_hasta'] },
   { tabla: 'tenant_node', rol: 'app_job', privilegio: 'INSERT', columnas: ['created_at', 'deleted_at', 'id', 'nombre', 'parent_id', 'tipo', 'updated_at'] },
   { tabla: 'tenant_node', rol: 'app_job', privilegio: 'SELECT', columnas: ['created_at', 'deleted_at', 'id', 'nid', 'nombre', 'parent_id', 'parent_path', 'path', 'tipo', 'updated_at'] },
   // `app_job` sí puede tocar `path`/`parent_path`/`parent_id` y `app_request` no: es la asimetría
@@ -482,6 +488,8 @@ const GRANTS_A_NIVEL_TABLA: readonly string[] = [
   'reconocimiento_movimiento|app_request|SELECT',
   'regla_imputacion|app_request|INSERT',
   'regla_imputacion|app_request|SELECT',
+  'confirmacion_grupo|app_request|INSERT',
+  'confirmacion_grupo|app_request|SELECT',
   'tenant_node|app_job|DELETE',
   'tenant_node|app_job|SELECT',
   'tenant_node|app_request|DELETE',

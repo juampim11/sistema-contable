@@ -361,3 +361,20 @@ export type ReglaImputacion = Readonly<{
   decididoPor: string;
   creadaEn: string;
 }>;
+
+/** `confirmacion_grupo` (`0043`) — memoria de confirmaciones por grupo (doc 31, Tanda 2). Capa de
+ *  EXPORTACIÓN pura: nunca escribe `reconocimiento_movimiento` ni `asiento_propuesto` (D-28 sigue
+ *  bloqueado). La clave es EXACTA a `claveDeAgrupacion()` (`armar-libro.ts`): `(bancoCodigo,
+ *  conceptoNormalizado)`, scopeada por `clienteId` (RLS). */
+export type ConfirmacionGrupo = Readonly<{
+  id: string;
+  clienteId: string;
+  bancoCodigo: string;
+  conceptoBanco: string | null;
+  conceptoNormalizado: string;
+  cuentaId: string;
+  respaldo: string;
+  confirmadoPor: string;
+  confirmadoEn: string;
+  vigenteHasta: string | null;
+}>;

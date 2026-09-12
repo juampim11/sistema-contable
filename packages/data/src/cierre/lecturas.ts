@@ -11,7 +11,14 @@
  */
 
 import type { Tx } from '../db/conexion.ts';
-import type { CuentaRef, CuentaResolucion, ReglaImputacion, RolFuncionalCuenta, TipoAsientoPropuesto } from './tipos.ts';
+import type {
+  ConfirmacionGrupo,
+  CuentaRef,
+  CuentaResolucion,
+  ReglaImputacion,
+  RolFuncionalCuenta,
+  TipoAsientoPropuesto,
+} from './tipos.ts';
 
 // -----------------------------------------------------------------------------
 // leerReconocimientosParaImputar — D-26 (el JOIN) + filtro de alcance de D-28 (solo `propuesta`)
@@ -285,6 +292,89 @@ export async function leerReglaImputacionPorId(
   );
   const f = filas[0];
   return f ? filaAReglaImputacion(f) : undefined;
+}
+
+// -----------------------------------------------------------------------------
+// `confirmacion_grupo` (`0043`) — memoria de confirmaciones por grupo (doc 31, Tanda 2)
+// -----------------------------------------------------------------------------
+
+type FilaConfirmacionGrupo = {
+  id: string;
+  cliente_id: string;
+  banco_codigo: string;
+  concepto_banco: string | null;
+  concepto_normalizado: string;
+  cuenta_id: string;
+  respaldo: string;
+  confirmado_por: string;
+  confirmado_en: string;
+  vigente_hasta: string | null;
+};
+
+const COLUMNAS_CONFIRMACION_GRUPO = `id::text as id, cliente_id::text as cliente_id, banco_codigo,
+            concepto_banco, concepto_normalizado, cuenta_id::text as cuenta_id, respaldo,
+            confirmado_por::text as confirmado_por, confirmado_en::text as confirmado_en,
+            vigente_hasta::text as vigente_hasta`;
+
+function filaAConfirmacionGrupo(f: FilaConfirmacionGrupo): ConfirmacionGrupo {
+  return {
+    id: f.id,
+    clienteId: f.cliente_id,
+    bancoCodigo: f.banco_codigo,
+    conceptoBanco: f.concepto_banco,
+    conceptoNormalizado: f.concepto_normalizado,
+    cuentaId: f.cuenta_id,
+    respaldo: f.respaldo,
+    confirmadoPor: f.confirmado_por,
+    confirmadoEn: f.confirmado_en,
+    vigenteHasta: f.vigente_hasta,
+  };
+}
+
+/** Todas las confirmaciones VIGENTES de un cliente — para el llamador de `armar-libro.ts` (capa de
+ *  exportación), que las indexa en memoria por `(bancoCodigo, conceptoNormalizado)`. Nunca filtra por
+ *  banco/concepto en SQL: el llamador ya tiene `normalizarParaAgrupar()` como único árbitro de la
+ *  clave (evita una segunda implementación de la normalización divergiendo de la primera). */
+export async function leerConfirmacionesGrupoVigentes(
+  tx: Tx,
+  args: { readonly clienteId: string },
+): Promise<readonly ConfirmacionGrupo[]> {
+  const filas = await tx.consultar<FilaConfirmacionGrupo>(
+    `select ${COLUMNAS_CONFIRMACION_GRUPO}
+       from confirmacion_grupo
+      where cliente_id = $1 and vigente_hasta is null
+      order by banco_codigo, concepto_normalizado`,
+    [args.clienteId],
+  );
+  return filas.map(filaAConfirmacionGrupo);
+}
+
+/** Una confirmación puntual por id — para el selector `--revoca` de `confirmar-grupo.ts`. */
+export async function leerConfirmacionGrupoPorId(
+  tx: Tx,
+  args: { readonly clienteId: string; readonly confirmacionGrupoId: string },
+): Promise<ConfirmacionGrupo | undefined> {
+  const filas = await tx.consultar<FilaConfirmacionGrupo>(
+    `select ${COLUMNAS_CONFIRMACION_GRUPO} from confirmacion_grupo where cliente_id = $1 and id = $2`,
+    [args.clienteId, args.confirmacionGrupoId],
+  );
+  const f = filas[0];
+  return f ? filaAConfirmacionGrupo(f) : undefined;
+}
+
+/** La vigente para UNA clave puntual — dry-run de `confirmar-grupo.ts` (antes de decidir `--aplicar`). */
+export async function leerConfirmacionGrupoVigente(
+  tx: Tx,
+  args: { readonly clienteId: string; readonly bancoCodigo: string; readonly conceptoNormalizado: string },
+): Promise<ConfirmacionGrupo | undefined> {
+  const filas = await tx.consultar<FilaConfirmacionGrupo>(
+    `select ${COLUMNAS_CONFIRMACION_GRUPO}
+       from confirmacion_grupo
+      where cliente_id = $1 and banco_codigo = $2 and concepto_normalizado = $3 and vigente_hasta is null`,
+    [args.clienteId, args.bancoCodigo, args.conceptoNormalizado],
+  );
+  const f = filas[0];
+  return f ? filaAConfirmacionGrupo(f) : undefined;
 }
 
 /**

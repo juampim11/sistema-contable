@@ -194,6 +194,137 @@ export async function altaReglaImputacion(
 }
 
 // -----------------------------------------------------------------------------
+// `confirmarGrupo` (`0043`, doc 31 Tanda 2) — memoria de confirmaciones por grupo. Capa de
+// EXPORTACIÓN pura: esta función nunca toca `reconocimiento_movimiento` ni `asiento_propuesto`
+// (D-28 sigue bloqueado, decisión de JP 2026-09-12). Patrón de vigencia idéntico a
+// `altaReglaImputacion` (`vigente_hasta`, UPDATE solo por column-grant) — nunca `revoca_a`/
+// append-only: esta tabla no es citada por FK desde ninguna otra, no hereda el problema que sí
+// resolvió `0041`/`0042` para `padron_manifestacion`.
+// -----------------------------------------------------------------------------
+
+export type PedidoConfirmarGrupo = {
+  readonly clienteId: string;
+  readonly bancoCodigo: string;
+  readonly conceptoBanco: string | null;
+  /** YA resuelto por el caller (CLI, contra `leerPlanDeCuentasCompleto` + código real) — esta función
+   *  nunca busca ni inventa una cuenta, mismo criterio que `altaReglaImputacion`. */
+  readonly cuentaId: string;
+  readonly respaldo: string;
+  readonly confirmadoPor: string;
+  /** `null` = alta nueva. Con valor: tiene que ser EXACTAMENTE la confirmación vigente de la MISMA
+   *  clave `(bancoCodigo, conceptoBanco normalizado)` — mismo criterio que `manifestarPadron`
+   *  (`RevocaNoEsLaVigenteError`): nunca "lo que el operador creía", siempre "lo que hay ahora". */
+  readonly revocaId: string | null;
+};
+
+export type ResultadoConfirmarGrupo = { readonly confirmacionGrupoId: string };
+
+/** Traduce `uq_confirmacion_grupo_vigente` cuando `revocaId === null` — este alta es solo para grupos
+ *  SIN confirmación vigente. Para reemplazar una vigente, hay que pasar `--revoca <id>`. */
+export class YaExisteConfirmacionVigenteError extends Error {
+  constructor(bancoCodigo: string, conceptoBanco: string | null) {
+    super(
+      `Ya existe una confirmacion_grupo vigente para (${bancoCodigo}, ${conceptoBanco ?? 'sin concepto'}) — ` +
+        `este alta es solo para grupos SIN confirmación. Para reemplazar una vigente, pasá --revoca <id>.`,
+    );
+    this.name = 'YaExisteConfirmacionVigenteError';
+  }
+}
+
+/** `revocaId` no cerró ninguna fila: o no existe, o ya no está vigente (la cerró otra corrida), o
+ *  pertenece a otro cliente — las tres indistinguibles desde afuera de RLS, a propósito. */
+export class RevocaNoEsLaVigenteConfirmacionError extends Error {
+  constructor(revocaId: string) {
+    super(
+      `revocaId=${revocaId} no es la confirmacion_grupo vigente (no existe, ya no está vigente, o es de ` +
+        `otro cliente). Volvé a leer cuál es la vigente antes de reintentar.`,
+    );
+    this.name = 'RevocaNoEsLaVigenteConfirmacionError';
+  }
+}
+
+/** `revocaId` cerró una fila de OTRA clave — el operador pidió revocar la confirmación X pero la
+ *  nueva confirmación es de un grupo `(bancoCodigo, conceptoBanco)` distinto al de X. Aborta ANTES de
+ *  dejar la vieja cerrada con una nueva sin relación: la transacción entera se revierte. */
+export class RevocaDeOtraClaveConfirmacionError extends Error {
+  constructor(revocaId: string) {
+    super(`revocaId=${revocaId} corresponde a un grupo (banco, concepto) distinto al que se está confirmando.`);
+    this.name = 'RevocaDeOtraClaveConfirmacionError';
+  }
+}
+
+/** Traduce `uq_confirmacion_grupo_vigente` cuando `revocaId !== null` — significa que OTRA corrida
+ *  cerró y reabrió la MISMA clave entre nuestro UPDATE y nuestro INSERT (carrera real, no un error de
+ *  uso): mismo espíritu que `RevocacionEnCarreraError` de `padron_manifestacion`, mecanismo distinto
+ *  (índice de "vigente", no de "revoca_a" — esta tabla no tiene esa columna). */
+export class ConfirmacionEnCarreraError extends Error {
+  constructor(bancoCodigo: string, conceptoBanco: string | null) {
+    super(
+      `Carrera real: otra corrida ya confirmó (${bancoCodigo}, ${conceptoBanco ?? 'sin concepto'}) entre ` +
+        `el cierre de la vigente anterior y este alta. Volvé a leer cuál es la vigente y reintentá.`,
+    );
+    this.name = 'ConfirmacionEnCarreraError';
+  }
+}
+
+export async function confirmarGrupo(
+  tx: Tx,
+  _ctx: ContextoAuditado,
+  pedido: PedidoConfirmarGrupo,
+): Promise<ResultadoConfirmarGrupo> {
+  let revocada: { readonly bancoCodigo: string; readonly conceptoNormalizado: string } | null = null;
+
+  if (pedido.revocaId !== null) {
+    // `clock_timestamp()`, NO `now()`: esta UPDATE y el INSERT de abajo corren en la MISMA
+    // transacción — `now()` devuelve el instante de INICIO de la transacción, igual a
+    // `confirmado_en` de la fila nueva si la cerrada fuera la misma fila, y chocaría con
+    // `confirmacion_grupo_vigencia_chk` (hallazgo real, `mutaciones-0043-...test.ts`).
+    const cerrado = await conErroresTraducidos(undefined, () =>
+      tx.consultar<{ id: string; banco_codigo: string; concepto_normalizado: string }>(
+        `update confirmacion_grupo set vigente_hasta = clock_timestamp()
+           where cliente_id = $1 and id = $2 and vigente_hasta is null
+         returning id, banco_codigo, concepto_normalizado`,
+        [pedido.clienteId, pedido.revocaId],
+      ),
+    );
+    const fila = cerrado[0];
+    if (!fila) throw new RevocaNoEsLaVigenteConfirmacionError(pedido.revocaId);
+    revocada = { bancoCodigo: fila.banco_codigo, conceptoNormalizado: fila.concepto_normalizado };
+  }
+
+  try {
+    const insertado = await conErroresTraducidos(undefined, () =>
+      tx.consultar<{ id: string; banco_codigo: string; concepto_normalizado: string }>(
+        `insert into confirmacion_grupo (cliente_id, banco_codigo, concepto_banco, cuenta_id, respaldo, confirmado_por)
+         values ($1, $2, $3, $4, $5, $6)
+         returning id::text as id, banco_codigo, concepto_normalizado`,
+        [pedido.clienteId, pedido.bancoCodigo, pedido.conceptoBanco, pedido.cuentaId, pedido.respaldo, pedido.confirmadoPor],
+      ),
+    );
+    const nueva = insertado[0];
+    if (!nueva) throw new Error('El alta de confirmacion_grupo no devolvió id.'); // H-14
+
+    // Si se revocó una fila, TIENE que ser la misma clave que la nueva — si no, la transacción entera
+    // se revierte (el caller no queda con una vieja cerrada y una nueva sin relación entre sí).
+    if (
+      revocada !== null &&
+      (revocada.bancoCodigo !== nueva.banco_codigo || revocada.conceptoNormalizado !== nueva.concepto_normalizado)
+    ) {
+      throw new RevocaDeOtraClaveConfirmacionError(pedido.revocaId as string);
+    }
+
+    logger.info('confirmacion_grupo.alta', { cliente_id: pedido.clienteId });
+    return { confirmacionGrupoId: nueva.id };
+  } catch (error) {
+    if (error instanceof ErrorDeBase && error.constraint === 'uq_confirmacion_grupo_vigente') {
+      if (pedido.revocaId !== null) throw new ConfirmacionEnCarreraError(pedido.bancoCodigo, pedido.conceptoBanco);
+      throw new YaExisteConfirmacionVigenteError(pedido.bancoCodigo, pedido.conceptoBanco);
+    }
+    throw error;
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Backfill de `documento_ingerido` — 3 lotes reales de Capa 1 (Sesión 2a, `27-roadmap-capa-d.md`)
 // -----------------------------------------------------------------------------
 
