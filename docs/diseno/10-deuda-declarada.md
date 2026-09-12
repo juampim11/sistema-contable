@@ -664,6 +664,22 @@ algún mes el PDF viene roto o escaneado, caso que no se dio todavía con Macro.
 desde PDF | Sin dueño. Si se necesita comparar contra Excel en el futuro (PDF roto/escaneado, o un
 segundo caso real de discrepancia): agregar `xlsx`/SheetJS con convocatoria a `security-engineer`
 primero — o pedirle a Laura/al banco un export en XLSX/CSV, que evita agregar la dependencia |
+| **B.25** | 🟡 **El guard puntual de ROKA/agosto cubre "una fuente vigente por cuenta-período" — pero
+nunca ejercitó tolerancia de redondeo ni la condición de bloqueo con datos reales, porque nunca llegó
+a comparar dos fuentes (2026-09-12, revisión de Tanda 1/Tanda 2 de `31-replanteo-hacia-producto.md`).**
+Lo que el guard puntual sí verificó: que para agosto de ROKA existía una sola fuente utilizable (el PDF,
+capa de texto completa) — en ese sentido "una fuente vigente por período" se cumplió, sin necesidad de
+elegir entre dos. Lo que **no** se ejercitó, porque el Excel de Macro resultó illegible (B.24, no por
+decisión del guard): (1) ninguna comparación numérica real entre dos fuentes para el mismo
+cuenta-período; (2) ninguna tolerancia de redondeo entre los saldos de ambas; (3) la condición de
+"bloquear solo si la diferencia es real" (vs. bloquear siempre que hay dos fuentes) — nunca se llegó a
+ese branch. El mecanismo general (`(cliente_id, cuenta_bancaria_id, periodo_desde, periodo_hasta)` +
+"gana el que `verificacion_estado = 'cuadra'`") sigue descrito solo en el documento, no en código, y
+sigue bloqueado por `ADR-0004` (sin escribir) como precondición — **no se generaliza ni se escribe el
+ADR en esta revisión**, a pedido explícito de JP: la prioridad de esta tanda es la memoria de
+confirmaciones (ver entrada de `HANDOFF.md` de esta fecha) | Sin dueño. Se retoma cuando: (a) aparezca
+un segundo caso real de discrepancia entre dos fuentes, o (b) le llegue el turno a Tanda 2 completa —
+recién ahí se justifica escribir `ADR-0004` y generalizar |
 | **B.26** | 🟡 **`reglas-de-codigo.test.ts` (R-F) en rojo — hallazgo nuevo, encontrado corriendo la
 suite completa después del fix de idempotencia de Capa D (2026-09-09), sin relación con ese fix
 (confirmado con `git stash`: falla igual sin los cambios de hoy).** Dos archivos construyen
