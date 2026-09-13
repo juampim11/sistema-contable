@@ -6,6 +6,83 @@
 
 ---
 
+## 2026-09-13 (210) — 🔒 CIERRE: memoria de confirmaciones (`confirmacion_grupo`, `0043`) construida
+y probada de punta a punta — D-28 intacto, sin reabrir. 4 commits pusheados a `origin/main`.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de la revisión de Tanda 1/
+Tanda 2 de `docs/diseno/31-replanteo-hacia-producto.md` (dictámenes de `arquitecto-software` +
+`dba-data` sobre el diseño acotado).
+
+### Qué se construyó
+
+`confirmacion_grupo` (migración `0043`) — la pieza de memoria de confirmaciones: Laura confirma a
+qué cuenta contable va un grupo (clave exacta de `claveDeAgrupacion()`: `banco_codigo` +
+`concepto_banco` normalizado), y esa confirmación pre-llena la hoja "Grupos" la próxima vez, en vez
+de volver a preguntar desde cero. Capa de **exportación pura**: nunca escribe
+`reconocimiento_movimiento` ni `asiento_propuesto`.
+
+- **Esquema**: siete renglones de ADR-0001 §5, patrón de vigencia de `regla_imputacion` (`vigente_hasta`
+  + `UPDATE` por column-grant, nunca `revoca_a` — esta tabla no es citada por FK desde ninguna otra),
+  `respaldo` NOT NULL con piso de longitud (15).
+- **Carrera de concurrencia demostrada EN VIVO**, dos conexiones reales, sin `pg_sleep` (mismo
+  rigor que `0040`/`0041`/`0042`): **sin el índice único, las dos entran — 2 filas vigentes y
+  contradictorias para el mismo grupo, confirmado por consulta directa**; **con el índice real,
+  exactamente 1 de 2 entra, la otra muere `23505`** — repetido 3 veces contra flakiness.
+- **CLI** `confirmar-grupo.ts` (`pnpm confirmar:grupo`), mismo molde que `alta-regla-imputacion.ts`/
+  `manifestar-padron.ts`: selector obligatorio, dry-run por defecto, `--revoca`, guard
+  `RE_POSIBLE_DOCUMENTO_EN_TEXTO` sobre `--respaldo`.
+- **Wiring**: nueva lectura en `paquete-cierre-bracci-roka-2026-05-a-08.ts` que rellena
+  `FilaPlanilla.cuentaContable` SOLO cuando Capa D la dejó en `null` — nunca pisa un valor real.
+  `packages/motor-conciliacion/src/resolver.ts` (D-28): **cero líneas tocadas**.
+
+### Tres decisiones de alcance, explícitas
+
+1. **D-28 no se reabre.** `resolverAsiento()` sigue sin resolver `decision_humana`/`sin_reconocer` —
+   decisión de JP, 2026-09-12. Consecuencia honesta: el dropdown de "Grupos" sigue activo cada mes,
+   pero llega pre-llenado con la confirmación anterior en vez de vacío — no es la promesa completa de
+   doc 31 ("nada se pregunta dos veces"), que sí exige D-28.
+2. **Tanda 1 (agrupación general) NO se generalizó.** La investigación confirmó que
+   `reconocer-lote.ts`/`resolver-contrapartida.ts` no agrupan nada hoy y que `exportar-planilla.ts` ya
+   recibe la agrupación indirectamente vía `armarLibro()` — no hay segundo consumidor real que
+   justifique mover `claveDeAgrupacion()` a un módulo compartido. Cero cambios de código en esa pieza.
+3. **Guard PDF/Excel (Tanda 2, el otro lado) tampoco se generalizó.** Documentado como **B.25** en
+   `docs/diseno/10-deuda-declarada.md`: el guard puntual de ROKA/agosto cubrió "una fuente vigente por
+   período", pero nunca ejercitó tolerancia de redondeo ni la condición de bloqueo — el Excel de Macro
+   resultó ilegible antes de llegar a comparar nada (B.24). Sin generalizar, sin `ADR-0004`.
+
+### Insumo para el futuro, no aplicado
+
+`estaVetadaPorFamiliaSocio()` (`resolver.ts`, D-31) ya existe y resolvería el riesgo que señaló
+`arquitecto-software` sobre `confirmacion_grupo` (dos contrapartes distintas compartiendo el mismo
+texto de banco) **si algún día se decide reabrir D-28** — anotado junto a D-28 en
+`10-deuda-declarada.md`, sin dueño, sin convocatoria propia todavía.
+
+### Verificación
+
+`pnpm typecheck` limpio. Todo lo tocado por esta tarea: **212/213 verde** (el único rojo, `R-F`, es
+preexistente — confirmado con `git stash` que ya fallaba en `main` antes de esta sesión).
+`packages/ingesta` completo: **973/984 verde**, los 4 rojos son la deuda de `aislamiento-modulo-1.test.ts`
+ya declarada en (209), no de esta tarea. Migración aplicada y probada solo en LOCAL — **el piloto no
+se tocó en ningún punto**.
+
+### Commits (4, en orden, pusheados)
+
+`0887d3f` (migración + datos + prueba de mutación) → `7561d1d` (CLI + tests) → `3b21667` (wiring +
+ajuste de R-B para `armar-libro.ts`/`armar-libro-laura.ts`) → `947c70f` (docs: B.25 + insumo D-28).
+`HEAD` y `origin/main` en sync en `947c70f`.
+
+### Qué queda pendiente, explícito
+
+- El "radio real del gesto" de `confirmar-grupo.ts` (cuántos movimientos se beneficiarían) — declarado
+  en el propio header del CLI, requiere un join no verificado.
+- Reabrir D-28 (convocatoria propia, mismo peso que la sesión original: `arquitecto-software` +
+  `motor-conciliacion-contable` + `contador-dominio`) si algún día se decide que `confirmacion_grupo`
+  también debe producir asientos reales.
+- `ADR-0004` (guard PDF/Excel) y el resto de Tanda 2 completa, si le llega el turno.
+- Todo lo de (209) §"Qué queda pendiente" sigue igual.
+
+---
+
 ## 2026-09-11 (209) — 🔒 CIERRE del día: del hallazgo del gate de vías calificadas al segundo
 paquete enviado a Laura — commiteado y pusheado a `origin/main`. Números finales: **Bracci 79,0%
 automático / ROKA 80,6%** (sobre el total, sin FCI), y **99,5% / 99,5%** de eso ya con cuenta
