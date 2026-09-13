@@ -1072,13 +1072,10 @@ export const CLASIFICACION = {
         exportable: true,
         nota: '🔴 Convocatoria de 0038 (dba-data + seguridad-datos-financieros, caminos independientes, mismo ' +
           'veredicto): mismo tier que reconocimiento_contrapartida_match.socio_id — uuid opaco pero ENLAZABLE a ' +
-          'un tercero puntual de ESTE cliente, mostrado en la cola de revisión activa. NO el tier de ' +
-          'asiento_propuesto_renglon.padron_contraparte_id (N1, 0037): ese cita evidencia sobre un asiento YA ' +
-          'generado, un paso después — rol distinto (deuda de reclasificación registrada, sin dueño, en ' +
-          'docs/diseno/10-deuda-declarada.md). El riesgo acá es la correlación entre filas por un mismo uuid ' +
-          'recurrente (perfil comercial del tercero con este cliente), no el contenido del uuid. N2 y NO N2-R: ' +
-          'con N2-R esta tabla entraría sola en tablasQueExigenRolEnLectura() y la cola de revisión se volvería ' +
-          'inusable.',
+          'un tercero puntual de ESTE cliente, mostrado en la cola de revisión activa. El riesgo acá es la ' +
+          'correlación entre filas por un mismo uuid recurrente (perfil comercial del tercero con este cliente), ' +
+          'no el contenido del uuid. N2 y NO N2-R: con N2-R esta tabla entraría sola en ' +
+          'tablasQueExigenRolEnLectura() y la cola de revisión se volvería inusable.',
       },
       created_at: MARCA_TIEMPO,
     },
@@ -1451,8 +1448,9 @@ export const CLASIFICACION = {
       corrige_asiento_id: {
         ...UUID_INTERNO,
         nota: 'Caso B del reproceso (0040): liga un ajuste_cierre al asiento YA CONFIRMADO que ' +
-          'corrige. El uuid no revela contenido — mismo tier que padron_manifestacion_id/' +
-          'padron_contraparte_id de asiento_propuesto_renglon.',
+          'corrige. El uuid no revela contenido — mismo tier que padron_manifestacion_id de ' +
+          'asiento_propuesto_renglon (padron_contraparte_id de esa misma tabla es N2 desde esta ' +
+          'tarea, ya no aplica como precedente acá).',
       },
       tipo: { nivel: 'N1', exportable: true, nota: 'Vocabulario de proceso: qué clase de asiento es, no su contenido.' },
       fecha_imputacion: { nivel: 'N2', exportable: true, nota: 'La fecha contable real de un hecho económico de ESTE cliente.' },
@@ -1475,8 +1473,17 @@ export const CLASIFICACION = {
       fuente_cierre_id: UUID_INTERNO,
       padron_manifestacion_id: UUID_INTERNO,
       padron_contraparte_id: {
-        ...UUID_INTERNO,
-        nota: 'FK de evidencia a padron_contraparte (0037) — mismo tier que padron_manifestacion_id: el uuid no revela contenido.',
+        nivel: 'N2',
+        exportable: true,
+        nota: 'Reclasificado N1→N2 (dictamen seguridad-datos-financieros, docs/diseno/33-plan-deuda-pre-tanda-4.md ' +
+          '§A.3, sobre hallazgo ya declarado en 10-deuda-declarada.md). La clasificación original de 0037 por ' +
+          'analogía con padron_manifestacion_id era incorrecta: padron_manifestacion_id es un puntero de VERSIÓN ' +
+          'DE PROCESO que no identifica a nadie; padron_contraparte_id cita la fila de UN tercero puntual ' +
+          'conocido por nombre. Mismo tier y mismo motivo que su columna hermana ' +
+          'reconocimiento_contrapartida_patron_match.padron_contraparte_id (0038): el riesgo es la correlación ' +
+          'entre renglones por un uuid recurrente (perfil comercial de ese tercero con ESTE cliente), no el ' +
+          'contenido del uuid. N2 y no N2-R: con N2-R esta tabla entraría sola en tablasQueExigenRolEnLectura() ' +
+          'y la cola de revisión se volvería inusable — mismo argumento que ya usó 0038 para su propia columna.',
       },
       orden: { nivel: 'N1', exportable: true },
       cuenta_id: UUID_INTERNO,

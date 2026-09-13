@@ -887,20 +887,28 @@ degradación que R-F existe para evitar — antes de decidir, no asumir ninguna 
   `code-reviewer`, commit `1cabfe0`. **Capa C re-corrida sobre los 3 lotes: 671/699/714 (2084 total)
   pasaron 100% a `distinguir_tercero_de_socio`, verificado por consulta directa en los tres, sin
   discrepancias entre lotes.** `concepto_no_catalogado` para `"ING TRANSF:"` queda en 0 en los tres.
-- 🟡 **`asiento_propuesto_renglon.padron_contraparte_id` (migración `0037`) está clasificado N1
-  (`UUID_INTERNO`) por una analogía que no es la correcta para su rol — sin dueño todavía.** Hallazgo de
-  `seguridad-datos-financieros`, convocatoria de la migración `0038` (escritor real de
-  `reconocimiento_contrapartida` sobre `padron_contraparte`, `docs/diseno/29-padron-contraparte.md`).
-  `0037` clasificó esa columna por analogía con `padron_manifestacion_id` ("el uuid no revela
-  contenido") — pero `padron_manifestacion_id` es un puntero de VERSIÓN DE PROCESO que no identifica a
-  nadie, y `padron_contraparte_id` cita la fila de UN proveedor/cliente puntual conocido por nombre. El
-  precedente correcto, confirmado por `dba-data` y `seguridad-datos-financieros` en paralelo para la
-  columna hermana de `0038` (`reconocimiento_contrapartida_patron_match.padron_contraparte_id`, N2): el
-  mismo tier que `reconocimiento_contrapartida_match.socio_id`/`cuenta_atributo.padron_socio_id` — el
-  riesgo es la correlación entre filas por un uuid recurrente (perfil comercial de ese tercero con este
-  cliente), no el contenido del uuid. No bloquea `0038` (tablas distintas, columnas distintas). Cierre:
-  edición pura de `packages/shared/src/seguridad/clasificacion-campos.ts` (nivel N1→N2 de esa entrada),
-  nunca de la migración `0037` ya aplicada — sin dueño todavía.
+- ✅ **CERRADO — `asiento_propuesto_renglon.padron_contraparte_id` reclasificado N1→N2 (docs/diseno/
+  33-plan-deuda-pre-tanda-4.md §A.3).** Estaba clasificado N1 (`UUID_INTERNO`) por una analogía que no
+  era la correcta para su rol. Hallazgo original de `seguridad-datos-financieros`, convocatoria de la
+  migración `0038` (escritor real de `reconocimiento_contrapartida` sobre `padron_contraparte`,
+  `docs/diseno/29-padron-contraparte.md`). `0037` clasificó esa columna por analogía con
+  `padron_manifestacion_id` ("el uuid no revela contenido") — pero `padron_manifestacion_id` es un
+  puntero de VERSIÓN DE PROCESO que no identifica a nadie, y `padron_contraparte_id` cita la fila de UN
+  proveedor/cliente puntual conocido por nombre. El precedente correcto, confirmado por `dba-data` y
+  `seguridad-datos-financieros` en paralelo para la columna hermana de `0038`
+  (`reconocimiento_contrapartida_patron_match.padron_contraparte_id`, N2): el mismo tier que
+  `reconocimiento_contrapartida_match.socio_id`/`cuenta_atributo.padron_socio_id` — el riesgo es la
+  correlación entre filas por un uuid recurrente (perfil comercial de ese tercero con este cliente), no
+  el contenido del uuid. No bloqueaba `0038` (tablas distintas, columnas distintas).
+  **Cierre aplicado**: edición pura de `packages/shared/src/seguridad/clasificacion-campos.ts` (nivel
+  N1→N2 de esa entrada, más las dos notas hermanas que citaban el N1 viejo como precedente —
+  `reconocimiento_contrapartida_patron_match.padron_contraparte_id` y
+  `asiento_propuesto.corrige_asiento_id`), nunca de la migración `0037` ya aplicada. Efecto práctico
+  inmediato: cero cambio de comportamiento del redactor de logs (ya bloqueaba el literal por nombre de
+  columna, vía la hermana N2 de `0038`) — el valor real es que el serializador que la Tanda 4 escriba
+  después hereda el tier correcto por default, en vez de heredar un N1 mal puesto. Verificado: typecheck
+  limpio, `redactor.test.ts` (31/31) y `reglas-de-codigo.test.ts` (63/64, el único rojo es R-F,
+  preexistente, confirmado con `git stash`).
 - 🟡 **El guard de `sembrar()` (`packages/data/tests/ayuda.ts`) verifica una ETIQUETA que el propio
   proceso de test fabrica, no el DSN real de conexión — sin dueño todavía.** `tools/setup-tests.ts` hace
   `cargarEnv()` (que respeta un `ENV_FILE` ya exportado en el shell) y a continuación
