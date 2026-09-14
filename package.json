@@ -53,7 +53,8 @@
     "conciliar:lote": "node apps/cli/src/conciliar-lote.ts",
     "calibrar:lexico": "node apps/cli/src/calibrar-lexico-metadatos.ts",
     "listar:conceptobanco": "node apps/cli/src/listar-conceptobanco-sin-reconocer.ts",
-    "medir:identidad": "node apps/cli/src/medir-identidad-resuelta.ts"
+    "medir:identidad": "node apps/cli/src/medir-identidad-resuelta.ts",
+    "agrupar:decisiones-pendientes": "node apps/cli/src/agrupar-decisiones-pendientes.ts"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

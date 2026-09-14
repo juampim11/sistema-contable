@@ -310,6 +310,27 @@ un dato con forma de N2R (identificador de un tercero) queda visible sin rastro 
 cuándo, más allá del rastro grueso de apertura de cliente por sesión de §9. **Se acepta ese riesgo como
 condición de esta decisión**, no como un hallazgo pendiente de otra tarea.
 
+## §6.bis. Riesgo H-1 aceptado por escrito — mismo dato, vía distinta: archivo exportado, no pantalla
+
+**Decisión del titular (2026-09-14, convocatoria de Frente 1 — backend genérico de agrupación):** el
+`.xlsx` que produce `agruparDecisionesPendientes()`/el script de cierre (`packages/ingesta/scripts/
+paquete-cierre-bracci-roka-2026-05-a-08.ts`) sigue exponiendo `descripcion`/`concepto_banco` completos
+por grupo, igual que hoy.
+
+**Condición explícita de esta elección, no un detalle secundario** (hallazgo H-1 de
+`seguridad-datos-financieros`, misma convocatoria): es **el mismo dato y el mismo riesgo que F4** —
+CUIT de terceros pegado sin separador, medido en 569/1346 filas de un lote real — pero por una **vía
+distinta**: acá no es una pantalla permanente con sesión y rastro grueso de apertura (§9), es un
+**archivo que sale del sistema** (`.xlsx` entregado a Laura) y **circula sin ningún control posterior**
+— mail, Drive compartido, una laptop sin cifrado. La aceptación de F4 (§6) fue específica de "pantalla
+permanente"; no cubre esta vía por extensión, y no se asume que la cubra.
+
+**Se acepta el mismo riesgo para esta vía, con la misma condición que F4**: la exportación sigue
+dejando su propio rastro (`registrarAcceso` con `accion: 'export'`, motivo obligatorio, ANTES de leer
+cada recurso — ya es el comportamiento del script puntual y se preserva al generalizar), pero ese
+rastro cubre "quién generó el archivo y cuándo", no "quién lo leyó después de que salió del sistema".
+Esa distancia entre las dos preguntas es el riesgo que se acepta acá, por escrito, no en silencio.
+
 ---
 
 ## §7. Autoría de Capa D — de "identidad declarada" a atada a la sesión
@@ -624,7 +645,8 @@ exactamente como antes).
 Se adoptan: el contrato `AuthProvider` con identidad opaca (§1); la tabla puente `usuario_identidad`
 (§2); las capacidades finas por función `IMMUTABLE` (§3); el guard único `conSesion` con las reglas de
 código R-R a R-Y (§4); el rol `app_web` sin las 4 columnas N2R/N3 (§5); mostrar
-`descripcion`/`concepto_banco` completos con el riesgo F4 aceptado por escrito (§6); la regla R44 que ata
+`descripcion`/`concepto_banco` completos con el riesgo F4 aceptado por escrito (§6), extendido al mismo
+dato vía archivo exportado con el riesgo H-1 aceptado por escrito (§6.bis); la regla R44 que ata
 toda autoría de Capa D a la sesión (§7); el grant angosto de `app_web` sobre `confirmacion_grupo` con la
 capacidad `imputar_grupo`, sujeto a las dos precondiciones bloqueantes de R44 aplicada+probada y el
 guard de `respaldo` movido adentro de `confirmarGrupo()` (§7.bis); `admin_plataforma` sin membresía en
