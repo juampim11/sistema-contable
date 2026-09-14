@@ -6,6 +6,99 @@
 
 ---
 
+## 2026-09-13 (211) — 🔒 CIERRE: lecciones de proceso + plan de deuda pre-Tanda 4 + A.2/A.3
+implementados + incidente #18 registrado y contenido. 5 commits pusheados a `origin/main`.
+
+**Herramienta:** Claude Code, sesión en background. Continuación directa de (210): relevamiento de
+`HANDOFF.md` (183)-(210) para lecciones de proceso, plan priorizado de la deuda declarada contra la
+Tanda 4, y ejecución de las dos piezas chicas de ese plan que no dependen de `AuthProvider`.
+
+### Qué se construyó
+
+1. **`docs/diseno/32-lecciones-y-protocolos-de-sesion.md`** — 6 categorías de lecciones de proceso, con
+   casos reales de (183)-(210): números citados sin revalidar (el "6293" reconstruido mal dos veces,
+   corregido a 5257 en (199)), confusión dato-real-vs-prueba (el lote `ae762fda`, B.22), gates del motor
+   descubiertos tarde a escala completa (D-31 frenando ~95% de ROKA hasta (204)), el estándar de
+   verificación con evidencia real que sí funcionó (las pruebas de concurrencia en vivo de
+   `0041`/`0042`/`0043`), el checklist de "documento para humano" (las rondas de corrección del paquete
+   Excel de Laura, (207)-(209)), y —agregada al cierre de esta tarea— una sexta: redacción/enmascarado
+   verificado por argumento y no por prueba, con los cuatro incidentes reales que comparten esa causa
+   raíz (#14, #15, #16, #18 de `registro-incidentes.md`).
+2. **`docs/diseno/33-plan-deuda-pre-tanda-4.md`** — consolida `10-deuda-declarada.md` (B.1-B.26 +
+   sección C) contra lo que la Tanda 4 (ADR de auth + vista de solo lectura) depende o expone.
+   Convocatoria real a `product-owner` + `seguridad-datos-financieros`, en paralelo. Bloqueante antes de
+   Tanda 4: B.4 (`AuthProvider`, ya lo dice el propio doc 31), guard mínimo de dato-real-vs-prueba,
+   reclasificación N1→N2 de `padron_contraparte_id`, cablear `leerConAuditoria` en toda lectura N2-R/N3
+   de la vista, B.12 condicional a que se agregue la primera escritura desde la UI. Puede esperar: el
+   resto de la sección B y la sección C completas (confirmado, sin objeción de `product-owner`).
+3. **A.3 — reclasificación N1→N2 de `padron_contraparte_id`** (`asiento_propuesto_renglon`) —
+   `packages/shared/src/seguridad/clasificacion-campos.ts`, 3 notas corregidas (la propia + dos hermanas
+   que citaban el N1 viejo como precedente), más el cierre del bullet correspondiente en
+   `10-deuda-declarada.md`. Sin migración, sin cambio de comportamiento del redactor de logs hoy (ya
+   bloqueaba el literal por nombre de columna vía la hermana N2 de `0038`) — el valor es que el
+   serializador que la Tanda 4 escriba después herede el tier correcto por default.
+4. **A.2 — guard `lote_ingesta.es_dato_real`** — migración `0044_lote_ingesta_es_dato_real.sql`:
+   columna `boolean NOT NULL` sin default (vía `ADD COLUMN ... DEFAULT` + `DROP DEFAULT`, nunca un
+   `UPDATE` de backfill — evita el problema de RLS que lo dejaría en 0 filas sin error), grant de
+   `UPDATE` acotado por columna (`revoke`+`grant` explícito, `es_dato_real` afuera — mismo patrón que
+   `0028` ya cerró para otras dos tablas con el mismo bug de grant a nivel tabla completa) + trigger de
+   inmutabilidad post-alta. Flag obligatorio `--es-dato-real real|prueba` (enum Zod cerrado, sin
+   default) en `apps/cli/src/ingestar.ts`, único INSERT de producción. Clasificación N1. Prueba de
+   mutación del guard del CLI. Los 34 archivos de test que insertan `lote_ingesta` directo ganaron la
+   columna. **Aplicada y verificada solo contra LOCAL — NO aplicada al piloto**, requiere su propia
+   autorización explícita (CLAUDE.md §1.9), declarado en el propio doc 33 §A.2.
+5. **Incidente #18** (`docs/seguridad/registro-incidentes.md`) — contraseña real de Postgres LOCAL
+   impresa en el `tool_result` de la sesión por un `sed` de redacción mal escrito (asumía el prefijo
+   `postgresql://`, el DSN real de este repo usa `postgres://`, la sustitución nunca matcheó). Severidad
+   MEDIA — sin dato de cliente ni de piloto, nunca escrito a ningún archivo del repo, puerto solo en
+   loopback. Contenido en el mismo turno; la rotación efectiva quedó pendiente hasta que JP pidió el
+   detalle del incidente antes de cerrar la tarea — rotada recién ahí (`ALTER ROLE` vía auth local del
+   contenedor, sin necesitar la contraseña vieja).
+
+### Convocatorias reales (Agent, no solo nombradas)
+
+`product-owner` + `seguridad-datos-financieros` (plan de deuda, en paralelo) → `dba-data` +
+`security-engineer` + `seguridad-datos-financieros` (diseño del DDL de A.2, en paralelo, sobre un
+borrador concreto) → `backend-dev` (implementación completa de A.2, pausó correctamente ante una
+contradicción real no anticipada — `apps/cli/tests/ingestar.test.ts` fuera de la lista original — en vez
+de decidir solo) → `code-reviewer` (revisión del diff de ~38 archivos, sin hallazgos bloqueantes).
+
+### Verificación
+
+**A.2**: migración aplicada a LOCAL sin error, `pnpm typecheck` limpio, suite completa 1773/1792 verde
+(los 12 rojos restantes son deuda preexistente ya documentada — B.21×7, `mutaciones-0038.test.ts`, mismo
+mensaje/constraint que HANDOFF ya registra; B.26×1, R-F; `aislamiento-modulo-1.test.ts`×4, TABLAS_M1),
+`grants-conjunto-cerrado.test.ts` 20/20, prueba de mutación del CLI verde→mutante→rojo→revertido→verde.
+**Un bug real encontrado y corregido en el camino, no anticipado por el diseño**: la función del trigger
+de inmutabilidad no neutralizaba `pg_temp` en su `search_path` (R10, mismo patrón del incidente #1) — lo
+agarró `catalogo.test.ts` en la primera corrida completa contra LOCAL; corregido (`set search_path =
+pg_catalog, public, app, pg_temp`, mismo patrón que `0028`) y re-verificado antes de commitear.
+
+**A.3**: typecheck limpio, `redactor.test.ts` 31/31, `reglas-de-codigo.test.ts` 63/64 (único rojo R-F,
+preexistente, confirmado con `git stash` contra el mismo commit).
+
+### Commits (5, en orden, pusheados)
+
+`68f9ccc` (docs 32/33, versión inicial) → `b2bf574` (A.3) → `7eaaccb` (A.2) → `d59b928` (incidente #18 +
+rotación de la contraseña local) → `d0aa52b` (doc 32, sexta categoría). `HEAD` y `origin/main` en sync
+en `d0aa52b`.
+
+### Qué queda pendiente, explícito
+
+- Migración `0044` sin aplicar al piloto — antes de correrla ahí: listar y confirmar SOLO esa migración
+  (CLAUDE.md §1.9, nunca `pnpm db:migrate` pelado), y correr la verificación puntual de candidatos
+  post-2026-09-09 que quedó sin hacer (esta sesión no tuvo acceso al piloto).
+- A.1 (B.4/`AuthProvider`), A.4 (choke point `leerConAuditoria`), A.5 (B.12 condicional) y A.6
+  (vigilancia de grants) de `33-plan-deuda-pre-tanda-4.md`, sin arrancar — quedan para cuando le llegue
+  el turno a la Tanda 4.
+- El helper único de redacción para sondeos ad hoc, deuda declarada en `32-lecciones-y-protocolos-de-
+  sesion.md` §6 — sin dueño, sin diseño, evaluar recién cuando se priorice.
+- Un `⚠️` que ya está declarado dos veces y sigue sin mecanismo de código: ninguna herramienta de la
+  sesión fuerza una redacción verificada contra un archivo de secretos o un documento real antes de
+  imprimir algo — mismo hueco de #14/#15/#16, ahora también #18.
+
+---
+
 ## 2026-09-13 (210) — 🔒 CIERRE: memoria de confirmaciones (`confirmacion_grupo`, `0043`) construida
 y probada de punta a punta — D-28 intacto, sin reabrir. 4 commits pusheados a `origin/main`.
 
