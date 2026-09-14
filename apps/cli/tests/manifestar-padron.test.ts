@@ -217,8 +217,8 @@ describe('correrManifestarPadron — conteo de citas del dry-run (punto 5, "revo
       );
       const cuentaId = cuenta[0]?.id ?? '';
       const lote = await tx.consultar<{ id: string }>(
-        `insert into lote_ingesta (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas)
-         values ($1, 'banco_mp_test', 'prueba-mp', 'archivo', $2, 'recibido', 0) returning id::text as id`,
+        `insert into lote_ingesta (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas, es_dato_real)
+         values ($1, 'banco_mp_test', 'prueba-mp', 'archivo', $2, 'recibido', 0, true) returning id::text as id`,
         [cliente, `hash_mp_${randomUUID()}`],
       );
       const loteId = lote[0]?.id ?? '';

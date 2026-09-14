@@ -368,6 +368,7 @@ export const CLASIFICACION = {
       },
       procesado_por: UUID_INTERNO,
       created_at: MARCA_TIEMPO,
+      es_dato_real: { nivel: 'N1', exportable: true, nota: 'Metadato de pipeline (B.22): true=extracto real, false=fixture de desarrollo. No es dato de ningún tercero.' },
     },
   },
 

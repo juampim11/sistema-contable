@@ -1,7 +1,12 @@
 /**
  * CLI DE INGESTA — el orden del pipeline, y el guard antes de todo.
  *
- *     pnpm ingesta --cliente <uuid> --archivo <ruta> [--banco <codigo>] [--usuario <uuid>]
+ *     pnpm ingesta --cliente <uuid> --archivo <ruta> [--banco <codigo>] [--usuario <uuid>] \
+ *       --es-dato-real real|prueba
+ *
+ * `--es-dato-real` es OBLIGATORIO, sin default (B.22, `docs/diseno/33-plan-deuda-pre-tanda-4.md`
+ * A.2): `real` para un extracto entregado por el cliente, `prueba` para un fixture de desarrollo.
+ * Nunca se mezclan — es la diferencia entre lo que sostiene el piloto y lo que no.
  *
  * ## Por qué el CLI es un punto de seguridad y no un envoltorio
  *
@@ -105,6 +110,15 @@ const esquemaArgumentos = z.object({
   archivo: z.string().min(1),
   banco: z.string().regex(/^[a-z0-9_]{2,32}$/),
   usuario: z.string().regex(RE_UUID, 'el --usuario tiene que ser un uuid'),
+  /**
+   * Obligatorio, sin default, vocabulario cerrado (B.22, `docs/diseno/33-plan-deuda-pre-tanda-4.md`
+   * A.2): distingue un extracto real entregado por un cliente de un fixture de desarrollo. Un solo
+   * flag `--es-dato-real real|prueba` en vez de dos switches booleanos — encaja con el parser
+   * `--flag valor` que ya usa este archivo, y sin default obliga a declararlo en cada corrida.
+   */
+  esDatoReal: z.enum(['real', 'prueba'], {
+    message: 'el --es-dato-real tiene que ser "real" o "prueba", sin default (B.22).',
+  }),
 });
 
 export type Argumentos = z.infer<typeof esquemaArgumentos>;
@@ -195,6 +209,7 @@ export function parsearArgumentos(argv: readonly string[]): Argumentos {
     archivo: mapa.get('archivo') ?? '',
     banco: mapa.get('banco') ?? '',
     usuario: mapa.get('usuario') ?? '',
+    esDatoReal: mapa.get('es-dato-real') ?? '',
   };
 
   const r = esquemaArgumentos.safeParse(crudo);
@@ -202,9 +217,12 @@ export function parsearArgumentos(argv: readonly string[]): Argumentos {
     const faltan = r.error.issues.map((i) => `--${String(i.path[0])}: ${i.message}`).join('; ');
     throw new Error(
       `Argumentos inválidos (${faltan}).\n\n` +
-        '  pnpm ingesta --cliente <uuid> --archivo <ruta> --banco <codigo> --usuario <uuid>\n\n' +
+        '  pnpm ingesta --cliente <uuid> --archivo <ruta> --banco <codigo> --usuario <uuid> ' +
+        '--es-dato-real real|prueba\n\n' +
         'El --cliente es OBLIGATORIO y no tiene default: sin cliente declarado no hay contra qué\n' +
-        'verificar que el archivo sea de quien se dice (ADR-0001 §5.1, INV-6).',
+        'verificar que el archivo sea de quien se dice (ADR-0001 §5.1, INV-6).\n' +
+        'El --es-dato-real es OBLIGATORIO y no tiene default: distingue un extracto real de un\n' +
+        'fixture de desarrollo (B.22).',
     );
   }
   return r.data;
@@ -317,10 +335,13 @@ export async function ingestar(
       // PASO 4 — el lote es el ancla de todo lo que sigue, incluso del rechazo.
       const creado = await tx.consultar<{ id: string }>(
         `insert into lote_ingesta
-           (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por)
-         values ($1, $2, $3, $4, $5, $6, app.current_user_id())
+           (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por,
+            es_dato_real)
+         values ($1, $2, $3, $4, $5, $6, app.current_user_id(), $7)
          returning id::text as id`,
         // La versión definitiva se escribe al cerrar el lote, con la del adaptador que de verdad lo leyó.
+        // `es_dato_real` es inmutable desde acá (trigger `trg_lote_ingesta_es_dato_real_inmutable`,
+        // migración 0044): lo que se declara al alta queda fijo para siempre (B.22).
         [
           args.cliente,
           args.banco,
@@ -328,6 +349,7 @@ export async function ingestar(
           ORIGEN_DEL_CLI,
           archivoHash,
           ESTADO_AL_CREAR,
+          args.esDatoReal === 'real',
         ],
       );
       const nuevoId = creado[0]?.id;

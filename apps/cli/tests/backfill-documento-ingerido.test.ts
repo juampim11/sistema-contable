@@ -57,8 +57,8 @@ async function crearLoteSintetico(clienteId: string, opciones: OpcionesLote = {}
     const lote = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
          (cliente_id, banco_codigo, adaptador_version, origen, archivo_clave, archivo_hash, estado,
-          filas_leidas, filas_aceptadas)
-       values ($1, $2, 'prueba@1', 'archivo', $3, $4, $5, 1, 1)
+          filas_leidas, filas_aceptadas, es_dato_real)
+       values ($1, $2, 'prueba@1', 'archivo', $3, $4, $5, 1, 1, true)
        returning id::text as id`,
       [clienteId, bancoCodigo, archivoClave, randomUUID(), estado],
     );

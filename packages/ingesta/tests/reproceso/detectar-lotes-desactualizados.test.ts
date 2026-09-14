@@ -41,8 +41,8 @@ async function crearLote(clienteId: string, filaOrigen: Record<string, unknown>)
 
     const lote = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas, filas_aceptadas)
-       values ($1, 'detectar_prueba', 'prueba@1', 'archivo', $2, 'procesado', 1, 1)
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas, filas_aceptadas, es_dato_real)
+       values ($1, 'detectar_prueba', 'prueba@1', 'archivo', $2, 'procesado', 1, 1, true)
        returning id::text as id`,
       [clienteId, randomUUID()],
     );

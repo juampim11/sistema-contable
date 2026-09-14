@@ -191,7 +191,16 @@ describe('`--cliente` es obligatorio y no tiene default', () => {
    */
   it('sin --cliente, no corre', () => {
     expect(() =>
-      parsearArgumentos(['--archivo', 'x.pdf', '--banco', 'banco_cli', '--usuario', USUARIOS.socio]),
+      parsearArgumentos([
+        '--archivo',
+        'x.pdf',
+        '--banco',
+        'banco_cli',
+        '--usuario',
+        USUARIOS.socio,
+        '--es-dato-real',
+        'real',
+      ]),
     ).toThrow(/--cliente/);
   });
 
@@ -206,6 +215,8 @@ describe('`--cliente` es obligatorio y no tiene default', () => {
         'banco_cli',
         '--usuario',
         USUARIOS.socio,
+        '--es-dato-real',
+        'real',
       ]),
     ).toThrow(/uuid/);
   });
@@ -213,7 +224,7 @@ describe('`--cliente` es obligatorio y no tiene default', () => {
   it('el mensaje de error explica POR QUÉ es obligatorio', () => {
     // Un mensaje que solo dice "falta --cliente" invita a buscar la forma de no pasarlo.
     try {
-      parsearArgumentos(['--archivo', 'x.pdf']);
+      parsearArgumentos(['--archivo', 'x.pdf', '--es-dato-real', 'real']);
       expect.unreachable('debería haber lanzado');
     } catch (error) {
       expect((error as Error).message).toMatch(/INV-6|aislamiento|sin cliente/i);
@@ -230,6 +241,8 @@ describe('`--cliente` es obligatorio y no tiene default', () => {
       'banco_cli',
       '--usuario',
       USUARIOS.socio,
+      '--es-dato-real',
+      'real',
     ]);
     expect(a.cliente).toBe(s.clienteA);
     expect(a.banco).toBe('banco_cli');
@@ -246,7 +259,7 @@ describe('el guard de R18, extendido al CLI', () => {
   it('la credencial de este entorno pasa el guard (si no, el resto de la suite no significa nada)', async () => {
     const { storage } = storageEspia();
     const r = await ingestar(
-      { cliente: s.clienteA, archivo, banco: 'banco_cli', usuario: USUARIOS.socio },
+      { cliente: s.clienteA, archivo, banco: 'banco_cli', usuario: USUARIOS.socio, esDatoReal: 'real' },
       storage,
     );
     // Pasa el guard y llega al parseo, donde rechaza porque el archivo no es un PDF. Lo que importa acá es
@@ -265,7 +278,13 @@ describe('el guard de R18, extendido al CLI', () => {
   it('un archivo que no es un PDF se RECHAZA con código, no explota', async () => {
     const { storage, escrituras } = storageEspia();
     const r = await ingestar(
-      { cliente: s.clienteA, archivo: archivoUnico('corrupto'), banco: 'banco_cli', usuario: USUARIOS.socio },
+      {
+        cliente: s.clienteA,
+        archivo: archivoUnico('corrupto'),
+        banco: 'banco_cli',
+        usuario: USUARIOS.socio,
+        esDatoReal: 'real',
+      },
       storage,
     );
     expect(r.estado).toBe('rechazado');
@@ -281,6 +300,7 @@ describe('el guard de R18, extendido al CLI', () => {
         archivo: 'no-existe.docx',
         banco: 'banco_cli',
         usuario: USUARIOS.socio,
+        esDatoReal: 'real',
       },
       storage,
     );
@@ -318,7 +338,13 @@ describe('el rechazo se asienta con accion = rechazo', () => {
     const { storage, escrituras } = storageEspia();
 
     const r = await ingestar(
-      { cliente: s.clienteA, archivo: archivoUnico('rechazo'), banco: 'banco_cli', usuario: USUARIOS.socio },
+      {
+        cliente: s.clienteA,
+        archivo: archivoUnico('rechazo'),
+        banco: 'banco_cli',
+        usuario: USUARIOS.socio,
+        esDatoReal: 'real',
+      },
       storage,
     );
 
@@ -380,6 +406,7 @@ describe('idempotencia por cliente', () => {
       archivo: archivoUnico('idempotencia'),
       banco: 'banco_cli',
       usuario: USUARIOS.socio,
+      esDatoReal: 'real' as const,
     };
 
     const primera = await ingestar(args, storage);
@@ -468,7 +495,13 @@ describe('idempotencia por cliente', () => {
         'SEGUNDA LINEA SOLO PARA SUPERAR EL UMBRAL DE CARACTERES MINIMOS',
       ]),
     );
-    const args = { cliente: s.clienteB, archivo: ruta, banco: 'banco_cli_noop', usuario: USUARIOS.socio };
+    const args = {
+      cliente: s.clienteB,
+      archivo: ruta,
+      banco: 'banco_cli_noop',
+      usuario: USUARIOS.socio,
+      esDatoReal: 'real' as const,
+    };
 
     const primera = await ingestar(args, storage);
     expect(primera.estado).toBe('procesado');
@@ -572,6 +605,7 @@ describe('reintento de un lote rechazado (con_errores): SÍ reprocesa, no es ya_
         archivo: ruta,
         banco: 'banco_cli_reintento',
         usuario: USUARIOS.socio,
+        esDatoReal: 'real' as const,
       };
 
       // Primer intento: la cuenta del archivo todavía no está registrada para este cliente. Se rechaza.
@@ -734,7 +768,13 @@ describe('reintento con --banco corregido: banco_codigo queda consistente, no el
     // Primer intento: el operador declara el banco EQUIVOCADO. El adaptador que reconoce el
     // contenido es 'banco_cli_correcto', distinto del declarado -> rechaza.
     const primera = await ingestar(
-      { cliente: s.clienteB, archivo: ruta, banco: 'banco_cli_incorrecto', usuario: USUARIOS.socio },
+      {
+        cliente: s.clienteB,
+        archivo: ruta,
+        banco: 'banco_cli_incorrecto',
+        usuario: USUARIOS.socio,
+        esDatoReal: 'real',
+      },
       storage,
     );
     expect(primera.estado).toBe('rechazado');
@@ -743,7 +783,13 @@ describe('reintento con --banco corregido: banco_codigo queda consistente, no el
 
     // Segundo intento, MISMO archivo, ahora con el --banco correcto: reprocesa sobre el MISMO lote.
     const segunda = await ingestar(
-      { cliente: s.clienteB, archivo: ruta, banco: 'banco_cli_correcto', usuario: USUARIOS.socio },
+      {
+        cliente: s.clienteB,
+        archivo: ruta,
+        banco: 'banco_cli_correcto',
+        usuario: USUARIOS.socio,
+        esDatoReal: 'real',
+      },
       storage,
     );
     expect(segunda.estado).toBe('procesado');
@@ -789,7 +835,7 @@ describe('A2 (C5) — el gate de residuo rechaza el lote entero, antes de persis
     );
 
     const r = await ingestar(
-      { cliente: s.clienteA, archivo: ruta, banco: 'banco_cli', usuario: USUARIOS.socio },
+      { cliente: s.clienteA, archivo: ruta, banco: 'banco_cli', usuario: USUARIOS.socio, esDatoReal: 'real' },
       storage,
     );
 
@@ -896,7 +942,13 @@ describe('contingencia de residuo (2026-08-11): observación NO rechaza, a difer
     );
 
     const r = await ingestar(
-      { cliente: s.clienteA, archivo: ruta, banco: 'banco_cli_residuo_obs', usuario: USUARIOS.socio },
+      {
+        cliente: s.clienteA,
+        archivo: ruta,
+        banco: 'banco_cli_residuo_obs',
+        usuario: USUARIOS.socio,
+        esDatoReal: 'real',
+      },
       storage,
     );
 
@@ -1013,7 +1065,13 @@ describe('atomicidad del lote multi-cuenta (HANDOFF 2026-08-11 (40))', () => {
       );
 
       const r = await ingestar(
-        { cliente: s.clienteA, archivo: ruta, banco: 'banco_cli_atomico', usuario: USUARIOS.socio },
+        {
+          cliente: s.clienteA,
+          archivo: ruta,
+          banco: 'banco_cli_atomico',
+          usuario: USUARIOS.socio,
+          esDatoReal: 'real',
+        },
         storage,
       );
 

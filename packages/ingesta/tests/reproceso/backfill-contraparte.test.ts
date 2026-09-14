@@ -55,8 +55,8 @@ async function crearLotePre0013(
 
     const lote = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas, filas_aceptadas)
-       values ($1, 'backfill_prueba', 'prueba@1', 'archivo', $2, 'procesado', $3, $3)
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas, filas_aceptadas, es_dato_real)
+       values ($1, 'backfill_prueba', 'prueba@1', 'archivo', $2, 'procesado', $3, $3, true)
        returning id::text as id`,
       [clienteId, randomUUID(), cantidad],
     );

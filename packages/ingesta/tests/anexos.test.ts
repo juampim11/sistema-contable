@@ -73,8 +73,8 @@ async function loteNuevo(marca: string): Promise<string> {
   return conUsuario(USUARIOS.socio, async (tx) => {
     const f = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado)
-       values ($1, 'banco_anexo', 'sintetico@1', 'archivo', $2, 'recibido')
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, es_dato_real)
+       values ($1, 'banco_anexo', 'sintetico@1', 'archivo', $2, 'recibido', true)
        returning id::text as id`,
       [s.clienteA, `hash_anexo_${marca}`],
     );

@@ -89,8 +89,8 @@ async function registrarCuentaBancaria(clienteId: string): Promise<string> {
 async function crearLotePersistido(clienteId: string, cuentaBancariaId: string, cuenta: CuentaConMovimientos): Promise<string> {
   return conUsuario(USUARIOS.socio, async (tx) => {
     const creado = await tx.consultar<{ id: string }>(
-      `insert into lote_ingesta (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por)
-       values ($1, $2, $3, 'archivo', $4, 'recibido', app.current_user_id())
+      `insert into lote_ingesta (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por, es_dato_real)
+       values ($1, $2, $3, 'archivo', $4, 'recibido', app.current_user_id(), true)
        returning id::text as id`,
       [clienteId, BANCO_CODIGO, `${BANCO_CODIGO}@1`, randomUUID()],
     );

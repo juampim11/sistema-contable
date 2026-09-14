@@ -74,8 +74,8 @@ beforeAll(async () => {
       );
       const lote = await duenio.query<{ id: string }>(
         `insert into lote_ingesta
-           (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas)
-         values ($1, 'banco_0021', 'prueba-1', 'archivo', $2, 'recibido', 0)
+           (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas, es_dato_real)
+         values ($1, 'banco_0021', 'prueba-1', 'archivo', $2, 'recibido', 0, true)
          returning id::text as id`,
         [clienteId, `hash_0021_${clave}`],
       );

@@ -46,8 +46,8 @@ beforeAll(async () => {
     cuentaId = cuenta[0]?.id ?? '';
     const lote = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas)
-       values ($1, $2, 'prueba-0038-wiring', 'archivo', 'hash_0038_wiring', 'recibido', 0)
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas, es_dato_real)
+       values ($1, $2, 'prueba-0038-wiring', 'archivo', 'hash_0038_wiring', 'recibido', 0, true)
        returning id::text as id`,
       [s.clienteA, BANCO],
     );

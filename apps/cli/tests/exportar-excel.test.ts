@@ -70,8 +70,8 @@ async function crearLoteConCuenta(bancoCodigo: string): Promise<string> {
   return conUsuario(USUARIOS.socio, async (tx) => {
     const creado = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por)
-       values ($1, $2, $3, 'archivo', $4, 'recibido', app.current_user_id())
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por, es_dato_real)
+       values ($1, $2, $3, 'archivo', $4, 'recibido', app.current_user_id(), true)
        returning id::text as id`,
       [s.clienteA, bancoCodigo, `${bancoCodigo}@1`, randomUUID()],
     );

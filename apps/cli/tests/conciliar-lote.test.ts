@@ -105,8 +105,8 @@ async function armarFixtureCompleto(
 
   const lote = await una(
     ej,
-    `insert into lote_ingesta (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado)
-     values ($1, $2, 'e2e@fixture', 'archivo', $3, 'procesado') returning id::text as id`,
+    `insert into lote_ingesta (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, es_dato_real)
+     values ($1, $2, 'e2e@fixture', 'archivo', $3, 'procesado', true) returning id::text as id`,
     [clienteId, BANCO_CODIGO, randomUUID()],
   );
   const loteId = String(lote['id']);

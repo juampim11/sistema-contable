@@ -201,9 +201,14 @@ const GRANTS_POR_COLUMNA: readonly {
   // `procesado_por` — el diagnóstico no necesita el archivo ni el detalle de un rechazo ni quién
   // corrió la ingesta, sólo agrupar y describir el lote.
   { tabla: 'lote_ingesta', rol: 'app_job', privilegio: 'SELECT', columnas: ['banco_codigo', 'cliente_id', 'created_at', 'estado', 'id'] },
-  { tabla: 'lote_ingesta', rol: 'app_request', privilegio: 'INSERT', columnas: ['adaptador_version', 'archivo_clave', 'archivo_hash', 'banco_codigo', 'cliente_id', 'created_at', 'estado', 'filas_aceptadas', 'filas_leidas', 'filas_rechazadas', 'id', 'motivo_codigo', 'motivo_codigo_previo', 'origen', 'paginas_declaradas', 'paginas_sin_texto', 'procesado_por'] },
-  { tabla: 'lote_ingesta', rol: 'app_request', privilegio: 'SELECT', columnas: ['adaptador_version', 'archivo_clave', 'archivo_hash', 'banco_codigo', 'cliente_id', 'created_at', 'estado', 'filas_aceptadas', 'filas_leidas', 'filas_rechazadas', 'id', 'motivo_codigo', 'motivo_codigo_previo', 'origen', 'paginas_declaradas', 'paginas_sin_texto', 'procesado_por'] },
-  { tabla: 'lote_ingesta', rol: 'app_request', privilegio: 'UPDATE', columnas: ['adaptador_version', 'archivo_clave', 'archivo_hash', 'banco_codigo', 'cliente_id', 'created_at', 'estado', 'filas_aceptadas', 'filas_leidas', 'filas_rechazadas', 'id', 'motivo_codigo', 'motivo_codigo_previo', 'origen', 'paginas_declaradas', 'paginas_sin_texto', 'procesado_por'] },
+  { tabla: 'lote_ingesta', rol: 'app_request', privilegio: 'INSERT', columnas: ['adaptador_version', 'archivo_clave', 'archivo_hash', 'banco_codigo', 'cliente_id', 'created_at', 'es_dato_real', 'estado', 'filas_aceptadas', 'filas_leidas', 'filas_rechazadas', 'id', 'motivo_codigo', 'motivo_codigo_previo', 'origen', 'paginas_declaradas', 'paginas_sin_texto', 'procesado_por'] },
+  { tabla: 'lote_ingesta', rol: 'app_request', privilegio: 'SELECT', columnas: ['adaptador_version', 'archivo_clave', 'archivo_hash', 'banco_codigo', 'cliente_id', 'created_at', 'es_dato_real', 'estado', 'filas_aceptadas', 'filas_leidas', 'filas_rechazadas', 'id', 'motivo_codigo', 'motivo_codigo_previo', 'origen', 'paginas_declaradas', 'paginas_sin_texto', 'procesado_por'] },
+  // `0044` (B.22): UPDATE deja de ser grant de TABLA completa — se acota a las columnas que tocan
+  // los UPDATE legítimos de producción hoy (ingestar.ts, completar-lote.ts, recapturar-conceptos.ts).
+  // `es_dato_real` queda afuera a propósito: inmutable desde el alta (trigger
+  // `trg_lote_ingesta_es_dato_real_inmutable`), mismo patrón que `0028` para
+  // `cierre_cliente_periodo`/`asiento_propuesto`.
+  { tabla: 'lote_ingesta', rol: 'app_request', privilegio: 'UPDATE', columnas: ['adaptador_version', 'archivo_clave', 'banco_codigo', 'estado', 'filas_aceptadas', 'filas_leidas', 'filas_rechazadas', 'motivo_codigo', 'motivo_codigo_previo', 'paginas_declaradas', 'paginas_sin_texto', 'procesado_por'] },
   { tabla: 'lote_ingesta_cuenta', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id', 'created_at', 'cuenta_bancaria_id', 'filas_aceptadas', 'filas_leidas', 'id', 'lote_ingesta_id', 'moneda', 'periodo_desde', 'periodo_hasta', 'saldo_final_calculado', 'saldo_final_declarado', 'saldo_inicial_declarado', 'total_creditos_calculado', 'total_creditos_declarado', 'total_debitos_calculado', 'total_debitos_declarado', 'verificacion_detalle', 'verificacion_estado'] },
   { tabla: 'lote_ingesta_cuenta', rol: 'app_request', privilegio: 'SELECT', columnas: ['cliente_id', 'created_at', 'cuenta_bancaria_id', 'filas_aceptadas', 'filas_leidas', 'id', 'lote_ingesta_id', 'moneda', 'periodo_desde', 'periodo_hasta', 'saldo_final_calculado', 'saldo_final_declarado', 'saldo_inicial_declarado', 'total_creditos_calculado', 'total_creditos_declarado', 'total_debitos_calculado', 'total_debitos_declarado', 'verificacion_detalle', 'verificacion_estado'] },
   { tabla: 'lote_ingesta_cuenta', rol: 'app_request', privilegio: 'UPDATE', columnas: ['cliente_id', 'created_at', 'cuenta_bancaria_id', 'filas_aceptadas', 'filas_leidas', 'id', 'lote_ingesta_id', 'moneda', 'periodo_desde', 'periodo_hasta', 'saldo_final_calculado', 'saldo_final_declarado', 'saldo_inicial_declarado', 'total_creditos_calculado', 'total_creditos_declarado', 'total_debitos_calculado', 'total_debitos_declarado', 'verificacion_detalle', 'verificacion_estado'] },
@@ -451,7 +456,8 @@ const GRANTS_A_NIVEL_TABLA: readonly string[] = [
   'fuente_cierre|app_request|SELECT',
   'lote_ingesta|app_request|INSERT',
   'lote_ingesta|app_request|SELECT',
-  'lote_ingesta|app_request|UPDATE',
+  // `0044` (B.22): UPDATE se acotó por columna — no aparece acá, ver GRANTS_POR_COLUMNA. Mismo
+  // patrón que `0028` dejó documentado arriba para `cierre_cliente_periodo`/`asiento_propuesto`.
   'lote_ingesta_cuenta|app_request|INSERT',
   'lote_ingesta_cuenta|app_request|SELECT',
   'lote_ingesta_cuenta|app_request|UPDATE',

@@ -50,8 +50,8 @@ beforeAll(async () => {
 
     const l = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado)
-       values ($1, 'banco_r28', 'r28@1', 'archivo', 'hash_r28', 'recibido')
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, es_dato_real)
+       values ($1, 'banco_r28', 'r28@1', 'archivo', 'hash_r28', 'recibido', true)
        returning id::text as id`,
       [s.clienteA],
     );

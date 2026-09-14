@@ -355,8 +355,8 @@ async function cargar(lado: Lado, semilla: number): Promise<void> {
     // sigue, incluido el rechazo, así que nace antes de leer una sola fila.
     const f = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por)
-       values ($1, $2, 'sintetico@1', 'archivo', $3, 'recibido', app.current_user_id())
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por, es_dato_real)
+       values ($1, $2, 'sintetico@1', 'archivo', $3, 'recibido', app.current_user_id(), true)
        returning id::text as id`,
       [e.clienteId, BANCO, `hash_aisl_${lado}`],
     );
@@ -653,8 +653,8 @@ describe('5 — escritura cruzada: un usuario de A no puede escribir en B', () =
       conUsuario(USUARIOS.contadorA, async (tx) =>
         tx.consultar(
           `insert into lote_ingesta
-             (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado)
-           values ($1, $2, 'sintetico@1', 'archivo', 'hash_cruce_escritura', 'recibido')`,
+             (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, es_dato_real)
+           values ($1, $2, 'sintetico@1', 'archivo', 'hash_cruce_escritura', 'recibido', true)`,
           [s.clienteB, BANCO],
         ),
       ),

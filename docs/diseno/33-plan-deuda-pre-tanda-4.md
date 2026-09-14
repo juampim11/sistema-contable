@@ -73,6 +73,19 @@ con SQL — va a ser Laura confiando en una pantalla.
 reales confirmados en la consulta que alimenta la vista, aunque el cierre estructural completo (columna +
 regla verificable) se resuelva después.
 
+**Estado (2026-09-13, `backend-dev`):** cierre estructural completo **implementado y verificado contra
+LOCAL** — migración `packages/data/migrations/0044_lote_ingesta_es_dato_real.sql` (columna `boolean not
+null` sin default, grant de `UPDATE` acotado por columna sin incluir `es_dato_real`, trigger
+`trg_lote_ingesta_es_dato_real_inmutable`), flag obligatorio `--es-dato-real real|prueba` en
+`apps/cli/src/ingestar.ts` (sin default, vocabulario cerrado), clasificación N1 en
+`clasificacion-campos.ts`, y prueba de mutación del guard del CLI en
+`apps/cli/tests/ingestar-es-dato-real.test.ts` (ciclo verde→mutante→rojo→revertido→verde confirmado
+real). **Migración `0044` SIN APLICAR TODAVÍA AL PILOTO**: aplicarla ahí requiere su propia autorización
+explícita, listando y confirmando SOLO esa migración (CLAUDE.md §1.9 — nunca `pnpm db:migrate` pelado).
+No se corrió una verificación puntual de candidatos post-2026-09-09 contra el piloto: este agente no
+tiene acceso a ese entorno desde su sesión de trabajo, así que se declara explícito en vez de asumir que
+no hay candidatos — queda pendiente para quien aplique `0044` al piloto.
+
 ### A.3 🟡 Reclasificación N1→N2 de `padron_contraparte_id` en `asiento_propuesto_renglon`
 
 Ya declarado en `10-deuda-declarada.md` (bullet sin número, cerca de la línea 890): clasificado N1 por

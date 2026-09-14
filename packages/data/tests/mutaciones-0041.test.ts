@@ -121,8 +121,8 @@ beforeAll(async () => {
     const lote = await una(
       ej,
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas)
-       values ($1, $2, 'prueba-mut-0041', 'archivo', $3, 'recibido', 0)
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas, es_dato_real)
+       values ($1, $2, 'prueba-mut-0041', 'archivo', $3, 'recibido', 0, true)
        returning id::text as id`,
       [s.clienteA, BANCO, `hash_mut_0041_${randomUUID()}`],
     );

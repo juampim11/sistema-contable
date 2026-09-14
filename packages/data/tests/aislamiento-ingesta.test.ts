@@ -73,8 +73,8 @@ beforeAll(async () => {
     const lote = async (clienteId: string, hash: string): Promise<string> => {
       const f = await tx.consultar<{ id: string }>(
         `insert into lote_ingesta
-           (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas)
-         values ($1, 'banco_prueba', 'prueba-1', 'archivo', $2, 'recibido', 0)
+           (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas, es_dato_real)
+         values ($1, 'banco_prueba', 'prueba-1', 'archivo', $2, 'recibido', 0, true)
          returning id::text as id`,
         [clienteId, hash],
       );
@@ -221,8 +221,8 @@ describe('la satélite N2R exige rol en LECTURA, no solo en escritura', () => {
     const pudoEscribir = await conUsuario(USUARIOS.administrativoA, async (tx) => {
       const f = await tx.consultar<{ id: string }>(
         `insert into lote_ingesta
-           (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado)
-         values ($1, 'banco_prueba', 'prueba-1', 'archivo', 'hash_del_administrativo', 'recibido')
+           (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, es_dato_real)
+         values ($1, 'banco_prueba', 'prueba-1', 'archivo', 'hash_del_administrativo', 'recibido', true)
          returning id::text as id`,
         [s.clienteA],
       );
@@ -338,8 +338,8 @@ describe('la FK de TRES columnas: lo que queda en pie cuando la policy no puede 
     const otroLote = await conUsuario(USUARIOS.socio, async (tx) => {
       const f = await tx.consultar<{ id: string }>(
         `insert into lote_ingesta
-           (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado)
-         values ($1, 'banco_prueba', 'prueba-1', 'archivo', 'hash_sin_cuentas', 'recibido')
+           (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, es_dato_real)
+         values ($1, 'banco_prueba', 'prueba-1', 'archivo', 'hash_sin_cuentas', 'recibido', true)
          returning id::text as id`,
         [s.clienteA],
       );
@@ -368,8 +368,8 @@ describe('`exigir_nodo_cliente`: un extracto no se le carga a un estudio', () =>
       conUsuario(USUARIOS.socio, async (tx) =>
         tx.consultar(
           `insert into lote_ingesta
-             (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado)
-           values ($1, 'banco_prueba', 'prueba-1', 'archivo', 'hash_al_estudio', 'recibido')`,
+             (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, es_dato_real)
+           values ($1, 'banco_prueba', 'prueba-1', 'archivo', 'hash_al_estudio', 'recibido', true)`,
           [s.estudio],
         ),
       ),

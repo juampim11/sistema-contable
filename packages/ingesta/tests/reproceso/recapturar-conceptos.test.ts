@@ -90,8 +90,8 @@ async function crearLotePre0007(
   return conUsuario(USUARIOS.socio, async (tx) => {
     const creado = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, archivo_clave, estado, procesado_por)
-       values ($1, $2, $3, 'archivo', $4, $5, 'recibido', app.current_user_id())
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, archivo_clave, estado, procesado_por, es_dato_real)
+       values ($1, $2, $3, 'archivo', $4, $5, 'recibido', app.current_user_id(), true)
        returning id::text as id`,
       [clienteId, bancoCodigo, `${bancoCodigo}@pendiente`, randomUUID(), `cliente/${clienteId}/extracto/${randomUUID()}.pdf`],
     );
@@ -157,8 +157,8 @@ async function crearLoteConNoPublicado(
   return conUsuario(USUARIOS.socio, async (tx) => {
     const creado = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, archivo_clave, estado, procesado_por)
-       values ($1, $2, $3, 'archivo', $4, $5, 'recibido', app.current_user_id())
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, archivo_clave, estado, procesado_por, es_dato_real)
+       values ($1, $2, $3, 'archivo', $4, $5, 'recibido', app.current_user_id(), true)
        returning id::text as id`,
       [clienteId, bancoCodigo, `${bancoCodigo}@1`, randomUUID(), `cliente/${clienteId}/extracto/${randomUUID()}.pdf`],
     );
@@ -464,8 +464,8 @@ describe('recapturarConceptosDeLote — aislamiento y abortos', () => {
     const archivoHash = randomUUID();
     const loteId = await conUsuario(USUARIOS.socio, async (tx) => {
       const creado = await tx.consultar<{ id: string }>(
-        `insert into lote_ingesta (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, motivo_codigo, procesado_por)
-         values ($1, $2, $3, 'archivo', $4, 'con_errores', 'cuenta_no_registrada', app.current_user_id())
+        `insert into lote_ingesta (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, motivo_codigo, procesado_por, es_dato_real)
+         values ($1, $2, $3, 'archivo', $4, 'con_errores', 'cuenta_no_registrada', app.current_user_id(), true)
          returning id::text as id`,
         [s.clienteA, banco, `${banco}@1`, archivoHash],
       );

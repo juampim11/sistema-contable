@@ -161,8 +161,8 @@ async function crearLoteHuerfano(opciones: {
   return conUsuario(USUARIOS.socio, async (tx) => {
     const creado = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, motivo_codigo, procesado_por)
-       values ($1, $2, $3, 'archivo', $4, 'con_errores', $5, app.current_user_id())
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, motivo_codigo, procesado_por, es_dato_real)
+       values ($1, $2, $3, 'archivo', $4, 'con_errores', $5, app.current_user_id(), true)
        returning id::text as id`,
       [
         opciones.clienteId,

@@ -72,8 +72,8 @@ beforeAll(async () => {
 
     const f2 = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas)
-       values ($1, 'banco_m2', 'prueba-1', 'archivo', 'hash_m2_a', 'recibido', 0)
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas, es_dato_real)
+       values ($1, 'banco_m2', 'prueba-1', 'archivo', 'hash_m2_a', 'recibido', 0, true)
        returning id::text as id`,
       [s.clienteA],
     );
@@ -117,8 +117,8 @@ beforeAll(async () => {
     );
     const loteB = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas)
-       values ($1, 'banco_m2', 'prueba-1', 'archivo', 'hash_m2_b', 'recibido', 0)
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, filas_leidas, es_dato_real)
+       values ($1, 'banco_m2', 'prueba-1', 'archivo', 'hash_m2_b', 'recibido', 0, true)
        returning id::text as id`,
       [s.clienteB],
     );

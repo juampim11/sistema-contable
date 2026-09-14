@@ -133,8 +133,8 @@ async function crearLoteConArchivoEnStorage(
   return conUsuario(USUARIOS.socio, async (tx) => {
     const creado = await tx.consultar<{ id: string }>(
       `insert into lote_ingesta
-         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, archivo_clave, estado, procesado_por)
-       values ($1, $2, $3, 'archivo', $4, $5, 'recibido', app.current_user_id())
+         (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, archivo_clave, estado, procesado_por, es_dato_real)
+       values ($1, $2, $3, 'archivo', $4, $5, 'recibido', app.current_user_id(), true)
        returning id::text as id`,
       [clienteId, bancoCodigo, `${bancoCodigo}@pendiente`, archivoHash, clave],
     );
@@ -220,8 +220,8 @@ describe('recapturarConceptos — flujo completo (storage + base reales)', () =>
     await registrarBanco(banco);
     const loteId = await conUsuario(USUARIOS.socio, async (tx) => {
       const creado = await tx.consultar<{ id: string }>(
-        `insert into lote_ingesta (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por)
-         values ($1, $2, $3, 'archivo', $4, 'procesado', app.current_user_id())
+        `insert into lote_ingesta (cliente_id, banco_codigo, adaptador_version, origen, archivo_hash, estado, procesado_por, es_dato_real)
+         values ($1, $2, $3, 'archivo', $4, 'procesado', app.current_user_id(), true)
          returning id::text as id`,
         [s.clienteA, banco, `${banco}@1`, randomUUID()],
       );
