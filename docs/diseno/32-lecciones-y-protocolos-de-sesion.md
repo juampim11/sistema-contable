@@ -214,6 +214,49 @@ es lo que hace falta anticipar la próxima vez.
 
 ---
 
+## 6. Enmascarado/redacción verificado por argumento, no por prueba
+
+### Los cuatro casos reales
+
+Cuatro incidentes de seguridad de este período (`docs/seguridad/registro-incidentes.md`), sin
+denominador técnico común — uno es un blocklist de dígitos, otro un regex de protocolo, otro directamente
+la ausencia de cualquier enmascarado — pero con la misma causa raíz:
+
+| Incidente | Fecha | Qué se asumió correcto sin probarlo contra la forma real | Qué reveló |
+|---|---|---|---|
+| **#14** | 2026-08-27 | Scripts efímeros que leyeron el `.xlsx` real de Bracci asumieron que una columna de "denominación contable" era vocabulario genérico seguro de imprimir — sin verificar que ese campo de texto libre pudiera traer, pegado, un nombre propio (`"Cuenta Particular <nombre>"`) | 2 nombres reales de socios + 2 `padron_socio_id` |
+| **#15** | 2026-08-28 | La sesión venía enmascarando dígitos con `sed 's/[0-9]/X/g'` antes de imprimir — correcto casi siempre — pero 2 de los llamados puntuales contra el extracto real de Bracci se corrieron sin pasar por ese enmascarado, asumiendo (sin confirmar) que el resultado sería inocuo | Un valor con forma de importe/CBU + el CUIT real del cliente |
+| **#16** | 2026-09-04 | Un script de sondeo protegía por **blocklist** (corridas de 3+ dígitos) en vez de por **allowlist** (solo el patrón exacto buscado) — asumido suficiente sin contemplar que la misma fila de rótulo trajera, pegado, texto libre no numérico | Nombre y apellido reales, repetidos en los 3 archivos procesados |
+| **#18** | 2026-09-13 | Un `sed` de redacción asumía el prefijo `postgresql://`, nunca confirmado contra el DSN real de este repo (`postgres://`, sin la sílaba `ql`) — la sustitución no matcheaba nunca, y nadie lo notó antes de correrlo | La contraseña real de Postgres LOCAL |
+
+En los cuatro casos, quien escribió el mecanismo de redacción confió en que el patrón "se veía bien"
+leyéndolo, y lo corrió directo contra el dato real — sin antes confirmarlo contra un valor sintético de
+la **misma forma exacta** (mismo separador, mismo prefijo, mismos caracteres de borde) que el dato real
+iba a tener. Ninguno de los cuatro reescribió el mecanismo de un incidente anterior: cada uno inventó su
+propia redacción ad hoc para su propio caso puntual.
+
+### La regla
+
+> 🔴 **Todo script que redacte o enmascare información sensible (nombres, CUIT, contraseñas,
+> credenciales) antes de imprimir algo se prueba PRIMERO contra un valor sintético de la MISMA FORMA
+> exacta del dato real** — mismo separador (`postgres://` vs. `postgresql://`, guion vs. punto), mismo
+> prefijo/sufijo, mismos caracteres de borde — **antes** de correrlo contra el archivo, la base o el
+> `.env` real. No alcanza con que el regex "se vea bien" leyéndolo: se corre una vez contra un fixture
+> sintético con la forma exacta, se confirma que redacta lo que tiene que redactar, y recién ahí se
+> corre contra el dato real.
+
+### Deuda técnica declarada, no resuelta ahora
+
+Candidato futuro, sin dueño y sin diseño todavía: un **helper único de redacción para sondeos ad hoc**
+(distinto de `formaParaLog`/`redactar.ts`, que ya cubren el código de producción) — ya probado una vez
+contra las formas reales conocidas, reusado siempre en vez de reescrito cada vez que hace falta un
+chequeo puntual contra un documento real o un archivo de secretos. El patrón de los cuatro incidentes
+sugiere que la solución no es "tener más cuidado la próxima vez" — eso ya se intentó cuatro veces y
+falló cuatro veces, cada una con una forma distinta — sino no tener que escribir la redacción de nuevo
+en cada sesión. Evaluar recién cuando se decida priorizarlo, no como parte de esta tarea.
+
+---
+
 ## Otras lecciones del rango, breves
 
 - **La convocatoria real (no solo nombrada) siguió funcionando cuando se ejerció**: (204) convocó en
