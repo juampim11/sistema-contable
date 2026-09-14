@@ -490,11 +490,23 @@ datos sintéticos (decisión del titular, punto 1). **Datos Bracci/ROKA**: recar
 llegue el turno (nada de la demo se promueve), aprovechada como prueba end-to-end del sistema completo —
 es un paso posterior, con su propia autorización, no de este ADR.
 
+**Diseño visual de PR4 (actualización 2026-09-14, decisión del titular)**: la pantalla de solo lectura de
+PR4 no es un mínimo sin diseño — tiene que verse como un producto real, aunque no sea la experiencia
+final. Entra en el alcance de PR4: tablas prolijas, estados visuales claros (p. ej. distinguir
+visualmente "propuesta" de "decisión humana"), navegación clara entre vistas, con tokens de diseño y
+dirección visual coherente (herramienta a confirmar — ver nota en la fila de abajo). Esto **reemplaza
+parcialmente** la condición que `docs/diseno/31-replanteo-hacia-producto.md` (líneas 640-648) ponía sobre
+**todo** el diseño visual de la Tanda 4: esa sección quedó actualizada en el mismo commit que este ADR
+(ver la nota fechada 2026-09-14 agregada ahí) para separar el diseño visual básico (en alcance ahora, sin
+esperar la condición) del branding final (logos reales de banco, experiencia pulida — sigue condicionado
+exactamente como antes).
+
 **Queda afuera a propósito:**
 
 | Afuera | Qué se pierde | Por qué es aceptable |
 |---|---|---|
-| Diseño visual (`ux-designer`, logos de banco) | La vista v1 es funcional, no la experiencia imaginada | Condicionado en `doc 31` a que Laura complete las hojas de Excel primero |
+| Branding final y logos de banco reales (`ux-designer`, convocatoria formal) | La vista de PR4 se ve como un producto cuidado (tablas, estados, navegación con dirección visual coherente), pero no es la experiencia final que imaginó el titular (selección de banco con logo real, etc.) | Sigue condicionado en `doc 31` (actualizado 2026-09-14) a que Laura complete las hojas de Excel primero — sin cambios respecto de la decisión original; lo que cambió es que el diseño visual **básico** ya no espera esa condición |
+| Herramienta exacta para tokens de diseño/dirección visual | — | 🔴 **Sin confirmar**: el titular mencionó "la skill de frontend-design de este entorno" pero no se encontró ninguna skill con ese nombre, ni en el listado global de la sesión ni en `.claude/` de este repo. Pendiente de aclarar antes de empezar PR4 |
 | MFA para `socio` | Un solo factor protege el secreto fiscal en v1 | Decisión explícita del titular (punto 8), pospuesto a después de la Tanda 4 |
 | B.12 (`decidido_por` en `cuenta_atributo`) | Sin auditoría por fila en esa tabla todavía | La Tanda 4 es de solo lectura; R-U (§4) hace visible el momento en que se agregue la primera escritura |
 | Portal `cliente_lectura` | Sin acceso de clientes finales | Ningún cliente entra a la Tanda 4 (§9) |
