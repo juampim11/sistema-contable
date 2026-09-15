@@ -695,6 +695,10 @@ describe('R-F — `clase: \'propuesta\'` solo se construye en nucleo/motor.ts', 
     // arriba — construye el PEDIDO de un `insert` SQL directo contra `reconocimiento_movimiento` para
     // sembrar el escenario, nunca un `Reconocimiento` armado a mano en código de producción.
     'packages/ingesta/tests/agrupar-decisiones-pendientes.test.ts',
+    // Fixture de `agruparDecisionesPendientesConConfirmaciones`: mismo motivo EXACTO que la línea de
+    // arriba (mismo fixture `crearMovimiento`, duplicado a propósito) — construye el PEDIDO de un
+    // `insert` SQL directo, nunca un `Reconocimiento` armado a mano en código de producción.
+    'packages/ingesta/tests/agrupar-decisiones-pendientes-con-confirmaciones.test.ts',
     // Calibración de léxico (E-4, `calibrar-lexico-metadatos.ts`): construye Reconocimiento sintéticos
     // para probar `contarPatrones()` sin base — mismo motivo exacto que `resolver-contrapartida.test.ts`
     // arriba.

@@ -19,6 +19,7 @@ export * from './planilla/exportar-planilla.ts';
 export * from './planilla/relevamiento-laura.ts';
 export * from './planilla/armar-libro-laura.ts';
 export * from './cierre/agrupar-decisiones-pendientes.ts';
+export * from './cierre/agrupar-decisiones-pendientes-con-confirmaciones.ts';
 export * from './reproceso/recapturar-conceptos.ts';
 export * from './reproceso/backfill-contraparte.ts';
 export * from './reproceso/reclasificar-contraparte.ts';
