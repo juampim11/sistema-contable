@@ -6,6 +6,127 @@
 
 ---
 
+## 2026-09-15 (214) — Trabajo autónomo nocturno: docs 34/35 cerrados, HU-6 mínima cerrada
+(dos decisiones de criterio encontradas y frenadas antes de resolverse solas). Lista cerrada de 4 puntos,
+dada por el titular con stop conditions explícitas; PARÓ donde correspondía, tal como se pidió.
+
+**Herramienta:** Claude Code, sesión interactiva, trabajo autónomo nocturno sobre una lista cerrada de 4
+puntos. Continuación directa de (213) — el fix del lote-ancla ya estaba cerrado y commiteado (`bb4e2ea`)
+antes de arrancar esta lista; esta entrada no lo reabre, solo lo referencia como punto de partida.
+Restricciones del titular para toda la noche: ningún merge a `main`, ningún fork/subagente con contexto
+completo para tareas chicas, ninguna convocatoria nueva de `dba-data`/`security-engineer`/
+`seguridad-datos-financieros`/`arquitecto-software`, nada de `app_web` ni pantallas nuevas ni el botón
+"borrar". Las tres ramas de abajo quedan sin mergear, esperando revisión.
+
+### Punto 1 — `docs/diseno/35-continuidad-y-reingesta-wizard.md`: HU-4/5/6 tabuladas
+
+Las 9 HU del documento quedan con formato uniforme (Enunciado/AC/Clasificación). HU-4 tenía antes solo
+una mención de pasada en §5(b) ("ya cubierto hoy, sin trabajo nuevo") sin su propia evidencia — ahora
+tiene sección propia (§2.6) con cita real: `uq_lote_ingesta_archivo` (`0004_ingesta.sql:317`) +
+`ingestar.ts:307-320` (línea corregida contra el código real de hoy, no la que citaba el plan original,
+que había quedado desactualizada por drift). Tabla nueva de HU-4/5/6 en §2.7. Se agregó además, al cerrar
+el punto 3 de esta lista, una nota de riesgo de concurrencia aceptado a propósito en §2.3 (ver abajo).
+
+### Punto 2 — `docs/diseno/34-modelo-interaccion-wizard-demo.md`: numeración final de 6 pasos
+
+El documento tenía una advertencia (§0) diciendo que el listado original de 8 pasos se había perdido y
+bloqueaba la renumeración. El titular lo resolvió de forma directa (sin reconstruir la lista perdida):
+numeración final de **6 pasos** — 1) Elegir cliente, 2) Subir extracto bancario, 3) Resumen de la
+extracción, 4) Procesar y tipificar, 5) Revisar e imputar (fusión ya resuelta en §1.2), 6) Generar
+asiento contable — más la pantalla de cierre del bucle (§1.1), fuera de la numeración principal, con sus
+dos acciones ("otra cuenta del mismo cliente" / "elegir otro cliente") al mismo nivel visual, sin
+default. §0, §2 y §3 del documento se actualizaron para reflejar la numeración cerrada, sin necesitar el
+chat de hoy para entenderse. Este doc nunca había sido commiteado (era `??` desde que se escribió) — pasa
+a estarlo recién en esta tarea.
+
+**Rama:** `docs/wizard-numeracion-6-pasos-y-hu-reingesta` (commit `2672c3a`), sobre `bb4e2ea`.
+
+### Punto 3 — HU-6 mínima (doc 35 §2.3): bloqueo de carga con período solapado
+
+Bug que motivó la HU: `uq_mov_crudo_fila` (fila-a-fila, por hash de contenido económico) no atrapa una
+**segunda fuente con formato distinto** para el mismo cuenta-período — un re-export tras un cambio de
+versión del sistema del banco, o un PDF vs. un Excel del mismo extracto, produce un hash distinto para la
+misma transacción real y entra como fila "nueva" sin que nada lo note. Guarda implementada en
+`persistirCuenta` (`packages/ingesta/src/persistir.ts`): un `select` de solape de rango contra
+`lote_ingesta_cuenta` por `(cliente_id, cuenta_bancaria_id)`.
+
+**Dos decisiones de criterio encontradas en el camino — ninguna resuelta por cuenta propia, tal como
+pidió el titular:**
+
+1. **Orden de precedencia entre HU-5 y HU-6.** El primer intento evaluaba la guarda de HU-6 ANTES del
+   loop de inserción fila-a-fila. Rompió 9 archivos/28 tests de la suite: toda re-ingesta con contenido
+   idéntico (el caso que `fila_duplicada_por_hash`/HU-5 ya cubre desde `bb4e2ea`) es por definición
+   también un "período solapado", así que el motivo nuevo, más genérico, tapaba siempre al más
+   específico ya shippeado — `fila_duplicada_por_hash` se volvía inalcanzable. Se frenó, se revirtió el
+   código a estado limpio (verificado con suite completa: 15 rojos/0 nuevos), y se reportó el hallazgo
+   sin resolverlo. El titular decidió: la guarda de HU-6 se evalúa DESPUÉS del loop, solo sobre lo que
+   sobrevive al filtro de HU-5 — reimplementado así, con `lote_ingesta_id <> pedido.loteId` para excluir
+   la fila que el propio `persistirCuenta` ya insertó para este lote (antes del loop, por la FK de tres
+   columnas de los movimientos).
+2. **Fixtures preexistentes que reutilizaban cuenta+período por comodidad.** Con el orden corregido,
+   `packages/ingesta/tests/anexos.test.ts` seguía rompiendo (10 de 30 tests) — pero por una causa
+   distinta: sus ~12 casos usaban el mismo período fijo hardcodeado y, en su mayoría, la misma cuenta, sin
+   que ningún test verificara coexistencia real de dos cargas separadas sobre esa cuenta+período (se
+   revisaron los 12 uno por uno, con evidencia de código, antes de tocar nada). El titular confirmó: es un
+   problema de aislamiento de fixtures, no de alcance de la guarda — se resolvió derivando el período de
+   `semilla` (ya único por test en ese archivo), mismo patrón que ya usa `marca` para `archivo_hash`, sin
+   mecanismo nuevo. Cambio de una sola función (`cuentaCon()`), ninguna aserción tocada.
+
+**Verificación**: predicción falsable propia antes de cada intento; 5 casos en vivo en
+`apps/cli/tests/hu6-carga-solapada.test.ts` (precedencia de HU-5, período adyacente no rechaza, borde
+compartido sí rechaza, cuenta distinta del mismo cliente no se bloquea, segunda fuente con hash distinto
+y período solapado rechazada con `lote_ingesta con_errores` + 1 fila de rastro en `acceso_auditoria`); los
+12 tests reales de `anexos.test.ts` verdes; `persistir.test.ts` y `reingesta-duplicada.test.ts` (HU-5)
+verdes sin cambios. `pnpm typecheck` limpio. Suite completa, corrida tres veces en total esta noche (una
+por cada intento): 15 rojos preexistentes documentados, cero nuevos, en la versión final.
+
+`code-reviewer` sin hallazgos bloqueantes. Un hallazgo de riesgo, no bloqueante: la guarda es
+"check-then-insert" sin atomicidad de base (sin `EXCLUDE USING gist`/lock/`FOR UPDATE`) — bajo
+`READ COMMITTED` (default de Postgres, sin isolation level explícito en el repo), dos ingestas
+concurrentes sobre la misma cuenta+período solapado podrían pasar el chequeo las dos antes de comitear.
+Correcto para el camino secuencial de hoy (el CLI no corre en paralelo sobre el mismo cliente); se acepta
+a propósito, documentado en doc 35 §2.3, diferido junto al resto de `ADR-0004` (B.25) — no se cierra con
+un constraint de exclusión en esta tarea para no ampliar el alcance de "guarda mínima".
+
+**Rama:** `fix/hu6-bloqueo-carga-solapada` (commit `77a640f`), sobre la rama de docs de arriba.
+
+### Punto 4 — esta entrada
+
+Cierra la lista. No se agregó trabajo fuera de los 4 puntos pedidos; no se tocó `app_web`, ninguna
+pantalla nueva, ni el botón "borrar"; no se convocó a ningún agente fuera de `code-reviewer` (matriz
+CLAUDE.md §3.1, "código nuevo o modificado").
+
+### Estado
+
+**Actualizado tras la revisión de la mañana siguiente (mismo 2026-09-15).** Las tres ramas originales
+(`docs/wizard-numeracion-6-pasos-y-hu-reingesta`, `fix/hu6-bloqueo-carga-solapada`,
+`docs/handoff-noche-2026-09-15`) quedaron apiladas una sobre otra por error — no eran independientes
+entre sí, y la de HANDOFF arrastraba sin querer el commit de HU-6. Se aislaron los puntos 1+2 (doc
+34/35) en una rama nueva directo desde `main` y se mergearon; esta misma entrada se aisló igual, sin el
+commit de HU-6, y también se mergeó:
+
+- Puntos 1 y 2 (doc 34/35): **mergeados a `main`** (commit `90b24fe`, vía merge `8bce951`).
+- Esta entrada de HANDOFF: **mergeada a `main`** en el mismo lote.
+- Punto 3 (HU-6, `fix/hu6-bloqueo-carga-solapada`, commit `77a640f`): **sin mergear**, esperando que el
+  titular revise el diff completo (entregado aparte) y apruebe.
+- Migraciones `0045`/`0046`, PR1 de auth (`ADR-0006`) y Frente 1 de agrupación: **sin mergear**, siguen
+  en `feat/agrupar-decisiones-pendientes`, esperando autorización explícita por separado —
+  específicamente NO cubiertos por la autorización de esta noche, que era solo para los 4 puntos de la
+  lista cerrada.
+- La rama de trabajo original (`feat/agrupar-decisiones-pendientes`) sigue con cambios sin commitear de
+  Frente 1 (`packages/ingesta/src/index.ts`, `packages/data/tests/reglas-de-codigo.test.ts`,
+  `packages/ingesta/src/cierre/agrupar-decisiones-pendientes-con-confirmaciones.ts` + su test) — **no
+  tocados esta noche ni en la revisión de la mañana**, quedan tal como estaban.
+
+### Lo próximo
+
+A decisión del titular: revisar el diff de HU-6 y aprobar (o no) su merge; decidir cuándo autorizar,
+migración por migración, `0045`/`0046` y el resto del trabajo pendiente en
+`feat/agrupar-decisiones-pendientes`; retomar `app_web`/el boceto de Pantalla 2 en adelante con la
+numeración de 6 pasos ya fijada y ya en `main`.
+
+---
+
 ## 2026-09-13 (211) — 🔒 CIERRE: lecciones de proceso + plan de deuda pre-Tanda 4 + A.2/A.3
 implementados + incidente #18 registrado y contenido. 5 commits pusheados a `origin/main`.
 
