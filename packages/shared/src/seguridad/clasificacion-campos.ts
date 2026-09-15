@@ -130,6 +130,36 @@ export const CLASIFICACION = {
     },
   },
 
+  /**
+   * Tabla puente identidad ↔ membresía (ADR-0006 §2, migración `0045`). Mismo plano que `membership`/
+   * `membership_historia`: se aísla por el nodo al que apunta la membresía, no por `cliente_id`
+   * propio — `usuario_identidad.activo` es transversal a todos los tenants donde la persona tenga
+   * membresía (interruptor global, P12).
+   */
+  usuario_identidad: {
+    columnaTenant: 'ninguna',
+    motivoSinTenant:
+      'Igual que `membership`: no hay `cliente_id` propio, se aísla vía el join a `membership` sobre ' +
+      'tenant_node_id in (select app.accessible_tenant_ids()) en las policies. Una identidad de staff ' +
+      'no pertenece a un cliente — pertenece a la plataforma, ADR-0006 §2.',
+    campos: {
+      usuario_id: UUID_INTERNO,
+      proveedor: { nivel: 'N1', exportable: true, nota: 'Catálogo cerrado (dev-identidad-fija|supabase), mismo tier que membership.rol.' },
+      sujeto_externo: {
+        nivel: 'N1',
+        exportable: true,
+        nota:
+          'Campo ESTRUCTURADO (email o id de proveedor) sobre identidad de STAFF, no texto libre ni ' +
+          'dato de cliente/tercero — no es el caso de acceso_auditoria.motivo (el único N2 de una ' +
+          'tabla `\'ninguna\'` del registro, que lo es por ser prosa libre). N1 no alcanza por sí solo ' +
+          'para el enmascarado de logs (COLUMNAS_SENSIBLES excluye N0/N1): la protección real viene de ' +
+          'CLAVES_SENSIBLES_EXTERNAS, mismo mecanismo que la reserva de `email` (ADR-0006 §15).',
+      },
+      activo: { nivel: 'N1', exportable: true, nota: 'Mismo tier que membership.activo.' },
+      creado_en: MARCA_TIEMPO,
+    },
+  },
+
   // ---------------------------------------------------------------------------
   // Auditoría de acceso (ADR-0002 §C.0 / R32). Append-only.
   // ---------------------------------------------------------------------------
@@ -1462,6 +1492,13 @@ export const CLASIFICACION = {
           'reconocimiento_movimiento.clase/.es_propuesta.',
       },
       creado_en: MARCA_TIEMPO,
+      confirmado_por: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'R44 (0045): identidad declarada ≠ autenticada, mismo tier que hecho_por/decidido_por ' +
+          'en toda la base (membership_historia.hecho_por).',
+      },
+      confirmado_en: { nivel: 'N1', exportable: true, nota: 'Mismo tier que membership_historia.ocurrido_en.' },
     },
   },
 
@@ -1726,6 +1763,15 @@ export const CLAVES_SENSIBLES_EXTERNAS = [
    * use, no desde que alguien se acuerde de agregarlo.
    */
   'valor_leido',
+  /**
+   * `usuario_identidad.sujeto_externo` (0045, ADR-0006 §2) — email o id de proveedor de una persona
+   * de staff. N1 en el registro (identidad de staff, no dato de cliente), así que `COLUMNAS_SENSIBLES`
+   * no lo tapa por nivel; esta entrada es el mecanismo real de protección en logs. Mismas dos grafías
+   * que el resto de esta lista, porque `ClaveProhibida` compara literales exactos y el código TS usa
+   * camelCase.
+   */
+  'sujeto_externo',
+  'sujetoExterno',
 ] as const satisfies readonly string[];
 
 /**

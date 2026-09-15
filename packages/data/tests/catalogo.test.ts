@@ -79,6 +79,12 @@ import {
   VIAS_EVIDENCIA,
 } from '../../contabilidad/src/nucleo/tipos.ts';
 import { clienteDuenio } from './ayuda.ts';
+/**
+ * ⚠️ Import relativo a `packages/auth`, mismo criterio exacto que el de `packages/ingesta` arriba:
+ * el árbitro TS del catálogo `proveedor` de `usuario_identidad` (0045) vive ahí, y este test tiene
+ * que ver las dos puntas (el check de la base y la constante de TypeScript).
+ */
+import { ADAPTERS_AUTH } from '../../auth/src/registro.ts';
 
 let db: Client;
 
@@ -238,7 +244,14 @@ describe('R1/R2/R3 — RLS, columna de tenant e índice', () => {
       with_check: string | null;
     }>(`select tablename, policyname, cmd, qual, with_check from pg_policies where schemaname = 'public'`);
 
-    const conRls = new Set<string>([...tablasConColumnaTenant(), 'tenant_node', 'membership']);
+    const conRls = new Set<string>([
+      ...tablasConColumnaTenant(),
+      'tenant_node',
+      'membership',
+      // `usuario_identidad` (0045): mismo plano transversal que `membership` (columnaTenant: 'ninguna'
+      // en el registro), RLS forzada, con policy de select/insert/update.
+      'usuario_identidad',
+    ]);
     for (const tabla of conRls) {
       const suyas = rows.filter((f) => f.tablename === tabla);
       expect(suyas.length, `${tabla} no tiene ninguna policy`).toBeGreaterThan(0);
@@ -318,16 +331,36 @@ describe('R4/R5 — el predicado de tenant, exacto y sin fisuras', () => {
     expect(mal).toEqual([]);
   });
 
-  it('R5: ninguna policy tiene `true`, `or true`, `is null` ni un coalesce que abra el predicado', async () => {
-    const { rows } = await db.query<{ n: number }>(
-      `select count(*)::int as n from pg_policies
-        where schemaname = 'public'
-          and ( coalesce(qual, '') ~* '^\\s*true\\s*$'
-             or coalesce(qual, '') ~* '(or\\s+true|is\\s+null)'
-             or coalesce(with_check, '') ~* '^\\s*true\\s*$'
-             or coalesce(with_check, '') ~* '(or\\s+true|is\\s+null)' )`,
+  it('R5: ninguna policy tiene `true`, `or true` ni un `or ... is null` que abra el predicado', async () => {
+    /**
+     * 🔴 R5 PRECISADA (migración `0045`, R44). El riesgo real que esta regla existe para atajar es una
+     * DISYUNCIÓN que ENSANCHA el predicado — `<algo> OR true` o `<algo> OR <col> IS NULL` a nivel tal
+     * que pueda saltear el chequeo de tenant/rol. Un `IS NULL` usado como conjunto `AND` (nunca `OR`)
+     * NUNCA ensancha nada — solo puede restringir más, jamás menos. `0045` introdujo un idioma legítimo
+     * de esa forma segura, verificado abajo contra el predicado REAL (no asumido):
+     *   `(col IS NULL) OR (col = app.current_user_id())` — el `IS NULL` va ANTES del `OR`, nunca
+     *   después, así que un chequeo de "`or` seguido de `is null`" no lo confunde con el patrón
+     *   peligroso (que sería exactamente al revés: `<algo> OR ... IS NULL`).
+     * Por eso la regla pasa a exigir la ADYACENCIA real del riesgo (`or` inmediatamente antes de un
+     * `is null`), en vez de prohibir la subcadena `is null` en cualquier posición. Un intento de colar
+     * un `IS NULL` que sí ensanche el predicado (`... OR confirmado_por IS NULL`) lo sigue agarrando.
+     */
+    const abre = (predicado: string | null): boolean => {
+      const p = predicado ?? '';
+      return (
+        /^\s*true\s*$/i.test(p) ||
+        /\bor\s+true\b/i.test(p) ||
+        /\bor\s*\(?\s*[\w.]+\s+is\s+null\b/i.test(p)
+      );
+    };
+
+    const { rows } = await db.query<{ policyname: string; qual: string | null; with_check: string | null }>(
+      `select policyname, qual, with_check from pg_policies where schemaname = 'public'`,
     );
-    expect(rows[0]?.n, 'policies con predicado abierto').toBe(0);
+    const conPredicadoAbierto = rows
+      .filter((r) => abre(r.qual) || abre(r.with_check))
+      .map((r) => r.policyname);
+    expect(conPredicadoAbierto, 'policies con predicado abierto').toEqual([]);
   });
 });
 
@@ -560,22 +593,26 @@ describe('R10/R11 — funciones SECURITY DEFINER', () => {
   });
 
   /**
-   * 🔴 R11 AMPLIADA A TRES (migración `0041`). Este repo tiene el hábito MEDIDO de esquivar una
-   * tercera `security definer` — `0040:129-136` la evita explícitamente citando R11, y dos
+   * 🔴 R11 AMPLIADA A CUATRO (migración `0045`). Este repo tiene el hábito MEDIDO de esquivar una
+   * `security definer` de más — `0040:129-136` evita una tercera citando R11 explícitamente, y dos
    * incidentes de `HANDOFF.md` resuelven "R11 no se toca y no hace falta ningún ADR" eligiendo
-   * `invoker` cuando alcanzaba. Acá se intentó IGUAL y no alcanzó, medido: `exigir_manifestacion_
-   * vigente()` (0041, trigger de `reconocimiento_contrapartida`) necesita `select ... for update`
-   * sobre `padron_manifestacion`, y `for update`/`for share` exigen privilegio `UPDATE` en
-   * Postgres — independiente de RLS — que `app_request` NO tiene y NO puede tener sobre esa tabla
-   * (esa ausencia es la premisa de frescura de `0021`, vigilada por R41 en
-   * `grants-conjunto-cerrado.test.ts`). Reproducido en vivo bajo invoker antes de esta migración:
-   * `permission denied for table padron_manifestacion` (42501, `aclcheck_error`), en el `for
-   * update`, antes de tocar una sola policy. La única forma de tomar el lock sin otorgarle ese
-   * privilegio a `app_request` es correr como el dueño del esquema — de ahí la tercera `security
-   * definer`, con su guard replicando `reconocimiento_contrapartida_ins` contra ser oráculo
-   * cross-tenant (ver el `comment on function` en `0041`).
+   * `invoker` cuando alcanzaba. La tercera (`exigir_manifestacion_vigente`, `0041`) se intentó bajo
+   * `invoker` y no alcanzó, medido: necesita `select ... for update` sobre `padron_manifestacion`, y
+   * `for update`/`for share` exigen privilegio `UPDATE` en Postgres — independiente de RLS — que
+   * `app_request` NO tiene y NO puede tener sobre esa tabla (esa ausencia es la premisa de frescura
+   * de `0021`, vigilada por R41 en `grants-conjunto-cerrado.test.ts`). Reproducido en vivo bajo
+   * invoker antes de esa migración: `permission denied for table padron_manifestacion` (42501,
+   * `aclcheck_error`), en el `for update`, antes de tocar una sola policy.
+   *
+   * `has_capacidad_en` (0045) es la cuarta, por el mismo motivo que las dos primeras
+   * (`accessible_tenant_ids`/`has_role_on`): lee `membership`/`usuario_identidad`/`tenant_node` de
+   * TODO el árbol para decidir si la sesión tiene una capacidad fina en un nodo, cruzando tenants por
+   * diseño (es la función que las policies de escritura llaman para autorizar, no algo que
+   * `app_request` pueda resolver mirando solo sus propias filas). Mismo `search_path` fijo que sus
+   * tres hermanas — el motivo por el que R11 existe: una `security definer` sin ese guard es
+   * escalación de privilegios, no una optimización.
    */
-  it('R11: las únicas SECURITY DEFINER son las tres que leen tenancía o necesitan un lock que app_request no puede tener', async () => {
+  it('R11: las únicas SECURITY DEFINER son las cuatro que leen tenancía/capacidades o necesitan un lock que app_request no puede tener', async () => {
     const { rows } = await db.query<{ nombre: string }>(
       `select p.proname as nombre
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -584,6 +621,7 @@ describe('R10/R11 — funciones SECURITY DEFINER', () => {
     expect(rows.map((f) => f.nombre)).toEqual([
       'accessible_tenant_ids',
       'exigir_manifestacion_vigente',
+      'has_capacidad_en',
       'has_role_on',
     ]);
   });
@@ -1275,6 +1313,14 @@ const DOMINIOS_CERRADOS: DominioCerrado[] = [
     constante: 'CUENTA_RESOLUCIONES',
     valores: CUENTA_RESOLUCIONES,
     migracion: '0030',
+  },
+  {
+    check: 'usuario_identidad_proveedor_chk',
+    tabla: 'usuario_identidad',
+    columna: 'proveedor',
+    constante: 'ADAPTERS_AUTH',
+    valores: ADAPTERS_AUTH,
+    migracion: '0045',
   },
 ];
 

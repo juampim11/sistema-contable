@@ -25,10 +25,18 @@
  * Por tabla: 1-2 casos legítimos (la transición real sigue funcionando) + el ataque literal de
  * HANDOFF 130 (reescribir un campo sin tocar el estado, código real vía `conUsuario`) + al menos
  * una mutación que reproduce el defecto que motivó esta migración. Total: 8 legítimos, 6 ataques
- * reales, 6 mutaciones — 16 `it()` (contado con `grep -c '  it('`, no de memoria). `qa-automation`
+ * reales, 9 mutaciones — 19 `it()` (contado con `grep -c '  it('`, no de memoria). `qa-automation`
  * diseñó una batería más amplia (~40 casos, incluidas variantes de re-superseder y de lista de
  * terminales incompleta); quedan señaladas como `// TODO(0028-b)` donde correspondería sumarlas, no
  * implementadas en esta pasada por foco de tiempo — no se declaran como cerradas.
+ *
+ * 🔴 Ampliación de `0045` (R44, `usuario_identidad`): los payloads de las mutaciones M-A1/M-A2/M-C1
+ * pasaron de `USUARIOS.contadorA` (autor AJENO) a `USUARIOS.socio` (la propia identidad de la
+ * sesión) — con R44 activo, un autor ajeno ya muere por RLS con o sin el trigger, así que el eje que
+ * sigue aislando ESTE trigger es reescribir la PROPIA autoría en una fila terminal (backdating), no
+ * la suplantación. Se agregó, junto a cada una, un mellizo `(R44)` que repite el mismo ataque con el
+ * payload viejo (autor ajeno) y prueba que R44 solo lo sigue bloqueando — ver
+ * `mutaciones-0045-usuario-identidad-r44.test.ts` para la batería dedicada a R44 en sí.
  *
  * 🔴 Hallazgo real, encontrado CORRIENDO este archivo, no anticipado en el diseño: la mutación más
  * importante ("resto igual") no se puede demostrar en `asiento_propuesto` — esa tabla solo tiene DOS
@@ -292,28 +300,56 @@ describe('0028 A — cierre_cliente_periodo: inmutable una vez confirmado/anulad
     esperarRechazo(error, '42501', 'periodo_desde no es columna grantable desde 0028 — ni siquiera llega al trigger');
   });
 
-  it('MUTACIÓN M-A1 🔴 con el trigger deshabilitado, el ataque de HANDOFF 130 pasa', async () => {
+  it('MUTACIÓN M-A1 🔴 con el trigger deshabilitado, reescribir la propia autoría en fila terminal (backdating) pasa', async () => {
     await conInmutabilidadMutada(
       ['alter table cierre_cliente_periodo disable trigger trg_cierre_periodo_inmutable'],
       USUARIOS.socio,
       async (ej) => {
         const cierreId = await crearCierreConfirmado(ej, '2027-05-01');
+        // Payload de la PROPIA identidad de sesión (USUARIOS.socio): con R44 (0045) activo,
+        // confirmado_por = current_user_id() pasa el WITH CHECK igual — lo único que puede aislar el
+        // aporte del trigger acá es "reescribir la propia autoría de una fila terminal" (backdating),
+        // no la suplantación de un tercero, que R44 bloquearía con o sin el trigger.
         const actualizado = await una(
           ej,
           `update cierre_cliente_periodo set confirmado_por = $2 where cliente_id = $1 and id = $3
            returning confirmado_por::text as "confirmadoPor"`,
-          [s.clienteA, USUARIOS.contadorA, cierreId],
+          [s.clienteA, USUARIOS.socio, cierreId],
         );
         expect(
           actualizado['confirmadoPor'],
-          'con el trigger deshabilitado, el ataque original de HANDOFF 130 vuelve a pasar — así se ' +
-            'demuestra que ES el trigger, y no otra cosa, lo que lo bloquea',
-        ).toBe(USUARIOS.contadorA);
+          'con el trigger deshabilitado, reescribir la propia autoría de una fila terminal (backdating) ' +
+            'vuelve a pasar — así se demuestra que ES el trigger, y no R44 (que no cierra este vector: ' +
+            'confirmado_por = current_user_id() pasa igual), lo que lo bloquea',
+        ).toBe(USUARIOS.socio);
       },
     );
   });
 
-  it('MUTACIÓN M-A2 🔴 con el trigger recreado `BEFORE UPDATE OF cierre_estado` (repite el error original de D-24), el ataque pasa', async () => {
+  it('MUTACIÓN M-A1 (R44) 🔴 con el trigger deshabilitado, R44 solo sigue bloqueando la suplantación de un tercero', async () => {
+    const error = await capturar(() =>
+      conInmutabilidadMutada(
+        ['alter table cierre_cliente_periodo disable trigger trg_cierre_periodo_inmutable'],
+        USUARIOS.socio,
+        async (ej) => {
+          const cierreId = await crearCierreConfirmado(ej, '2027-05-15');
+          return ej(`update cierre_cliente_periodo set confirmado_por = $2 where cliente_id = $1 and id = $3`, [
+            s.clienteA,
+            USUARIOS.contadorA,
+            cierreId,
+          ]);
+        },
+      ),
+    );
+    esperarRechazo(
+      error,
+      '42501',
+      'apagado el trigger de 0028, el payload de un AUTOR AJENO (USUARIOS.contadorA) sigue muriendo por ' +
+        'RLS — R44 (0045) es una capa independiente del trigger, no una redundancia accidental',
+    );
+  });
+
+  it('MUTACIÓN M-A2 🔴 con el trigger recreado `BEFORE UPDATE OF cierre_estado` (repite el error original de D-24), la propia autoría en fila terminal se reescribe igual', async () => {
     await conInmutabilidadMutada(
       [
         'drop trigger trg_cierre_periodo_inmutable on cierre_cliente_periodo',
@@ -325,19 +361,50 @@ describe('0028 A — cierre_cliente_periodo: inmutable una vez confirmado/anulad
       USUARIOS.socio,
       async (ej) => {
         const cierreId = await crearCierreConfirmado(ej, '2027-06-01');
-        // El ataque NUNCA toca cierre_estado — con `OF cierre_estado`, el trigger ni dispara.
+        // El ataque NUNCA toca cierre_estado — con `OF cierre_estado`, el trigger ni dispara. Payload
+        // de la PROPIA identidad (mismo motivo que M-A1): aísla el trigger, no R44.
         const actualizado = await una(
           ej,
           `update cierre_cliente_periodo set confirmado_por = $2 where cliente_id = $1 and id = $3
            returning confirmado_por::text as "confirmadoPor"`,
-          [s.clienteA, USUARIOS.contadorA, cierreId],
+          [s.clienteA, USUARIOS.socio, cierreId],
         );
         expect(
           actualizado['confirmadoPor'],
           'con `OF cierre_estado`, el ataque que NUNCA toca esa columna vuelve a pasar — es exactamente ' +
-            'el defecto original del gate de D-24, reproducido a propósito',
-        ).toBe(USUARIOS.contadorA);
+            'el defecto original del gate de D-24, reproducido a propósito (R44 no lo bloquea: es la ' +
+            'propia identidad de sesión)',
+        ).toBe(USUARIOS.socio);
       },
+    );
+  });
+
+  it('MUTACIÓN M-A2 (R44) 🔴 con el trigger recreado `OF cierre_estado`, R44 solo sigue bloqueando la suplantación de un tercero', async () => {
+    const error = await capturar(() =>
+      conInmutabilidadMutada(
+        [
+          'drop trigger trg_cierre_periodo_inmutable on cierre_cliente_periodo',
+          `create trigger trg_cierre_periodo_inmutable
+             before update of cierre_estado on cierre_cliente_periodo
+             for each row
+             execute function app.exigir_inmutabilidad_post_terminal('cierre_estado', 'confirmado,anulado', '')`,
+        ],
+        USUARIOS.socio,
+        async (ej) => {
+          const cierreId = await crearCierreConfirmado(ej, '2027-06-15');
+          return ej(`update cierre_cliente_periodo set confirmado_por = $2 where cliente_id = $1 and id = $3`, [
+            s.clienteA,
+            USUARIOS.contadorA,
+            cierreId,
+          ]);
+        },
+      ),
+    );
+    esperarRechazo(
+      error,
+      '42501',
+      'con el trigger recableado a `OF cierre_estado` (no dispara), el payload de un AUTOR AJENO sigue ' +
+        'muriendo por RLS — R44 no depende de que el trigger esté bien cableado',
     );
   });
 
@@ -364,10 +431,14 @@ describe('0028 B — asiento_propuesto: inmutable salvo la supersesión legítim
        values ($1, $2, 'devengamiento', $3) returning id::text as id`,
       [s.clienteA, cierre['id'], fecha],
     );
-    await ej(`update asiento_propuesto set asiento_estado = 'confirmado' where cliente_id = $1 and id = $2`, [
-      s.clienteA,
-      asiento['id'],
-    ]);
+    // R44 (0045): `asiento_propuesto_confirmacion_chk` exige confirmado_por/confirmado_en no-nulos
+    // junto con asiento_estado='confirmado' — sin esto, este helper rompería el CHECK nuevo.
+    await ej(
+      `update asiento_propuesto
+         set asiento_estado = 'confirmado', confirmado_por = $2, confirmado_en = now()
+       where cliente_id = $1 and id = $3`,
+      [s.clienteA, USUARIOS.socio, asiento['id']],
+    );
     return String(asiento['id']);
   }
 
@@ -618,21 +689,32 @@ describe('0028 C — pendiente_cierre: mismo trigger genérico, confirma que el 
            values ($1, $2, 'documento_faltante', 'abierto', 'reproceso-test-mutacion') returning id::text as id`,
           [s.clienteA, cierreDelViejo['cierreId']],
         );
-        // El ataque: supersede Y cuela una falsificación de resuelto_por en el MISMO update.
+        // El ataque: supersede Y cuela un CAMBIO de resuelto_por en el MISMO update. Payload de la
+        // PROPIA identidad de sesión (USUARIOS.socio) — CORRECCIÓN sobre el plan original de la
+        // convocatoria (que decía "M-C2 no se toca"): verificado corriendo el archivo, no en el
+        // papel. Con R44 (0045) activo, `pendiente_cierre_upd_general` exige `resuelto_por is null or
+        // resuelto_por = current_user_id()` para CUALQUIER destino, incluido 'superseded' — un payload
+        // AJENO (USUARIOS.contadorA, el original) muere por RLS ANTES de llegar al trigger mutado,
+        // así que este test dejaría de aislar lo que dice aislar (el trigger, no R44). El eje que
+        // sigue vivo con el payload propio es "colar un cambio de autoría propia junto con la
+        // supersesión, sin declarar que cambió" — que R44 no cierra (resuelto_por = current_user_id()
+        // pasa el WITH CHECK igual) y que sigue siendo el vector exacto de HANDOFF 130 disfrazado de
+        // supersesión.
         const resultado = await una(
           ej,
           `update pendiente_cierre
              set pendiente_estado = 'superseded', superseded_by_id = $3, resuelto_por = $4
            where cliente_id = $1 and id = $2
            returning resuelto_por::text as "resueltoPor"`,
-          [s.clienteA, viejoId, nuevo['id'], USUARIOS.contadorA],
+          [s.clienteA, viejoId, nuevo['id'], USUARIOS.socio],
         );
         expect(
           resultado['resueltoPor'],
-          'sin el chequeo de "ningún otro campo cambió", colar resuelto_por junto con la supersesión ' +
-            'legítima pasa — es el vector exacto de HANDOFF 130, disfrazado de supersesión, y acá el ' +
-            'grant NO alcanza solo porque resuelto_por sí es grantable',
-        ).toBe(USUARIOS.contadorA);
+          'sin el chequeo de "ningún otro campo cambió", colar un cambio de resuelto_por junto con la ' +
+            'supersesión legítima pasa — es el vector exacto de HANDOFF 130, disfrazado de supersesión; ' +
+            'acá el grant NO alcanza solo porque resuelto_por sí es grantable, y R44 no lo bloquea ' +
+            'porque el payload es la propia identidad de sesión',
+        ).toBe(USUARIOS.socio);
       },
     );
   });
@@ -656,24 +738,51 @@ describe('0028 C — pendiente_cierre: mismo trigger genérico, confirma que el 
     );
   });
 
-  it('MUTACIÓN M-C1 🔴 con el trigger deshabilitado, el ataque sobre pendiente_cierre también pasa', async () => {
+  it('MUTACIÓN M-C1 🔴 con el trigger deshabilitado, reescribir la propia autoría en fila terminal (backdating) pasa', async () => {
     await conInmutabilidadMutada(
       ['alter table pendiente_cierre disable trigger trg_pendiente_cierre_inmutable'],
       USUARIOS.socio,
       async (ej) => {
         const pendienteId = await crearPendienteResuelto(ej, '2028-03-01');
+        // Payload de la PROPIA identidad de sesión — mismo motivo que M-A1: con R44 activo, la
+        // suplantación de un tercero muere por RLS con o sin trigger, así que lo único que aísla el
+        // aporte de ESTE trigger es reescribir la propia autoría (backdating).
         const actualizado = await una(
           ej,
           `update pendiente_cierre set resuelto_por = $2 where cliente_id = $1 and id = $3
            returning resuelto_por::text as "resueltoPor"`,
-          [s.clienteA, USUARIOS.contadorA, pendienteId],
+          [s.clienteA, USUARIOS.socio, pendienteId],
         );
         expect(
           actualizado['resueltoPor'],
-          'con el trigger deshabilitado en ESTA tabla puntual, el ataque vuelve a pasar — prueba que ' +
-            'es este trigger, instalado en las tres tablas independientemente, el que cierra cada una',
-        ).toBe(USUARIOS.contadorA);
+          'con el trigger deshabilitado en ESTA tabla puntual, reescribir la propia autoría vuelve a ' +
+            'pasar — prueba que es este trigger, instalado en las tres tablas independientemente, el ' +
+            'que cierra cada una (R44 no lo bloquea: es la propia identidad de sesión)',
+        ).toBe(USUARIOS.socio);
       },
+    );
+  });
+
+  it('MUTACIÓN M-C1 (R44) 🔴 con el trigger deshabilitado, R44 solo sigue bloqueando la suplantación de un tercero', async () => {
+    const error = await capturar(() =>
+      conInmutabilidadMutada(
+        ['alter table pendiente_cierre disable trigger trg_pendiente_cierre_inmutable'],
+        USUARIOS.socio,
+        async (ej) => {
+          const pendienteId = await crearPendienteResuelto(ej, '2028-03-15');
+          return ej(`update pendiente_cierre set resuelto_por = $2 where cliente_id = $1 and id = $3`, [
+            s.clienteA,
+            USUARIOS.contadorA,
+            pendienteId,
+          ]);
+        },
+      ),
+    );
+    esperarRechazo(
+      error,
+      '42501',
+      'apagado el trigger de 0028, el payload de un AUTOR AJENO (USUARIOS.contadorA) sigue muriendo por ' +
+        'RLS — R44 (0045) es una capa independiente del trigger, no una redundancia accidental',
     );
   });
 

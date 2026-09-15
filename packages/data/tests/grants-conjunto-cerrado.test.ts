@@ -331,7 +331,11 @@ const GRANTS_POR_COLUMNA: readonly {
   { tabla: 'cierre_cliente_periodo', rol: 'app_request', privilegio: 'INSERT', columnas: ['cierre_anterior_id', 'cierre_estado', 'cliente_id', 'confirmado_en', 'confirmado_por', 'creado_en', 'id', 'periodo_desde', 'periodo_hasta', 'tipo_periodo'] },
   { tabla: 'cierre_cliente_periodo', rol: 'app_request', privilegio: 'SELECT', columnas: ['cierre_anterior_id', 'cierre_estado', 'cliente_id', 'confirmado_en', 'confirmado_por', 'creado_en', 'id', 'periodo_desde', 'periodo_hasta', 'tipo_periodo'] },
   { tabla: 'cierre_cliente_periodo', rol: 'app_request', privilegio: 'UPDATE', columnas: ['cierre_estado', 'confirmado_en', 'confirmado_por'] },
-  { tabla: 'cierre_transicion', rol: 'app_request', privilegio: 'INSERT', columnas: ['cierre_id', 'cliente_id', 'estado_desde', 'estado_hasta', 'hecho_por', 'hecho_via', 'id', 'motivo', 'ocurrido_en'] },
+  // `0045` (R44): acotado por columna -- `id`/`hecho_por`/`ocurrido_en` fuera (mecanismo, DEFAULT
+  // app.current_user_id() sobre hecho_por, sin grant -- mismo patrón que padron_manifestacion,
+  // 0021:483-485). Antes de 0045 este INSERT era de TABLA completa (ver GRANTS_A_NIVEL_TABLA abajo,
+  // de donde se sacó). SELECT sigue de tabla completa, sin cambios.
+  { tabla: 'cierre_transicion', rol: 'app_request', privilegio: 'INSERT', columnas: ['cierre_id', 'cliente_id', 'estado_desde', 'estado_hasta', 'hecho_via', 'motivo'] },
   { tabla: 'cierre_transicion', rol: 'app_request', privilegio: 'SELECT', columnas: ['cierre_id', 'cliente_id', 'estado_desde', 'estado_hasta', 'hecho_por', 'hecho_via', 'id', 'motivo', 'ocurrido_en'] },
   { tabla: 'documento_ingerido', rol: 'app_request', privilegio: 'INSERT', columnas: ['banco_codigo', 'cliente_id', 'cobertura', 'creado_en', 'id', 'ingerido_en', 'lote_ingesta_id', 'objeto_almacenamiento', 'periodo_desde', 'periodo_hasta', 'superseded_by_id', 'tipo_documento'] },
   { tabla: 'documento_ingerido', rol: 'app_request', privilegio: 'SELECT', columnas: ['banco_codigo', 'cliente_id', 'cobertura', 'creado_en', 'id', 'ingerido_en', 'lote_ingesta_id', 'objeto_almacenamiento', 'periodo_desde', 'periodo_hasta', 'superseded_by_id', 'tipo_documento'] },
@@ -355,9 +359,17 @@ const GRANTS_POR_COLUMNA: readonly {
   // NUNCA fueron re-otorgadas — identidad fijada al INSERT. `asiento_estado`/`superseded_by_id` siguen
   // grantables porque son la transición legítima (confirmar, superseder) — la inmutabilidad post-
   // terminal la cierra `trg_asiento_propuesto_inmutable`, no la policy.
-  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'corrige_asiento_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
-  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'corrige_asiento_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
-  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'UPDATE', columnas: ['asiento_estado', 'superseded_by_id'] },
+  // `0045`: el grant original de `0027` es TABLA COMPLETA (`grant select, insert, update on
+  // asiento_propuesto to app_request`, sin lista de columnas) -- `confirmado_por`/`confirmado_en`
+  // (columnas nuevas) heredan SELECT e INSERT automáticamente de ese grant de tabla, tal como
+  // Postgres extiende un privilegio de tabla a toda columna agregada después, aunque la migración
+  // solo haya otorgado UPDATE de forma explícita. `information_schema.column_privileges` los reporta
+  // igual, por columna.
+  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'confirmado_en', 'confirmado_por', 'corrige_asiento_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
+  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'confirmado_en', 'confirmado_por', 'corrige_asiento_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
+  // `0045` (R44): agrega confirmado_por/confirmado_en (columnas nuevas) -- confirmarAsiento()
+  // (escrituras.ts:619-629) los escribe en el mismo UPDATE que asiento_estado.
+  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'UPDATE', columnas: ['asiento_estado', 'confirmado_en', 'confirmado_por', 'superseded_by_id'] },
   { tabla: 'asiento_propuesto_reproceso', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_id', 'asiento_nuevo_id', 'caso', 'cliente_id', 'hecho_por', 'id', 'motivo', 'ocurrido_en', 'regla_imputacion_id_anterior', 'regla_imputacion_id_nueva', 'reproceso_motivo_codigo'] },
   { tabla: 'asiento_propuesto_reproceso', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_id', 'asiento_nuevo_id', 'caso', 'cliente_id', 'hecho_por', 'id', 'motivo', 'ocurrido_en', 'regla_imputacion_id_anterior', 'regla_imputacion_id_nueva', 'reproceso_motivo_codigo'] },
   { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_contraparte_id', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
@@ -366,6 +378,46 @@ const GRANTS_POR_COLUMNA: readonly {
   // grant, el dueño del esquema bypassea RLS al resolverla — SELECT únicamente, nunca escritura (es
   // un agregado, no una tabla).
   { tabla: 'asiento_propuesto_totales', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_id', 'cliente_id', 'total_debe', 'total_haber'] },
+  // `0045`: SELECT/INSERT son de tabla completa (`grant select, insert ... to app_request`, sin
+  // acotar) -- las 5 columnas aparecen igual en `information_schema.column_privileges`. Solo `activo`
+  // es escribible -- dar de baja/reactivar una identidad es reversible; cambiar proveedor/
+  // sujeto_externo es otra cosa. Mismo criterio que `membership` (0019:217-221).
+  {
+    tabla: 'usuario_identidad',
+    rol: 'app_request',
+    privilegio: 'INSERT',
+    columnas: ['activo', 'creado_en', 'proveedor', 'sujeto_externo', 'usuario_id'],
+  },
+  {
+    tabla: 'usuario_identidad',
+    rol: 'app_request',
+    privilegio: 'SELECT',
+    columnas: ['activo', 'creado_en', 'proveedor', 'sujeto_externo', 'usuario_id'],
+  },
+  { tabla: 'usuario_identidad', rol: 'app_request', privilegio: 'UPDATE', columnas: ['activo'] },
+  // `app_job` (BYPASSRLS) necesita el grant de tabla para el bootstrap (`conJob('alta_estudio')`) --
+  // las 3 policies de arriba no lo alcanzan porque las salta por completo. INSERT/SELECT de tabla
+  // completa, sin acotar por columna: un job de sistema no tiene el mismo riesgo de "usuario web
+  // mintiendo su propio dato" que sí justifica acotar `app_request` a solo `activo`.
+  //
+  // 🔴 SIN `UPDATE` (corrección de `dba-data`, 0045): el precedente real es `membership`
+  // (`0019:236-237`), que acota el `UPDATE` de `app_job` a `(activo)`, no a tabla entera -- y acá
+  // verificado (grep del repo entero) que CERO callers hacen `update usuario_identidad` desde
+  // `conJob` hoy, ni siquiera la siembra sintética. Dar `UPDATE` sin uso real sería más ancho que el
+  // propio precedente que este comentario cita, y contradice P12 ("baja de una persona = un solo
+  // comando", vía `administrar_membresias`/`app_request`, nunca un job).
+  {
+    tabla: 'usuario_identidad',
+    rol: 'app_job',
+    privilegio: 'INSERT',
+    columnas: ['activo', 'creado_en', 'proveedor', 'sujeto_externo', 'usuario_id'],
+  },
+  {
+    tabla: 'usuario_identidad',
+    rol: 'app_job',
+    privilegio: 'SELECT',
+    columnas: ['activo', 'creado_en', 'proveedor', 'sujeto_externo', 'usuario_id'],
+  },
 ];
 
 /**
@@ -426,7 +478,7 @@ const GRANTS_A_NIVEL_TABLA: readonly string[] = [
   'banco|app_request|SELECT',
   'cierre_cliente_periodo|app_request|INSERT',
   'cierre_cliente_periodo|app_request|SELECT',
-  'cierre_transicion|app_request|INSERT',
+  // `0045` (R44): INSERT dejó de ser de tabla completa -- acotado por columna, ver GRANTS_POR_COLUMNA.
   'cierre_transicion|app_request|SELECT',
   'cotizacion_bna|app_request|SELECT',
   'credencial_fiscal|app_firmador|INSERT',
@@ -500,6 +552,16 @@ const GRANTS_A_NIVEL_TABLA: readonly string[] = [
   'tenant_node|app_job|SELECT',
   'tenant_node|app_request|DELETE',
   'tenant_node|app_request|SELECT',
+  // `0045`: SELECT/INSERT de tabla completa (sin columnas N2-R que acotar); UPDATE sí se acota, ver
+  // GRANTS_POR_COLUMNA ('activo' únicamente).
+  'usuario_identidad|app_request|INSERT',
+  'usuario_identidad|app_request|SELECT',
+  // `app_job` (BYPASSRLS) -- las 3 policies de la tabla no lo alcanzan, necesita el grant para el
+  // bootstrap de identidad (`conJob('alta_estudio')`). INSERT/SELECT de tabla completa, sin acotar
+  // por columna. SIN `UPDATE`: ver el comentario en `GRANTS_POR_COLUMNA` (0045, corrección de
+  // `dba-data` -- cero callers, y el precedente de `membership` acota a `(activo)`, no a tabla entera).
+  'usuario_identidad|app_job|INSERT',
+  'usuario_identidad|app_job|SELECT',
 ];
 
 /**

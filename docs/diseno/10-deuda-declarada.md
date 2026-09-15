@@ -689,6 +689,41 @@ función permitida): `packages/data/tests/mutaciones-savepoint-reconocimientos.t
 tarea (hallazgo adyacente, no se resuelve "ya que estamos") | Sin dueño. Confirmar si son
 construcciones legítimas de fixture (agregar a la allowlist, con motivo) o un salteo real de la
 degradación que R-F existe para evitar — antes de decidir, no asumir ninguna de las dos |
+| **B.27** | 🟡 **Asientos manuales / de ajuste (no originados en extracto bancario) — necesarios para
+cierres de período y balances.** Todo el flujo hoy (Capa B/C/D, la demo de la Tanda 4, el motor de
+reconocimiento completo) nace de un extracto bancario — `movimiento_bancario_crudo` es el único punto
+de entrada de dominio. Un asiento de ajuste (devengamientos, amortizaciones, previsiones, correcciones
+manuales sin contraparte bancaria) no tiene hoy ningún camino de alta en el sistema. Nota de backlog,
+no accionable ahora — no entra en el alcance de la demo actual (titular, 2026-09-14) | Sin dueño, sin
+diseño. Pendiente de convocatoria futura cuando el producto lo priorice — candidatos naturales:
+`contador-dominio` (qué campos/validaciones necesita un asiento sin origen bancario) +
+`arquitecto-software` (dónde entra en el pipeline sin romper el invariante "todo dato de dominio
+cuelga de `cliente_id`" ni el que dice que Capa D siempre parte de un `movimiento_bancario_crudo`) |
+| **B.28** | 🟡 **CLI de invitación real (`apps/cli/src/invitar-usuario.ts`) — diseñado en `ADR-0006`
+§11, nunca escrito.** El ADR lo cita como si ya existiera ("la invitación corre por un CLI..."), pero
+`git log --all --diff-filter=A` confirma que el archivo nunca se creó — es diseño sin código, hallazgo
+de la convocatoria de la migración `0045_usuario_identidad_capacidades_r44.sql` (2026-09-14). Local
+sigue funcionando hoy vía el seed sintético de `packages/data/tests/ayuda.ts` (ya corregido para crear
+`usuario_identidad` de los 6 `USUARIOS.*`) — el alta de personal real queda pendiente hasta esta tarea.
+Necesario para PR 5 de `ADR-0006` (invitación real + login de punta a punta) | Sin dueño, sin diseño.
+Maneja `SUPABASE_SERVICE_ROLE_KEY` — requiere convocatoria propia a `backend-dev` +
+`security-engineer` antes de escribirse, no se arranca como companion code de otra tarea |
+| **B.29** | 🟡 **INSERT sin atar autoría — `cierre_periodo_ins` (`0027:349-351`) y
+`asiento_propuesto_ins` (`0027:761-764`) permiten que una fila nazca ya en estado terminal
+(`'confirmado'`) con `*_por` de un tercero, sin pasar nunca por la policy de UPDATE que R44
+(`0045_usuario_identidad_capacidades_r44.sql`, 2026-09-14) sí blindó.** Mismo patrón que tenía
+`pendiente_cierre_ins`, YA CERRADO en `0046_pendiente_cierre_ins_r44.sql` (2026-09-14, convocatoria de
+`dba-data` + `security-engineer`, verificado por `code-reviewer`) — pero sin su agravante: ese caso
+además bypaseaba el gate de ROL (`administrativo` dispensando por INSERT lo que no puede por UPDATE);
+acá cualquier rol ya autorizado a insertar puede simplemente atribuirle la fila a otra persona, sin
+cruzar ningún gate adicional. Causa raíz: las dos tablas heredan `grant insert` de tabla completa desde
+`0027` (sin acotar por columna), y ninguna de las dos policies `_ins` restringe la columna de autoría ni
+el estado de alta. El trigger `app.exigir_inmutabilidad_post_terminal()` (`0028`) es `BEFORE UPDATE`,
+nunca alcanza un INSERT |
+Sin dueño, identificado, sin convocatoria todavía. Pendiente de decisión futura sobre si se cierra
+junto con otra tarea de R44 o aparte — mismo mecanismo que ya cerró `pendiente_cierre_ins` en `0046`
+(columnas de autoría fuera del grant de INSERT donde ningún caller legítimo las nombra, o `with_check`
+fijando el único valor de nacimiento válido donde sí hay un caso legítimo documentado que las nombra) |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 

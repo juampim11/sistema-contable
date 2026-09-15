@@ -170,7 +170,11 @@ export async function sembrar(): Promise<Sembrado> {
         // `tenant_node`, pero nombrarla es lo que hace que la próxima tabla del plano de tenancía se
         // note acá. 0019 la agregó y esta lista no se enteró — que es la misma falla que tenía R1 de
         // `catalogo.test.ts`, y por el mismo motivo: una lista escrita a mano.
-        'membership_historia, membership, ' +
+        // `usuario_identidad` (0045) NO cuelga de `tenant_node` por FK (mismo plano transversal que
+        // `membership`, sin FK a propósito — ADR-0006 §2): el `cascade` de abajo NO la alcanza.
+        // Sin nombrarla acá, la segunda corrida de `sembrar()` (es idempotente, se llama muchas veces
+        // por suite) viola `usuario_identidad_pkey` sobre los mismos `USUARIOS.*` de la corrida anterior.
+        'membership_historia, membership, usuario_identidad, ' +
         'tenant_node cascade',
     );
   } finally {
@@ -202,6 +206,29 @@ export async function sembrar(): Promise<Sembrado> {
         [userId, nodoId, rol],
       );
     };
+
+    // `0045` extiende `accessible_tenant_ids()`/`has_role_on()` con `join usuario_identidad u on
+    // u.usuario_id = m.user_id and u.activo` (alcance amplio: lectura Y escritura). Sin esta fila,
+    // los 6 `USUARIOS.*` sintéticos pierden ambas — toda la suite que use `membresia()` para probar
+    // un camino de escritura empieza a fallar por 0 filas de RLS, no por un bug de la migración.
+    const identidad = async (userId: string): Promise<void> => {
+      await tx.consultar(
+        `insert into usuario_identidad (usuario_id, proveedor, sujeto_externo, activo)
+         values ($1::uuid, 'dev-identidad-fija', $1::text, true)`,
+        [userId],
+      );
+    };
+
+    for (const userId of [
+      USUARIOS.socio,
+      USUARIOS.contadorA,
+      USUARIOS.contadorB,
+      USUARIOS.socioOtroEstudio,
+      USUARIOS.administrativoA,
+      USUARIOS.auditorA,
+    ]) {
+      await identidad(userId);
+    }
 
     await membresia(USUARIOS.socio, estudio, 'socio');
     await membresia(USUARIOS.contadorA, clienteA, 'contador');

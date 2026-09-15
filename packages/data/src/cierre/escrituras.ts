@@ -606,13 +606,25 @@ export async function confirmarAsiento(
   _ctx: ContextoAuditado,
   pedido: PedidoConfirmarAsiento,
 ): Promise<ResultadoConfirmarAsiento> {
+  // R44 (ADR-0006 §7, migración 0045): `asiento_propuesto_upd_confirmar` exige en su `with check`
+  // que `confirmado_por = app.current_user_id()` — el mismo uuid que `conUsuario()` ya fijó como
+  // sesión de esta transacción (`tx.usuarioId`). Sin fijarlo acá explícito, el UPDATE viola el check
+  // nuevo (columna nunca escrita, `null` no satisface la coherencia con `asiento_estado='confirmado'`).
+  if (!tx.usuarioId) {
+    throw new Error(
+      'confirmarAsiento() necesita una transacción con identidad (conUsuario). R44 exige ' +
+        'confirmado_por = app.current_user_id(); sin sesión no hay quién firme la confirmación.',
+    );
+  }
   const confirmado = await conErroresTraducidos(undefined, () =>
     tx.consultar<{ id: string }>(
       `update asiento_propuesto
-          set asiento_estado = 'confirmado'
+          set asiento_estado = 'confirmado',
+              confirmado_por = $3,
+              confirmado_en = now()
         where cliente_id = $1 and id = $2 and asiento_estado = 'propuesto'
         returning id::text as id`,
-      [pedido.clienteId, pedido.asientoId],
+      [pedido.clienteId, pedido.asientoId, tx.usuarioId],
     ),
   );
   if (!confirmado[0]?.id) {

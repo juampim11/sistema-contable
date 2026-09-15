@@ -123,15 +123,24 @@ Se agrega una tabla puente, trivialmente 1:1 hoy, que existe para que dejar de s
 proveedor) no obligue a reescribir `membership`:
 
 ```sql
-create table app.usuario_identidad (
+create table usuario_identidad (
   usuario_id      uuid primary key,          -- = membership.user_id = auth.users.id de Supabase
-  proveedor       text not null,             -- 'supabase' | 'local'  (catálogo cerrado, árbitro en TS)
+  proveedor       text not null,             -- 'dev-identidad-fija' | 'supabase'  (catálogo cerrado,
+                                              -- árbitro real: packages/auth/src/registro.ts:20)
   sujeto_externo  text not null,
   activo          boolean not null default true,
   creado_en       timestamptz not null default now(),
   unique (proveedor, sujeto_externo)
 );
 ```
+
+**Corrección de texto (verificado contra el código real al implementar la migración `0045`):** el
+catálogo de `proveedor` no es `'supabase' | 'local'` — el árbitro TS ya commiteado
+(`packages/auth/src/registro.ts:20`) dice `ADAPTERS_AUTH = ['dev-identidad-fija', 'supabase']`, y el
+`check` de la migración usa ese catálogo real. Tampoco lleva prefijo `app.`: las 44 migraciones
+existentes crean toda tabla de dominio/tenancía en `public` (`tenant_node`, `membership`,
+`cierre_cliente_periodo`, todas `public`), así que `usuario_identidad` sigue esa misma convención —
+`create table usuario_identidad`, sin schema `app`.
 
 Y `app.accessible_tenant_ids()`/`app.has_capacidad_en()` agregan `join usuario_identidad u on
 u.usuario_id = m.user_id and u.activo` (`0001_tenancy.sql:220-246`). La baja de una persona
@@ -324,6 +333,87 @@ la `with check`/trigger que las ata a la sesión (patrón `0021`); (b) `asiento_
 de autor de confirmación (`escrituras.ts:604-625` solo cambia estado) — se agrega, con el mismo patrón.
 Entra en este ADR, no queda como deuda con fecha (decisión del titular, punto 5).
 
+## §7.bis. Enmienda formal — mecanismo de escritura de `app_web` sobre `confirmacion_grupo`
+
+**Reapertura, no lectura laxa del texto vigente.** §5 dice literal "sin `insert`/`update`/`delete` salvo
+`insert` sobre `acceso_auditoria`" y el criterio de cierre dice "la Tanda 4 es de solo lectura" — esta
+enmienda contradice ese texto tal como estaba escrito, a propósito, por convocatoria real (Frente 2 de
+`docs/diseno/33-plan-deuda-pre-tanda-4.md`: `arquitecto-software` + `security-engineer` +
+`seguridad-datos-financieros`, los tres coincidentes) sobre la tensión entre ese diseño y el flujo de
+demo que necesita confirmar/imputar un grupo desde una pantalla.
+
+**Corrección de una brecha encontrada al escribir esta enmienda**: la secuencia "PR 1 / PR 2 / PR 3..."
+de este ADR se había descrito solo en una síntesis de chat, nunca en ningún documento — el mismo defecto
+que ya pagó este repo antes (HANDOFF, "planes y dictámenes van al repo"). Se corrige acá: **§7 (R44)
+entra en la migración de `usuario_identidad` + capacidades finas** (la segunda pieza revertible después
+del esqueleto de `packages/auth`), **no** en una pieza aparte — R44 ya nombra `confirmacion_grupo_ins`
+explícito entre sus cuatro objetivos (§7 arriba), así que esta enmienda no agrega alcance nuevo a esa
+migración, solo confirma por escrito que ya lo cubre.
+
+### Qué se otorga
+
+```sql
+grant select, insert on confirmacion_grupo to app_web;
+grant update (vigente_hasta) on confirmacion_grupo to app_web;
+```
+
+Ninguna otra tabla, ninguna otra columna. Mismo patrón angosto que `0043` ya usa para `app_request` —
+la policy `confirmacion_grupo_ins`/`_upd` (`0043:85-95`) es la autorización real; el grant es la
+superficie. **`app_web` no se ensancha "ya que estamos" a ninguna otra tabla de Capa D** — cada tabla
+nueva que necesite escritura es su propia enmienda, con su propia convocatoria, nunca una extensión
+silenciosa de ésta.
+
+### Capacidad nueva: `imputar_grupo`
+
+Se agrega a `app.capacidades_de()` (§3), separada de `confirmar_asiento`/`dispensar_pendiente` por el
+mismo criterio que el resto de esa función ya aplica — imputar un grupo autora una regla de
+clasificación que rige **todos los movimientos futuros** de esa clave hasta que se revoque (radio de
+daño más parecido a `regla_imputacion` que a un asiento puntual), un riesgo distinto de aprobar un
+asiento ya calculado o de dispensar un caso puntual:
+
+```sql
+when 'socio'    then array[..., 'imputar_grupo']
+when 'contador' then array[..., 'imputar_grupo']
+-- 'administrativo' NO la tiene (mismo criterio que ROLES_QUE_EXPORTAN, exportar-planilla.ts:107-110)
+-- 'auditor' tampoco (sus capacidades son solo lectura: ver_cliente, revelar_dato_restringido, leer_auditoria)
+```
+
+La capacidad sirve **solo para ocultar/mostrar el botón en la web** (§3: "nunca para autorizar") — la
+autorización real sigue siendo la policy SQL de `0043`, que ya exige `['socio','contador']` y ya excluye
+`administrativo`. Omitir la capacidad no abre ningún agujero; agregarla mal (a `administrativo`, por
+ejemplo) tampoco lo hace por sí sola, porque la policy sigue siendo el gate real — pero de todos modos
+se declara aparte, para que la UI y el riesgo real no diverjan en cómo se leen.
+
+### Dos precondiciones bloqueantes — ninguna es "nice to have"
+
+1. **R44 (§7) tiene que estar aplicada y probada EN VIVO sobre `confirmacion_grupo_ins` antes de dar
+   este grant.** Sin la `with check` que ata `confirmado_por` a `app.current_user_id()`, un request de
+   browser podría escribir una confirmación atribuida a otra persona — la prueba que lo verifica
+   (`security-engineer`, Frente 2) no puede pasar hoy porque la migración de R44 no está aplicada
+   todavía; tiene que estar en rojo primero, y en verde recién después de aplicar la migración, nunca
+   salteada.
+2. **El guard `RE_POSIBLE_DOCUMENTO_EN_TEXTO` sobre `respaldo` tiene que moverse adentro de
+   `confirmarGrupo()`** (`packages/data/src/cierre/escrituras.ts`), no quedarse en el parseo de
+   argumentos del CLI (`confirmar-grupo.ts:151-158`) — hallazgo de `seguridad-datos-financieros`: un
+   futuro server action de `apps/web` que llame a `confirmarGrupo()` directo, sin pasar por
+   `parsearArgumentos()`, pierde el guard en silencio. El control tiene que vivir en el único lugar que
+   **todos** los callers (CLI de hoy, web de mañana) atraviesan.
+
+### Dos hallazgos de honestidad de producto — no se resuelven con código, se declaran
+
+1. **`confirmado_por` no se presenta en pantalla como una firma real** mientras la sesión no venga de un
+   `AuthProvider` real (§1) — si la demo corre con la identidad fija de desarrollo
+   (`AUTH_PROVIDER=dev-identidad-fija`, §1), la pantalla no puede mostrar "confirmado por Laura" con la
+   misma confianza que después de que exista login real. Mismo límite que ya declara
+   `clasificacion-campos.ts` sobre `padron_manifestacion.manifestado_por`.
+2. **La web no tiene el freno que el CLI sí tiene.** `confirmar-grupo.ts` es dry-run por defecto —
+   nunca escribe sin `--aplicar` explícito. Un clic en una pantalla web no tiene ese paso intermedio por
+   diseño de interacción, y eso es un cambio de riesgo real frente a hoy (`security-engineer`, tabla
+   comparativa CLI-vs-web, Frente 2): de "un operador con terminal, dry-run por defecto" a "cualquier
+   sesión válida, un clic". **Esto se traslada a `ux-designer` como requisito de diseño explícito para
+   la pantalla de imputar/confirmar un grupo** — no es una nota de seguridad archivada, es una decisión
+   de interacción pendiente de resolver antes de construir esa pantalla.
+
 ---
 
 ## §8. `admin_plataforma` — Opción A: cero membresía en tenants de producción
@@ -389,16 +479,32 @@ no sobre identidades de usuario para QA: no hay excepción que declarar acá. Mi
 3. La invitación corre por un CLI (`apps/cli/src/invitar-usuario.ts`), en la máquina del titular, con
    `SUPABASE_SERVICE_ROLE_KEY` en el `.env` de infraestructura — **nunca** en Vercel ni en
    `apps/web/.env.local` (análogo exacto de R18 para `DATABASE_URL_JOB`). Dry-run por defecto.
-4. Orden: primero `auth.admin.inviteUserByEmail()` (devuelve el `user.id`), después
-   `insert into membership` con `conUsuario(socioId)`. Si el segundo paso falla, el usuario queda en
-   `auth.users` sin membresía → 0 filas, falla cerrado. Se reintenta solo el segundo paso.
+4. Orden, y el orden importa: primero `auth.admin.inviteUserByEmail()` (devuelve el `user.id`), después,
+   en la MISMA transacción con `conUsuario(socioId)`, primero `insert into membership` y **recién
+   después** `insert into usuario_identidad (usuario_id, proveedor, sujeto_externo, activo) values
+   (user.id, 'supabase', user.id, true)` — mismo `user.id` que devolvió `inviteUserByEmail()`, sin un
+   select intermedio. **No es indiferente cuál va primero**: `usuario_identidad_ins` (`0045`) exige
+   `exists (select 1 from membership m where m.user_id = usuario_identidad.usuario_id and ...)` — si el
+   `insert` de `usuario_identidad` corre antes de que exista la fila de `membership` correspondiente, el
+   `with check` no encuentra nada que verificar y el `insert` muere con `42501` (hallazgo de
+   `code-reviewer`, convocatoria de `0045`, 2026-09-14). Alcance amplio de `0045` §7: sin la fila de
+   `usuario_identidad`, `has_role_on()` también gatea escritura y la persona recién invitada no podría
+   escribir nada. Si la transacción falla, el usuario queda en `auth.users` sin `usuario_identidad` ni
+   membresía → 0 filas, falla cerrado. Se reintenta la transacción completa.
 5. Invitación no aceptada: un CLI de listado cruza `membership.activo=true` con
    `last_sign_in_at is null`; el socio decide dar de baja.
-6. **Baja** (criterio de cierre, punto 12 del titular): **un solo comando CLI** que hace las dos cosas
-   juntas — `update membership set activo=false` (única columna otorgable, `0019:231-232`, deja rastro en
-   `membership_historia`) y `auth.admin.updateUserById(…, { ban_duration: … })` en Supabase. Nunca borrar
-   el usuario del proveedor: el uuid sigue resolviendo a una persona en el rastro histórico. Cambio de rol
-   = baja + alta. **Un uuid de usuario nunca se reusa.**
+6. **Baja** (criterio de cierre, punto 12 del titular, corregido con el alcance amplio de `0045`):
+   **un solo comando CLI** — `update usuario_identidad set activo = false where usuario_id = $1`. Es
+   el interruptor global de P12: una sola fila, corta lectura **y** escritura sobre **todos** los
+   clientes donde la persona tuviera membership, sin importar cuántas filas de `membership` tenga (el
+   `join usuario_identidad u on u.usuario_id = m.user_id and u.activo` de `accessible_tenant_ids()` y
+   `has_role_on()`, §2, ya corta todo — no hace falta tocar `membership.activo` fila por fila). El
+   mismo comando llama además `auth.admin.updateUserById(…, { ban_duration: … })` en Supabase, para
+   que `conSesion` (§4) rechace al usuario baneado antes de llegar a `conUsuario`, sin esperar al
+   siguiente `getUser()`. Nunca borrar el usuario del proveedor: el uuid sigue resolviendo a una
+   persona en el rastro histórico. Cambio de rol = baja + alta. **Un uuid de usuario nunca se reusa.**
+   `membership.activo=false` sigue siendo la operación **separada** para remover a alguien de **un**
+   cliente puntual sin afectar sus otras membresías — no se confunde con la baja global de acá.
 
 ---
 
@@ -519,7 +625,10 @@ Se adoptan: el contrato `AuthProvider` con identidad opaca (§1); la tabla puent
 (§2); las capacidades finas por función `IMMUTABLE` (§3); el guard único `conSesion` con las reglas de
 código R-R a R-Y (§4); el rol `app_web` sin las 4 columnas N2R/N3 (§5); mostrar
 `descripcion`/`concepto_banco` completos con el riesgo F4 aceptado por escrito (§6); la regla R44 que ata
-toda autoría de Capa D a la sesión (§7); `admin_plataforma` sin membresía en producción, Opción A (§8);
+toda autoría de Capa D a la sesión (§7); el grant angosto de `app_web` sobre `confirmacion_grupo` con la
+capacidad `imputar_grupo`, sujeto a las dos precondiciones bloqueantes de R44 aplicada+probada y el
+guard de `respaldo` movido adentro de `confirmarGrupo()` (§7.bis); `admin_plataforma` sin membresía en
+producción, Opción A (§8);
 roles del equipo configurados por membresía caso a caso (§9); usuarios de prueba con membresía real, sin
 impersonación (§10); invitación por enlace, nunca contraseña temporal (§11); el residual declarado del
 incidente #8 (§12); y el registro de Supabase/Vercel como terceros (§15).
