@@ -206,6 +206,26 @@
         "texto-humano.ts": "6c9d8039838c182e",
         "tipos.ts": "7a091c2672ab69c8"
       }
+    },
+    {
+      "version": 4,
+      "aceptada_en": "2026-09-14",
+      "bump": true,
+      "motivo": "0039 (commits 8b179ed + d42fd17, 2026-09-07): resolverEvidenciaDeContraparte reintenta con descripcion si concepto_banco da sin_match (fallback secuencial, altera motor_digest); mas el fix de digestDeEntrada que ya no hashea descripcion en runtime. Housekeeping tardio, sin relacion con IIBB/jurisdiccion de retenciones: B.23 sigue bloqueado por dato externo, corpus-macro.test.ts sin tocar.",
+      "archivos": {
+        "contraparte.ts": "6aa22d93c136b46d",
+        "contrapartida.ts": "9225c9191a65d5cf",
+        "entrada.ts": "3f0bc58a7e379d95",
+        "indice.ts": "c93529e3a0044adb",
+        "lexico.ts": "e3ebbde02837b6c7",
+        "matcher.ts": "0a15006f1992cf32",
+        "motor.ts": "14761d2b7edf685c",
+        "normalizacion.ts": "17d7ecc738aad461",
+        "persistible.ts": "21aa3720fdfe8d2b",
+        "reconocimiento.ts": "7c32f1d06956625f",
+        "texto-humano.ts": "6c9d8039838c182e",
+        "tipos.ts": "7a091c2672ab69c8"
+      }
     }
   ]
 }
