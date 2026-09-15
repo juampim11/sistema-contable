@@ -371,6 +371,14 @@ describe('las dependencias entre paquetes no pueden hacer ciclo', () => {
    * agregado al escribir `0043` (JP, 2026-09-12): si `armar-libro.ts` empezara a leer la base, el
    * riesgo que evita el diseño de esa tabla (todo en memoria, aguas abajo) se reabriría en silencio —
    * el mismo argumento que ya cerró el bug del digest (HANDOFF 187) para el léxico del motor.
+   *
+   * 🔴 `packages/ingesta/src/cierre/agrupar-decisiones-pendientes.ts` (Frente 1, backend genérico de
+   * agrupación) NO es un vecino más de `planilla/` que "se olvidó" de esta regla — SÍ importa
+   * `@sistema-contable/data`, a propósito: es la capa que ORQUESTA la lectura (rol, auditoría,
+   * `movimiento_bancario_crudo`/`asiento_propuesto`) y recién después llama a `agruparFilas`/
+   * `claveDeAgrupacion` de este archivo, puros, sin tocarlos — el mismo rol que cumplía el script
+   * puntual del que se generalizó. Nadie debería "corregir" moviéndolo a `planilla/`: ahí no puede
+   * vivir sin romper esta regla.
    */
   it('`armar-libro.ts`/`armar-libro-laura.ts` no importan `@sistema-contable/data`', () => {
     const archivos = FUENTES.filter(
@@ -683,6 +691,14 @@ describe('R-F — `clase: \'propuesta\'` solo se construye en nucleo/motor.ts', 
     // (0038): construye el PEDIDO de persistencia a mano para ejercitar el gate de
     // creado/supersedido/no_op sin pasar por el motor.
     'packages/data/tests/persistencia-contrapartida-0038.test.ts',
+    // Fixture de `agruparDecisionesPendientes` (Frente 1): mismo motivo exacto que las dos líneas de
+    // arriba — construye el PEDIDO de un `insert` SQL directo contra `reconocimiento_movimiento` para
+    // sembrar el escenario, nunca un `Reconocimiento` armado a mano en código de producción.
+    'packages/ingesta/tests/agrupar-decisiones-pendientes.test.ts',
+    // Fixture de `agruparDecisionesPendientesConConfirmaciones`: mismo motivo EXACTO que la línea de
+    // arriba (mismo fixture `crearMovimiento`, duplicado a propósito) — construye el PEDIDO de un
+    // `insert` SQL directo, nunca un `Reconocimiento` armado a mano en código de producción.
+    'packages/ingesta/tests/agrupar-decisiones-pendientes-con-confirmaciones.test.ts',
     // Calibración de léxico (E-4, `calibrar-lexico-metadatos.ts`): construye Reconocimiento sintéticos
     // para probar `contarPatrones()` sin base — mismo motivo exacto que `resolver-contrapartida.test.ts`
     // arriba.
@@ -1567,5 +1583,61 @@ describe('R-X bis — el catálogo de entornos de packages/auth no diverge del d
     const deData = arrayLiteralDe(join(RAIZ, 'packages/data/src/db/entorno.ts'), 'ENTORNOS');
     expect(deAuth.length, 'la lectura del catálogo de auth no está vacía').toBeGreaterThan(0);
     expect(deAuth.sort()).toEqual(deData.sort());
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-Z — dirección única del grafo: `data`/`ingesta`/`auth`/`contabilidad` no importan `apps/`', () => {
+  /**
+   * Letra verificada con `grep` contra este archivo antes de escribirla (CLAUDE.md, "verificar
+   * numeración antes de usarla"): `R-X`/`R-X bis` es la última EN USO; `R-R`…`R-Y` están reservadas
+   * por `ADR-0006-autenticacion.md` §4 para la convocatoria de autenticación (R-Y en particular,
+   * `ADR-0006` §4: "extiende R16: `set_config('app.user_id'` y `set`/`reset app.user_id` prohibidos
+   * fuera de `conexion.ts`") — sin implementar todavía al escribir esto, así que `R-Z` es la próxima
+   * libre real, no la que sigue a `R-Q` de memoria.
+   *
+   * Qué prohíbe: que un archivo de dominio (`packages/data/src`, `packages/ingesta/src`,
+   * `packages/auth/src`, `packages/contabilidad/src`) importe algo de `apps/` — la dirección del grafo
+   * es una sola, `shared` ← `data` ← `ingesta`/`auth`/`contabilidad` ← `apps` (mismo principio que ya
+   * verifican las reglas de "las dependencias entre paquetes no pueden hacer ciclo", más arriba en
+   * este archivo, y que hasta ahora solo estaba documentado en el diagrama de `ADR-0006` §1, nunca
+   * verificado). Antes era solo una convención; esta regla la hace estructural: un comando que
+   * necesita varias capas va en `apps/`, nunca al revés — invertir la dirección abre la puerta al
+   * mismo ciclo silencioso que ya causó `data → ingesta → data` (ver el test de arriba).
+   */
+  const PATRONES_SRC = [
+    'packages/data/src/',
+    'packages/ingesta/src/',
+    'packages/auth/src/',
+    'packages/contabilidad/src/',
+  ];
+  const PATRON_IMPORTA_APPS = /from\s+['"][^'"]*\bapps\/[^'"]*['"]|@sistema-contable\/cli\b/;
+
+  it('ningún archivo de `data/src`, `ingesta/src`, `auth/src` ni `contabilidad/src` importa `apps/`', () => {
+    const archivos = FUENTES.filter((r) => PATRONES_SRC.some((p) => rel(r).startsWith(p)));
+    expect(
+      archivos.length,
+      'no se está barriendo alguno de los cuatro paquetes — revisar el glob de FUENTES',
+    ).toBeGreaterThan(20);
+
+    const infractores = archivos.filter((ruta) => PATRON_IMPORTA_APPS.test(readFileSync(ruta, 'utf8')));
+
+    expect(
+      infractores.map(rel),
+      'dirección única del grafo (ADR-0006 §1): shared ← data ← ingesta/auth/contabilidad ← apps. ' +
+        'Un archivo de dominio que importa apps/ invierte esa dirección — un comando que necesita ' +
+        'varias capas va en apps/, nunca al revés.',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta la infracción plantada y no confunde vecinos', () => {
+    // Infracción plantada: un import relativo que atraviesa hasta `apps/`, y el nombre de paquete
+    // (por si alguna vez alguien declarara `@sistema-contable/cli` como dependencia real).
+    expect(PATRON_IMPORTA_APPS.test("import { ingestar } from '../../../apps/cli/src/ingestar.ts';")).toBe(true);
+    expect(PATRON_IMPORTA_APPS.test("import type { Argumentos } from '@sistema-contable/cli';")).toBe(true);
+    // No confunde: un paquete o carpeta cuyo nombre solo SUENA parecido, o una mención en prosa sin
+    // `from '...'`.
+    expect(PATRON_IMPORTA_APPS.test("import { z } from '../aplicaciones-varias/foo.ts';")).toBe(false);
+    expect(PATRON_IMPORTA_APPS.test('// este comando corre desde apps/cli, ver el runbook')).toBe(false);
   });
 });
