@@ -35,11 +35,21 @@ async function crearCierreAbierto(tx: Tx): Promise<string> {
 
 async function crearAsiento(estado: 'propuesto' | 'confirmado'): Promise<string> {
   return conUsuario(USUARIOS.socio, async (tx) => {
+    // `0045`: `asiento_propuesto_confirmacion_chk` exige confirmado_por/confirmado_en junto con
+    // asiento_estado='confirmado' -- este fixture sintético los completa igual que confirmarAsientos()
+    // (confirmar-asientos.ts), para no confundir la falta de autoría con lo que este test realmente mide.
     const f = await tx.consultar<{ id: string }>(
-      `insert into asiento_propuesto (cliente_id, cierre_id, tipo, fecha_imputacion, asiento_estado)
-       values ($1, $2, 'devengamiento', '2026-06-15'::date, $3)
+      `insert into asiento_propuesto (cliente_id, cierre_id, tipo, fecha_imputacion, asiento_estado,
+         confirmado_por, confirmado_en)
+       values ($1, $2, 'devengamiento', '2026-06-15'::date, $3, $4, $5)
        returning id::text as id`,
-      [s.clienteA, cierreAbiertoId, estado],
+      [
+        s.clienteA,
+        cierreAbiertoId,
+        estado,
+        estado === 'confirmado' ? USUARIOS.socio : null,
+        estado === 'confirmado' ? new Date() : null,
+      ],
     );
     const id = f[0]?.id;
     if (!id) throw new Error('no se creó el asiento sintético');

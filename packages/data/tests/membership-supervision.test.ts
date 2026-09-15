@@ -55,6 +55,16 @@ beforeAll(async () => {
   s = await sembrar();
   duenio = await clienteDuenio();
   job = await clienteJob();
+  // `0045` extiende `has_role_on()` con `join usuario_identidad ... and activo` -- estos tres uuid son
+  // ad-hoc de este archivo (no pasan por `sembrar()`/`ayuda.ts`), así que necesitan su propia fila o
+  // pierden TODO acceso (lectura y escritura) bajo el alcance amplio, sin que sea lo que el test mide.
+  await duenio.query(
+    `insert into usuario_identidad (usuario_id, proveedor, sujeto_externo, activo)
+     select u, 'dev-identidad-fija', u::text, true
+       from unnest($1::uuid[]) as u
+     on conflict (proveedor, sujeto_externo) do nothing`,
+    [[AUDITOR, ADMIN_PLATAFORMA, CONTADOR]],
+  );
 });
 
 afterAll(async () => {
