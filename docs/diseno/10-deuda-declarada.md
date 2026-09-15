@@ -689,6 +689,25 @@ función permitida): `packages/data/tests/mutaciones-savepoint-reconocimientos.t
 tarea (hallazgo adyacente, no se resuelve "ya que estamos") | Sin dueño. Confirmar si son
 construcciones legítimas de fixture (agregar a la allowlist, con motivo) o un salteo real de la
 degradación que R-F existe para evitar — antes de decidir, no asumir ninguna de las dos |
+| **B.27** | 🟡 **Asientos manuales / de ajuste (no originados en extracto bancario) — necesarios para
+cierres de período y balances.** Todo el flujo hoy (Capa B/C/D, la demo de la Tanda 4, el motor de
+reconocimiento completo) nace de un extracto bancario — `movimiento_bancario_crudo` es el único punto
+de entrada de dominio. Un asiento de ajuste (devengamientos, amortizaciones, previsiones, correcciones
+manuales sin contraparte bancaria) no tiene hoy ningún camino de alta en el sistema. Nota de backlog,
+no accionable ahora — no entra en el alcance de la demo actual (titular, 2026-09-14) | Sin dueño, sin
+diseño. Pendiente de convocatoria futura cuando el producto lo priorice — candidatos naturales:
+`contador-dominio` (qué campos/validaciones necesita un asiento sin origen bancario) +
+`arquitecto-software` (dónde entra en el pipeline sin romper el invariante "todo dato de dominio
+cuelga de `cliente_id`" ni el que dice que Capa D siempre parte de un `movimiento_bancario_crudo`) |
+| **B.28** | 🟡 **CLI de invitación real (`apps/cli/src/invitar-usuario.ts`) — diseñado en `ADR-0006`
+§11, nunca escrito.** El ADR lo cita como si ya existiera ("la invitación corre por un CLI..."), pero
+`git log --all --diff-filter=A` confirma que el archivo nunca se creó — es diseño sin código, hallazgo
+de la convocatoria de la migración `0045_usuario_identidad_capacidades_r44.sql` (2026-09-14). Local
+sigue funcionando hoy vía el seed sintético de `packages/data/tests/ayuda.ts` (ya corregido para crear
+`usuario_identidad` de los 6 `USUARIOS.*`) — el alta de personal real queda pendiente hasta esta tarea.
+Necesario para PR 5 de `ADR-0006` (invitación real + login de punta a punta) | Sin dueño, sin diseño.
+Maneja `SUPABASE_SERVICE_ROLE_KEY` — requiere convocatoria propia a `backend-dev` +
+`security-engineer` antes de escribirse, no se arranca como companion code de otra tarea |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 
