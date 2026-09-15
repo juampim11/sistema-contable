@@ -648,6 +648,21 @@ existe y es seguro con menos fricción, en orden:
 > que el flujo por planilla (Tandas 1-2) demuestre primero que Laura completa las hojas. No se
 > convoca ni se diseña nada de esto ahora.
 
+> **Actualización (2026-09-14, decisión del titular) — se separa el diseño visual básico del
+> branding final.** La condición de arriba seguía redactada sobre **todo** el diseño visual de la
+> Tanda 4 en bloque ("no es una pantalla funcional genérica... tiene que tener un nivel visual alto"),
+> con el logo real de cada banco como *ejemplo* de ese nivel, no como el único contenido de la
+> condición — así que gateaba layout, estados visuales y navegación igual que gateaba el branding.
+> Eso queda reemplazado: **el diseño visual básico de PR4 entra en alcance ahora, sin esperar esa
+> condición** — tablas prolijas, estados visuales claros (distinguir "propuesta" de "decisión
+> humana"), navegación clara entre vistas, con tokens de diseño y dirección visual coherente (no HTML
+> sin estilo). **Lo que sigue condicionado, sin cambios**: el branding final — logo real de cada
+> banco, la experiencia pulida que motivó este párrafo — y la convocatoria formal a `ux-designer`,
+> exactamente como decía la versión original de esta nota. Ver `ADR-0006-autenticacion.md` §16 para
+> el detalle de alcance de PR4. 🔴 Pendiente sin resolver: el titular pidió usar "la skill de
+> frontend-design de este entorno" para los tokens de diseño — no se encontró ninguna skill con ese
+> nombre en la sesión ni en `.claude/` de este repo; a confirmar antes de empezar PR4.
+
 > 🔴 **Corrección final (2026-09-09 — reemplaza la corrección del 2026-09-08 de más abajo en el
 > historial de este bloque, que llegó a una conclusión equivocada sobre el origen de "3843").** La
 > corrida real de Tanda 3 se ejecutó primero sobre 10 lotes (6 Bracci + 4 ROKA), pero uno de los 4 de

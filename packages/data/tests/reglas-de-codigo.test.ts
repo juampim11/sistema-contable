@@ -173,6 +173,9 @@ describe('cobertura del barrido', () => {
     // `packages/fci` (costeo PEPS de fondos comunes de inversión): mismo motivo — si quedara fuera del
     // glob, las reglas espejo de R-B/R-G/R-J para este paquete pasarían por vacío sin avisar.
     expect(FUENTES.map(rel)).toContain('packages/fci/src/index.ts');
+    // `packages/auth` (ADR-0006, identidad opaca): mismo motivo — si el paquete quedara fuera del
+    // glob, R-R/R-V/R-X de más abajo pasarían por vacío sin avisar.
+    expect(FUENTES.map(rel)).toContain('packages/auth/src/index.ts');
   });
 });
 // -----------------------------------------------------------------------------
@@ -1406,5 +1409,163 @@ describe('R-Q — el padrón COMPLETO de `padron_contraparte` nunca llega a un l
     expect(PATRON_LOG_CON_PATRONES.test('const x = patronesDeContraparte.map(comoPatronDeContraparte);')).toBe(
       false,
     );
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-R — @supabase/* solo en el adapter de Supabase (ADR-0006 §1, §4)', () => {
+  /**
+   * `packages/auth/src/adapters/supabase.ts` es el ÚNICO archivo del repo que en algún momento
+   * (PR3 de ADR-0006) va a importar el SDK de Supabase. Ni el resto de `packages/auth` ni ningún
+   * otro paquete pueden hacerlo — es la misma disciplina de "agnóstico de proveedor" que `CLAUDE.md`
+   * §1.1 ya exige para datos/almacenamiento, hecha verificable acá para auth.
+   *
+   * Hoy (PR1) el propio adapter TAMPOCO importa el SDK todavía — no se instala `@supabase/*` hasta
+   * PR3 (decisión explícita del ADR). El caso legítimo de esta regla, por ahora, es que el barrido dé
+   * CERO coincidencias en todo el repo; el archivo queda en la lista de permitidos de antemano para
+   * que PR3 no tenga que volver a tocar esta regla.
+   */
+  const PATRON_IMPORTA_SUPABASE = /(?:from|require\()\s*['"]@supabase\//;
+  const PERMITIDOS_R_R = ['packages/auth/src/adapters/supabase.ts'];
+
+  it('ningún archivo del repo importa @supabase/* fuera del adapter', () => {
+    expect(
+      infractores(PATRON_IMPORTA_SUPABASE, PERMITIDOS_R_R),
+      'el SDK de Supabase entra por un único choke point (packages/auth/src/adapters/supabase.ts, ' +
+        'PR3 de ADR-0006) — un import en cualquier otro archivo es la primera grieta de ' +
+        '"agnóstico de proveedor"',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta la infracción plantada y no confunde un paquete de nombre parecido', () => {
+    expect(PATRON_IMPORTA_SUPABASE.test("import { createClient } from '@supabase/supabase-js';")).toBe(true);
+    expect(PATRON_IMPORTA_SUPABASE.test("import { createServerClient } from '@supabase/ssr';")).toBe(true);
+    expect(PATRON_IMPORTA_SUPABASE.test("const x = require('@supabase/supabase-js');")).toBe(true);
+    // Un scope parecido pero distinto no es una infracción.
+    expect(PATRON_IMPORTA_SUPABASE.test("import x from '@supabase-community/algo';")).toBe(false);
+    // Una mención en prosa, sin `from '...'`/`require(...)`, tampoco.
+    expect(
+      PATRON_IMPORTA_SUPABASE.test('// ver ADR-0006 §1: el adapter va a importar @supabase/supabase-js en PR3'),
+    ).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-V — packages/auth no ramifica por literal de rol (ADR-0006 §1, §3)', () => {
+  /**
+   * El rol nunca se resuelve en TypeScript — `Sesion` es opaca (solo `usuarioId` + `expiraEn`) y la
+   * capacidad se resuelve SIEMPRE en Postgres (`app.has_capacidad_en`). Un `if (rol === 'socio')`
+   * en `packages/auth` es la primera grieta de esa regla. Mismo argumento que R-I (el catálogo
+   * canónico no ramifica por nombre de banco), espejado acá para roles de membresía.
+   */
+  const ROLES_DE_MEMBRESIA = [
+    'socio',
+    'contador',
+    'administrativo',
+    'auditor',
+    'admin_plataforma',
+    'cliente_lectura',
+  ] as const;
+  const PATRON_ROL_COMPARADO = new RegExp(
+    `===?\\s*['"](?:${ROLES_DE_MEMBRESIA.join('|')})['"]|['"](?:${ROLES_DE_MEMBRESIA.join('|')})['"]\\s*===?`,
+  );
+
+  it('ningún archivo de packages/auth compara un literal de rol contra una variable', () => {
+    const archivosDeAuth = FUENTES.filter((r) => rel(r).startsWith('packages/auth/'));
+    expect(archivosDeAuth.length, 'no se está barriendo packages/auth').toBeGreaterThan(0);
+
+    const infractoresAuth = archivosDeAuth.filter((ruta) =>
+      PATRON_ROL_COMPARADO.test(readFileSync(ruta, 'utf8')),
+    );
+    expect(
+      infractoresAuth.map(rel),
+      '`packages/auth` es identidad opaca (ADR-0006 §1) — el rol se resuelve siempre en Postgres, ' +
+        'nunca acá; una comparación contra un literal de rol es la primera grieta',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta la infracción plantada (en los dos órdenes) y no confunde un tipo o un array', () => {
+    expect(PATRON_ROL_COMPARADO.test("if (rol === 'socio') { ... }")).toBe(true);
+    expect(PATRON_ROL_COMPARADO.test("if ('contador' === rol) { ... }")).toBe(true);
+    expect(PATRON_ROL_COMPARADO.test("if (m.rol === 'admin_plataforma') { ... }")).toBe(true);
+    // Una unión de tipo o un array literal no son una COMPARACIÓN — no matchean.
+    expect(PATRON_ROL_COMPARADO.test("type Rol = 'socio' | 'contador';")).toBe(false);
+    expect(PATRON_ROL_COMPARADO.test("const ROLES = ['socio', 'contador'] as const;")).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-X — packages/auth y packages/data no importan next/* (ADR-0006 §1/§4: el framework queda confinado a apps/web)', () => {
+  /**
+   * Ni `packages/auth` ni `packages/data` pueden depender de Next.js: el grafo de dependencias del
+   * ADR es `shared ← auth`, `shared ← data`, sin flecha desde ningún framework hacia ninguno de los
+   * dos. Un `import ... from 'next/headers'` en cualquiera de los dos ataría identidad o datos al
+   * framework de la web, exactamente lo que R-X existe para evitar.
+   *
+   * El ADR nombra los DOS paquetes (§4: "packages/auth y packages/data no importan next/"), y
+   * `packages/data` ya existe hoy (a diferencia de `apps/web`, que todavía no — por eso R-S/R-T/R-U/
+   * R-W quedan para cuando exista). Acotar el barrido a un solo paquete dejaría pasar por vacío la
+   * mitad de lo que la propia regla declara proteger.
+   */
+  const PATRON_IMPORTA_NEXT = /(?:from|require\()\s*['"]next(?:\/[^'"]*)?['"]/;
+  const PREFIJOS_VIGILADOS = ['packages/auth/', 'packages/data/'] as const;
+
+  it('ningún archivo de packages/auth ni de packages/data importa `next` ni `next/*`', () => {
+    const archivosVigilados = FUENTES.filter((r) =>
+      PREFIJOS_VIGILADOS.some((p) => rel(r).startsWith(p)),
+    );
+    expect(archivosVigilados.length, 'no se está barriendo packages/auth ni packages/data').toBeGreaterThan(0);
+
+    const infractoresNext = infractores(PATRON_IMPORTA_NEXT).filter((r) =>
+      PREFIJOS_VIGILADOS.some((p) => r.startsWith(p)),
+    );
+    expect(
+      infractoresNext,
+      '`packages/auth`/`packages/data` no dependen del framework (ADR-0006 §1/§4) — next/* queda ' +
+        'confinado a `apps/web`',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta la infracción plantada y no confunde un paquete de nombre parecido', () => {
+    expect(PATRON_IMPORTA_NEXT.test("import { cookies } from 'next/headers';")).toBe(true);
+    expect(PATRON_IMPORTA_NEXT.test("import type { NextRequest } from 'next/server';")).toBe(true);
+    expect(PATRON_IMPORTA_NEXT.test("import next from 'next';")).toBe(true);
+    expect(PATRON_IMPORTA_NEXT.test("const x = require('next/config');")).toBe(true);
+    // Un paquete de nombre parecido, pero que no es `next` ni `next/algo`, no es una infracción.
+    expect(PATRON_IMPORTA_NEXT.test("import x from 'next-auth';")).toBe(false);
+    expect(PATRON_IMPORTA_NEXT.test("import y from 'nextjs-cors';")).toBe(false);
+  });
+});
+
+describe('R-X bis — el catálogo de entornos de packages/auth no diverge del de packages/data', () => {
+  /**
+   * `packages/auth/src/adapters/local-fijo.ts` duplica a propósito el catálogo cerrado de entornos de
+   * `packages/data/src/db/entorno.ts` (el ADR prohíbe que `auth` importe `data` — ver la nota de
+   * cabecera de `local-fijo.ts`). Una duplicación sin barrido es exactamente el patrón que CLAUDE.md
+   * §1.8 señala: "un ⚠️ que nadie convierte en trabajo es un ✅ con más letras". Este test hace que el
+   * drift se note en el gate en vez de en un incidente: si alguien agrega un quinto entorno en un
+   * archivo y se olvida del otro, esta regla se pone roja.
+   */
+  function arrayLiteralDe(ruta: string, nombreConstante: string): string[] {
+    const contenido = readFileSync(ruta, 'utf8');
+    const patron = new RegExp(`${nombreConstante}\\s*=\\s*\\[([^\\]]*)\\]`);
+    const m = patron.exec(contenido);
+    if (!m?.[1]) {
+      throw new Error(`No se encontró la constante ${nombreConstante} en ${ruta} — revisar el patrón`);
+    }
+    return m[1]
+      .split(',')
+      .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+      .filter((s) => s.length > 0);
+  }
+
+  it('ENTORNOS_CONOCIDOS (auth) y ENTORNOS (data) son EXACTAMENTE el mismo conjunto', () => {
+    const deAuth = arrayLiteralDe(
+      join(RAIZ, 'packages/auth/src/adapters/local-fijo.ts'),
+      'ENTORNOS_CONOCIDOS',
+    );
+    const deData = arrayLiteralDe(join(RAIZ, 'packages/data/src/db/entorno.ts'), 'ENTORNOS');
+    expect(deAuth.length, 'la lectura del catálogo de auth no está vacía').toBeGreaterThan(0);
+    expect(deAuth.sort()).toEqual(deData.sort());
   });
 });

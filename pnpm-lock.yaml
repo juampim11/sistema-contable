@@ -76,6 +76,12 @@ importers:
         specifier: ^4.1.13
         version: 4.4.3
 
+  packages/auth:
+    dependencies:
+      zod:
+        specifier: ^4.1.13
+        version: 4.4.3
+
   packages/contabilidad:
     dependencies:
       '@sistema-contable/shared':
