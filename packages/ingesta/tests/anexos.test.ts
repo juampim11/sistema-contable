@@ -59,12 +59,38 @@ function anexo(sobrescribe: Partial<AnexoExtracto> = {}): AnexoExtracto {
 }
 
 function cuentaCon(anexos: readonly AnexoExtracto[], semilla = 31): CuentaConMovimientos {
+  /**
+   * El período de la cuenta se deriva de `semilla` — mismo rol que ya cumple `marca` para
+   * `archivo_hash` en `loteNuevo`: un valor que ya distingue a cada test, reusado para distinguir
+   * también el período. Sin esto, HU-6 (`persistirCuenta`, doc 35 §2.3/§2.7 — una sola carga vigente por
+   * cuenta+período) ve a todos los tests de este archivo compitiendo por la MISMA cuenta+período (todos
+   * usaban el mismo `'2026-06-01'..'2026-06-30'` hardcodeado) y rechaza a partir del segundo. Ninguno de
+   * los tests de este archivo verifica la coexistencia de dos cargas separadas sobre la misma
+   * cuenta+período —lo reutilizaban solo por comodidad—, así que aislar el período es lo correcto acá,
+   * no ajustar la guarda.
+   *
+   * Un mes por semilla, dentro del mismo año: `extractoSintetico` no soporta un período que cruce un
+   * límite de mes (deriva el mes de `periodoHasta` y el día de `periodoDesde`, ver
+   * `extracto-sintetico.ts:113-114`), así que desde/hasta quedan en el mismo mes.
+   *
+   * 🔴 **Advertencia para quien agregue el próximo test a este archivo (el 13°)**: `1 + (semilla % 12)`
+   * solo da **12 meses distintos posibles** (residuos 0-11), y las semillas ya usadas en este archivo
+   * (31 a 42, verificado por grep) **ya cubren los 12** sin ninguno libre. Una semilla nueva con un
+   * residuo mod 12 que coincida con una de las ya usadas (ej. `43 % 12 === 31 % 12`) va a generar el
+   * MISMO mes que ese test viejo y, si ambos usan `ids.cuenta` (el caso por defecto), va a chocar contra
+   * HU-6 (`periodo_solapa_con_carga_existente`) exactamente como pasaba antes de este fix — mismo bug,
+   * reintroducido por acumulación. No hace falta un mecanismo más robusto todavía (12 tests alcanzan
+   * hoy): al agregar el test 13, o bien se amplía el rango (ej. `semilla % 24` con un año distinto por
+   * mitad, o dos dígitos del día además del mes) o se le pasa explícitamente `ids.cuenta2` en vez del
+   * default, para no competir por la misma cuenta+período que los 12 anteriores.
+   */
+  const mes = String(1 + (semilla % 12)).padStart(2, '0');
   const base = extractoSintetico({
     semilla,
     cantidadMovimientos: 12,
     saldoInicialCentavos: 1_000_000n,
-    periodoDesde: '2026-06-01',
-    periodoHasta: '2026-06-30',
+    periodoDesde: `2026-${mes}-01`,
+    periodoHasta: `2026-${mes}-28`,
   });
   return { ...base, anexos: [...anexos] };
 }

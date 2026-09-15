@@ -171,6 +171,24 @@ export const MOTIVOS_TECNICOS = [
    * residuo del cuerpo sin interpretar (`EST_LINEA_NO_INTERPRETADA`, reusado). Ver `verificarDestinos`.
    */
   'destinos_no_cuadran',
+  /**
+   * Doc 35 §2.2: un extracto REEMITIDO (archivo distinto, al menos una fila con el mismo contenido
+   * económico que una ya persistida) dispara `uq_mov_crudo_fila` dentro de `persistirCuenta`
+   * (`packages/ingesta/src/persistir.ts`). El nombre es neutral a propósito: el hash no distingue "la fila
+   * viene de otro lote" de "dos filas idénticas dentro del MISMO archivo, mal distinguidas por
+   * `ordinalEnEmpate`" — afirmar "otro lote" sería falso en ese segundo caso.
+   */
+  'fila_duplicada_por_hash',
+  /**
+   * HU-6 mínima (doc 35 §2.3/§2.7): un `lote_ingesta_cuenta` ya vigente para el mismo `(cliente_id,
+   * cuenta_bancaria_id)` cubre, total o parcialmente, el período de esta carga (`persistirCuenta`,
+   * `packages/ingesta/src/persistir.ts`) — evaluado DESPUÉS del filtro de `fila_duplicada_por_hash`,
+   * solo para lo que ese filtro no atrapa (ver el comentario en `persistir.ts`). Es la guarda mínima
+   * contra una segunda fuente con formato distinto que `fila_duplicada_por_hash` no puede ver (mismo
+   * movimiento, hash distinto) — sin fusión ni comparación numérica; el mecanismo completo queda para
+   * `ADR-0004` (diferido, B.25).
+   */
+  'periodo_solapa_con_carga_existente',
 ] as const;
 
 const EXTENSIONES_ACEPTADAS = new Set(['.pdf', '.xlsx', '.xls', '.csv']);

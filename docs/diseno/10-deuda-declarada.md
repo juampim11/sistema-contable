@@ -1025,7 +1025,8 @@ confirma lo mismo: **el gate verde no es evidencia de nada por sí solo.**
 
 ## 1. Modelo de datos (auditoría de `dba-data`)
 
-### 1.1 🟠 El lote-ancla se pierde en todo camino de excepción
+### 1.1 🟠 El lote-ancla se pierde en todo camino de excepción — **caso de `uq_mov_crudo_fila` CERRADO
+(2026-09-15)**, los otros dos disparadores siguen abiertos
 
 `ingestar.ts` declara: *"el lote se crea antes de todo lo demás, incluso si el archivo se va a
 rechazar: es el ancla a la que se cuelgan el rechazo y su motivo"*. **Eso vale solo en los caminos que
@@ -1033,17 +1034,26 @@ hacen `return`.** En todo camino que lanza, el `catch` de `conUsuario` hace `ROL
 lote, su `motivo_codigo` **y** la fila de `acceso_auditoria`. Queda un exit code y cero rastro en la
 base.
 
-Y el disparador probable en producción no es exótico: **un extracto reemitido o con período solapado**
-viola `uq_mov_crudo_fila` → `23505` → `ING_DUPLICADO` → rollback total. Lo mismo con
-`uq_anexo_sin_doble_lectura`, que es una **heurística de detección implementada como unique index**: un
-falso positivo aborta un lote de 1346 filas sin dejar constancia de por qué.
+✅ **El disparador probable en producción, ya cerrado**: un extracto reemitido violaba `uq_mov_crudo_fila`
+→ `23505` → `ING_DUPLICADO` → rollback total, sin rastro. Convocatoria real (`dba-data` + `backend-dev`,
+dos rondas, `code-reviewer` antes de cerrar) sobre `docs/diseno/35-continuidad-y-reingesta-wizard.md`
+§2.2. Mecanismo: `SAVEPOINT` puntual por fila alrededor del insert de `movimiento_bancario_crudo`
+(`packages/ingesta/src/persistir.ts`), que permite, ante la colisión, correr un `select` de verificación
+para distinguir **re-ingesta legítima** (la fila ya existente pertenece a OTRO `lote_ingesta_id` →
+`motivoCodigo:'fila_duplicada_por_hash'`, mismo camino que los demás ~8 rechazos) de **bug real
+intra-lote** (misma fila colisiona dentro del MISMO lote que se está insertando → `throw`, preserva
+"todo o nada" — es exactamente el caso que ya prueba `packages/ingesta/tests/persistir.test.ts`, sin
+tocar). La primera ronda de diseño asumía que alcanzaba con filtrar por `error.constraint`; una segunda
+ronda, a pedido explícito del titular ("¿el select ve el estado real, sin asumir?"), encontró que sin el
+`SAVEPOINT` el `select` de verificación fallaba con `25P02` (transacción abortada) en el 100% de los
+casos — corregido antes de cerrar, no después.
 
-**Por qué no se corrigió:** es un cambio de estructura de la aplicación (dos transacciones, o un
-`SAVEPOINT` alrededor de la persistencia con el rechazo asentado después), no una migración. Merece su
-propia tarea con su propio test.
-
-**Converge con** el hallazgo de `security-engineer` sobre `persistirAnexos`, que lanza en vez de
-devolver un `motivoCodigo` — el mismo agujero por otra puerta.
+**Sigue abierto**, mismo patrón, sin tocar en esta tarea: `uq_anexo_sin_doble_lectura` (heurística de
+detección implementada como unique index — un falso positivo aborta un lote de 1346 filas sin dejar
+constancia de por qué), y el hallazgo de `security-engineer` sobre `persistirAnexos`
+(`anexo_literal_con_identificador`, `packages/ingesta/src/persistir.ts:475-482` — lanza en vez de
+devolver un `motivoCodigo`, mismo agujero por otra puerta). Ninguno de los dos tiene el mismo disparador
+concreto y medido que tenía `uq_mov_crudo_fila` — quedan declarados, sin dueño, para su propia tarea.
 
 ### 1.2 🟡 Once índices redundantes — **requiere enmendar ADR-0001 §5 antes de tocar nada**
 

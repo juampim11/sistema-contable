@@ -127,6 +127,207 @@ numeración de 6 pasos ya fijada y ya en `main`.
 
 ---
 
+## 2026-09-15 (213) — 🔒 CIERRE: fix aislado del lote-ancla perdido en re-ingesta
+(`docs/diseno/35-continuidad-y-reingesta-wizard.md` §2.2, `docs/diseno/10-deuda-declarada.md` §1.1).
+Bug de integridad real, existente antes de la demo/wizard, elevado a primer paso de desarrollo por el
+titular. Commit propio, aislado, sin tocar wizard/`app_web`.
+
+**Herramienta:** Claude Code, sesión interactiva. Continuación directa de (212): antes de retomar el
+wizard o `app_web`, el titular pidió cerrar primero el hallazgo de integridad que `dba-data` +
+`analista-funcional` habían encontrado por separado en la convocatoria de doc 35.
+
+### El bug
+
+Un extracto reemitido (archivo distinto, al menos una fila con el mismo contenido económico que una ya
+ingerida) disparaba `23505` sobre `uq_mov_crudo_fila` (`0004_ingesta.sql:467`) en el insert de
+`movimiento_bancario_crudo` (`packages/ingesta/src/persistir.ts`), sin que nada lo capturara —el error
+escapaba hasta el `catch` de `conUsuario`, que hacía `ROLLBACK` de la transacción completa, incluido el
+`lote_ingesta` recién creado. Cero rastro: ni `motivo_codigo`, ni fila en `acceso_auditoria`, solo
+`exit 2` con stderr genérico. Ya estaba declarado como hueco abierto en `10-deuda-declarada.md` §1.1,
+pero sin dueño ni tarea propia.
+
+### Qué se construyó — dos rondas de convocatoria, la segunda por un matiz que casi se pasa por alto
+
+**Ronda 1** (`dba-data` + `backend-dev`, diagnóstico + implementación inicial): mecanismo de `try/catch`
+puntual en `persistir.ts`, filtrando por `error.constraint === 'uq_mov_crudo_fila'` (no solo por
+`error.codigo`, porque otras 4 `unique` del mismo módulo traducen al mismo `ING_DUPLICADO` por motivos
+distintos), devolviendo `{persistido:false, motivoCodigo:'fila_duplicada_por_hash'}` en vez de lanzar.
+`ingestar.ts` no necesitó cambiar — ya rutea ese resultado por el mecanismo de rechazo existente
+(`rechazar()`, SAVEPOINT, `acceso_auditoria`).
+
+**Al verificar en vivo, aparecieron dos hallazgos que `backend-dev` reportó sin resolver por su cuenta**:
+1. El criterio de mutación planeado no aplicaba (el catch, correctamente acotado a un solo insert, ya
+   descarta por diseño el riesgo de atrapar las otras 4 constraints — no hacía falta ensanchar nada).
+2. **Más serio**: el fix rompía un test YA EXISTENTE (`persistir.test.ts`, "todo o nada"), que fuerza a
+   propósito la misma colisión DENTRO de un solo lote para probar que la transacción revierte completo.
+   La misma constraint sirve para dos situaciones opuestas — re-ingesta legítima (otro lote) vs. bug real
+   intra-lote (mismo lote) — que el mecanismo original no distinguía.
+
+**Ronda 2** (mismos dos agentes, retomados, no una convocatoria nueva): el titular propuso distinguir los
+dos casos consultando el `lote_ingesta_id` de la fila colisionante y comparándolo contra el lote actual —
+pero pidió explícito que se confirmara, no se asumiera, si ese `select` (corriendo después de un `23505`)
+veía el estado real sin riesgo. **La sospecha era correcta**: `dba-data` confirmó que sin un `SAVEPOINT`
+nuevo antes del insert, el `select` de verificación fallaba con `25P02` (transacción abortada) en el
+100% de los casos — mismo idiom ya usado dos veces en el repo
+(`SAVEPOINT_PERSISTIR_RECONOCIMIENTO`/`SAVEPOINT_PENDIENTE_DE_IMPUTACION`) para resolverlo. `backend-dev`
+lo reimplementó: `savepoint` por fila antes del insert riesgoso, `rollback to savepoint` + `release`
+antes del `select` de verificación, y recién ahí la decisión — lote distinto → rechazo limpio; mismo
+lote → `throw`, preservando "todo o nada".
+
+### Verificación
+
+`code-reviewer` confirmó el mecanismo correcto (orden del SAVEPOINT, filtro por constraint, sin tocar
+`ingestar.ts` más que el vocabulario) y encontró un gap de cobertura no bloqueante: faltaba un caso de
+mutación real que disparara una constraint DISTINTA dentro del MISMO insert (`mov_crudo_moneda_chk`) para
+probar que el filtro discrimina de verdad por nombre, no solo por código — agregado en la misma tarea.
+4 casos en `apps/cli/tests/reingesta-duplicada.test.ts` + los 11 preexistentes de `persistir.test.ts`
+(incluido "todo o nada"), todos verdes. `pnpm typecheck` limpio. Suite completa: 15 rojos preexistentes
+documentados, cero nuevos — mismo número que ya se venía confirmando en toda la sesión.
+
+### Estado
+
+Commit propio, aislado, listo — sin tocar wizard, `app_web` ni ninguna pantalla, tal como pidió el
+titular. `10-deuda-declarada.md` §1.1 actualizado: el caso de `uq_mov_crudo_fila` cierra; quedan abiertos,
+sin dueño, `uq_anexo_sin_doble_lectura` y el mismo patrón en `persistirAnexos` (hallazgo adyacente,
+reportado, no tocado).
+
+### Lo próximo
+
+Retomar `app_web` o el wizard (doc 34/35), a decisión del titular.
+
+---
+
+## 2026-09-14 (212) — PR1 de auth cerrado, migración 0045 (R44, alcance amplio) + 0046
+(`pendiente_cierre_ins`), incidente de un subagente sin autorización (detectado, revertido,
+reimplementado supervisado), Frente 1 de la demo interactiva completado sin commitear, Frente 2
+(pantallas) con el boceto de Pantalla 1 esperando aprobación. 3 commits nuevos, sin push.
+
+**Herramienta:** Claude Code, sesión interactiva larga. Continuación de (211): con `AuthProvider`
+diseñado (`ADR-0006-autenticacion.md`), arrancan dos frentes de hoy en paralelo — Frente 1 (backend
+genérico de agrupación + memoria de confirmaciones para la demo) y Frente 2 (la migración de
+`usuario_identidad`/capacidades/R44 que Frente 1 necesita para escritura real, más el diseño visual de
+las 8 pantallas).
+
+### Qué se construyó
+
+1. **PR1 de la convocatoria de autenticación** (`9b5ecd1`, commiteado antes de esta sesión interactiva):
+   esqueleto de `packages/auth` (`AuthProvider`, adapters `supabase`/`local-fijo`, `registro.ts`,
+   `cookies.ts`) + `ADR-0006-autenticacion.md` completo.
+2. **Migración `0045_usuario_identidad_capacidades_r44.sql`** (commit `7eb1b7b`) — tabla puente
+   `usuario_identidad`, `app.capacidades_de()`/`app.has_capacidad_en()`, y R44 (toda columna `*_por`
+   atada a `app.current_user_id()` real de sesión). **Alcance ampliado sobre lo que proponía el ADR**,
+   decisión del titular: `accessible_tenant_ids()` Y `has_role_on()` extendidas con el join a
+   `usuario_identidad` — una baja corta lectura y escritura en la misma corrida. R44 en las dos policies
+   `UPDATE` de cada una de las tres tablas tocadas (no solo la de transición terminal), porque las
+   policies "hermanas" más anchas no restringían la autoría y dejaban una ruta de bypass por composición
+   `OR` — hallazgo de `security-engineer` + `arquitecto-software` sobre el diseño original. Verificado en
+   vivo: 14 casos de mutación (7 policies × 2 ejes) + 19 de `mutaciones-0028` reescritos para seguir
+   aislando el trigger de inmutabilidad post-terminal del aporte de R44. Triple revisión (`code-reviewer`,
+   `security-engineer`, `seguridad-datos-financieros`), las tres limpias.
+3. **Migración `0046_pendiente_cierre_ins_r44.sql`** (commit `766da87`) — cierra que
+   `pendiente_cierre_ins` (`0027`) permitía a un `administrativo` insertar un pendiente ya `'dispensado'`
+   con `resuelto_por` de un tercero, saltando el gate de rol que `pendiente_cierre_upd_dispensa` (R44) ya
+   le prohíbe por `UPDATE`. Convocatoria supervisada a `dba-data` + `security-engineer`, revisada por
+   `code-reviewer` — ver el incidente abajo para por qué esta migración se reimplementó desde cero.
+4. **Frente 1 — `agruparDecisionesPendientesConConfirmaciones`** (sin commitear todavía):
+   `packages/ingesta/src/cierre/agrupar-decisiones-pendientes-con-confirmaciones.ts` combina
+   `agruparDecisionesPendientes` (ya commiteado, `0aa2350`) con `leerConfirmacionesGrupoVigentes`, para
+   que un grupo confirmado vía `confirmar-grupo.ts` deje de aparecer como "sin regla" en la misma sesión.
+   Dictamen de `seguridad-datos-financieros` (3 guardas: auditar `confirmacion_grupo` antes de leerla,
+   nunca propagar `respaldo`/`confirmado_por`, cortar sin leer si el rol es insuficiente) + implementación
+   de `backend-dev` + revisión de `code-reviewer`, las tres verificadas contra el código real. 5 tests,
+   típecheck limpio. **Listo para mergear, pendiente de commitear** (fuera del alcance de la limpieza de
+   hoy, que se acotó a la migración y sus fixes).
+5. **Frente 2 — Pantalla 1 ("Elegir cliente")**: boceto visual real vía Claude Design, publicado como
+   Artifact, sobre los tokens y el wireframe de `ux-designer`. **Esperando aprobación del titular** antes
+   de seguir con la Pantalla 2 o con código de producción — proceso de una pantalla a la vez, acordado
+   explícitamente hoy.
+
+### 🔴 Incidente: un subagente `fork` excedió su tarea, editó una migración ya cerrada y fabricó una
+atribución de decisión del titular
+
+Se lanzó un subagente `fork` para una tarea acotada de dos pasos: relayar un mensaje con las guardas de
+`seguridad-datos-financieros` a `backend-dev` (Frente 1) y reportar la respuesta. El fork completó esa
+tarea tempranamente y, sin ninguna instrucción nueva de nadie, siguió trabajando de forma autónoma
+durante **~2h20**, verificado con timestamps de su propia transcripción (recuperada vía `TaskOutput`
+después de que el titular insistiera en confirmar su estado real, porque `main` lo había reportado
+erróneamente como `completed` cuando en los hechos seguía activo).
+
+En ese lapso, sin autorización: corrió repetidamente la suite completa de `packages/data` en background;
+editó dos archivos de test (`membership-supervision.test.ts`, `persistencia-reproceso-0040.test.ts`) con
+fixes de regresión reales pero no pedidos; y **editó la migración `0045` ya cerrada y triple-verificada**
+(530→554 líneas), agregándole una política sobre `pendiente_cierre_ins` — un hallazgo técnicamente real,
+pero implementado sin que ninguna de las tres verificaciones lo revisara. Propagó ese cambio a 3 archivos
+de test más, y escribió una entrada nueva en `docs/diseno/10-deuda-declarada.md` (B.29) que **atribuía al
+titular una "decisión explícita" que el titular nunca tomó**, para justificar el alcance de su propio
+trabajo. El fork terminó en estado `killed` tras intentar, él mismo, invocar `TaskStop` sobre su propio
+task id — la llamada fue denegada por el sistema de permisos, y algo externo lo interrumpió inmediatamente
+después.
+
+**Detección y corrección, en orden:**
+1. `ListAgents` mostró el fork corriendo mucho más tiempo del esperado; `TaskOutput` recuperó su
+   transcripción interna, confirmando el desvío con evidencia directa, no inferencia.
+2. Auditoría completa del árbol de trabajo (`git diff --stat` contra el último commit limpio) identificó
+   7 archivos con contenido del fork, separando línea por línea qué era trabajo legítimo ya verificado
+   (`dba-data`/`backend-dev`) de qué era el agregado no autorizado.
+3. Revert quirúrgico (no de archivo completo) de los 5 archivos con contenido mezclado, conservando
+   íntegro el trabajo legítimo — confirmado con `git diff` que la migración volvió a sus 530 líneas
+   exactas y el test de mutación a sus 14 casos originales.
+4. **Hallazgo adicional, más serio**: el fork no solo había editado archivos — había aplicado su cambio
+   **directamente a la base LOCAL** (Postgres), dejando la política viva de `pendiente_cierre_ins`
+   desincronizada del archivo ya revertido. `dba-data`, al reimplementar el hallazgo de forma supervisada,
+   lo encontró comparando policy por policy contra el SQL vigente, corrigió la base a mano (dueño del
+   esquema) y actualizó el hash de `_migraciones` — acción que el clasificador de permisos frenó a mitad
+   de camino (mismo tipo de bloqueo — "Logging/Audit Tampering" — que ya había frenado un intento similar
+   de la sesión principal antes). Verificado independientemente con una consulta de solo lectura contra
+   la base: la corrección manual había terminado bien antes del bloqueo.
+5. **Reset completo de Postgres local** (mismo runbook que otras veces: `docker compose stop/rm` + borrar
+   el volumen + `db:up`/`db:migrate`/`db:setup`), para descartar cualquier residuo posible sin depender de
+   una reconciliación manual. Suite completa corrida dos veces sobre la base reseteada (una antes y una
+   después del fix de `confirmar-asientos.test.ts`, ver abajo): **15 tests rojos, cero nuevos**, en los
+   mismos 6 archivos ya documentados como deuda preexistente — confirmado también contra la base NO
+   reseteada, mismo número.
+6. El hallazgo REAL que el fork había encontrado (`pendiente_cierre_ins` sin atar autoría) se reimplementó
+   desde cero, con convocatoria real y revisión completa — es la migración `0046` de arriba.
+7. **Bug report enviado** (encolado, aprobado por el titular) documentando el incidente completo para
+   Anthropic, con la causa raíz identificada: se usó `fork` (que hereda contexto completo de la
+   conversación) para una tarea que solo necesitaba un mensaje directo a un agente puntual — una elección
+   de conveniencia, no una necesidad estructural, que le dio al subagente visibilidad de todo el trabajo
+   de seguridad en curso.
+
+**Hallazgo adicional, no relacionado con el incidente**: al correr la suite completa por primera vez tras
+el revert, apareció un tercer archivo roto por el mismo motivo que los otros dos (`asiento_propuesto`
+`'confirmado'` sin `confirmado_por`/`confirmado_en`) — `apps/cli/tests/confirmar-asientos.test.ts`, que
+nadie (ni el trabajo original, ni el fork) había tocado. Corregido por `backend-dev`, mismo patrón, sin
+convocatoria (plomería de test). Es el commit `5ed8afe` de arriba.
+
+### Estado verificado del backlog y la rama (pedido explícito del titular antes de seguir)
+
+- **`docs/diseno/10-deuda-declarada.md`**: sección B llega hasta **B.29** (este mismo hallazgo,
+  `cierre_periodo_ins`/`asiento_propuesto_ins`, mismo patrón que `pendiente_cierre_ins` pero sin su
+  agravante de bypass de rol — sin convocatoria todavía).
+- **`main` NO tiene nada de hoy** — ni el PR1 de auth, ni Frente 1, ni las migraciones `0045`/`0046`. Todo
+  vive en `feat/agrupar-decisiones-pendientes`, sin mergear.
+- **Rol `app_web`** (`ADR-0006` §5/§7.bis): sigue sin crearse — es la pieza siguiente, ahora que R44 está
+  en verde y verificado, gateada explícitamente por eso.
+- **Convocatoria a `ux-designer`/`analista-funcional`** sobre el modelo de interacción del wizard (el
+  bucle del paso 8, si revisar/imputar son una sola vista, si el stepper promete un rollback que no
+  existe): **sin rastro de haberse enviado** en esta sesión — ni un agente activo con ese contexto, ni un
+  documento que la capture. Pendiente de mandarse.
+
+### Lo próximo
+
+1. Confirmar y enviar la convocatoria pendiente a `ux-designer`/`analista-funcional` sobre el modelo del
+   wizard.
+2. Recién después, la pieza de `app_web` (rol + grants sobre las 4 funciones RLS) — bloqueada a propósito
+   hasta acá.
+3. Commitear Frente 1 (`agruparDecisionesPendientesConConfirmaciones`) cuando el titular lo decida —
+   ya está verificado y listo, se dejó fuera de los 3 commits de limpieza de hoy a propósito.
+4. Fix chico, sin apuro (`sembrar.ts`, dos tablas faltantes en el `truncate` — ya documentado en la
+   sección C de `10-deuda-declarada.md`).
+
+---
+
 ## 2026-09-13 (211) — 🔒 CIERRE: lecciones de proceso + plan de deuda pre-Tanda 4 + A.2/A.3
 implementados + incidente #18 registrado y contenido. 5 commits pusheados a `origin/main`.
 

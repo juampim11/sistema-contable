@@ -32,7 +32,12 @@
  * que uno verificado.
  */
 
-import { conErroresTraducidos, leerDigestsDeCuentasPropias, type Tx } from '@sistema-contable/data';
+import {
+  conErroresTraducidos,
+  ErrorDeBase,
+  leerDigestsDeCuentasPropias,
+  type Tx,
+} from '@sistema-contable/data';
 import { logger } from '@sistema-contable/shared/observabilidad';
 import { extraerCandidatosDeContraparte } from './contraparte.ts';
 import { contieneIdentificador, depurarGlosa } from './glosa.ts';
@@ -150,6 +155,19 @@ function primeraDiferencia(verificacion: Verificacion): string {
   const error = verificacion.diferencias.find((d) => d.severidad === 'error');
   return error?.codigo ?? verificacion.diferencias[0]?.codigo ?? 'verificacion_no_cuadra';
 }
+
+/**
+ * 🔴 Nombre FIJO, nunca interpolado con un dato del pedido — mismo criterio que
+ * `SAVEPOINT_PERSISTIR_RECONOCIMIENTO` (`packages/data/src/contabilidad/escrituras.ts`) y
+ * `SAVEPOINT_PENDIENTE_DE_IMPUTACION` (`packages/data/src/cierre/escrituras.ts`): un `SAVEPOINT` no
+ * admite parámetros ligados, así que interpolar un valor del pedido sería la misma clase de bug de
+ * inyección que esos dos evitan por diseño.
+ *
+ * Es seguro reusarlo en cada vuelta del `for` de movimientos: el camino feliz lo libera
+ * (`release savepoint`) y el camino de colisión hace `rollback to` + lo libera antes de la próxima
+ * vuelta, así que no se acumulan savepoints anidados a lo largo de un lote de miles de filas.
+ */
+const SAVEPOINT_PERSISTIR_MOVIMIENTO_CRUDO = 'sp_persistir_movimiento_crudo';
 
 /**
  * Persiste una cuenta con sus movimientos. **Asume que ya está dentro de una transacción** con identidad
@@ -299,44 +317,111 @@ export async function persistirCuenta(
       return { persistido: false, motivoCodigo: 'concepto_banco_no_es_prefijo' };
     }
 
+    /**
+     * SAVEPOINT por fila, ANTES del insert que puede fallar por `uq_mov_crudo_fila`. Sin él, el `select`
+     * de más abajo (que necesita distinguir "esta fila es de OTRO lote" de "es del MISMO lote") fallaría
+     * con `25P02` (`current transaction is aborted`) en el 100% de las colisiones: un error de Postgres
+     * dentro de una transacción la deja abortada hasta el próximo `ROLLBACK`, y ese `select` corre
+     * DESPUÉS del `insert` fallido.
+     */
+    await tx.consultar(`savepoint ${SAVEPOINT_PERSISTIR_MOVIMIENTO_CRUDO}`);
+
     // El traductor lleva el número de fila: sin él, un insert de 326 filas que falla no dice cuál, y la
     // única salida sería volver al archivo del cliente.
-    const insertado = await conErroresTraducidos(m.filaNumero, () =>
-      tx.consultar<{ id: string }>(
-      `insert into movimiento_bancario_crudo
-         (cliente_id, lote_ingesta_id, cuenta_bancaria_id, fila_numero, fila_hash,
-          fecha, fecha_valor, descripcion, importe, saldo, saldo_es_acreedor, moneda,
-          concepto_codigo, referencia_externa,
-          concepto_banco, concepto_completo, concepto_banco_estrategia, pagina_pdf,
-          contraparte_captura)
-       values ($1, $2, $3, $4, $5, $6::date, $7::date, $8, $9::numeric, $10::numeric, $11, $12, $13, $14,
-               $15, $16, $17, $18, $19)
-       returning id::text as id`,
-      [
-        pedido.clienteId,
-        pedido.loteId,
-        pedido.cuentaBancariaId,
-        m.filaNumero,
-        m.filaHash,
-        m.fecha,
-        m.fechaValor ?? null,
-        glosa.descripcion,
-        m.importe,
-        m.saldo ?? null,
-        m.saldoEsAcreedor ?? null,
-        m.moneda,
-        m.conceptoCodigo ?? null,
-        m.referenciaExterna ?? null,
-        conceptoBanco,
-        m.conceptoCompleto ?? null,
-        // `no_publicado` cuando el adaptador no declaró nada Y no trajo concepto: es el caso honesto.
-        // Con concepto y sin estrategia el esquema ya no valida, así que acá no puede llegar.
-        m.conceptoBancoEstrategia ?? 'no_publicado',
-        m.paginaPdf,
-        contraparte.captura,
-      ],
-      ),
-    );
+    let insertado: readonly { id: string }[];
+    try {
+      insertado = await conErroresTraducidos(m.filaNumero, () =>
+        tx.consultar<{ id: string }>(
+        `insert into movimiento_bancario_crudo
+           (cliente_id, lote_ingesta_id, cuenta_bancaria_id, fila_numero, fila_hash,
+            fecha, fecha_valor, descripcion, importe, saldo, saldo_es_acreedor, moneda,
+            concepto_codigo, referencia_externa,
+            concepto_banco, concepto_completo, concepto_banco_estrategia, pagina_pdf,
+            contraparte_captura)
+         values ($1, $2, $3, $4, $5, $6::date, $7::date, $8, $9::numeric, $10::numeric, $11, $12, $13, $14,
+                 $15, $16, $17, $18, $19)
+         returning id::text as id`,
+        [
+          pedido.clienteId,
+          pedido.loteId,
+          pedido.cuentaBancariaId,
+          m.filaNumero,
+          m.filaHash,
+          m.fecha,
+          m.fechaValor ?? null,
+          glosa.descripcion,
+          m.importe,
+          m.saldo ?? null,
+          m.saldoEsAcreedor ?? null,
+          m.moneda,
+          m.conceptoCodigo ?? null,
+          m.referenciaExterna ?? null,
+          conceptoBanco,
+          m.conceptoCompleto ?? null,
+          // `no_publicado` cuando el adaptador no declaró nada Y no trajo concepto: es el caso honesto.
+          // Con concepto y sin estrategia el esquema ya no valida, así que acá no puede llegar.
+          m.conceptoBancoEstrategia ?? 'no_publicado',
+          m.paginaPdf,
+          contraparte.captura,
+        ],
+        ),
+      );
+      await tx.consultar(`release savepoint ${SAVEPOINT_PERSISTIR_MOVIMIENTO_CRUDO}`);
+    } catch (error) {
+      /**
+       * Un extracto REEMITIDO (archivo distinto, al menos una fila con el mismo contenido económico que
+       * una ya persistida) dispara `uq_mov_crudo_fila` (`0004_ingesta.sql:467`). Sin este catch, la
+       * excepción sube hasta `conUsuario`, que revierte la transacción ENTERA — incluido el `insert` del
+       * lote-ancla — y el intento no deja ni un `motivo_codigo` ni una fila en `acceso_auditoria`.
+       *
+       * Filtro ESTRICTO por `error.constraint`, no por `error.codigo`: `persistirCuenta`/`persistirAnexos`
+       * tocan otras cuatro `unique` que también traducen a `ING_DUPLICADO` por el mismo camino genérico
+       * (`uq_lote_cuenta_natural`, `uq_anexo_orden`, `uq_mov_origen_movimiento`, y esta misma
+       * `uq_mov_crudo_fila`), cada una con una semántica de bug DISTINTA. Elegir el código en vez de la
+       * constraint (por ejemplo, atrapar `ErrorDeBase` en general) taparía esos bugs reales detrás de un
+       * motivo que dice "ya existe" — mismo riesgo que ya identificó por escrito el precedente de
+       * `packages/data/src/contabilidad/escrituras.ts` (`SAVEPOINT_PERSISTIR_RECONOCIMIENTO`).
+       */
+      if (error instanceof ErrorDeBase && error.constraint === 'uq_mov_crudo_fila') {
+        // La transacción quedó abortada por el `insert` que acaba de fallar (ver el comentario del
+        // savepoint, arriba): primero se limpia el estado local, y RECIÉN DESPUÉS —con la transacción
+        // ya utilizable— se puede correr el `select` de abajo.
+        await tx.consultar(`rollback to savepoint ${SAVEPOINT_PERSISTIR_MOVIMIENTO_CRUDO}`);
+        await tx.consultar(`release savepoint ${SAVEPOINT_PERSISTIR_MOVIMIENTO_CRUDO}`);
+
+        /**
+         * ¿La fila que ya existe es de OTRO lote (reemisión legítima del mismo extracto) o del MISMO
+         * lote (duplicado intra-lote — un bug real de `ordinalEnEmpate`, no una reemisión)? El hash por
+         * sí solo no lo distingue: hace falta esta lectura, ahora que la transacción está limpia.
+         */
+        const existente = await tx.consultar<{ lote_ingesta_id: string }>(
+          `select lote_ingesta_id from movimiento_bancario_crudo
+             where cliente_id = $1 and cuenta_bancaria_id = $2 and fila_hash = $3`,
+          [pedido.clienteId, pedido.cuentaBancariaId, m.filaHash],
+        );
+        const loteExistente = existente[0]?.lote_ingesta_id;
+
+        if (loteExistente !== undefined && loteExistente !== pedido.loteId) {
+          logger.warn('persistencia.rechazada', {
+            cliente_id: pedido.clienteId,
+            lote_id: pedido.loteId,
+            motivo_codigo: 'fila_duplicada_por_hash',
+            fila_numero: m.filaNumero,
+          });
+          return { persistido: false, motivoCodigo: 'fila_duplicada_por_hash' };
+        }
+
+        /**
+         * Mismo `lote_ingesta_id` (duplicado intra-lote real, todo-o-nada), o el `select` no encontró la
+         * fila que provocó la colisión (no esperado: se prefiere relanzar antes que afirmar "es de otro
+         * lote" sin haberlo confirmado). Es seguro relanzar el `ErrorDeBase` original después del
+         * `rollback to` local: cuando llegue al `catch` de `conUsuario()` va a hacer el `ROLLBACK`
+         * completo igual, esté la transacción "limpia" por este savepoint o no.
+         */
+        throw error;
+      }
+      throw error;
+    }
 
     const movimientoId = insertado[0]?.id;
     if (!movimientoId) throw new Error('El movimiento no devolvió id: la transacción se revierte.');
@@ -388,6 +473,49 @@ export async function persistirCuenta(
     );
 
     filas += 1;
+  }
+
+  /**
+   * HU-6 mínima (`docs/diseno/35-continuidad-y-reingesta-wizard.md` §2.3/§2.7): bloqueo simple de una
+   * sola carga vigente por `(cliente_id, cuenta_bancaria_id)` con período no solapado.
+   *
+   * 🔴 **Se evalúa ACÁ, después del loop de arriba, no antes.** `fila_hash` (`uq_mov_crudo_fila`, HU-5,
+   * catch de más arriba) ya atrapa la re-ingesta cuyo contenido matchea por hash — ese es el motivo más
+   * específico y tiene que ganar cuando aplica. Este chequeo es la red para el hueco que `fila_hash` NO
+   * puede ver: una segunda fuente con formato distinto para el mismo cuenta-período (PDF vs. Excel del
+   * mismo extracto, un re-export tras un cambio de versión del sistema del banco) produce un hash
+   * DISTINTO para la misma transacción real — todas las filas pasan el loop de arriba como "nuevas", y
+   * solo acá, mirando el período de la cuenta contra lo que ya hay persistido, se nota el solape. Ponerlo
+   * antes del loop haría que este motivo, más genérico, tapara siempre al de `fila_hash` — cualquier
+   * reingesta del mismo período (el caso que HU-5 ya cubre) TAMBIÉN es un período solapado, así que
+   * `fila_duplicada_por_hash` nunca se alcanzaría. La guarda completa (tolerancia de redondeo, "gana el
+   * que cuadra", `ADR-0004`) queda fuera de alcance a propósito (decisión previa del titular, B.25) —
+   * acá solo se impide la segunda carga, sin excepción, una vez descartado que `fila_hash` ya la haya
+   * explicado mejor.
+   *
+   * `lote_ingesta_id <> pedido.loteId` excluye la fila que este mismo `persistirCuenta` insertó para
+   * `pedido.loteId` más arriba (antes del loop, por la FK de tres columnas que necesitan los
+   * `movimiento_bancario_crudo` de arriba) — sin esto, la cuenta se encontraría solapada consigo misma
+   * en cada carga.
+   */
+  const solapada = await tx.consultar<{ id: string }>(
+    `select id::text as id from lote_ingesta_cuenta
+      where cliente_id = $1
+        and cuenta_bancaria_id = $2
+        and lote_ingesta_id <> $3
+        and periodo_desde <= $4::date
+        and periodo_hasta  >= $5::date
+      limit 1`,
+    [pedido.clienteId, pedido.cuentaBancariaId, pedido.loteId, c.periodoHasta, c.periodoDesde],
+  );
+  if (solapada.length > 0) {
+    logger.warn('persistencia.rechazada', {
+      cliente_id: pedido.clienteId,
+      lote_id: pedido.loteId,
+      motivo_codigo: 'periodo_solapa_con_carga_existente',
+      filas_descartadas: movimientos.length,
+    });
+    return { persistido: false, motivoCodigo: 'periodo_solapa_con_carga_existente' };
   }
 
   /**
