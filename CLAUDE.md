@@ -72,6 +72,47 @@
    > casualidad** — en los tres casos lo pendiente coincidía con lo autorizado. **El control nunca
    > existió.** Es el mismo patrón que R33 y R13: un artefacto que dice una cosa y hace otra.
 
+10. **Merge es parte de "terminado", no un paso aparte.** Una migración, un PR o un fix no está
+    cerrado hasta que está en `main`. La aprobación de contenido y la autorización de merge se piden
+    y se dan en el mismo momento — nunca "aprobado, lo mergeamos después".
+
+    > **Por qué está escrito como regla dura.** Sesión del 15/16 de septiembre de 2026: el bump de
+    > versión del motor (`chore(contabilidad): motor:version:aceptar`) quedó aprobado y cerrado, pero
+    > sin mergear a `main`, durante horas — y toda la sesión siguió corriendo la suite completa contra
+    > "15 rojos preexistentes" como número de referencia, cuando el número real, con ese fix ya
+    > aceptado, era 14. El error no se notó hasta el inventario completo de ramas al final de la
+    > noche.
+
+11. **Toda rama nueva nace de `main`, salvo excepción explícita.** Antes de crear una rama, declarar
+    la base en voz alta: "desde `main`" o "continuando la rama X porque Y". Nunca apilar en silencio.
+
+    > **Por qué está escrito como regla dura.** Misma sesión: dos ramas pensadas como "solo
+    > documentación" (numeración de un flujo de wizard, una entrada de bitácora) se crearon apiladas
+    > sobre una rama de feature en curso, sin declararlo — y terminaron arrastrando dos migraciones de
+    > esquema y RLS que nadie había decidido llevar a `main` todavía. Se descubrió recién al pedir el
+    > `git diff --stat` antes de mergear, no al crear la rama.
+
+12. **Ningún `fork` (subagente con contexto completo) para tareas de relay o acotadas.** Un `fork` se
+    usa solo cuando la tarea genuinamente necesita ese contexto completo. Para relayar un mensaje o
+    resolver una tarea puntual y chica, una llamada directa y acotada — nunca un `fork` por
+    conveniencia.
+
+    > **Por qué está escrito como regla dura.** Incidente de la misma sesión: un subagente lanzado
+    > como `fork` para una tarea de relay corrió sin supervisión cerca de dos horas y media, reabrió y
+    > modificó una migración ya cerrada y verificada, escribió directo contra la base de datos local,
+    > y fabricó una atribución de decisión del titular que nunca existió, para justificar su propio
+    > alcance ampliado.
+
+13. **Checkpoint de integración obligatorio.** Si en un momento dado hay más de 2 piezas de trabajo
+    cerradas y sin mergear a `main` de forma simultánea, se para el trabajo nuevo y se invoca la
+    skill `cierre-de-integracion` antes de seguir — el procedimiento completo vive ahí, no acá.
+
+    > **Por qué está escrito como regla dura.** Misma sesión: siete piezas grandes (PR1 de auth, dos
+    > migraciones de R44, el fix del lote-ancla, HU-6, el bump de versión del motor, el fix de CI, y
+    > Frente 1) quedaron cerradas y sin mergear al mismo tiempo, cada una en su propia rama, algunas
+    > apiladas unas sobre otras sin declararlo (regla 11). Reconstruir qué tenía cada una, qué drift
+    > había, y en qué orden mergear sin perder nada costó una sesión entera dedicada solo a eso.
+
 ## 2. Convenciones técnicas
 
 - **TypeScript estricto** de punta a punta; validación de límites con **Zod**. Stack completo y monorepo:
