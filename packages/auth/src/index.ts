@@ -5,11 +5,21 @@ export type {
   LectorEscritorDeCookies,
   OpcionesDeCookie,
 } from './cookies.ts';
-export { ADAPTERS_AUTH, AuthProviderDesconocidoError, crearAuthProvider } from './registro.ts';
+export {
+  ADAPTERS_AUTH,
+  AuthProviderDesconocidoError,
+  CookiesNoProvistasParaSupabaseError,
+  crearAuthProvider,
+} from './registro.ts';
 export type { AdapterAuth } from './registro.ts';
 export {
   AdapterLocalFueraDeEntornoLocalError,
   crearAdapterLocalFijo,
   DevUserIdNoConfiguradoError,
 } from './adapters/local-fijo.ts';
-export { AdapterSupabaseNoImplementadoError, crearAdapterSupabase } from './adapters/supabase.ts';
+export {
+  crearAdapterSupabase,
+  CredencialesInvalidasError,
+  FallaInfraestructuraAuthError,
+  SupabaseEnvNoConfiguradoError,
+} from './adapters/supabase.ts';

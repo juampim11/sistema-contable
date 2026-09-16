@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { AdapterLocalFueraDeEntornoLocalError } from '../src/adapters/local-fijo.ts';
-import { AuthProviderDesconocidoError, crearAuthProvider } from '../src/registro.ts';
+import {
+  AuthProviderDesconocidoError,
+  CookiesNoProvistasParaSupabaseError,
+  crearAuthProvider,
+} from '../src/registro.ts';
+import type { LectorEscritorDeCookies } from '../src/cookies.ts';
+
+function cookiesDePrueba(): LectorEscritorDeCookies {
+  return { obtenerTodas: () => [], establecerTodas: () => {} };
+}
 
 const UUID_SINTETICO = '11111111-2222-4333-8444-555555555555';
 
@@ -47,11 +56,16 @@ describe('crearAuthProvider — catálogo cerrado (ADR-0006 §1)', () => {
     expect(() => crearAuthProvider()).toThrow(AdapterLocalFueraDeEntornoLocalError);
   });
 
-  it('"supabase" devuelve el stub (construir no lanza, invocar sí)', async () => {
+  it('"supabase" sin cookies lanza CookiesNoProvistasParaSupabaseError, sin construir nada', () => {
     process.env['AUTH_PROVIDER'] = 'supabase';
 
-    const provider = crearAuthProvider();
+    expect(() => crearAuthProvider()).toThrow(CookiesNoProvistasParaSupabaseError);
+  });
+
+  it('"supabase" con cookies devuelve el adapter real (construir no lanza)', () => {
+    process.env['AUTH_PROVIDER'] = 'supabase';
+
+    const provider = crearAuthProvider(cookiesDePrueba());
     expect(provider).toBeDefined();
-    await expect(provider.iniciarSesion({ email: 'x', password: 'y' })).rejects.toThrow();
   });
 });
