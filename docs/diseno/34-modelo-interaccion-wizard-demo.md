@@ -200,3 +200,88 @@ ningún documento anterior.
    bocetar Pantalla 2.
 3. Con (2) resuelto, retomar el proceso de una pantalla a la vez (boceto → aprobación → código) para la
    Pantalla 2 ("Subir extracto bancario") en adelante, en el orden de la tabla de §0.
+
+---
+
+## 4. Coherencia de §1.3 con el paso 5 fusionado (convocatoria 2026-09-16)
+
+> Convocatoria: `ux-designer`, sola (2026-09-16). Corrige una premisa con la que llegó la convocatoria:
+> no existe ningún boceto de "Pantalla 5" — este dictamen es análisis sobre el texto de §1.2/§1.3 y el
+> código citado ahí, no sobre una pantalla dibujada. A diferencia del resto de este documento, esta
+> sección no tuvo convocatoria conjunta con `analista-funcional`; el punto 4 de la Resolución queda
+> marcado explícitamente como pendiente de esa verificación, no como AC cerrado.
+
+### Hallazgo
+
+§1.3 fue escrito con la unidad "paso" tratada como átomo: pre-confirmación (navegable) vs.
+post-confirmación (cerrado). En el conteo original de 8, "revisar tipificaciones" e "imputar a cuentas
+contables" eran dos pasos separados, y cada uno tenía un único evento terminal que lo cerraba entero.
+
+Con la fusión de §1.2, el paso 5 ("Revisar e imputar") ya no tiene un único evento terminal: contiene N
+filas de `GrupoDecisionPendiente[]`, cada una con su propio `confirmarGrupo()` independiente — y §1.2 ya
+estableció, como AC explícito, que "confirmar una fila no exige haber revisado en un paso anterior
+separado" ni exige un "confirmar todo el paso" de una vez. Aplicar el candado de §1.3 al PASO completo
+tal cual está escrito produce un estado sin sentido: con 12 de 23 grupos confirmados, ¿el círculo del
+stepper está cerrado o abierto? Los dos AC originales de §1.3 ("no responde a click", "hover muestra
+motivo") no tienen respuesta binaria en ese punto intermedio — y ese punto intermedio es el caso normal
+del paso 5, no la excepción: un archivo de volumen real (Bracci, julio 2026 — citado en §1.2) tiene 563
+grupos para decidir, no se resuelven en un solo gesto.
+
+Además, `confirmarGrupo()` y `confirmarAsiento()` (paso 6) no son el mismo evento ni tienen el mismo
+alcance: el primero cierra una fila; el segundo cierra el asiento completo, y es el que corresponde al
+"punto de no retorno real" que describe §1.1. Tratarlos como si dispararan el mismo comportamiento de
+paso (candado de paso completo) confunde dos niveles de inmutabilidad que el propio esquema (`0028`) ya
+distingue por fila/entidad, no por paso del wizard.
+
+### Resolución
+
+El candado de §1.3 sigue siendo el contrato correcto — pero se aplica en **dos niveles distintos**, no
+en uno:
+
+1. **Nivel fila** (dentro del paso 5, en el contenido, no en el stepper): el contrato completo de §1.3
+   se aplica tal cual, fila por fila. Apenas `confirmarGrupo()` cierra un grupo, esa fila puntual pasa a
+   modo "cerrado" — sin cursor de edición inline, con candado+check, y con el mismo hover "quién y
+   cuándo lo confirmó" + puente a "Corregir esta decisión" (`revocaId`). Las demás filas del mismo paso
+   siguen abiertas y editables en simultáneo. Es una extensión directa de §1.3, aplicada al grano real
+   del dominio (`GrupoDecisionPendiente`, no "paso").
+
+2. **Nivel paso** (el círculo del stepper): mientras el wizard sigue en la sesión de esta cuenta, el
+   círculo 5 del stepper **nunca entra en el modo "cerrado sin puntero"** de §1.3 — permanece navegable
+   incluso con grupos ya confirmados adentro, porque siempre hay una razón legítima para volver (ver el
+   resto de los grupos, corregir uno vía `revocaId`). El modo "cerrado sin puntero, solo hover" que
+   §1.3 describe corresponde al evento de `confirmarAsiento()` en el paso 6 — ahí sí hay un único
+   evento terminal de alcance completo, coherente con "punto de no retorno real" de §1.1. Cuando eso
+   ocurre, el candado real de §1.3 aplica al stepper completo (los 6 círculos de esa cuenta), consistente
+   con que la sesión completa del wizard para esa cuenta queda cerrada.
+
+3. El círculo 5 necesita, mientras tanto, un estado visual propio — **no** "cerrado" ni "activo": progreso
+   parcial, con contador (`12/23 confirmados`, en el vocabulario de Laura: "grupos"). Es una cuarta
+   variante del sistema de tokens, adicional a la tercera que ya señaló §1.3 (el estado binario
+   "confirmado/cerrado" a nivel paso) — acá se aclara que ese tercer estado nunca se usa tal cual en el
+   paso 5 (no hay paso 5 "cerrado" antes de paso 6), y hace falta un cuarto: "en progreso, con contador".
+
+4. Gate para avanzar de paso 5 a paso 6: cada grupo necesita haber llegado a un estado terminal —
+   confirmado **o** marcado explícitamente `indeterminado` con su motivo — antes de habilitar el botón de
+   avance. Un grupo sin tocar (ni confirmado ni marcado indeterminado) bloquea el avance; un grupo
+   `indeterminado` con motivo explícito **no** bloquea, porque ya es una decisión tomada en el sentido de
+   la regla dura de `ux-designer` ("el 'no sé' es un estado usable, no un hueco"). **Esto es una propuesta
+   de criterio de producto, no una verificación de código** — a diferencia del resto de este documento, no
+   fue confirmada contra un call site real ni por `analista-funcional`; queda marcada como pendiente de
+   esa verificación antes de convertirse en AC cerrado.
+
+### AC
+
+| AC | Nivel | Cómo se comprueba |
+|---|---|---|
+| Una fila con `confirmarGrupo()` ya aplicado no tiene cursor de edición inline; las demás filas del mismo paso siguen editables | Fila | Test de UI: `disabled`/sin handler de edición solo en las filas con estado confirmado, no en el resto del paso |
+| Hover sobre una fila cerrada muestra quién y cuándo la confirmó, y el puente "Corregir esta decisión" hacia `revocaId` | Fila | Mismo test que el AC de fila de §1.3, aplicado por fila en vez de por paso |
+| El círculo 5 del stepper es clickeable/navegable en todo momento mientras la sesión del wizard sigue abierta, sin importar cuántos grupos tenga confirmados adentro | Paso | Test: click sobre el círculo 5 navega, con 0, algunos o todos los grupos confirmados |
+| El círculo 5 nunca muestra el modo "cerrado sin puntero" de §1.3 antes de que ocurra `confirmarAsiento()` en paso 6 | Paso | Revisión de estados: el único evento que dispara ese modo para los 6 círculos es `confirmarAsiento()`, ningún `confirmarGrupo()` individual lo dispara por sí solo |
+| El círculo 5 muestra un contador de progreso (`n/m`) mientras hay grupos mixtos (algunos confirmados, algunos no) | Paso | Fixture con confirmación parcial: el contador coincide con el conteo real de filas cerradas |
+| **(propuesto, no verificado)** El botón de avance a paso 6 se habilita solo cuando cada grupo tiene estado confirmado o indeterminado explícito — nunca con un grupo sin tocar | Paso | Pendiente: verificar contra el código real de habilitación del botón (no identificado en este dictamen) antes de tomarlo como AC cerrado |
+
+### Lo que no cambia
+
+Los tres AC originales de §1.3 sobre el `confirmarAsiento()` de paso 6 siguen vigentes tal cual, sin
+ajuste — paso 6 sí es el "paso" atómico con un único evento terminal que la redacción original de §1.3
+asumía en general. El ajuste de esta sección es específico al paso 5 fusionado.
