@@ -336,8 +336,31 @@ tiene que verse clickeable. Agregado como `.paso.default-navegable` (cursor poin
 activo, breadcrumb con el cliente real del paso 1 ("Estudio Demo S.A.", sintético). Contenido del paso:
 selector de cuenta bancaria (3 cuentas sintéticas) + dropzone interactivo (PDF/Excel, hasta 20 MB,
 alterna a chip de archivo cargado) + botón "Continuar" deshabilitado hasta elegir cuenta y cargar
-archivo. Pantalla 1 **no se reabrió** — doc 36 ya había aclarado que se reencuadra en código, no en el
-boceto.
+archivo.
+
+### Reconsideración (mismo día, 2026-09-16): Pantalla 1 SÍ recibe el marco ahora, no en PR4
+
+Primera versión de esta sección decía que Pantalla 1 "no se reabría" (doc 36 ya lo permitía: el
+reencuadre podía esperar al código). El titular reconsideró al revisar las dos pantallas lado a lado:
+una con marco y otra sin él genera confusión real al leer el flujo completo — más barato resolverlo
+ahora, con dos pantallas, que después con seis. **Pantalla 1 (versión 4) queda envuelta con el mismo
+header global + sidebar + panel de contenido que Pantalla 2**, mismo método de cirugía quirúrgica del
+JSON (`json.loads`/`json.dumps`, verificación `count==1` antes de cada uno de los tres reemplazos: el
+bloque CSS de `.header` → `.header-global`/`.layout`/`.panel`, la apertura del `<body>`, y el cierre de
+los divs nuevos antes de `</div></x-dc>`).
+
+**El contenido de Pantalla 1 no cambió en nada** — mismo título "Elegir cliente", misma descripción,
+las 6 tarjetas de cliente byte a byte iguales (verificado: 6 tarjetas, 6 botones "Elegir cliente" antes
+y después). Lo único que cambió es el contenedor: el `<div class="header">` viejo (con el estudio, el
+avatar y una flecha de dropdown) se reemplazó por el mismo `<div class="header-global">` de Pantalla 2
+(avatar + "Laura" + botón "Salir"), y `<div class="stepper-bar">`/`<div class="contenido">` pasaron a
+vivir dentro de `<div class="layout"><nav class="sidebar">...</nav><div class="panel">...` — mismo
+sidebar de 4 ítems, "Cierre mensual" activo (es la sección donde vive el wizard). Balance de divs
+verificado (73 apertura / 73 cierre) antes de publicar.
+
+Las reglas CSS `.sidebar`/`.nav-item`/`.paso.cerrado`/`.paso.default-navegable` ya estaban en el sistema
+de tokens de Pantalla 1 desde la sección anterior de este documento — no hizo falta duplicarlas, solo
+agregar `.header-global`/`.layout`/`.panel` (reemplazando la `.header` vieja, que queda sin uso).
 
 ### Pendientes que quedan declarados, no resueltos acá
 

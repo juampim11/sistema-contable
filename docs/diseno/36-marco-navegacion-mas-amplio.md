@@ -349,18 +349,20 @@ stepper.
 
 ### 6. Lo que esto cambia en lo ya construido y en lo pendiente
 
-- **Pantalla 1, ya publicada y aprobada**: sigue vigente en su contenido (el paso "Elegir cliente" no
-  cambia). Lo que cambia es su contenedor: pasa de ocupar el marco completo a vivir dentro del panel de
-  contenido, al lado del sidebar. No hace falta reabrir el boceto ya aprobado por esto — se reencuadra
-  cuando se pase a código, no antes.
+- **Pantalla 1**: **reencuadrada 2026-09-16** (versión 4 del Artifact) — ya NO queda pendiente para el
+  código. Reconsideración del titular sobre lo que decía la versión original de este punto ("se
+  reencuadra cuando se pase a código, no antes"): revisar Pantalla 1 y Pantalla 2 lado a lado con
+  layouts distintos generaba confusión real al leer el flujo completo. Mismo método de cirugía
+  quirúrgica que Pantalla 2 (ver doc 34 §5) — contenido sin cambios (título, descripción, las 6
+  tarjetas), solo el contenedor: header-global + sidebar + panel, igual que Pantalla 2.
 - **El tercer estado visual de paso del stepper** (doc 34 §1.3/§3): **resuelto 2026-09-16** — ver doc
   34 §5. El estado "próximamente" para ítems de sidebar también quedó resuelto ahí, en el mismo commit
   (distinto del estado "confirmado/cerrado" del stepper: uno es "no disponible todavía", el otro es "ya
   pasó y está cerrado").
-- **Nuevo pendiente, agregado por este documento**: el header global (identidad + salir) y el sidebar de
-  4 ítems (con su lógica de visibilidad por rol, ver §2) se agregan a la lista de piezas de layout a
-  construir en PR4, antes o junto con el reencuadre de Pantalla 1 a código — no es una pantalla nueva del
-  wizard, es marco de aplicación.
+- **Pendiente que queda, agregado por este documento**: la lógica de visibilidad por rol del sidebar (§2
+  regla 2, §7 punto 2) todavía no está construida en código — hoy Pantalla 1 y Pantalla 2 muestran
+  siempre la vista `socio`/`contador` (los 3 ítems "próximamente" visibles-deshabilitados). Eso se
+  resuelve en PR4, no en el boceto — no es una pantalla nueva del wizard, es marco de aplicación.
 
 ### 7. Pendiente antes de construir esto en código
 

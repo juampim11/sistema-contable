@@ -47,14 +47,32 @@ Pantalla 2 sí (el paso 1 "Elegir cliente" tiene que verse clickeable). Agregado
 (identidad + salir) + sidebar de 4 ítems ("Cierre mensual" activo, 3 "próximamente" con tooltip
 accesible en hover y foco por teclado) + stepper (paso 1 navegable, paso 2 activo) + breadcrumb con
 cliente real + selector de cuenta bancaria + dropzone interactivo PDF/Excel + botón "Continuar"
-condicionado. Todo sintético, mismo criterio que Pantalla 1. Pantalla 1 no se reabrió (doc 36 ya había
-aclarado que se reencuadra en código, no en el boceto).
+condicionado. Todo sintético, mismo criterio que Pantalla 1.
+
+### Reconsideración del titular, mismo día: Pantalla 1 también recibe el marco ahora
+
+Primera versión de esta tarea dejaba Pantalla 1 sin el marco de doc 36 hasta el código real (PR4) — doc
+36 lo permitía explícito. El titular reconsideró al revisar las dos pantallas lado a lado: layouts
+distintos (una con marco, otra sin) generan confusión real al leer el flujo completo, más barato
+resolverlo ahora con dos pantallas que después con seis. Pantalla 1 (versión 4) quedó envuelta con el
+mismo header-global + sidebar + panel que Pantalla 2, mismo método de cirugía quirúrgica del JSON,
+verificación `count==1` en los tres reemplazos (bloque CSS, apertura de body, cierre de divs). Contenido
+sin cambios — verificado: 6 tarjetas de cliente intactas, 6 botones "Elegir cliente", balance de divs
+73/73 antes y después de publicar. La `.header` vieja (con flecha de dropdown) queda reemplazada por
+`.header-global` (avatar + "Salir", igual que Pantalla 2) — sin uso, no se dejó CSS muerto.
+
+Doc 34 §5 y doc 36 §6 actualizados para reflejar que Pantalla 1 SÍ tiene el marco aplicado (no queda
+pendiente para el código).
 
 ### Verificado
 
-Tokens nuevos y estados CSS presentes en los dos Artifacts (Pantalla 1 v3 y Pantalla 2), mismo valor y
-mismo nombre en los dos — coherencia confirmada leyendo ambos archivos. Doc 34 §0 actualizado (Pantalla
-2: "Bocetada", con link). Doc 34 §5 y doc 36 §5/§7 actualizados con la corrección y los pendientes.
+Tokens nuevos y estados CSS presentes en los dos Artifacts (Pantalla 1 v4 y Pantalla 2), mismo valor y
+mismo nombre en los dos — coherencia confirmada leyendo ambos archivos. Verificación adicional sobre
+Pantalla 1 v4: el caracter mostrado como `�` en la salida de terminal al hacer `print()` se confirmó
+como `ó` real (U+00F3, UTF-8 `\xc3\xb3`) leyendo el codepoint directo — artefacto de cómo este entorno
+imprime UTF-8 en consola, no una corrupción del archivo. Doc 34 §0 actualizado (Pantalla 2: "Bocetada",
+con link). Doc 34 §5 y doc 36 §5/§6/§7 actualizados con la corrección, la reconsideración y los
+pendientes.
 
 ### Pendientes declarados por `ux-designer`, no resueltos acá
 
