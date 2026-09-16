@@ -52,6 +52,16 @@ sin lanzar, pero el error ya no es invisible. Un hallazgo no bloqueante (mismo r
 distinguía "sesión sin `expires_at`" de un estado imposible — ahora también lanza
 `FallaInfraestructuraAuthError` en vez de inventar una sesión "recién nacida y ya vencida".
 
+**Segundo hallazgo, del titular, sobre el mismo método (revisión del diff completo antes de autorizar el
+merge)**: el `try/catch` que envuelve `c.auth.getUser()` devolvía `null` para cualquier error o excepción
+por igual, sin distinguir un 4xx rutinario (sin cookie, cookie vencida — pasa en cada visita anónima) de
+un 5xx o una excepción real (Supabase caído, timeout) — mismo tipo de fuga de visibilidad que el hallazgo
+de `code-reviewer` de arriba, pero en el punto que ese review no había tocado. Corregido (commit
+`45d2b08`, separado de `d8213cb` para no reescribir un commit ya cerrado): `error.status >= 500` o una
+excepción lanzada pasan por `logger.error('auth.supabase.obtener_sesion.falla_verificacion', undefined,
+causa)` antes de devolver `null`; un 4xx normal sigue silencioso, a propósito (loguear cada visita
+anónima sin sesión sería ruido constante). 3 tests nuevos/ajustados verifican las dos ramas por separado.
+
 ### Declaraciones de seguridad (commit separado)
 
 `email` agregado a `CLAVES_SENSIBLES_EXTERNAS` (`password` ya estaba) — el ADR §15 lo prometía desde
@@ -62,11 +72,14 @@ código, no después).
 
 ### Verificado
 
-`pnpm typecheck` limpio. `packages/auth`: 29 tests, cliente Supabase inyectado/mockeado, cero red real.
-R-R (`@supabase/*` solo en el adapter) verde con el import real. Suite completa: **14 rojos
-preexistentes, 0 nuevos** — mismo número que HANDOFF (215), total sube de 2519 a 2530 (11 tests nuevos:
-9 de `supabase.test.ts` — 8 de la reescritura + 1 del hallazgo bloqueante — 1 de `registro.test.ts`, 1 de
-`iniciarSesion` sin `expires_at`).
+`pnpm typecheck` limpio. `packages/auth`: 30 tests (verificado con `vitest run`, no a mano), cliente
+Supabase inyectado/mockeado, cero red real. R-R (`@supabase/*` solo en el adapter) verde con el import
+real. Suite completa (corrida antes del commit `45d2b08` — ver nota): **14 rojos preexistentes, 0
+nuevos** — mismo número que HANDOFF (215), total sube de 2519 a 2530. `45d2b08` (el segundo hallazgo del
+titular, ver arriba) agrega 1 test más — `packages/auth` pasa de 29 a 30, total del repo a 2531; no se
+re-corrió la suite completa después de ese commit puntual (cambio acotado a un archivo ya cubierto por
+`pnpm typecheck` + `vitest run packages/auth`, ambos verdes) — se corre completa antes del merge (paso 7
+de `cierre-de-integracion`).
 
 **Hallazgo aparte, no de esta tarea, no tocado**: `pnpm fixtures:verificar` falla en
 `packages/ingesta/tests/fixtures/extracto-sintetico.txt` (chequeo 1, "ningún token del material real") —
@@ -76,10 +89,12 @@ convocar a `dba-data`/`seguridad-datos-financieros` sobre esto antes de confiar 
 
 ### Estado
 
-**`feat/pr3-adapter-supabase-real` queda SIN MERGEAR**, dos commits (`d8213cb` mecanismo, `f9a77cd`
-declaraciones de seguridad), esperando revisión del titular. `.env.example` se actualizó **en disco, no
-en git** — sigue sin trackearse a propósito (`70024fa`, "un archivo de ejemplo trackeado es el camino más
-corto para que un valor real termine en el repo").
+**`feat/pr3-adapter-supabase-real` queda revisada y aprobada, lista para mergear**, tres commits
+(`d8213cb` mecanismo, `f9a77cd` declaraciones de seguridad, `45d2b08` segundo hallazgo del titular sobre
+`obtenerSesion` — más `ab059f9`, esta misma entrada de HANDOFF, que no cuenta como pieza sustantiva
+aparte). `.env.example` se actualizó **en disco, no en git** — sigue sin trackearse a propósito
+(`70024fa`, "un archivo de ejemplo trackeado es el camino más corto para que un valor real termine en el
+repo").
 
 ### Lo próximo
 
