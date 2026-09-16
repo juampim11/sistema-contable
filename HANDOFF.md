@@ -6,6 +6,81 @@
 
 ---
 
+## 2026-09-16 (218) — Marco de navegación más amplio, antes de PR4: sidebar de 4 secciones (`docs/diseno/
+36-marco-navegacion-mas-amplio.md`, nuevo). Convocatoria real y en paralelo a `ux-designer` +
+`analista-funcional`. **Nota de numeración**: esta entrada usa (218) — (216) y (217) ya están tomadas en
+otras dos ramas sin mergear de esta misma sesión (`docs/wizard-paso5-coherencia-y-pantalla1-breadcrumb`,
+`feat/pr3-adapter-supabase-real`) que esta rama, creada después desde `main`, no conoce. Mismo criterio
+que (217): quien mergee primero fija el orden real.
+
+**Herramienta:** Claude Code, sesión interactiva. Rama `docs/wizard-marco-navegacion-mas-amplio`, desde
+`main`.
+
+### El hallazgo
+
+El boceto de Pantalla 1 y el modelo de 6 pasos de doc 34 se diseñaron como si el wizard de carga/
+procesamiento de extractos fuera la aplicación completa — el header + stepper ocupan todo el marco
+superior. Pero el sistema real necesita, más allá del wizard: ABM de clientes del estudio, ABM de plan de
+cuentas, gestión de socios por cliente. Verificado antes de convocar: grep completo de `docs/` sin
+ninguna mención de una estructura de navegación más amplia en ningún documento — gap real, no un punto ya
+resuelto.
+
+### Qué se hizo
+
+Convocatoria en paralelo (mismo patrón que la convocatoria original de doc 34): `analista-funcional`
+verificó, contra migraciones y CLI reales, que las tres secciones existen como dominio modelado
+(`tenant_node`/`0001`, `cuenta`+`cuenta_atributo`/`0027`, `padron_socio`/`0013`, cada una con su CLI de
+alta en `apps/cli/`) pero sin ningún camino de lectura de conjunto ni edición — solo alta a mano por JP.
+Midió volumen real contra el piloto (consulta agregada, sin contenido N2/N2-R): 6 clientes, 446 cuentas
+en solo 2 de 6 clientes (carga única del `2026-08-30`), 8 socios en 2 sesiones — conclusión: las tres son
+trabajo de *setup por cliente*, no mantenimiento mensual, baja urgencia. Hallazgo adicional no pedido: la
+migración `0047` (rol `app_web`) no da ningún grant de escritura a las tres tablas, y `padron_socio` ni
+siquiera tiene grant de lectura — construir cualquier ABM real exige su propia migración de grants y su
+propia convocatoria, no es "agregar una pantalla".
+
+`ux-designer` propuso sidebar (no nav superior — evita que compita con el eje horizontal del stepper) de
+4 ítems: "Cierre mensual" (el wizard, construido) + Clientes/Plan de cuentas/Socios ("próximamente",
+visibles-deshabilitados para `socio`/`contador`, **ocultos** para `administrativo` porque las policies
+reales ya excluyen ese rol de escritura en las tres — cruce con el hallazgo de `analista-funcional`). El
+stepper no cambia su lógica (6 pasos, mismos 3 estados de doc 34 §1.3) — solo su contenedor: el header
+actual se divide en header global (nuevo) + header de sección (lo que ya existe). No tocó el Artifact
+publicado de Pantalla 1 (riesgo de corromper un canvas ya aprobado) — dejó un wireframe ASCII con los
+tokens `--om-*` reales del Artifact para cuando se reencuadre a código.
+
+**Incidente propio, detectado y corregido en la misma tarea**: los dos agentes escribieron al mismo
+archivo nuevo (`docs/diseno/36-...md`) en paralelo, sin coordinar en vivo — la escritura de
+`analista-funcional` pisó la de `ux-designer`, que se perdió de disco (nunca commiteada). Detectado
+al revisar el archivo resultante (solo tenía una sección). Corregido pidiéndole a la misma instancia de
+`ux-designer` que reescribiera su dictamen con `Edit` (no `Write`), ahora en secuencia — se recuperó
+completo, con cruces explícitos a lo que `analista-funcional` ya había escrito. Mismo patrón que la
+memoria de sesión "agentes de escritura en paralelo, mismo árbol" ya señala: aislar con archivos
+distintos o secuenciar, nunca dos `Write`/`Edit` en paralelo sobre el mismo archivo nuevo.
+
+### Verificado
+
+Los cinco AC de `analista-funcional` (aislamiento estructural, visibilidad por rol, persistencia de
+`cliente_id`, cero requests fantasma para "próximamente", predicción falsable de que el stepper no
+cambia) + los AC de `ux-designer` (4 ítems para `socio`/`contador`, 1 para `administrativo`,
+`aria-disabled`, foco/hover) quedan escritos en el documento, todos falsables — nada implementado
+todavía, es decisión de marco, no código.
+
+### Estado
+
+`docs/wizard-marco-navegacion-mas-amplio` queda SIN MERGEAR, un archivo nuevo
+(`docs/diseno/36-marco-navegacion-mas-amplio.md`), esperando revisión del titular. Sin commitear todavía
+— se commitea junto con esta entrada de HANDOFF.
+
+### Lo próximo
+
+A decisión del titular: revisar y aprobar el documento; cuando arranque PR4, el layout nace con header
+global + sidebar + panel de contenido desde el primer componente (no se construye el wizard primero y se
+envuelve después); dos pendientes nuevos antes de código: el estado visual "próximamente" en el sistema
+de tokens (junto con el estado "confirmado/cerrado" que doc 34 ya pedía), y una convocatoria a
+`seguridad-datos-financieros` + `security-engineer` sobre la lógica de visibilidad por rol del sidebar
+antes de construirla.
+
+---
+
 ## 2026-09-16 (217) — 🔒 PR3 de ADR-0006 cerrado: adapter Supabase real (`packages/auth`), scope
 `'local'` en `cerrarSesion`. Convocatoria real (`dba-data` + `security-engineer` +
 `seguridad-datos-financieros`, paralelo) + `code-reviewer` sobre el diff, 1 bloqueante corregido. **Nota
