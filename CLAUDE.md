@@ -122,7 +122,16 @@
 - Dominio en **español** (`cliente`, `asiento`, `movimiento`, `jurisdiccion`); plomería técnica genérica
   en inglés (`AuthProvider`, `ObjectStorage`). Comentarios en **español**.
 - Commits: **Conventional Commits** (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`).
-- Una tarea = una rama (`feat/<slug>`). PRs chicos y revisables.
+- Una tarea = una rama (`feat/<slug>`). PRs chicos y revisables. **Sin excepción para cambios de
+  documentación o de proceso** — ni siquiera el mismo día en que la regla que los describe se escribe.
+
+  > **Primera vez que se rompió, el mismo día en que se escribió esta línea** (2026-09-16, migración
+  > `0047`/`app_web`): las reglas 10-13 de este mismo documento y la skill `cierre-de-integracion` se
+  > commitearon directo sobre `main`, sin rama propia — porque quien conducía ya estaba parado en
+  > `main` después de un merge anterior, y el contenido "era de bajo riesgo". El titular lo dejó pasar
+  > (ya estaba pusheado, contenido de bajo riesgo real) pero pidió que quedara escrito acá: el riesgo
+  > bajo del contenido no es el punto. El punto es que "esta vez no hace falta" es exactamente el
+  > razonamiento que ya rompió reglas 10 y 11 en la sesión que las escribió.
 - Migraciones: **`drizzle-kit`**, SQL plano en `packages/data/migrations/NNNN_*.sql`. Nunca editar una ya
   aplicada; crear la siguiente con prefijo incremental. Corren con el **dueño del esquema**, nunca con
   `app_request`. Con Drizzle los tipos se infieren del esquema TS (no hay paso de "generar tipos").
