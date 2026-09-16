@@ -6,6 +6,58 @@
 
 ---
 
+## 2026-09-16 (216) — Doc 34 §4 (coherencia paso 5 fusionado) + boceto Pantalla 1 actualizado (stepper
+6 pasos + breadcrumb). Convocatoria puntual a `ux-designer`. Aclaración de estado: (215) decía
+`feat/rol-app-web` "sin mergear" — verificado contra git real, **ya está mergeado** (commit `5da254b`
+del merge aislado), igual que HU-6, PR1 de auth y Frente 1 — las cuatro piezas que HANDOFF describía como
+pendientes ya cerraron en sesiones posteriores no documentadas acá punto por punto. `main` está limpio,
+sin checkpoint de integración pendiente (CLAUDE.md §1.13).
+
+**Herramienta:** Claude Code, sesión interactiva. Rama `docs/wizard-paso5-coherencia-y-pantalla1-
+breadcrumb`, desde `main`.
+
+### Qué se hizo
+
+Convocatoria puntual a `ux-designer` (sola — tarea de flujo/formato, no dispara el resto del panel) sobre
+dos pendientes: (a) reconciliar `docs/diseno/34-modelo-interaccion-wizard-demo.md` §1.3 (el "freno" del
+stepper + corrección vía `revocaId`) con la fusión del paso 5 ("Revisar e imputar", §1.2); (b) actualizar
+el boceto ya publicado de Pantalla 1 con los 6 nombres reales de doc 34 §0.
+
+El agente corrigió dos premisas con las que se lo convocó, verificadas contra el repo real antes de
+convocarlo: no existe ningún boceto de "Pantalla 5" (solo Pantalla 1 está bocetada — las 2-6 siguen
+"Pendiente de boceto" en doc 34 §0), y "sin breadcrumb desde el paso 2" no está respaldado por ningún doc
+de diseño (el término no aparece en doc 34 en ningún punto). Sobre esto último, decisión de diseño propia
+del agente: agregar el **contenedor** del breadcrumb (`hidden`, con comentario) en vez de inventar
+contenido de muestra en Pantalla 1, donde todavía no hay cliente/cuenta elegidos — se puebla recién desde
+Pantalla 2.
+
+1. **`docs/diseno/34-modelo-interaccion-wizard-demo.md` §4 (nueva)**: el candado de §1.3 pasa a aplicarse
+   en dos niveles — por fila (`GrupoDecisionPendiente`, extensión directa de §1.3) y por paso (el círculo
+   5 del stepper nunca entra en modo "cerrado sin puntero" mientras la sesión sigue abierta; ese modo
+   corresponde solo a `confirmarAsiento()` en paso 6). Agrega un cuarto estado de token ("en progreso,
+   n/m") y dos AC nuevos. El AC de gate paso 5→6 queda marcado explícito **"propuesto, no verificado"**
+   — pendiente de que `analista-funcional` lo confirme contra código real, no se fuerza a AC cerrado.
+2. **Artifact "Pantalla 1 — Elegir cliente"** (`https://claude.ai/artifact/2i58PAMpUiWay4UDxLkG6Q`,
+   ahora versión 2): stepper de 8 círculos (7 sin etiqueta) a 6, con los nombres reales de doc 34 §0, +
+   contenedor `.breadcrumb` vacío. Edición quirúrgica vía `json.loads`/`json.dumps` sobre el blob de
+   `appifact-doc` (nunca reemplazo de texto escapado a mano — el `<` va como `<` de forma no
+   estándar), con verificación `count==1` antes de cada reemplazo. Verificado post-publish: 6 pasos con
+   etiqueta no vacía, texto UTF-8 intacto ("extracción" sin mojibake), breadcrumb presente, 6 tarjetas de
+   cliente y el resto del documento sin diff.
+
+### Verificado
+
+`git diff --stat` de doc 34: una sola sección nueva agregada al final, nada existente tocado. Lectura
+post-publish del Artifact confirma 6 `<div class="etiqueta">` no vacíos y el contenedor `.breadcrumb`.
+
+### Lo próximo
+
+A decisión del titular: revisar el diff de esta rama y aprobar el merge; el AC "propuesto, no verificado"
+de doc 34 §4 queda pendiente de convocatoria a `analista-funcional`; el boceto de Pantalla 2 en adelante
+sigue esperando el tercer/cuarto estado visual de tokens que doc 34 §1.3/§4 señalan como precondición.
+
+---
+
 ## 2026-09-16 (215) — 🔒 `app_web` (ADR-0006 §5): rol de solo lectura para `apps/web`, migración `0047`
 cerrada y revisada, SIN MERGEAR. Convocatoria real previa (`dba-data` + `security-engineer` +
 `seguridad-datos-financieros`), `code-reviewer` sobre el diff ya implementado, 3 hallazgos corregidos.
