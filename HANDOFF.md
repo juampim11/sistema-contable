@@ -6,6 +6,128 @@
 
 ---
 
+## 2026-09-16 (215) — 🔒 `app_web` (ADR-0006 §5): rol de solo lectura para `apps/web`, migración `0047`
+cerrada y revisada, SIN MERGEAR. Convocatoria real previa (`dba-data` + `security-engineer` +
+`seguridad-datos-financieros`), `code-reviewer` sobre el diff ya implementado, 3 hallazgos corregidos.
+Deuda de 11 funciones con `EXECUTE` de `PUBLIC` declarada por escrito (corregido de 12 tras verificación
+en vivo pedida por el titular, ver "Corrección posterior" al final de esta entrada). Documentación de
+cierre.
+
+**Herramienta:** Claude Code, sesión interactiva de `documentador`, sobre la rama `feat/rol-app-web`
+(desde `main`, `ab25c02`).
+
+### Qué se construyó
+
+`packages/data/migrations/0047_rol_app_web.sql`: crea el rol Postgres `app_web` (ADR-0006 §5), de solo
+lectura para la futura `apps/web`. Alcance: **SOLO §5 (lectura)** — §7.bis (escritura sobre
+`confirmacion_grupo`) queda fuera a propósito, sus dos precondiciones no están cumplidas (R44 sin
+aplicar+probada en vivo sobre `confirmacion_grupo_ins`, y el guard `RE_POSIBLE_DOCUMENTO_EN_TEXTO`
+todavía en el parseo de argumentos del CLI, no adentro de `confirmarGrupo()`). `create role app_web
+nologin` con el mismo guard `do $$ if not exists...` que `app_request`/`app_job`/`app_firmador`, `grant
+usage on schema app`, `grant execute` sobre 4 funciones RLS (`current_user_id`, `accessible_tenant_ids`,
+`has_role_on`, `has_capacidad_en`), `grant select` por columna — nunca de tabla completa — sobre 11
+tablas explícitas, cada una justificada por una consulta real trazada en código (no por analogía con
+`app_request`), y `grant insert` acotado por columna sobre `acceso_auditoria` para el rastro.
+
+Convocatoria real (`Agent()`, en paralelo, antes de escribir el SQL): `dba-data`, `security-engineer`,
+`seguridad-datos-financieros` — los tres convergieron en que el grant tenía que ser una lista angosta y
+explícita de tablas, no un espejo de `app_request` menos 4 columnas. Después, revisión real de
+`code-reviewer` sobre el diff ya implementado: **3 hallazgos, los 3 corregidos** — incluido que
+`columnasVedadasParaWeb()`/`COLUMNAS_ADICIONALES_VEDADAS_PARA_WEB` eran código muerto (sin ningún test
+que las conectara con `GRANTS_POR_COLUMNA`), que `create role app_web` no seguía el guard de
+`app_request`/`app_job`/`app_firmador`, y que el comentario de `R41c` traía el conteo de funciones con
+`EXECUTE` de `PUBLIC` mal contado (esto último se terminó de corregir recién en la revisión final del
+titular — ver "Corrección posterior" más abajo, el número real es 11, no el 12 que dijo esta misma
+sesión en un paso intermedio).
+
+### Hallazgo real encontrado corriendo la suite completa, no por inspección
+
+La primera versión del grant sobre `tenant_node` incluía `nid`, `path` y `parent_path` — las tres con
+nota explícita en `clasificacion-campos.ts` ("NUNCA sale en API, URL ni export — R25, enumeraría la
+plataforma"), pero son N1 y el filtro N2R/N3 de `columnasVedadasParaWeb()` no las capturaba. Lo agarró
+`packages/data/tests/path-coherente.test.ts` (test **R36, YA EXISTENTE**, no uno nuevo de esta tarea) al
+correr la suite completa. Corregido: las 3 columnas afuera del grant de `0047`, y el motivo documentado en
+`COLUMNAS_ADICIONALES_VEDADAS_PARA_WEB` (`packages/shared/src/seguridad/clasificacion-campos.ts`, junto al
+caso H1 de `cuenta_atributo.respaldo`/`.padron_socio_id`).
+
+### Deuda declarada, no resuelta a propósito
+
+**11 funciones de `app` con `EXECUTE` heredado de `PUBLIC`, nunca revocado** — `app_web` las hereda igual
+que cualquier rol nuevo, SIN que `0047` se lo otorgue (9 de trigger + `es_rol_supervisor` +
+`verificar_gate_confirmacion_cierre`). Verificado: ninguna es `SECURITY DEFINER`, así que no habilitan
+escalada de privilegio real; 9 son funciones de trigger que Postgres rechaza invocar fuera de contexto de
+trigger. Pero rompe el invariante "`app_web` solo puede ejecutar estas 4 funciones nombradas" que el
+diseño pretende. **Motivo textual del titular para no cerrarlo ahora**: revocar de `PUBLIC` sin verificar
+primero, función por función, si `app_request`/`app_job` dependen de ese mismo `EXECUTE` heredado para
+disparar sus propios triggers podría romper `INSERT`/`UPDATE` existente de todo el dominio — riesgo bajo,
+arreglo caro, necesita su propia convocatoria (`dba-data` + `security-engineer`), no un byproduct de esta
+tarea. Declarado en el código (`packages/data/tests/grants-conjunto-cerrado.test.ts`, comentario del
+describe `R41c`) y ahora también en `docs/diseno/10-deuda-declarada.md` **B.30**.
+
+Hallazgo relacionado, distinto, que NO cuenta en las 11: `current_user_id()` (una de las 4 que `0047` SÍ
+otorga explícito) también tiene un grant a `PUBLIC` en su `proacl`, nunca revocado en `0001` — no agrega
+superficie (ya era ejecutable por el grant explícito), pero explica por qué `M-web` muta sobre
+`has_capacidad_en` y no sobre `current_user_id()`: revocar el grant explícito de esta última no cambiaría
+el privilegio efectivo, porque `PUBLIC` lo sostiene igual.
+
+### Corrección posterior (mismo día, misma tarea) — tres preguntas directas del titular antes del merge
+
+Antes de escribir el diff final para revisión, el titular pidió verificar tres cosas con evidencia fresca,
+no de memoria del resumen anterior — las tres encontraron imprecisiones reales, ya corregidas:
+
+1. **El número de funciones con `EXECUTE` de `PUBLIC` era 11, no 12.** La primera versión de esta entrada
+   (y de B.30, y del comentario de `R41c`) sumaba `current_user_id()` a la lista de 11 — pero esa función
+   SÍ la otorga `0047` explícito, así que no es superficie no intencional. Es un hallazgo real pero
+   DISTINTO (ver arriba), no una unidad más del mismo conteo. Corregido en las tres fuentes.
+2. **Secuencia real de `nid`/`path`/`parent_path`**: confirmado con el log de la corrida real
+   (`AssertionError: expected '{app_web=r/sistema_contable}' to be '(sin acl)'`,
+   `path-coherente.test.ts:409`) y con `git diff` contra ese archivo (sin cambios, nunca se tocó): se
+   escribió la migración con esas tres columnas incluidas, se corrió la suite completa, **R36 —test ya
+   existente— falló**, y se corrigió el **grant**, nunca el test. No hubo ninguna versión donde el test
+   fallara "al revés".
+3. **`columnasVedadasParaWeb()`/`COLUMNAS_ADICIONALES_VEDADAS_PARA_WEB` no son consumidas por la
+   migración ni por `GRANTS_POR_COLUMNA`** — no pueden serlo: `0047_rol_app_web.sql` es SQL crudo, no
+   puede importar TypeScript, y `GRANTS_POR_COLUMNA` sigue siendo una lista escrita a mano (mismo
+   patrón que ya usa el archivo para cada rol existente, no una excepción de `app_web`). Lo único que
+   las conecta mecánicamente es el test `R41d`, que compara `GRANTS_POR_COLUMNA` contra el resultado de
+   esas dos listas y se pone rojo si divergen — es una verificación cruzada, no una fuente de la que el
+   `.sql` "derive". El docstring de `clasificacion-campos.ts` decía "fuente única para la migración",
+   una frase que sobreclamaba lo que el mecanismo hace de verdad — corregido para describir la relación
+   real (referencia que un test verifica, no que un generador consulta).
+
+### Otra corrección de documentación, en la misma tarea
+
+`docs/arquitectura/ADR-0006-autenticacion.md` §14 decía, en la fila de `DATABASE_URL_APP` en producción,
+"rol `app_web`" — contradice §5 y la propia migración `0047` (`app_web nologin`, sin nadie que se conecte
+como él). Corregido a "rol de login miembro de `app_web` (a definir, mismo patrón que `app_request_dev`)",
+con nota fechada 2026-09-16 explicando la corrección — hallazgo de `security-engineer` en la convocatoria
+original, documentado ahora, no resuelto (falta `devops` para cablear la variable real en Vercel).
+
+### Verificado
+
+`pnpm typecheck` limpio. Suite completa: **14 rojos exactos, preexistentes, 0 nuevos** — 2498 passed,
+2519 total (2515 original + 4 tests nuevos: `L-web` y `R41c` (2 tests EXECUTE) sobre las 4 funciones RLS,
+`R41d` conectando `columnasVedadasParaWeb()`/`COLUMNAS_ADICIONALES_VEDADAS_PARA_WEB` con lo declarado en
+`GRANTS_POR_COLUMNA`, `R-web` sobre `rolcanlogin`/`rolbypassrls`/`rolsuper` de `app_web`).
+
+### Estado
+
+**`feat/rol-app-web` queda SIN MERGEAR, esperando revisión del titular.** No se mergeó, no se commiteó
+nada en esta tarea de documentación — eso lo hace el titular o JP después. Archivos tocados en el diff
+(todos sin commitear): `packages/data/migrations/0047_rol_app_web.sql` (nuevo),
+`packages/shared/src/seguridad/clasificacion-campos.ts`, `packages/data/tests/
+grants-conjunto-cerrado.test.ts`, `packages/data/tests/catalogo.test.ts`, más esta entrada de `HANDOFF.md`
+y las correcciones de `docs/arquitectura/ADR-0006-autenticacion.md` y `docs/diseno/10-deuda-declarada.md`.
+
+### Lo próximo
+
+A decisión del titular: revisar el diff completo de `feat/rol-app-web` y aprobar (o no) el commit y el
+merge; cuando se cablee `DATABASE_URL_APP` en Vercel, convocar a `devops` para crear el rol de login
+miembro de `app_web` (§14 corregido); B.30 queda para una convocatoria futura de `dba-data` +
+`security-engineer` cuando se decida cerrar el hueco de `EXECUTE` de `PUBLIC`.
+
+---
+
 ## 2026-09-15 (214) — Trabajo autónomo nocturno: docs 34/35 cerrados, HU-6 mínima cerrada
 (dos decisiones de criterio encontradas y frenadas antes de resolverse solas). Lista cerrada de 4 puntos,
 dada por el titular con stop conditions explícitas; PARÓ donde correspondía, tal como se pidió.

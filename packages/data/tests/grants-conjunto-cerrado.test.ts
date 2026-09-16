@@ -144,6 +144,10 @@
 
 import type { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  columnasVedadasParaWeb,
+  COLUMNAS_ADICIONALES_VEDADAS_PARA_WEB,
+} from '@sistema-contable/shared/seguridad';
 import { entornoActual } from '../src/db/entorno.ts';
 import { clienteDuenio } from './ayuda.ts';
 
@@ -418,6 +422,28 @@ const GRANTS_POR_COLUMNA: readonly {
     privilegio: 'SELECT',
     columnas: ['activo', 'creado_en', 'proveedor', 'sujeto_externo', 'usuario_id'],
   },
+
+  // ---------------------------------------------------------------------------
+  // `app_web` (0047, ADR-0006 §5) — rol de solo lectura para `apps/web`. Lista angosta y explícita de
+  // tablas, cada una justificada por una consulta real (ver el encabezado de `0047_rol_app_web.sql`),
+  // TODAS por columna aunque no tengan ninguna columna vedada -- mismo criterio que R41b exige para no
+  // absorber en silencio una columna N2R/N3 futura. Leído del catálogo real después de aplicar la
+  // migración, no copiado del `.sql`.
+  { tabla: 'acceso_auditoria', rol: 'app_web', privilegio: 'INSERT', columnas: ['accion', 'cliente_id', 'correlacion', 'motivo', 'recurso', 'recurso_id', 'user_id'] },
+  { tabla: 'asiento_propuesto', rol: 'app_web', privilegio: 'SELECT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'confirmado_en', 'confirmado_por', 'corrige_asiento_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
+  { tabla: 'asiento_propuesto_renglon', rol: 'app_web', privilegio: 'SELECT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_contraparte_id', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
+  { tabla: 'asiento_propuesto_totales', rol: 'app_web', privilegio: 'SELECT', columnas: ['asiento_id', 'cliente_id', 'total_debe', 'total_haber'] },
+  // Sin `respaldo` ni `padron_socio_id` (H1 / N2 pseudónimo de socio) — ver COLUMNAS_ADICIONALES_VEDADAS_PARA_WEB.
+  { tabla: 'cuenta_atributo', rol: 'app_web', privilegio: 'SELECT', columnas: ['activa', 'cliente_id', 'codigo', 'creada_en', 'cuenta_id', 'cuenta_padre_id', 'denominacion', 'id', 'nivel', 'rol_funcional', 'vigente_desde', 'vigente_hasta'] },
+  { tabla: 'cuenta_bancaria', rol: 'app_web', privilegio: 'SELECT', columnas: ['abierta_desde', 'alias', 'banco_codigo', 'cerrada_en', 'cliente_id', 'created_at', 'cuenta_id', 'id', 'moneda'] },
+  // Sin `numero` (N2R, ADR-0006 §5) — ver columnasVedadasParaWeb().
+  { tabla: 'cuenta_bancaria_identificador', rol: 'app_web', privilegio: 'SELECT', columnas: ['cbu_hmac', 'cbu_ultimos4', 'cliente_id', 'created_at', 'cuenta_bancaria_id', 'cuit_titular_hmac', 'cuit_titular_ultimos4', 'id', 'moneda', 'pepper_id', 'tipo_cuenta', 'vigente_desde', 'vigente_hasta'] },
+  { tabla: 'lote_ingesta', rol: 'app_web', privilegio: 'SELECT', columnas: ['adaptador_version', 'archivo_clave', 'archivo_hash', 'banco_codigo', 'cliente_id', 'created_at', 'es_dato_real', 'estado', 'filas_aceptadas', 'filas_leidas', 'filas_rechazadas', 'id', 'motivo_codigo', 'motivo_codigo_previo', 'origen', 'paginas_declaradas', 'paginas_sin_texto', 'procesado_por'] },
+  { tabla: 'membership', rol: 'app_web', privilegio: 'SELECT', columnas: ['activo', 'created_at', 'id', 'rol', 'tenant_node_id', 'user_id'] },
+  { tabla: 'movimiento_bancario_crudo', rol: 'app_web', privilegio: 'SELECT', columnas: ['cliente_id', 'concepto_banco', 'concepto_banco_estrategia', 'concepto_codigo', 'concepto_completo', 'contraparte_captura', 'created_at', 'cuenta_bancaria_id', 'descripcion', 'entrada_digest', 'fecha', 'fecha_valor', 'fila_hash', 'fila_numero', 'id', 'importe', 'lote_ingesta_id', 'moneda', 'pagina_pdf', 'referencia_externa', 'saldo', 'saldo_es_acreedor'] },
+  { tabla: 'reconocimiento_movimiento', rol: 'app_web', privilegio: 'SELECT', columnas: ['clase', 'cliente_id', 'concepto', 'created_at', 'entrada_digest', 'es_propuesta', 'evidencia_caracteres_matcheados', 'evidencia_entrada_lexico_id', 'evidencia_hubo_cola', 'id', 'lado', 'motivo_codigo', 'motor_digest', 'movimiento_id', 'polaridad', 'que_decide', 'recalculo_disponible', 'superseded_por', 'tipo', 'via'] },
+  // Sin `nid`/`path`/`parent_path` (R25 — enumeraría la plataforma) — ver COLUMNAS_ADICIONALES_VEDADAS_PARA_WEB.
+  { tabla: 'tenant_node', rol: 'app_web', privilegio: 'SELECT', columnas: ['created_at', 'deleted_at', 'id', 'nombre', 'parent_id', 'tipo', 'updated_at'] },
 ];
 
 /**
@@ -1154,5 +1180,122 @@ describe('R41 — prueba de mutación: 13 mutaciones, elegidas para refutar', ()
 
       expect(await membresias(c)).toContain('app_job → app_request');
     });
+  });
+});
+
+// -----------------------------------------------------------------------------
+/**
+ * R41c — `EXECUTE` **explícito** de `app_web` sobre las 4 funciones RLS que necesita (ADR-0006 §5,
+ * migración `0047`).
+ *
+ * `barrer()` sweepea `pg_class`/`pg_attribute` del schema `'public'` — NUNCA `pg_proc`, y las
+ * funciones RLS viven en `app`. El `EXECUTE` de `app_web` es superficie genuinamente NO cubierta por
+ * R41/R41b (0 tests nuevos ahí — ver el comentario junto a las filas de `app_web` en
+ * `GRANTS_POR_COLUMNA`), así que necesita su propio barrido chico.
+ *
+ * 🔴 **Alcance deliberadamente acotado, no "lista de permitidos" completa como R41.** Medido al
+ * escribir este test: **11** funciones de `app` (9 de trigger + `es_rol_supervisor` +
+ * `verificar_gate_confirmacion_cierre`) tienen `EXECUTE` heredado de `PUBLIC`, nunca revocado, SIN que
+ * esta migración se lo otorgue -- superficie genuinamente no intencional, la que declara la deuda de
+ * abajo. (Verificado con `has_function_privilege('app_web', ..., 'EXECUTE')` filtrando las 4 con grant
+ * explícito -- 11 exacto, re-confirmado 2026-09-16 después de que una primera versión de este
+ * comentario dijera 12 por contar acá un hallazgo DISTINTO, ver el paréntesis siguiente.)
+ *
+ * Hallazgo relacionado pero SEPARADO, que no suma a los 11: `current_user_id()` -- una de las 4
+ * funciones que esta migración SÍ otorga explícito -- también tiene un grant a `PUBLIC` en su
+ * `pg_proc.proacl`, nunca revocado (`0001_tenancy.sql:210-213,294-298` revocó `PUBLIC` de
+ * `accessible_tenant_ids()`/`has_role_on()` porque son las dos funciones sensibles de esa migración,
+ * pero no tocó `current_user_id()` -- ninguna de las tres es `SECURITY DEFINER`, así que no hay
+ * inconsistencia de ese criterio, solo un guard que no se aplicó parejo). No agrega superficie: `app_web`
+ * ya podía ejecutar `current_user_id()` por el grant explícito, con o sin el de `PUBLIC`. Por eso `M-web`
+ * (abajo) muta sobre `has_capacidad_en`, no sobre `current_user_id()` -- revocar el grant explícito de
+ * esta última no cambiaría el privilegio efectivo, porque `PUBLIC` lo sostiene igual (hallazgo de
+ * `code-reviewer`, el test ya elegía bien antes de que este comentario se corrigiera).
+ *
+ * Un `L-web` que afirmara "app_web tiene EXECUTE exactamente sobre estas 4, ninguna otra" sería FALSO
+ * (por `current_user_id()` vía `PUBLIC`, entre otras). Este test afirma lo que la migración SÍ controla
+ * — el grant explícito — no el universo completo de qué puede ejecutar el rol. El hueco de `PUBLIC`
+ * sobre las 11 queda declarado como deuda (`docs/diseno/10-deuda-declarada.md` B.30) — cerrarlo exige
+ * verificar primero que `app_request`/`app_job` no dependan de ese mismo `PUBLIC` para disparar sus
+ * propios triggers, y eso es una convocatoria aparte (`dba-data` + `security-engineer`), no un efecto
+ * colateral de crear `app_web`.
+ */
+describe('R41c — EXECUTE explícito de app_web sobre las 4 funciones RLS', () => {
+  // `pg_get_function_identity_arguments` devuelve los parámetros CON su nombre declarado, no solo el
+  // tipo -- verificado contra el catálogo real antes de escribir esta lista.
+  const FUNCIONES_APP_WEB_EXECUTE = [
+    'current_user_id()',
+    'accessible_tenant_ids()',
+    'has_role_on(nodo_objetivo uuid, roles app.rol_membership[])',
+    'has_capacidad_en(nodo uuid, capacidad text)',
+  ];
+
+  it('L-web: app_web tiene EXECUTE sobre las 4 funciones RLS que la migración le otorga', async () => {
+    const { rows } = await db.query<{ funcion: string; puede: boolean }>(
+      `select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as funcion,
+              has_function_privilege('app_web', p.oid, 'EXECUTE') as puede
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'app'
+          and p.proname in ('current_user_id', 'accessible_tenant_ids', 'has_role_on', 'has_capacidad_en')`,
+    );
+    expect(rows.map((f) => f.funcion).sort()).toEqual([...FUNCIONES_APP_WEB_EXECUTE].sort());
+    expect(rows.every((f) => f.puede), 'falta EXECUTE explícito sobre alguna de las 4 funciones RLS').toBe(
+      true,
+    );
+  });
+
+  it('🔴 M-web: revocar el EXECUTE explícito de una de las 4 funciones RLS se detecta', async () => {
+    // Mutación elegida para refutar EXACTAMENTE lo que L-web afirma (el grant explícito), no el
+    // universo de PUBLIC -- ver el 🔴 de arriba. Un `grant execute` de más sobre una función AJENA
+    // (p.ej. `reparentar_nodo`) no lo detectaría L-web tal como quedó acotado, así que la mutación real
+    // que discrimina es la inversa: sacar uno de los 4 explícitos.
+    if (entornoActual() !== 'local') {
+      throw new Error(`La mutación de EXECUTE corre SOLO en local y APP_ENTORNO es "${entornoActual()}".`);
+    }
+    const duenio = await clienteDuenio();
+    try {
+      await duenio.query('begin');
+      try {
+        await duenio.query('revoke execute on function app.has_capacidad_en(uuid, text) from app_web');
+        const { rows } = await duenio.query<{ puede: boolean }>(
+          `select has_function_privilege('app_web', 'app.has_capacidad_en(uuid, text)', 'EXECUTE') as puede`,
+        );
+        expect(rows[0]?.puede, 'la mutación no se aplicó -- el test no está midiendo nada').toBe(false);
+      } finally {
+        await duenio.query('rollback');
+      }
+    } finally {
+      await duenio.end();
+    }
+  });
+});
+
+// -----------------------------------------------------------------------------
+/**
+ * R41d — `columnasVedadasParaWeb()`/`COLUMNAS_ADICIONALES_VEDADAS_PARA_WEB` no son código muerto.
+ *
+ * 🔴 Hallazgo de `code-reviewer` (convocatoria de `0047`): las filas de `app_web` en
+ * `GRANTS_POR_COLUMNA` de arriba se escribieron y verificaron A MANO contra esas dos listas -- pero
+ * nada las conectaba. El helper y la constante decían en su propio JSDoc ser "la fuente única", sin
+ * que ningún test lo hiciera cierto: exactamente el patrón "lista a mano que nace incompleta" que este
+ * mismo archivo ya cataloga como pagado dos veces (líneas 57-59). Este test cierra ese loop -- sin él,
+ * agregar mañana una columna N2R nueva a una de las 11 tablas de `app_web`, o reclasificar
+ * `cuenta_atributo.respaldo`, no pondría nada rojo hasta que alguien volviera a mirar a mano.
+ */
+describe('R41d — el helper de columnas vedadas es la fuente real, no solo el nombre', () => {
+  it('ninguna columna SELECT de app_web en GRANTS_POR_COLUMNA está en la lista de vedadas', () => {
+    const vedadas = [...columnasVedadasParaWeb(), ...COLUMNAS_ADICIONALES_VEDADAS_PARA_WEB];
+    const filasAppWebSelect = GRANTS_POR_COLUMNA.filter(
+      (g) => g.rol === 'app_web' && g.privilegio === 'SELECT',
+    );
+    expect(filasAppWebSelect.length, 'no hay filas de app_web que revisar -- el test no mide nada').toBeGreaterThan(0);
+
+    const infractoras = filasAppWebSelect.flatMap((g) =>
+      g.columnas
+        .filter((columna) => vedadas.some((v) => v.tabla === g.tabla && v.columna === columna))
+        .map((columna) => `${g.tabla}.${columna}`),
+    );
+    expect(infractoras, 'app_web tiene SELECT declarado sobre una columna vedada').toEqual([]);
   });
 });
