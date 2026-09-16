@@ -6,6 +6,72 @@
 
 ---
 
+## 2026-09-16 (220) — PASO A: pase de identidad visual sobre Pantalla 1 (v5) y Pantalla 2 (v4).
+Convocatoria puntual a `ux-designer`. **Esperando aprobación del titular antes de PASO B** (boceto de
+Pantalla 3).
+
+**Herramienta:** Claude Code, sesión interactiva. Rama `docs/identidad-visual-pantalla1-2`, desde
+`main`.
+
+### Qué se hizo
+
+Metáfora rectora, fundamentada por `ux-designer`: **papel de libro contable rubricado**, no dashboard de
+oficina — el sistema hoy leía como "planilla prolija" sin ninguna seña de que es la herramienta de un
+profesional matriculado. Tres movimientos, mismos 9 nombres de token de siempre, valores nuevos:
+
+- **Paleta**: `--papel` de gris frío a hueso de papel timbrado (#F2EFE6); `--tinta` más profunda
+  (#181D2A); `--registro`/`--propuesta`/`--confirmado`/`--alerta` con densidad de "sello de goma real"
+  en vez de tonos planos de alerta de UI genérica.
+- **Tipografía**: se suma IBM Plex Serif (misma superfamilia que el Sans/Mono ya en uso — mismas
+  métricas), reservada **exclusivamente** a identidad: nombre del estudio, título de pantalla (h1),
+  razón social del cliente en las tarjetas. Nunca en botones ni labels — la disciplina que evita el tell
+  de "serif para dar onda vintage en todos lados".
+- **Tratamiento**: rayado sutil de papel de libro contable en el `body` (una sola propiedad,
+  reversible), visible solo donde no hay una superficie blanca encima.
+
+**Monograma de banco** (reemplaza el dropdown de texto plano en Pantalla 2): cuadrado de 28×28px, letras
+en IBM Plex Serif 600, fondo al 14% del color de marca, borde al 55%, color de marca a intensidad
+completa solo en el trazo de las letras — nunca bloque sólido (evita el tell de "grid de iconos
+saturados"). Aplicado a los 6 bancos reales que el Módulo 1 sabe parsear (Galicia, Macro, Santander,
+Bancor, Nación, ICBC — verificado contra `docs/diseno/02/06/07/20/21/22-formato-*.md` antes de
+convocar). Colores de marca públicos aproximados, **nunca el logo/isotipo real**.
+
+**Hallazgo encontrado y corregido en el camino**: el dropdown de ejemplo de Pantalla 2 usaba "Banco
+Provincia", que no es uno de los 6 bancos reales soportados — corregido a Galicia/Nación/Santander.
+
+**División del trabajo, por formato de Artifact** (mismo criterio que ya usamos hoy): Pantalla 2 (canvas
+tipo "Design" moderno) la editó `ux-designer` directo. Pantalla 1 (formato `appifact` viejo) la edité yo
+con cirugía quirúrgica del JSON — 6 reemplazos, `count==1` cada uno. Un ajuste en el camino: el anclaje
+que `ux-designer` especificó para el `:root` asumía comentarios inline que mi edición anterior (tokens
+"confirmado/cerrado"+"próximamente") no había incluido — verificado contra el archivo real antes de
+reintentar, no se asumió el texto del reporte.
+
+### Verificado
+
+Balance de divs 73/73 en Pantalla 1 (sin cambio — el pase no toca estructura, solo tokens/tipografía).
+Los 21 valores de `:root` son byte-idénticos entre Pantalla 1 y Pantalla 2 (comparación directa de los
+dos archivos) — coherencia real, no solo declarada. `grep` de "Provincia" en Pantalla 2: 0 resultados.
+
+### Hallazgos declarados por `ux-designer`, no resueltos
+
+1. **3 de los 6 colores de marca son rojos** (Macro, Santander, ICBC) — es la realidad del mercado
+   bancario argentino, no un error de elección. La disambiguación real depende de las letras del
+   monograma + el nombre completo al lado, nunca del tono de rojo.
+2. **Contraste WCAG no verificado con herramienta** — los valores de `--tinta-suave`/`--alerta` nuevos
+   se eligieron a ojo sobre el `--papel`/`--superficie` nuevos, sin checker real disponible en este
+   entorno. Pendiente antes de producción.
+3. `color-mix()` en el CSS del monograma es válido para el mockup (navegador moderno) pero
+   `frontend-dev` va a necesitar precomputar los valores si `apps/web` necesita soportar navegadores más
+   viejos — nota para cuando esto se implemente de verdad, no bloqueante para el mockup.
+
+### Estado
+
+Rama `docs/identidad-visual-pantalla1-2` lista, esperando que el titular revise los dos Artifacts
+actualizados (Pantalla 1 v5, Pantalla 2 v4) antes de autorizar PASO B (boceto de Pantalla 3 con el
+lenguaje visual ya actualizado, sin un tercer pase después).
+
+---
+
 ## 2026-09-16 (219) — Tokens de "confirmado/cerrado" + "próximamente" agregados al sistema real del
 Artifact de Pantalla 1 (versión 3); Pantalla 2 ("Subir extracto bancario") bocetada dentro del marco de
 doc 36. Convocatoria puntual a `ux-designer`.
