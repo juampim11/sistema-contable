@@ -338,16 +338,25 @@ divisoria entre sidebar y contenido. Ninguno de estos tokens es nuevo — ya est
 Artifact de Pantalla 1; lo nuevo es solo su aplicación a un ítem de sidebar en vez de a un paso del
 stepper.
 
+> **Corrección (2026-09-16, `ux-designer`, resolución de este pendiente — ver doc 34 §5):** los `--om-*`
+> de arriba **no son del boceto** — son el CSS del *editor* Claude Design (la herramienta de canvas),
+> compartido por cualquier `appifact`, nunca visible dentro del `<x-dc>` que aísla el contenido real. El
+> sistema de tokens propio de Pantalla 1/2 vive en `content.files["Main.dc.html"]`, con su propio
+> `:root` en español (`--papel`, `--tinta`, `--registro`, `--confirmado`, `--linea`, `--superficie`,
+> …). Los tres tokens nuevos que sí se agregaron (`--fondo-seleccionado`, `--fondo-mudo`,
+> `--tinta-inactiva`) están en ESE `:root`, no en `--om-*`. Detalle completo, con el CSS exacto de los
+> dos estados y el boceto de Pantalla 2 que los usa: doc 34 §5.
+
 ### 6. Lo que esto cambia en lo ya construido y en lo pendiente
 
 - **Pantalla 1, ya publicada y aprobada**: sigue vigente en su contenido (el paso "Elegir cliente" no
   cambia). Lo que cambia es su contenedor: pasa de ocupar el marco completo a vivir dentro del panel de
   contenido, al lado del sidebar. No hace falta reabrir el boceto ya aprobado por esto — se reencuadra
   cuando se pase a código, no antes.
-- **El tercer estado visual de paso del stepper** (doc 34 §1.3/§3, pendiente para Pantalla 2) sigue
-  pendiente igual que antes — este documento no lo resuelve ni lo reemplaza, solo agrega que el sistema
-  de tokens también necesita el estado "próximamente" para ítems de sidebar (distinto del estado
-  "confirmado/cerrado" del stepper: uno es "no disponible todavía", el otro es "ya pasó y está cerrado").
+- **El tercer estado visual de paso del stepper** (doc 34 §1.3/§3): **resuelto 2026-09-16** — ver doc
+  34 §5. El estado "próximamente" para ítems de sidebar también quedó resuelto ahí, en el mismo commit
+  (distinto del estado "confirmado/cerrado" del stepper: uno es "no disponible todavía", el otro es "ya
+  pasó y está cerrado").
 - **Nuevo pendiente, agregado por este documento**: el header global (identidad + salir) y el sidebar de
   4 ítems (con su lógica de visibilidad por rol, ver §2) se agregan a la lista de piezas de layout a
   construir en PR4, antes o junto con el reencuadre de Pantalla 1 a código — no es una pantalla nueva del
@@ -355,9 +364,8 @@ stepper.
 
 ### 7. Pendiente antes de construir esto en código
 
-1. Agregar el estado visual "próximamente" al sistema de tokens (junto con el estado "confirmado/cerrado"
-   de doc 34 §3, punto 2 — buen momento para hacer los dos juntos, ya que ambos tocan el mismo sistema de
-   tokens antes de bocetar Pantalla 2).
+1. ~~Agregar el estado visual "próximamente" al sistema de tokens (junto con el estado
+   "confirmado/cerrado" de doc 34 §3, punto 2)~~ — **resuelto 2026-09-16**, ver doc 34 §5.
 2. La lógica de visibilidad por rol del sidebar (§2, regla 2) necesita el mismo tipo de convocatoria que
    pide 2.bis del dictamen de arriba para cualquier ABM real: no es solo un `if` de UI, es una decisión
    que toca `rol_membership` y las policies reales — `seguridad-datos-financieros` + `security-engineer`

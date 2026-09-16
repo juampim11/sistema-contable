@@ -24,7 +24,7 @@ que el listado original tenía por separado.
 | # | Paso | Estado |
 |---|---|---|
 | 1 | Elegir cliente | Ya bocetado y aprobado (Artifact publicado) |
-| 2 | Subir extracto bancario | Pendiente de boceto |
+| 2 | Subir extracto bancario | Bocetado 2026-09-16, dentro del marco de doc 36 (header global + sidebar + panel) — [Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F). Pendiente de aprobación del titular |
 | 3 | Resumen de la extracción | Pendiente de boceto |
 | 4 | Procesar y tipificar | Pendiente de boceto |
 | 5 | Revisar e imputar (fusión de "revisar tipificaciones" + "imputación a cuentas contables", ver §1.2) | Pendiente de boceto |
@@ -285,3 +285,70 @@ en uno:
 Los tres AC originales de §1.3 sobre el `confirmarAsiento()` de paso 6 siguen vigentes tal cual, sin
 ajuste — paso 6 sí es el "paso" atómico con un único evento terminal que la redacción original de §1.3
 asumía en general. El ajuste de esta sección es específico al paso 5 fusionado.
+
+---
+
+## 5. Estados de token pendientes, resueltos — Pantalla 2 bocetada (2026-09-16)
+
+> Convocatoria: `ux-designer`, sola. Cierra el pendiente de §3 punto 2 (tercer estado visual de paso) y
+> el de doc 36 §7 punto 1 (estado "próximamente"), antes de bocetar Pantalla 2 tal como pedían los dos
+> documentos.
+
+### Dónde viven los tokens — corrección de una atribución equivocada
+
+Los tokens `--om-*` que doc 36 §5 citaba como "ya definidos en el Artifact de Pantalla 1" **no son del
+boceto**: son el CSS del *editor* Claude Design (el canvas `appifact` como herramienta), compartido por
+cualquier canvas — nunca visible dentro del `<x-dc>` que aísla el contenido real. El sistema de tokens
+propio de Pantalla 1/2 vive en `content.files["Main.dc.html"]`, con su propio `:root` en español:
+`--papel`, `--tinta`, `--tinta-suave`, `--registro`, `--propuesta`, `--confirmado`, `--alerta`,
+`--linea`, `--superficie` — el mismo vocabulario que ya usan `.paso`/`.paso.activo`/`.etiqueta`. Doc 36
+§5 queda con esta corrección pendiente de aplicarse ahí (ver también HANDOFF).
+
+### Los dos estados, resueltos
+
+Insertados en el `:root` real (Artifact de Pantalla 1, versión 3): tres tokens nuevos —
+`--fondo-seleccionado`, `--fondo-mudo`, `--tinta-inactiva` — reusando `--confirmado` (ya existía, sin
+usar) para el color del estado "cerrado", sin inventar paleta nueva.
+
+- **"confirmado/cerrado"** (nivel paso, §1.3/§3): clase `.paso.cerrado` — candado + check, sin cursor de
+  navegación, tooltip en hover/foco con "Confirmado por [quién] el [cuándo]" + el puente "Corregir esta
+  decisión". Semántica real (`<button class="paso cerrado">`, no un `div` con `onClick`). **No se
+  renderiza todavía en ningún boceto** (ni paso 1 de Pantalla 1 ni ningún paso de Pantalla 2 puede estar
+  cerrado hoy) — queda definido en el sistema de tokens, listo para cuando se boceten los pasos 5/6.
+- **"próximamente"** (sidebar, doc 36 §2 regla 2): `.nav-item[aria-disabled="true"]`, con
+  `tabindex="0"` (nunca `disabled` nativo — sacaría el ítem del tab order y rompería el AC de foco de
+  doc 36) y tooltip expuesto en hover **y** en foco. Sí está renderizado y funcionando en Pantalla 2 (ver
+  abajo).
+
+### Hallazgo nuevo — un tercer estado de paso que §1.3 nunca estiló: `.paso.default-navegable`
+
+§1.3 definió en detalle el contrato de "cerrado" (pasos posteriores a la confirmación) pero nunca estiló
+el otro lado de la misma distinción: "pasos previos a la confirmación... navegables libremente hacia
+atrás". Pantalla 1 nunca necesitó ese estado (es el primer paso, no tiene ningún paso previo que
+mostrar) — Pantalla 2 es la primera pantalla con un paso anterior real (paso 1, "Elegir cliente") que
+tiene que verse clickeable. Agregado como `.paso.default-navegable` (cursor pointer + hover/foco con
+`--registro`), extensión directa de §1.3, no un cambio de criterio.
+
+### Boceto de Pantalla 2 — "Subir extracto bancario"
+
+[Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F), dentro del marco de navegación de doc 36
+(header global + sidebar de 4 ítems + panel de contenido). Paso 1 en `.paso.default-navegable`, paso 2
+activo, breadcrumb con el cliente real del paso 1 ("Estudio Demo S.A.", sintético). Contenido del paso:
+selector de cuenta bancaria (3 cuentas sintéticas) + dropzone interactivo (PDF/Excel, hasta 20 MB,
+alterna a chip de archivo cargado) + botón "Continuar" deshabilitado hasta elegir cuenta y cargar
+archivo. Pantalla 1 **no se reabrió** — doc 36 ya había aclarado que se reencuadra en código, no en el
+boceto.
+
+### Pendientes que quedan declarados, no resueltos acá
+
+1. `.nav-item[aria-disabled="true"]` sobre un `<div>` (con `tabindex`, sin `onClick`) es una excepción al
+   principio general "elemento real, nunca `role`/`onClick` en un div" de la propia herramienta de
+   boceto — necesaria para que el AC de foco de doc 36 se cumpla (`disabled` nativo saca el elemento del
+   tab order). Decisión de implementación pendiente de `frontend-dev` cuando esto se traduzca a React:
+   ¿el mismo `<div>`, o `<button aria-disabled="true">` sin el atributo `disabled` nativo?
+2. La variante de sidebar para rol `administrativo` (doc 36 AC2: los 3 ítems "próximamente" **ocultos**,
+   no deshabilitados) no está bocetada — Pantalla 2 muestra solo la vista `socio`/`contador`.
+3. El estado "confirmado/cerrado" a **nivel fila** (§4, grupos de `GrupoDecisionPendiente` en el paso 5)
+   no tiene marcado de referencia todavía — cuando se boceté el paso 5, va a necesitar su propia
+   estructura (probablemente una fila de tabla, no `<button class="paso">`), reusando los mismos tokens
+   de color.

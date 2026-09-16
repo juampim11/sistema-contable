@@ -6,6 +6,79 @@
 
 ---
 
+## 2026-09-16 (219) — Tokens de "confirmado/cerrado" + "próximamente" agregados al sistema real del
+Artifact de Pantalla 1 (versión 3); Pantalla 2 ("Subir extracto bancario") bocetada dentro del marco de
+doc 36. Convocatoria puntual a `ux-designer`.
+
+**Herramienta:** Claude Code, sesión interactiva. Rama `docs/pantalla2-boceto-y-tokens-pendientes`,
+desde `main`.
+
+### Sin skill "/design"
+
+El titular pidió usar `/design` — no existe ningún skill con ese nombre en esta sesión, mismo gap que ya
+había marcado `ADR-0006-autenticacion.md` §16 como sin confirmar. Confirmado con el titular (pregunta
+directa): se usa el mismo mecanismo que Pantalla 1, el Artifact tool con Claude Design, directo.
+
+### Qué se hizo
+
+`ux-designer` leyó el Artifact real de Pantalla 1 (no asumió los tokens del brief) y corrigió una
+premisa equivocada: los `--om-*` que doc 36 §5 citaba como "tokens ya definidos en el Artifact" son del
+*editor* Claude Design, no del boceto — el sistema de tokens real (`--papel`/`--tinta`/`--registro`/…)
+vive en `content.files["Main.dc.html"]`, con su propio `:root`. Corrección aplicada a doc 36 §5.
+
+Especificó el CSS/HTML exacto de los dos estados pendientes (doc 34 §1.3/§3, doc 36 §2), reusando
+`--confirmado` (ya existía, sin usar) y agregando 3 tokens nuevos (`--fondo-seleccionado`,
+`--fondo-mudo`, `--tinta-inactiva`). Yo apliqué la cirugía quirúrgica del JSON (mismo método
+`json.loads`/`json.dumps` + verificación `count==1` ya validado en la tarea anterior) — `ux-designer` no
+edita el Artifact de Pantalla 1 directo, mismo criterio que la vez pasada (riesgo de corromper el canvas
+a mano). Verificado post-publish: 6 pasos intactos, los 3 tokens nuevos presentes, ninguno renderizado
+en el contenido actual de Pantalla 1 (correcto — ni el paso 1 puede estar "cerrado" ni hay sidebar
+todavía ahí).
+
+`ux-designer` sí publicó directo el Artifact nuevo de Pantalla 2 (vía el mecanismo normal
+`quickstart intent:"design"`, no edición manual de JSON — solo Pantalla 1, que ya existía en el formato
+viejo `appifact`, necesita cirugía; un Artifact nuevo se crea por el camino normal). Encontró y
+documentó un hallazgo nuevo en el camino: doc 34 §1.3 nunca estiló el estado de "paso previo a la
+confirmación, navegable" (solo el de "cerrado") — Pantalla 1 nunca lo necesitó (es el primer paso),
+Pantalla 2 sí (el paso 1 "Elegir cliente" tiene que verse clickeable). Agregado como
+`.paso.default-navegable`, extensión directa de §1.3, documentado en doc 34 §5.
+
+**Boceto de Pantalla 2**: [Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F) — header global
+(identidad + salir) + sidebar de 4 ítems ("Cierre mensual" activo, 3 "próximamente" con tooltip
+accesible en hover y foco por teclado) + stepper (paso 1 navegable, paso 2 activo) + breadcrumb con
+cliente real + selector de cuenta bancaria + dropzone interactivo PDF/Excel + botón "Continuar"
+condicionado. Todo sintético, mismo criterio que Pantalla 1. Pantalla 1 no se reabrió (doc 36 ya había
+aclarado que se reencuadra en código, no en el boceto).
+
+### Verificado
+
+Tokens nuevos y estados CSS presentes en los dos Artifacts (Pantalla 1 v3 y Pantalla 2), mismo valor y
+mismo nombre en los dos — coherencia confirmada leyendo ambos archivos. Doc 34 §0 actualizado (Pantalla
+2: "Bocetada", con link). Doc 34 §5 y doc 36 §5/§7 actualizados con la corrección y los pendientes.
+
+### Pendientes declarados por `ux-designer`, no resueltos acá
+
+1. `.nav-item[aria-disabled="true"]` sobre un `<div>` (no `<button disabled>`, por el AC de foco de doc
+   36) — decisión de implementación pendiente de `frontend-dev` en React.
+2. Variante de sidebar para rol `administrativo` (ítems ocultos, no deshabilitados, doc 36 AC2) — sin
+   bocetar.
+3. Estado "confirmado/cerrado" a nivel fila (doc 34 §4, paso 5) — sin marcado de referencia, pendiente
+   de cuando se boceté ese paso.
+
+### Estado
+
+`docs/pantalla2-boceto-y-tokens-pendientes` queda lista para mergear (sin commitear todavía — se
+commitea junto con esta entrada), esperando revisión del titular del Artifact de Pantalla 2 y de los
+docs actualizados.
+
+### Lo próximo
+
+A decisión del titular: aprobar Pantalla 2; retomar el boceto de Pantalla 3 ("Resumen de la extracción")
+cuando corresponda; resolver los 3 pendientes declarados arriba antes de construir el sidebar/stepper en
+código real (PR4).
+
+---
+
 ## 2026-09-16 (218) — Marco de navegación más amplio, antes de PR4: sidebar de 4 secciones (`docs/diseno/
 36-marco-navegacion-mas-amplio.md`, nuevo). Convocatoria real y en paralelo a `ux-designer` +
 `analista-funcional`. **Nota de numeración**: esta entrada usa (218) — (216) y (217) ya están tomadas en
