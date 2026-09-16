@@ -6,6 +6,103 @@
 
 ---
 
+## 2026-09-16 (217) — 🔒 PR3 de ADR-0006 cerrado: adapter Supabase real (`packages/auth`), scope
+`'local'` en `cerrarSesion`. Convocatoria real (`dba-data` + `security-engineer` +
+`seguridad-datos-financieros`, paralelo) + `code-reviewer` sobre el diff, 1 bloqueante corregido. **Nota
+de numeración**: esta entrada usa (217), no (216) — (216) ya está tomada en la rama sin mergear
+`docs/wizard-paso5-coherencia-y-pantalla1-breadcrumb` (misma sesión, tarea previa), que esta rama
+(`feat/pr3-adapter-supabase-real`, creada desde `main` antes de que esa otra se mergeara) no conoce.
+Quien mergee primero fija el orden real; si hay choque de número al mergear la segunda rama, se
+renumera esa entrada, no esta.
+
+**Herramienta:** Claude Code, sesión interactiva. Modo plan (CLAUDE.md §3.2) — plan aprobado antes de
+escribir código. Rama `feat/pr3-adapter-supabase-real`, desde `main`.
+
+### Qué se hizo
+
+Reemplazó el stub de `packages/auth/src/adapters/supabase.ts` (lanzaba `AdapterSupabaseNoImplementadoError`
+en sus 3 métodos, a propósito, desde PR1) por la implementación real, vía `@supabase/ssr` — no un cliente
+"bare" de `@supabase/supabase-js` — porque el adapter necesita el `LectorEscritorDeCookies` inyectado
+(`crearAdapterSupabase(cookies, clienteInyectado?)`), decisión que ya estaba fijada en el comentario de
+cabecera de `packages/auth/src/cookies.ts` desde PR1 y que el plan original (basado en la lectura de
+`security-engineer` sobre la prosa del ADR) no había visto — corregido a mitad de implementación, con
+confirmación del titular, sin reabrir toda la convocatoria.
+
+Contrato: `Sesion` sigue opaca (`{usuarioId, expiraEn}`); `getUser()`, nunca `getSession()` (ni para leer
+`expires_at` real — `expiraEn` en `obtenerSesion` queda como cota conservadora, con el motivo comentado en
+el código); un solo tipo de error (`CredencialesInvalidasError`) pliega credenciales inválidas + email
+inexistente + usuario baneado (evita enumeration leak), `FallaInfraestructuraAuthError` separado para red/
+5xx/timeout; solo la clave anon, nunca `SUPABASE_SERVICE_ROLE_KEY` (reservada para
+`apps/cli/src/invitar-usuario.ts`, fuera de este PR); `obtenerSesion` nunca lanza.
+
+**Decisión revisada dos veces sobre `cerrarSesion`** (ver ADR-0006 §17, agregado en esta tarea): primera
+propuesta de `security-engineer` fue logout stateless (sin revocar, riesgo residual aceptado por escrito)
+porque asumía que revocar exigía romper la opacidad de `Sesion` — el titular la aprobó. Al descubrirse que
+el adapter usa `@supabase/ssr` (no un cliente bare), `security-engineer` revirtió su propia recomendación:
+con el cliente ya ligado a las cookies, `signOut({scope:'local'})` revoca sin costo ni ruptura de contrato
+— el titular volvió a decidir, esta vez a favor de revocar. El ADR quedó escrito reflejando la decisión
+final, no la intermedia.
+
+**Hallazgo bloqueante de `code-reviewer`, corregido en la misma tarea**: `obtenerSesion` tapaba un
+`SupabaseEnvNoConfiguradoError` (config faltante) como si fuera "sin sesión" — en producción, con
+`SUPABASE_URL`/`SUPABASE_ANON_KEY` mal configuradas, todos los usuarios aparecerían deslogueados sin
+ningún rastro. Corregido: `cliente()` en su propio try/catch, separado del de la llamada de red, logueando
+el motivo con `logger.error` (redacta la causa automáticamente) antes de devolver `null` — el método sigue
+sin lanzar, pero el error ya no es invisible. Un hallazgo no bloqueante (mismo review): `iniciarSesion` no
+distinguía "sesión sin `expires_at`" de un estado imposible — ahora también lanza
+`FallaInfraestructuraAuthError` en vez de inventar una sesión "recién nacida y ya vencida".
+
+**Segundo hallazgo, del titular, sobre el mismo método (revisión del diff completo antes de autorizar el
+merge)**: el `try/catch` que envuelve `c.auth.getUser()` devolvía `null` para cualquier error o excepción
+por igual, sin distinguir un 4xx rutinario (sin cookie, cookie vencida — pasa en cada visita anónima) de
+un 5xx o una excepción real (Supabase caído, timeout) — mismo tipo de fuga de visibilidad que el hallazgo
+de `code-reviewer` de arriba, pero en el punto que ese review no había tocado. Corregido (commit
+`45d2b08`, separado de `d8213cb` para no reescribir un commit ya cerrado): `error.status >= 500` o una
+excepción lanzada pasan por `logger.error('auth.supabase.obtener_sesion.falla_verificacion', undefined,
+causa)` antes de devolver `null`; un 4xx normal sigue silencioso, a propósito (loguear cada visita
+anónima sin sesión sería ruido constante). 3 tests nuevos/ajustados verifican las dos ramas por separado.
+
+### Declaraciones de seguridad (commit separado)
+
+`email` agregado a `CLAVES_SENSIBLES_EXTERNAS` (`password` ya estaba) — el ADR §15 lo prometía desde
+2026-09-14, nunca se había escrito. Las dos filas de `docs/seguridad/registro-terceros.md` (Supabase Auth
+us-east-2, Vercel) — mismo caso: el ADR las redactaba, el archivo real tenía 0 resultados para
+`grep -i supabase` (hallazgo bloqueante de `seguridad-datos-financieros`, verificado antes de escribir
+código, no después).
+
+### Verificado
+
+`pnpm typecheck` limpio. `packages/auth`: 30 tests (verificado con `vitest run`, no a mano), cliente
+Supabase inyectado/mockeado, cero red real. R-R (`@supabase/*` solo en el adapter) verde con el import
+real. Suite completa, corrida dos veces — una antes de `45d2b08`, otra después (paso 7 de
+`cierre-de-integracion`, previa al merge): **14 rojos preexistentes, 0 nuevos** en las dos corridas —
+mismo número que HANDOFF (215). Total: 2519 (baseline de 215) → 2530 (tras `d8213cb`/`f9a77cd`) → **2531**
+(tras `45d2b08`, el segundo hallazgo del titular sobre `obtenerSesion`, +1 test).
+
+**Hallazgo aparte, no de esta tarea, no tocado**: `pnpm fixtures:verificar` falla en
+`packages/ingesta/tests/fixtures/extracto-sintetico.txt` (chequeo 1, "ningún token del material real") —
+verificado que el fixture no está modificado en esta rama ni tiene cambios locales, así que es
+preexistente en `main`. Queda sin investigar ni resolver — fuera de alcance de PR3, alguien tiene que
+convocar a `dba-data`/`seguridad-datos-financieros` sobre esto antes de confiar en ese gate de nuevo.
+
+### Estado
+
+**`feat/pr3-adapter-supabase-real` queda revisada y aprobada, lista para mergear**, tres commits
+(`d8213cb` mecanismo, `f9a77cd` declaraciones de seguridad, `45d2b08` segundo hallazgo del titular sobre
+`obtenerSesion` — más `ab059f9`, esta misma entrada de HANDOFF, que no cuenta como pieza sustantiva
+aparte). `.env.example` se actualizó **en disco, no en git** — sigue sin trackearse a propósito
+(`70024fa`, "un archivo de ejemplo trackeado es el camino más corto para que un valor real termine en el
+repo").
+
+### Lo próximo
+
+A decisión del titular: revisar el diff completo y aprobar el merge; investigar el fallo de
+`fixtures:verificar` (no es de esta tarea); cuando exista `apps/web`, implementar `conSesion()` (§4) y
+`LectorEscritorDeCookies` real (vía `next/headers`) — hereda el mismo riesgo de logging accidental de
+cookies de sesión que `security-engineer` señaló para este PR, declarado explícito para quien lo retome.
+
+---
+
 ## 2026-09-16 (216) — Doc 34 §4 (coherencia paso 5 fusionado) + boceto Pantalla 1 actualizado (stepper
 6 pasos + breadcrumb). Convocatoria puntual a `ux-designer`. Aclaración de estado: (215) decía
 `feat/rol-app-web` "sin mergear" — verificado contra git real, **ya está mergeado** (commit `5da254b`

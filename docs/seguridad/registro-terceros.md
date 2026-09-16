@@ -13,6 +13,8 @@
 | Destino | Qué se manda | Nivel máximo | Base / motivo | Autorizado por | Fecha | Redacción aplicada |
 |---|---|---|---|---|---|---|
 | `api.argentinadatos.com` | `moneda` + `fecha` (parámetros de la URL de consulta — sin dato de ningún cliente) | N0 | Cotización oficial BNA pública, ya validada en producción por el proyecto hermano `control-gestion`; investigación cerrada, JP aceptó la fuente explícitamente (`docs/diseno/12-cotizacion-bna-plan.md`) | JP | 2026-08-19 | n/a — no aplica, no viaja dato de cliente |
+| Supabase Auth (us-east-2) | `email`, hash de contraseña (administrado por el proveedor), marcas de sesión | N2 | Identidad de **staff** del estudio (Laura y su equipo), nunca dato de cliente ni dato financiero — `ADR-0006-autenticacion.md` §1/§15. Hueco normativo abierto: transferencia internacional de dato personal — **no tengo esa fuente cargada** (ADR-0002 §G). Validar con profesional matriculado. | Titular (decisión en `ADR-0006-autenticacion.md`, 2026-09-14) | 2026-09-16 (fila escrita al implementar PR3; la decisión es del 2026-09-14) | `email`/`password` en `CLAVES_SENSIBLES_EXTERNAS` (`clasificacion-campos.ts`); el adapter nunca loguea el objeto `credenciales` ni el error crudo del SDK |
+| Vercel (hosting) | Request logs con URL/IP | N1 | Hosting de la aplicación (`apps/web`) — `ADR-0006-autenticacion.md` §15. Mismo hueco normativo que la fila de arriba. | Titular (decisión en `ADR-0006-autenticacion.md`, 2026-09-14) | 2026-09-16 (fila escrita al implementar PR3; la decisión es del 2026-09-14) | R30 — ningún dato ≥N2 en URL |
 
 ## Destinos evaluados y rechazados
 
