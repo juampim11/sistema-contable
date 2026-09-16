@@ -577,10 +577,18 @@ pooler.
 | Variable | Vercel Production | Vercel Preview | Máquina del titular | Guard |
 |---|---|---|---|---|
 | `APP_ENTORNO` | `produccion` (o `staging`, según §16) | — (Preview desactivado, ver abajo) | según base | `entorno.ts` sin default |
-| `DATABASE_URL_APP` | pooler 6543, rol `app_web` | — | `app_request_dev` local | `verificarCredencialDeRequest` extendido (§5) |
+| `DATABASE_URL_APP` | pooler 6543, rol de login miembro de `app_web` (a definir, mismo patrón que `app_request_dev`) | — | `app_request_dev` local | `verificarCredencialDeRequest` extendido (§5) |
 | `SUPABASE_URL` + anon key | sí, server-only, **sin `NEXT_PUBLIC_`** | — | no hace falta | R37 |
 | `SUPABASE_SERVICE_ROLE_KEY` | **ausente** | — | sí, solo para `invitar-usuario.ts` | R-S + guard de arranque §4 |
 | `DATABASE_URL_JOB` / DSN del dueño | **ausente** | — | sí | guard de arranque §4 |
+
+**Corrección (2026-09-16, cierre de la migración `0047_rol_app_web.sql`, `documentador`):** la fila de
+arriba decía literal "rol `app_web`" — contradice §5 y la propia migración `0047`, que crean `app_web`
+`nologin` (igual que `app_request`, que también es `nologin`: el rol de login real que se conecta desde
+Vercel es `app_request_dev` en local, no `app_request` mismo). `DATABASE_URL_APP` en producción tiene que
+apuntar a un rol de login todavía sin crear, **miembro de** `app_web` (hereda sus grants por membership de
+rol de Postgres), nunca a `app_web` directamente — se define con `devops` cuando se cablee la variable
+real en Vercel, mismo patrón que `app_request_dev` ya resuelve para `app_request` en local.
 
 **Login 100% server-side, sin ningún `NEXT_PUBLIC_*`** (decisión del titular, punto 6): sin SDK de
 Supabase en el navegador, sin claves en el bundle — coherente con `ADR-0002` §E.1 sin necesidad de

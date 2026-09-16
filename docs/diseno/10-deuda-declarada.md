@@ -724,6 +724,45 @@ Sin dueño, identificado, sin convocatoria todavía. Pendiente de decisión futu
 junto con otra tarea de R44 o aparte — mismo mecanismo que ya cerró `pendiente_cierre_ins` en `0046`
 (columnas de autoría fuera del grant de INSERT donde ningún caller legítimo las nombra, o `with_check`
 fijando el único valor de nacimiento válido donde sí hay un caso legítimo documentado que las nombra) |
+| **B.30** | 🟡 **11 funciones de `app` con `EXECUTE` heredado de `PUBLIC`, nunca revocado — `app_web`
+(migración `0047_rol_app_web.sql`, ADR-0006 §5) las hereda igual que cualquier rol nuevo, SIN que la
+migración se lo otorgue (hallazgo declarado por escrito en el propio test, no encontrado por
+inspección después — 2026-09-16; conteo corregido el mismo día tras pregunta directa del titular,
+"¿cuál es el número real, verificado ahora" — una primera versión de esta entrada decía 12,
+verificado en vivo con `has_function_privilege('app_web', ..., 'EXECUTE')` que el número real es 11).**
+Nueve son funciones de trigger (`exigir_cierre_no_terminal_al_insertar_asiento`,
+`exigir_inmutabilidad_post_terminal`, `exigir_nodo_cliente`, `impedir_cambio_es_dato_real`,
+`rechazar_nid_manual`, `rechazar_path_manual`, `registrar_cambio_membership`, `tenant_node_set_path`,
+`verificar_entrada_digest`); las otras dos son `es_rol_supervisor` y `verificar_gate_confirmacion_cierre`.
+
+**Hallazgo relacionado, pero DISTINTO — no cuenta como una de las 11**: `current_user_id()`, una de las
+4 funciones que `0047` SÍ otorga explícito a `app_web`, también tiene un grant a `PUBLIC` en su
+`pg_proc.proacl`, nunca revocado (`0001_tenancy.sql:210-213, 294-298` revocó `PUBLIC` de
+`accessible_tenant_ids()`/`has_role_on()`, pero no tocó `current_user_id()` — ninguna de las tres es
+`SECURITY DEFINER`). No agrega superficie: `app_web` ya podía ejecutar `current_user_id()` por el grant
+explícito, con o sin el de `PUBLIC`. La primera versión de esta entrada sumaba este hallazgo a las 11 y
+decía 12 — es un error real distinto, no una variante de redondeo: mezclaba "superficie no intencional"
+con "superficie intencional que además tiene un grant redundante".
+
+**Verificado, no supuesto: ninguna de las 12 (las 11 + `current_user_id()`) es `SECURITY DEFINER`**
+(`prosecdef=false` las 12) — corren con el privilegio de quien las invoca, no elevado, así que no
+habilitan escalada de privilegio real por sí solas. Nueve son funciones de trigger que Postgres rechaza
+invocar fuera de contexto de trigger. Pero rompe el invariante que el diseño de `app_web` pretende
+sostener — "`app_web` solo puede ejecutar estas 4 funciones nombradas" (`current_user_id`,
+`accessible_tenant_ids`, `has_role_on`, `has_capacidad_en`) — y queda declarado en el propio test que lo
+mide: `packages/data/tests/grants-conjunto-cerrado.test.ts`, comentario del describe `R41c`, sección
+"🔴 Alcance deliberadamente acotado".
+
+**Por qué no se cierra en esta tarea (motivo textual del titular).** Cerrarlo de verdad (`revoke execute
+... from public` sobre las 12) es riesgoso sin verificar primero cada trigger — varias son `before
+insert/update` sobre tablas de dominio, y sin `SECURITY DEFINER` Postgres exige que el rol que dispara el
+trigger (`app_request`, `app_job`) tenga `EXECUTE` para poder escribir. Revocar de `PUBLIC` sin
+verificar/otorgar explícito a esos roles primero podría romper `INSERT`/`UPDATE` existente de todo el
+dominio. Necesita su propia convocatoria (`dba-data` + `security-engineer`), no un byproduct de esta
+tarea. Riesgo bajo, arreglo caro — diferido a propósito | Sin dueño. Convocatoria futura a `dba-data` +
+`security-engineer`: confirmar, función por función, si `app_request`/`app_job` dependen del `EXECUTE`
+heredado de `PUBLIC` para disparar sus propios triggers, otorgarles explícito donde haga falta, y recién
+después `revoke execute on function <las 12> from public` |
 
 ### C. Deuda técnica que no bloquea, pero se cobra sola
 

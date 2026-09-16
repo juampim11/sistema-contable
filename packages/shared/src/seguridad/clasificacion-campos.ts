@@ -1837,3 +1837,48 @@ export function columnasSoloFirmador(): { tabla: NombreTabla; columna: string }[
       .map(([columna]) => ({ tabla, columna })),
   );
 }
+
+/**
+ * Columnas que `app_web` (ADR-0006 §5) NO debe poder seleccionar.
+ *
+ * 🔴 **Precisión sobre qué "fuente única" significa acá, para no repetir la confusión que ya generó
+ * esta frase una vez** (pregunta directa del titular, 2026-09-16): esta función NO es código que
+ * `0047_rol_app_web.sql` ejecute ni importe -- es SQL crudo, no puede llamar a TypeScript. El `.sql` y
+ * las filas de `app_web` en `GRANTS_POR_COLUMNA` (`grants-conjunto-cerrado.test.ts`) siguen siendo
+ * texto escrito a mano, verificado contra esta función AL ESCRIBIRLOS, no derivado de ella. Lo único
+ * que conecta ambas cosas mecánicamente es el test `R41d`: compara `GRANTS_POR_COLUMNA` contra el
+ * resultado de esta función y de `COLUMNAS_ADICIONALES_VEDADAS_PARA_WEB`, y se pone rojo si divergen.
+ * `columnasVedadasParaWeb()` es entonces la referencia que un test verifica, no una fuente que un
+ * generador de código consulta. Hoy devuelve exactamente las 4 columnas del ADR:
+ * `cuenta_bancaria_identificador.numero`, `padron_socio_documento.documento`,
+ * `movimiento_origen_crudo.fila_origen`, `credencial_fiscal.material_cifrado`.
+ */
+export function columnasVedadasParaWeb(): { tabla: NombreTabla; columna: string }[] {
+  return (Object.keys(CLASIFICACION) as NombreTabla[]).flatMap((tabla) =>
+    Object.entries(CLASIFICACION[tabla].campos)
+      .filter(([, campo]) => campo.nivel === 'N2R' || campo.nivel === 'N3')
+      .map(([columna]) => ({ tabla, columna })),
+  );
+}
+
+/**
+ * Columnas vedadas para `app_web` que `columnasVedadasParaWeb()` NO agarra porque su riesgo no es
+ * `N2R`/`N3` -- cada una con su propio motivo, verificado, no generalizado a otras columnas con nota
+ * parecida que hoy no están en ningún grant de `app_web` (el día que alguna entre por una consulta
+ * real, esa migración agrega su propia fila acá):
+ *
+ * - **H1** (`cuenta_atributo.respaldo`/`.padron_socio_id`): riesgo real de fuga (prosa libre que puede
+ *   citar un CUIT/nombre de tercero, sin ningún `CHECK` que lo proteja -- a diferencia de
+ *   `padron_contraparte.patron`), pero nivel `N2`.
+ * - **R25** (`tenant_node.nid`/`.path`/`.parent_path`): bigint secuencial y sus dos espejos que lo
+ *   contienen -- "NUNCA sale en API, URL ni export" (`clasificacion-campos.ts:54-74`), enumeraría la
+ *   plataforma. Nivel `N1`. Hallazgo real de la primera versión de `0047_rol_app_web.sql`: las incluía,
+ *   `packages/data/tests/path-coherente.test.ts` (R36) lo puso rojo al correr la suite completa.
+ */
+export const COLUMNAS_ADICIONALES_VEDADAS_PARA_WEB = [
+  { tabla: 'cuenta_atributo', columna: 'respaldo' },
+  { tabla: 'cuenta_atributo', columna: 'padron_socio_id' },
+  { tabla: 'tenant_node', columna: 'nid' },
+  { tabla: 'tenant_node', columna: 'path' },
+  { tabla: 'tenant_node', columna: 'parent_path' },
+] as const satisfies readonly { tabla: NombreTabla; columna: string }[];

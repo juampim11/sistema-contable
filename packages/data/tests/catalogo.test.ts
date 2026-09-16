@@ -417,6 +417,19 @@ describe('R7/R8/R9 — owner, vistas y materializadas', () => {
     expect(conAppJob).toEqual([]);
   });
 
+  it('R-web: app_web es nologin, sin BYPASSRLS y sin SUPERUSER (ADR-0006 §5, migración 0047)', async () => {
+    const { rows } = await db.query<{
+      rolcanlogin: boolean;
+      rolbypassrls: boolean;
+      rolsuper: boolean;
+    }>(`select rolcanlogin, rolbypassrls, rolsuper from pg_roles where rolname = 'app_web'`);
+    expect(rows[0], 'app_web no existe -- ¿corrió la migración 0047?').toEqual({
+      rolcanlogin: false,
+      rolbypassrls: false,
+      rolsuper: false,
+    });
+  });
+
   /**
    * 🔴 Dos correcciones, las dos medidas contra la primera vista que se cree:
    *
