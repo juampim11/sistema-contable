@@ -194,10 +194,25 @@ export function crearAdapterSupabase(
         // el vencimiento exacto del token. Ningún control de seguridad depende de esta precisión: la
         // autorización real es RLS en Postgres (ADR-0001), no esta fecha.
         const { data, error } = await c.auth.getUser();
-        if (error || !data.user) return null;
+        if (error) {
+          // Mismo criterio que el catch de `cliente()` arriba: "no hay sesión" (sin cookie, cookie
+          // vencida/inválida — un 4xx normal, pasa en cada visita anónima) no es lo mismo que "no pude
+          // verificar porque Supabase falló" (5xx, rate limit sin status claro). Lo primero es
+          // silencioso a propósito (loguearlo en cada request sin sesión sería ruido constante); lo
+          // segundo se hace visible, mismo mecanismo que el hallazgo bloqueante de `code-reviewer` ya
+          // corrigió para el error de configuración — `logger.error` redacta `causa` automáticamente.
+          if ((error.status ?? 500) >= 500) {
+            logger.error('auth.supabase.obtener_sesion.falla_verificacion', undefined, error);
+          }
+          return null;
+        }
+        if (!data.user) return null;
 
         return { usuarioId: data.user.id, expiraEn: new Date(Date.now() + MARGEN_EXPIRACION_MS).toISOString() };
-      } catch {
+      } catch (e) {
+        // Una excepción acá (red caída, timeout) SIEMPRE es "no pude verificar", nunca "no hay sesión"
+        // — se distingue de la rama de arriba justamente porque no hubo respuesta que interpretar.
+        logger.error('auth.supabase.obtener_sesion.falla_verificacion', undefined, e);
         return null;
       }
     },

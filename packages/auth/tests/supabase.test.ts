@@ -193,22 +193,42 @@ describe('adapter Supabase real (ADR-0006 §1/§4/§17, PR3)', () => {
       expect(Object.keys(sesion ?? {})).toEqual(['usuarioId', 'expiraEn']);
     });
 
-    it('sin cookie (getUser sin usuario) devuelve null, nunca lanza', async () => {
+    it('sin cookie (getUser sin usuario, error 401 normal) devuelve null, nunca lanza, y NO loguea — es el caso rutinario de cada visita anónima, no una falla', async () => {
+      const espiaError = vi.spyOn(logger, 'error').mockImplementation(() => {});
       const cliente = clienteMock({
         getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: { status: 401, message: 'no session' } }),
       });
       const adapter = crearAdapterSupabase(cookiesDePrueba(), cliente);
 
       await expect(adapter.obtenerSesion(new Request('http://localhost/x'))).resolves.toBeNull();
+      expect(espiaError).not.toHaveBeenCalled();
+      espiaError.mockRestore();
     });
 
-    it('una excepción (red caída) también devuelve null, nunca lanza', async () => {
+    it('un 5xx de getUser() ("no pude verificar", no "sin sesión") devuelve null PERO lo loguea — hallazgo del titular, distinto del bloqueante de code-reviewer que ya cubría cliente()', async () => {
+      const espiaError = vi.spyOn(logger, 'error').mockImplementation(() => {});
+      const cliente = clienteMock({
+        getUser: vi.fn().mockResolvedValue({ data: { user: null }, error: { status: 500, message: 'internal server error' } }),
+      });
+      const adapter = crearAdapterSupabase(cookiesDePrueba(), cliente);
+
+      await expect(adapter.obtenerSesion(new Request('http://localhost/x'))).resolves.toBeNull();
+      expect(espiaError).toHaveBeenCalledTimes(1);
+      expect(espiaError.mock.calls[0]?.[0]).toBe('auth.supabase.obtener_sesion.falla_verificacion');
+      espiaError.mockRestore();
+    });
+
+    it('una excepción (red caída) también devuelve null, nunca lanza, y también la loguea (mismo motivo que el 5xx: no pude verificar)', async () => {
+      const espiaError = vi.spyOn(logger, 'error').mockImplementation(() => {});
       const cliente = clienteMock({
         getUser: vi.fn().mockRejectedValue(new Error('network down')),
       });
       const adapter = crearAdapterSupabase(cookiesDePrueba(), cliente);
 
       await expect(adapter.obtenerSesion(new Request('http://localhost/x'))).resolves.toBeNull();
+      expect(espiaError).toHaveBeenCalledTimes(1);
+      expect(espiaError.mock.calls[0]?.[0]).toBe('auth.supabase.obtener_sesion.falla_verificacion');
+      espiaError.mockRestore();
     });
 
     it('sin SUPABASE_URL/SUPABASE_ANON_KEY, devuelve null (nunca lanza) PERO lo hace visible con logger.error — no queda indistinguible de "sin sesión" (hallazgo bloqueante de code-reviewer, PR3)', async () => {
