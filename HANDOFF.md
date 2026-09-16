@@ -74,12 +74,10 @@ código, no después).
 
 `pnpm typecheck` limpio. `packages/auth`: 30 tests (verificado con `vitest run`, no a mano), cliente
 Supabase inyectado/mockeado, cero red real. R-R (`@supabase/*` solo en el adapter) verde con el import
-real. Suite completa (corrida antes del commit `45d2b08` — ver nota): **14 rojos preexistentes, 0
-nuevos** — mismo número que HANDOFF (215), total sube de 2519 a 2530. `45d2b08` (el segundo hallazgo del
-titular, ver arriba) agrega 1 test más — `packages/auth` pasa de 29 a 30, total del repo a 2531; no se
-re-corrió la suite completa después de ese commit puntual (cambio acotado a un archivo ya cubierto por
-`pnpm typecheck` + `vitest run packages/auth`, ambos verdes) — se corre completa antes del merge (paso 7
-de `cierre-de-integracion`).
+real. Suite completa, corrida dos veces — una antes de `45d2b08`, otra después (paso 7 de
+`cierre-de-integracion`, previa al merge): **14 rojos preexistentes, 0 nuevos** en las dos corridas —
+mismo número que HANDOFF (215). Total: 2519 (baseline de 215) → 2530 (tras `d8213cb`/`f9a77cd`) → **2531**
+(tras `45d2b08`, el segundo hallazgo del titular sobre `obtenerSesion`, +1 test).
 
 **Hallazgo aparte, no de esta tarea, no tocado**: `pnpm fixtures:verificar` falla en
 `packages/ingesta/tests/fixtures/extracto-sintetico.txt` (chequeo 1, "ningún token del material real") —
