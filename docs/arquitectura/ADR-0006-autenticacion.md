@@ -648,7 +648,27 @@ exactamente como antes).
 
 ---
 
-## Decisión
+## §17. `cerrarSesion` en PR3 — revocación real vía `@supabase/ssr`, riesgo residual acotado al TTL en curso
+
+**Decisión del titular (2026-09-16, implementación de PR3):** `cerrarSesion()` llama
+`supabase.auth.signOut({ scope: 'local' })` sobre el cliente `createServerClient` (`@supabase/ssr`,
+ligado al `LectorEscritorDeCookies` del pedido, §1/`cookies.ts`) — revoca el access token de **esa
+sesión puntual** del lado de Supabase, sin afectar otras sesiones del mismo usuario en otros
+dispositivos (`scope: 'global'` haría eso, y no es lo que pide un logout normal). No hace falta
+`SUPABASE_SERVICE_ROLE_KEY` ni `auth.admin.*` para esto — la anon key alcanza, porque el cliente ya
+sostiene el token de la propia sesión vía las cookies inyectadas.
+
+**Por qué no es el default que se había aprobado primero**: la decisión original (logout stateless, sin
+revocar) asumía que revocar exigía romper la opacidad de `Sesion` (pasarle el JWT al adapter) — cierto
+para un cliente Supabase "bare" sin persistencia. Con `@supabase/ssr` esa premisa cae: el cliente ya
+tiene el token vía el cookie handler inyectado, así que `signOut()` revoca sin que `Sesion` deje de ser
+solo `{usuarioId, expiraEn}`. Con el costo en cero, no hay motivo para aceptar el riesgo más grande.
+
+**Residual que sí queda, y es inherente al mecanismo, no a esta implementación**: un access token JWT ya
+emitido sigue siendo válido hasta su expiración natural aunque se revoque el refresh token que lo
+renovaría — ningún adapter puede invalidar un JWT ya firmado sin una lista de revocación aparte (que
+Supabase no expone). La ventana de riesgo es el TTL de acceso, corto por defecto (minutos, no horas — a
+confirmar el valor exacto del proyecto real antes de ir a producción), no la sesión completa.
 
 Se adoptan: el contrato `AuthProvider` con identidad opaca (§1); la tabla puente `usuario_identidad`
 (§2); las capacidades finas por función `IMMUTABLE` (§3); el guard único `conSesion` con las reglas de

@@ -1772,6 +1772,13 @@ export const CLAVES_SENSIBLES_EXTERNAS = [
    */
   'sujeto_externo',
   'sujetoExterno',
+  /**
+   * `email` — ADR-0006 §15 ("se agrega a `CLAVES_SENSIBLES_EXTERNAS` en el mismo commit del
+   * adapter"), cerrado acá (PR3, `packages/auth/src/adapters/supabase.ts`). Sin `_` en el nombre,
+   * no necesita grafía camelCase aparte (coincide con la snake_case). `password` ya estaba en esta
+   * lista (arriba) desde antes de que existiera `Credenciales` — verificado, no se duplica.
+   */
+  'email',
 ] as const satisfies readonly string[];
 
 /**
