@@ -6,6 +6,122 @@
 
 ---
 
+## 2026-09-17 (229) — ADR-0007 implementado: migración `0048` (correlativo + FK de trazabilidad)
+aplicada y verificada. **PARCIALMENTE cerrado** — falta el ajuste de `escrituras.ts`/`lecturas.ts`
+(Paso 2, `backend-dev`) y la prueba de mutación (`qa-automation`). Sin mergear a `main`.
+
+**Herramienta:** Claude Code, sesión interactiva. Rama `feat/adr-0007-correlativo-trazabilidad`, **ya
+existente, continuada** (no nueva — declarado explícito, CLAUDE.md §1 regla 11). Modo plan obligatorio
+por tocar esquema (CLAUDE.md §3.2(a)); convocatoria formal de IMPLEMENTACIÓN (§3.1/§3.2), distinta de la
+convocatoria de DISEÑO que ya cerró la entrada (228): `dba-data`, `security-engineer`,
+`seguridad-datos-financieros`, los tres convocados de verdad vía `Agent()`.
+
+### 1. Contexto
+
+[ADR-0007](docs/arquitectura/ADR-0007-modelo-datos-asiento-contable.md) (entrada 228) ya tenía el
+diseño cerrado, incluida la "Forma de la migración propuesta". Esta tarea es su implementación real.
+
+### 2. `dba-data` — migración `0048_correlativo_asiento_propuesto.sql`
+
+Tabla `asiento_correlativo_cliente` (contador por cliente), `asiento_propuesto.numero_correlativo` +
+`unique (cliente_id, numero_correlativo)`, trigger `trg_asiento_propuesto_correlativo` (invoker, sin
+`SECURITY DEFINER` — confirmado que el grant de columna alcanza, a diferencia de `0041`), FK compuesta
+tenant-safe `fk_asiento_renglon_movimiento`
+(`asiento_propuesto_renglon.movimiento_bancario_id` → `movimiento_bancario_crudo`), con backfill desde
+`referencia_origen`.
+
+**Desviación real y documentada del ADR**: `asiento_correlativo_cliente` es **autoprovisora**
+(`INSERT (cliente_id) ... ON CONFLICT DO NOTHING` dentro del propio trigger), no nace solo de un
+`conJob('alta_estudio')` futuro como preveía el diseño literal — medido en vivo: sin autoprovisión, el
+trigger nuevo tapaba un `42501` de RLS que un test de seguridad real (`mutaciones-0045-usuario-
+identidad-r44.test.ts`, cliente efímero sin alta "oficial") esperaba, devolviendo en cambio `P0006`
+("alta de cliente incompleta") — mismo patrón de "un control nuevo tapa a otro" que ya pasó en `0041`.
+
+Confirmado en vivo, no de memoria: el grant de columna (`select, update (siguiente_numero)`) alcanza
+para que `SELECT ... FOR UPDATE` funcione bajo invoker — a diferencia de `0041`
+(`padron_manifestacion`), donde `app_request` no tenía privilegio de `UPDATE` y moría con `42501` antes
+de tocar RLS. Acá apareció un obstáculo distinto y no anticipado por el ADR: **sin policy de `UPDATE`,
+`SELECT ... FOR UPDATE` devuelve 0 filas, sin error** — Postgres exige policies de `UPDATE` aplicables
+además de las de `SELECT` para el lock de fila, y conjunto vacío es `DENY`, no no-op. Corregido
+agregando la policy de `UPDATE` que el ADR no incluía (solo mencionaba "policy de select estándar").
+Con eso, la conclusión del ADR ("no hace falta `SECURITY DEFINER`") seguía siendo correcta, pero por un
+motivo adicional al anticipado: hacen falta el grant de columna **y** la policy de `UPDATE`, ninguna
+alcanza sola.
+
+### 3. `security-engineer` — revisión + hallazgo real
+
+Confirmó FK tenant-safe, invoker sin escalación, índice nuevo justificado (`movimiento_bancario_crudo`
+es la única FK de esa tabla con `DELETE` real a `app_request`, las otras tres FK compuestas de
+`asiento_propuesto_renglon` no lo necesitan). Encontró un hallazgo real: el primer `grant insert` sobre
+`asiento_correlativo_cliente` era de **tabla completa**, dejando a `app_request` insertar
+`siguiente_numero` con cualquier valor arbitrario sin pasar por el trigger. Corregido a `grant insert
+(cliente_id)` únicamente — verificado en vivo que el agujero cierra y que la autoprovisión legítima
+sigue funcionando igual (`siguiente_numero` solo puede tomar su `default 1`).
+
+### 4. `seguridad-datos-financieros` — revisión, confirma aislamiento, marca el trabajo pendiente
+
+Confirmó aislamiento genuino del correlativo por tenant (con evidencia de las policies reales) y que el
+autoprovisionamiento no abre ninguna vía de fuga de "¿existe este cliente?". **Pero encontró que el
+hallazgo de `HANDOFF.md` — hoy en la línea ~2033-2034, no 1958-1959 como decía el ADR, la bitácora
+creció — NO queda cerrado en la práctica todavía**: la migración agrega la columna/FK tipada, pero
+`packages/data/src/cierre/escrituras.ts` y `lecturas.ts` siguen escribiendo/leyendo
+`referencia_origen` — **ningún escritor/lector de producción usa `movimiento_bancario_id` todavía**.
+Esa es la tarea de `backend-dev` (Paso 2, siguiente), sin arrancar.
+
+### 5. Grants: 12 tests rojos nuevos, reales, en `grants-conjunto-cerrado.test.ts` — corregidos
+
+Al aplicar el fix del grant (punto 3), aparecieron 12 tests rojos NUEVOS y reales (R41) — el manifiesto
+declarado a mano no reflejaba los grants nuevos. `dba-data` lo corrigió con los grants ya arreglados.
+Verificado: `grants-conjunto-cerrado.test.ts` **23/23 verde**; suite completa `packages/data` da
+**EXACTAMENTE 8 rojos**, los mismos 8 ya preexistentes (7 de `mutaciones-0038.test.ts`, `HANDOFF.md:
+2549` + 1 de `reglas-de-codigo.test.ts`, `HANDOFF.md:1280`) — **ninguno nuevo**. `catalogo.test.ts`
+90/90, typecheck limpio.
+
+### 6. Hallazgo adyacente, reportado y NO resuelto en esta tarea
+
+`pnpm db:seed` está roto — al `TRUNCATE` de `packages/data/scripts/sembrar.ts` le faltan al menos 5
+tablas (`movimiento_contraparte_identificador`, `reconocimiento_movimiento`,
+`reconocimiento_contrapartida`, `membership_historia`, y ahora `asiento_correlativo_cliente`) — más
+grande de lo que se pensaba al principio (se creía que eran 2). Preexistente, no causado por esta
+migración, pero la tabla nueva se suma a la lista incompleta. **Candidato a tarea propia y chica**, no
+resuelto acá.
+
+### Estado final
+
+- **Frente 1: PARCIALMENTE cerrado.** Migración `0048` aplicada, verificada, gate en verde (mismo
+  baseline preexistente que antes: 8 rojos). El hallazgo sobre `referencia_origen` **NO se marca ✅** —
+  queda explícitamente "parcialmente cerrado, falta el Paso 2: ajustes de TypeScript en
+  `escrituras.ts`/`lecturas.ts` (y los 2 sitios de lectura adicionales:
+  `CONDICION_SIN_ASIENTO_NI_PENDIENTE_TERMINAL` en `lecturas.ts`, y el join de
+  `agrupar-decisiones-pendientes.ts`) para que la aplicación use `movimiento_bancario_id` de verdad".
+  Prueba de mutación (CLAUDE.md §1.8) de la FK/unique/trigger — TODAVÍA NO ESCRITA, tarea de
+  `qa-automation`, pendiente también.
+- **Sin mergear a `main`** — la rama sigue abierta, a la espera de que el Paso 2 (`backend-dev`) y la
+  prueba de mutación cierren el ADR completo, o de que el titular decida mergear parcial.
+- [ADR-0007](docs/arquitectura/ADR-0007-modelo-datos-asiento-contable.md), sección "Criterio de
+  cierre", actualizado con el estado de implementación real (parcial, no cumple el criterio completo
+  todavía).
+- **CHANGELOG.md: sin cambios.** Verificado contra la regla de oro 4 (`02-sdlc-git-flow.md` §5): esta
+  migración es puramente aditiva (`referencia_origen` queda deprecada, no se dropea) y nada de lo que
+  agrega ya había sido reportado antes — no hay dato ya reportado cuyo significado cambie. No aplica
+  entrada nueva.
+
+### Nota de diseño pendiente, sin relación con lo de arriba (Frente 2, pedido del titular)
+
+Agregado a [doc 34 §7](docs/diseno/34-modelo-interaccion-wizard-demo.md#7-pendientes-de-diseño-futuro-declarados--no-construir-ahora-2026-09-17),
+como pendiente de diseño futuro, **no construir ahora**:
+
+- **Logo/imagen por cliente** (patrón del proyecto hermano `trazabilidad-obra-gas`) — requiere ANTES un
+  campo de logo en la ficha de cliente, que no existe hoy en el esquema. No es solo una pantalla, es un
+  campo nuevo primero (con su propia convocatoria de esquema).
+- **Pantalla de login** — bocetada (4 estados: vacío, cargando, error de credenciales, falla de
+  infraestructura), publicada como Artifact, **pendiente de aprobación separada del titular todavía —
+  no se da por aprobada ni se cierra en esta entrada**. El caso "sesión ya activa en `/login`" quedó
+  explícitamente fuera de ese boceto, con inclinación ya anotada (probablemente redirect directo) a
+  confirmar cuando se construya el guard real (`conSesion`, futuro PR4).
+
+---
+
 ## 2026-09-17 (228) — ADR-0007: modelo de datos del asiento contable (número correlativo +
 trazabilidad movimiento↔renglón). Solo diseño — sin implementar. **Bloquea Pantalla 6, y reabre
 Pantalla 5 (ya mergeada) como pendiente de ajuste.**

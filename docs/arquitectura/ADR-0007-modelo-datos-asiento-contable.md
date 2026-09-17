@@ -323,3 +323,34 @@ momento real) está aplicada, la FK compuesta y el correlativo pasan su prueba d
 escritores de renglones (`escribirAsientoAutomatico`, `reprocesarAsientoNoRevisado`,
 `corregirAsientoEntregado`) escriben `movimiento_bancario_id` de forma consistente, y Pantalla 5/6
 reflejan la granularidad real (una línea por movimiento) o documentan explícitamente por qué no.
+
+### Estado de implementación (actualizado 2026-09-17) — PARCIAL, no cerrado
+
+`HANDOFF.md` (entrada de implementación, 2026-09-17) — no reescribir acá el detalle, solo el estado
+contra el criterio de arriba:
+
+- ✅ Migración `0048` escrita, aplicada y verificada localmente — con una desviación real y documentada
+  respecto de la "Forma de la migración propuesta" de este mismo ADR: `asiento_correlativo_cliente` es
+  **autoprovisora** (`INSERT (cliente_id) ... ON CONFLICT DO NOTHING` dentro del trigger de asignación),
+  no depende de un `conJob('alta_estudio')` futuro como preveía §3 — medido en vivo que sin
+  autoprovisión, un `SELECT ... FOR UPDATE` sin policy de `UPDATE` sobre esa tabla devuelve 0 filas en
+  silencio (no un `42501`) para un cliente efímero de test, rompiendo un test de seguridad real. Ver la
+  migración (cabecera) para el detalle medido completo.
+- ✅ El hallazgo de `security-engineer` sobre el `grant insert` de tabla completa (primera versión de la
+  migración) corregido a `insert (cliente_id)` — verificado en vivo.
+- ✅ Gate verde con el mismo baseline preexistente (8 rojos ya conocidos, ninguno nuevo);
+  `grants-conjunto-cerrado.test.ts` actualizado y 23/23 verde.
+- ❌ **NO cerrado**: `escrituras.ts`/`lecturas.ts` (y los dos sitios de lectura adicionales,
+  `CONDICION_SIN_ASIENTO_NI_PENDIENTE_TERMINAL` en `lecturas.ts` y el join de
+  `agrupar-decisiones-pendientes.ts`) siguen escribiendo/leyendo `referencia_origen` — **ningún
+  escritor/lector de producción usa `movimiento_bancario_id` todavía**. La migración agrega la columna
+  y la FK tipada, nada más. Tarea de `backend-dev`, sin arrancar.
+- ❌ **NO cerrado**: prueba de mutación (CLAUDE.md §1.8) de la FK compuesta, el `unique` del correlativo
+  y el trigger de asignación — corresponde a `qa-automation`, pendiente.
+- ❌ **NO cerrado**: Pantalla 5/6 siguen sin reflejar la granularidad real (una línea por movimiento) —
+  pendiente de diseño visual separado (ver este mismo ADR, sección de Pendientes, y doc 34).
+
+**Conclusión**: el ADR queda con dueño y con la migración de datos aplicada, pero **no cumple el
+criterio de cierre completo de arriba** — sigue abierto hasta que el paso de aplicación
+(`escrituras.ts`/`lecturas.ts`), la prueba de mutación y el ajuste de boceto cierren, o hasta que el
+titular decida un cierre parcial explícito.
