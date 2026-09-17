@@ -6,6 +6,56 @@
 
 ---
 
+## 2026-09-16 (222) — Corrección de rumbo: Pantalla 1 pasa a v7 (superficie clara por defecto); v6
+(escritorio oscuro) de (221) queda archivada como base para modo oscuro futuro, no descartada.
+**Esperando revisión del titular antes de tocar Pantalla 2.**
+
+**Herramienta:** Claude Code, sesión interactiva. Continúa en `docs/identidad-visual-pantalla1-2`.
+
+### Por qué
+
+El titular probó la v6 de (221) (escritorio oscuro) y confirmó que resulta demasiado invasiva para 2
+horas diarias de uso. Instrucción explícita: la v6 **no se descarta**, queda guardada como referencia
+para un modo oscuro real futuro. Se pide una v7 — corrección de rumbo, no una cuarta exploración —
+manteniendo el mismo criterio de tipografía A + estrategia de paleta C, pero con superficie clara como
+base.
+
+### Qué se hizo
+
+Convocatoria puntual a `ux-designer` (un solo agente, un solo Artifact nuevo local para comparar antes
+de publicar). Reemplazó la oposición dura "escritorio oscuro / papel claro" de v6 por **tres niveles de
+luminosidad ascendente** dentro de una sola familia cálida de "papel envejecido" (nunca blanco puro):
+`--marco: #EAE1CD` (header/sidebar/stepper-bar), `--lienzo: #F2ECE0` (fondo del panel), `--papel:
+#FBF8F1` (tarjeta de cliente). Consolidó la familia de texto/borde en una sola (`--tinta-mudo` fusiona
+`--texto-claro-mudo` y `--tinta-inactiva`; `--linea` fusiona `--linea-clara` y `--linea-papel`). Sin
+cambio de valor: acento bordó `#8C2F39` (exclusivo de botón primario + paso activo), `--confirmado`, los
+3 `--estado-*` de cola de revisión, los 6 `--banco-*`, y la tipografía A completa (Fraunces/JetBrains
+Mono/Inter). Grilla de tarjetas y los 6 registros sintéticos, sin cambio.
+
+**Ajuste de criterio no pedido, declarado**: `.tarjeta` pasó a borde + sombra liviana (antes solo sombra
+dura, pensada para separar contra el fondo oscuro de v6 — contra un `--lienzo` de luminosidad parecida a
+`--papel` ya no alcanzaba sola).
+
+### Verificado antes y después de publicar
+
+Splice quirúrgico del JSON sobre el Artifact canónico (mismo método de siempre). Estructural: 6
+`.tarjeta` byte a byte iguales, 4 `.nav-item`, 6 `.paso`, `.header-global`, `.breadcrumb`, `.sidebar`,
+balance de divs 73/73, y verificación explícita de que **cero** rastro de `--escritorio`/`--texto-claro`
+de v6 quedó en el contenido publicado (v7 reemplaza, no mezcla). Releído en vivo después de publicar:
+`--marco`/`--lienzo`/`--papel`/`#8C2F39` presentes, `--escritorio` ausente.
+
+### Estado
+
+[Artifact final](https://claude.ai/artifact/2i58PAMpUiWay4UDxLkG6Q) (versión 7, mismo Artifact — v6 sigue
+disponible en el historial de versiones del propio Artifact, no se perdió). Doc 34 §6 actualizado: la
+sub-sección de v6 se marca "SUPERADA" con nota explícita de que se archiva para modo oscuro futuro, y se
+agrega la sub-sección "Corrección de rumbo — v7" con el detalle completo. Doc 36 §6 actualizado con el
+mismo cruce. **Pantalla 2 sigue fuera de alcance** — su Artifact conserva la paleta "libro contable" de
+(220), ahora divergente tanto de v6 como de v7. Rama `docs/identidad-visual-pantalla1-2` sigue sin
+mergear, a la espera de que el titular revise v7.
+
+---
+
 ## 2026-09-16 (221) — Exploración de 3 direcciones visuales + síntesis final, Pantalla 1 (v6). Reemplaza
 la identidad "libro contable" de (220). **Esperando revisión del titular antes de tocar Pantalla 2.**
 

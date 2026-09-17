@@ -427,9 +427,17 @@ aplicada antes en este mismo repo con doc 36):
   por usuario, no solo `prefers-color-scheme`). No es trabajo gratis cuando llegue el momento, aunque hoy
   no haga falta.
 
-### Resultado — Pantalla 1, versión final
+### Resultado — Pantalla 1, versión 6 (escritorio oscuro) — SUPERADA, ver corrección de rumbo más abajo
 
-[Artifact](https://claude.ai/artifact/2i58PAMpUiWay4UDxLkG6Q) (versión 6). Verificado antes de publicar:
+> **Esta versión ya no es la vigente.** El titular la probó y confirmó que el escritorio oscuro por
+> defecto es demasiado invasivo para un uso diario de 2 horas. Queda descrita acá tal cual se construyó
+> porque **no se descarta**: es la base archivada, lista para cuando se construya un modo oscuro real
+> (ver la sub-sección "Corrección de rumbo" más abajo). La versión vigente, por defecto, es la v7 de la
+> siguiente sub-sección.
+
+[Artifact](https://claude.ai/artifact/2i58PAMpUiWay4UDxLkG6Q) — contenido histórico de la **versión 6**
+del Artifact (superada en el mismo Artifact por la versión 7 de más abajo; el link es el mismo porque es
+el mismo Artifact con historial de versiones, no un archivo separado). Verificado antes de publicar:
 6 tarjetas de cliente byte a byte iguales a las de §5 (mismo nombre, misma cantidad de cuentas, misma
 fecha de último extracto), 4 ítems de sidebar, 6 pasos de stepper con etiqueta, header-global,
 contenedor `.breadcrumb` vacío, balance de divs 73/73. Los tokens de estado de la cola de revisión
@@ -455,3 +463,56 @@ que el titular los confirme o los corrija):
 **Pantalla 2 queda fuera de alcance de esta síntesis** — su Artifact sigue con la paleta "libro
 contable" de §5, ahora divergente de la de Pantalla 1. Queda pendiente, no resuelto acá, para cuando el
 titular autorice seguir con Pantalla 2 en adelante.
+
+### Corrección de rumbo (2026-09-16) — v7: superficie clara por defecto; v6 archivada para el modo oscuro futuro
+
+El titular probó la v6 (escritorio oscuro) y confirmó que resulta demasiado invasiva para 2 horas
+diarias de uso. Decisión explícita: **la v6 no se descarta** — queda documentada tal cual arriba, como
+la base ya construida para cuando se implemente un modo oscuro real (ver la nota de modo claro/oscuro
+más arriba: ese trabajo futuro sigue necesitando un segundo set de tokens revisado a mano, no una
+inversión automática, más la lógica de preferencia guardada — la v6 adelanta el primer paso de ese
+trabajo, pero no lo completa). Se pide una **v7**, no una cuarta exploración: mismo criterio de
+tipografía A + estrategia de paleta C, pero con la superficie clara como base, dejando a criterio de
+`ux-designer` el tono exacto de "papel".
+
+**Qué cambia en v7 (convocatoria puntual a `ux-designer`, un solo agente, un solo Artifact):**
+
+- **Tres niveles de luminosidad ascendente**, dentro de una sola familia cálida de "papel envejecido"
+  (nunca blanco puro, para no recaer en la estética SaaS genérica ya rechazada al pedir las 3
+  direcciones): `--marco: #EAE1CD` (header, sidebar, stepper-bar — el más profundo de los tres, mismo
+  vocabulario que el "marco" de doc 36), `--lienzo: #F2ECE0` (fondo del panel de contenido), `--papel:
+  #FBF8F1` (la tarjeta de cliente, el más claro). Reemplaza la oposición dura "escritorio oscuro / papel
+  claro" de v6 — sin esa oposición de contraste, la jerarquía se rehace por gradiente de luminosidad,
+  cada salto sutil (todos en el rango ~0.82–0.93) para que se perciba como jerarquía y no como bloques
+  de color compitiendo.
+- **Familia de texto/borde consolidada en una sola** (ya no hacen falta dos, una por fondo oscuro y otra
+  por fondo claro): `--tinta`/`--tinta-suave` sin cambio de valor, `--tinta-mudo` (fusiona
+  `--texto-claro-mudo` y `--tinta-inactiva` de v6 — sus alphas, 0.34 y 0.32, ya eran casi idénticos) y
+  `--linea` (fusiona `--linea-clara` y `--linea-papel`).
+- **Sin cambio de valor ni de regla de exclusividad**: `--acento`/`--acento-hover`/`--acento-tinta`
+  (`#8C2F39`, exclusivo del botón "Elegir cliente" y el paso activo del stepper), `--confirmado`, los
+  tres `--estado-*` de cola de revisión, y los 6 `--banco-*`. Tipografía A intacta: Fraunces en
+  nombre/título, JetBrains Mono tabular en toda cifra, Inter en rótulos/nav/acción. Grilla de tarjetas
+  intacta, mismos 6 registros sintéticos byte a byte.
+- **Ajuste de criterio no pedido explícitamente, declarado**: `.tarjeta` pasó a `border: 1px solid
+  var(--linea)` + sombra mucho más liviana que en v6 (`0 1px 2px rgba(...,.05), 0 8px 20px
+  rgba(...,.06)`). Motivo: contra un `--lienzo` de luminosidad parecida a `--papel`, la sombra sola de
+  v6 (pensada para separar contra un fondo oscuro) ya no alcanza para leerse como objeto apoyado; hace
+  falta también el hairline de borde.
+- Los tooltips (`.tooltip-cerrado`, `.tooltip-proximamente`) se mantienen como elementos flotantes de
+  alto contraste independientes de la superficie de base — fondo `--tinta` sólido, texto en `--papel`
+  reusado como "tinta clara sobre fondo oscuro puntual" (no se inventó un token nuevo solo para ese
+  caso).
+
+**Resultado — Pantalla 1, versión 7 (vigente por defecto)**
+
+[Artifact](https://claude.ai/artifact/2i58PAMpUiWay4UDxLkG6Q) (versión 7, mismo Artifact, versión más
+reciente). Verificado antes de publicar y releído en vivo después: 6 tarjetas de cliente byte a byte
+iguales, 4 ítems de sidebar, 6 pasos de stepper con etiqueta, header-global, `.breadcrumb` vacío, balance
+de divs 73/73, cero rastro de `--escritorio`/`--texto-claro` (confirmado por grep sobre el contenido
+publicado — la v6 quedó totalmente reemplazada en esta versión del Artifact, no mezclada).
+
+**A partir de acá, toda referencia a "la identidad visual de Pantalla 1" en este documento y en doc 36
+es la v7 (superficie clara)**, salvo que se diga explícitamente "v6" o "modo oscuro archivado". Pantalla
+2 sigue fuera de alcance — su Artifact conserva la paleta "libro contable" de §5, ahora divergente tanto
+de v6 como de v7, pendiente de reconciliar cuando el titular autorice avanzar con Pantalla 2.

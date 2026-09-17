@@ -363,15 +363,18 @@ stepper.
   regla 2, §7 punto 2) todavía no está construida en código — hoy Pantalla 1 y Pantalla 2 muestran
   siempre la vista `socio`/`contador` (los 3 ítems "próximamente" visibles-deshabilitados). Eso se
   resuelve en PR4, no en el boceto — no es una pantalla nueva del wizard, es marco de aplicación.
-- **Identidad visual del marco — síntesis final, solo Pantalla 1 (2026-09-16)**: el marco descrito acá
-  (header global + sidebar de 4 ítems + panel de contenido) queda con una identidad visual nueva —
-  escritorio oscuro (`--escritorio`/`--escritorio-hondo`) para header/sidebar/stepper-bar/fondo de
-  panel, tarjetas claras, acento bordó exclusivo de acción primaria y paso activo, Fraunces/JetBrains
-  Mono/Inter según el rol de cada texto. Reemplaza la paleta "libro contable" que traía Pantalla 1 desde
-  el pase de identidad anterior. Detalle completo, las 3 direcciones exploradas y la decisión del titular
-  punto por punto: doc 34 §6. **Pantalla 2 queda fuera de esta síntesis** — su Artifact sigue con la
-  paleta "libro contable" vieja, divergente de la nueva de Pantalla 1, pendiente de reconciliar cuando
-  el titular autorice seguir con Pantalla 2 en adelante.
+- **Identidad visual del marco — síntesis final, solo Pantalla 1 (2026-09-16, corregida el mismo día)**:
+  el marco descrito acá (header global + sidebar de 4 ítems + panel de contenido) queda con una
+  identidad visual nueva. Primera síntesis (v6): escritorio oscuro (`--escritorio`/`--escritorio-hondo`)
+  para header/sidebar/stepper-bar/fondo de panel. El titular la probó y la encontró demasiado invasiva
+  para uso diario — **v6 no se descarta, queda archivada como base para un modo oscuro real futuro**.
+  **Versión vigente por defecto: v7**, superficie clara en tres niveles de luminosidad
+  (`--marco`/`--lienzo`/`--papel`), mismo acento bordó exclusivo de acción primaria y paso activo, mismo
+  reparto Fraunces/JetBrains Mono/Inter por rol de texto. Ambas reemplazan la paleta "libro contable" que
+  traía Pantalla 1 desde el pase de identidad anterior. Detalle completo, las 3 direcciones exploradas y
+  la decisión del titular punto por punto (incluida la corrección v6→v7): doc 34 §6. **Pantalla 2 queda
+  fuera de esta síntesis** — su Artifact sigue con la paleta "libro contable" vieja, divergente tanto de
+  v6 como de v7, pendiente de reconciliar cuando el titular autorice seguir con Pantalla 2 en adelante.
 
 ### 7. Pendiente antes de construir esto en código
 
