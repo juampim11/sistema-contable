@@ -6,6 +6,64 @@
 
 ---
 
+## 2026-09-17 (229) — Pantalla de login bocetada y APROBADA (4 estados + layout de dos paneles). Con
+esto, las 6 pantallas del wizard + el login quedan todas bocetadas y aprobadas.
+
+**Herramienta:** Claude Code, sesión interactiva. Rama nueva `docs/login-aprobado-4-estados-layout`,
+**desde `main`** (declarado explícito) — separada a propósito de `feat/adr-0007-correlativo-
+trazabilidad` (Frente 1, ADR-0007), que sigue sin mergear porque el Paso 2 de esa tarea no está hecho
+todavía. Esta entrada mergea SOLO la aprobación del login; la migración `0048` no viaja acá.
+
+### Qué se hizo
+
+Dos convocatorias puntuales a `ux-designer`, en la misma sesión que Frente 1 (en paralelo, sin
+relación), con `analista-funcional` convocado primero para la especificación funcional:
+
+1. **Los 4 estados del formulario** — grounding real contra `packages/auth/src/auth-provider.ts` y
+   `adapters/supabase.ts`: `Credenciales` es solo email+password; `CredencialesInvalidasError` cubre a
+   propósito 3 casos reales (inválida/inexistente/baneada) sin distinguirlos, un solo mensaje
+   ("credenciales inválidas"), decisión ya tomada por `security-engineer` contra enumeración de cuentas.
+   `analista-funcional` encontró un 4º estado real que el pedido original no contemplaba —
+   `FallaInfraestructuraAuthError` (red/timeout/5xx del proveedor, mensaje propio) — y recomendó
+   incluirlo; el titular confirmó que sí, con tratamiento visual distinto ("vos te equivocaste" vs.
+   "nosotros fallamos": ocre vs. azul-gris, ícono distinto, nunca el mismo tratamiento). Vacío (botón
+   deshabilitado hasta llenar los dos campos) y cargando (inputs+botón deshabilitados, único freno
+   posible contra doble-submit ya que el contrato no lo tiene) completan los 4.
+   [Artifact](https://claude.ai/artifact/E4RKqAxBpyPTAXruD9ZQcx).
+2. **Layout completo de página** — patrón de composición leído directo de `trazabilidad-obra-gas/src/
+   app/login/page.tsx` (panel de marca a un lado, formulario al otro), NO su paleta — la paleta es la v7
+   de este proyecto. El `.login-card` de arriba se encapsuló byte a byte, sin tocar su contenido.
+   Nombre de marca: placeholder explícito "SC" / "Sistema Contable" (grepeado el repo entero, sin
+   exploración previa de sigla — no se inventó un nombre definitivo), con etiqueta visible "nombre de
+   trabajo — pendiente de decisión de marca". Primera versión incluía tagline + 3 badges de
+   funcionalidad + footnote de principio de producto; el titular pidió sacarlos por completo en una
+   segunda vuelta — el alcance final del producto todavía no está definido, no corresponde tener ese
+   texto todavía. Versión final: panel de marca reducido a identidad pura (monograma + nombre +
+   etiqueta), centrado verticalmente para no verse desbalanceado con tan poco contenido.
+   [Artifact, versión 2 aprobada](https://claude.ai/artifact/NCcTiqmcGL84ShWroXPWii).
+
+### Verificación antes de esta entrada
+
+Antes de mergear, se verificaron en vivo (no de memoria) los dos links: el Artifact huérfano de un
+intento fallido (`.../TwtEzkg7wsS7qVC3TTaCV3`, quiso usar el formato canvas "Design" del wizard, un
+permission gate interno lo bloqueó al publicar multi-archivo) se confirmó borrado (`artifact not
+found`); el Artifact real de los 4 estados se releyó completo y coincide con lo reportado.
+
+### Pendiente, declarado, no resuelto acá
+
+"Sesión ya activa en `/login`" queda fuera del boceto — decisión de guard/routing (`conSesion()`,
+futuro PR4), con inclinación ya anotada (probablemente redirect directo) a confirmar cuando se
+construya el guard real. Doc 34 §7.2 tiene el detalle completo. §7.1 del mismo doc deja anotado, sin
+construir, un pendiente de diseño no relacionado (logo por cliente, requiere antes un campo nuevo en la
+ficha de cliente).
+
+### Estado
+
+Doc 34 §7 (nueva) sincronizado. **Login aprobado.** Sigue PR4 (esqueleto real de `apps/web` en código) —
+sin fecha ni convocatoria todavía, a la espera de que el titular lo encare.
+
+---
+
 ## 2026-09-17 (228) — ADR-0007: modelo de datos del asiento contable (número correlativo +
 trazabilidad movimiento↔renglón). Solo diseño — sin implementar. **Bloquea Pantalla 6, y reabre
 Pantalla 5 (ya mergeada) como pendiente de ajuste.**

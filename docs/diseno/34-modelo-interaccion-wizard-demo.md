@@ -712,3 +712,43 @@ inicial y corrección de la tabla): balance de divs 109/109, botones 28/28, sele
 sus `<tr>`/`<td>` balanceados, 6 pasos con etiqueta, 4 ítems de sidebar, header-global, breadcrumb, los 3
 `--estado-*` con usos reales (a diferencia de Pantallas 1-4, donde quedaban reservados sin uso), acento
 bordó limitado a la acción primaria + el stepper (nunca en botones de fila). **Aprobada por el titular.**
+
+---
+
+## 7. Pendientes de diseño futuro, declarados — no construir ahora (2026-09-17)
+
+### 7.1. Logo/imagen por cliente — pendiente, no construir ahora
+
+Idea de diseño futura, inspirada en el patrón ya usado en el proyecto hermano `trazabilidad-obra-gas`:
+mostrar el logo o imagen del cliente elegido una vez seleccionado el tenant (en el header del wizard,
+o donde corresponda una vez que se diseñe). **Requiere antes un campo de logo en la ficha de cliente,
+que no existe hoy en el esquema** — no es solo una pantalla nueva, es una columna nueva primero, con su
+propia convocatoria de esquema (`dba-data` + `security-engineer` + `seguridad-datos-financieros`,
+CLAUDE.md §3.1). Sin dueño ni fecha todavía.
+
+### 7.2. Pantalla de login — bocetada y APROBADA (2026-09-17)
+
+Puerta de entrada del sistema, antes de que exista sesión — no forma parte de la numeración del wizard
+de §0 (ese corre después de iniciar sesión). Dos piezas, las dos aprobadas por el titular:
+
+- **Los 4 estados del formulario** (vacío, cargando, error de credenciales, falla de infraestructura),
+  con sus 2 mensajes literales ("credenciales inválidas" / "no se pudo contactar al proveedor de
+  autenticación", nunca mezclados) —
+  [Artifact](https://claude.ai/artifact/E4RKqAxBpyPTAXruD9ZQcx).
+- **El layout completo de página** (panel de marca oscuro a la izquierda + el `.login-card` de arriba
+  encapsulado a la derecha), patrón de composición leído directo de
+  `trazabilidad-obra-gas/src/app/login/page.tsx` (paleta v7 propia, no la de esa referencia). El panel
+  de marca quedó reducido a identidad pura, sin copy de alcance ni de funcionalidad (se sacó kicker,
+  tagline y badges de módulos a pedido del titular — el alcance final del producto todavía no está
+  definido): solo el monograma placeholder "SC" + el nombre de trabajo "Sistema Contable", con su
+  etiqueta visible "nombre de trabajo — pendiente de decisión de marca" — [Artifact, versión 2
+  aprobada](https://claude.ai/artifact/NCcTiqmcGL84ShWroXPWii).
+
+El caso **"sesión ya activa en `/login`"** queda **explícitamente fuera** de este boceto — no es uno de
+los 4 estados. Inclinación ya anotada, **no decidida**: probablemente redirect directo (sin mostrar el
+formulario de login) cuando ya hay sesión válida. A confirmar recién cuando se construya el guard real
+(`conSesion()`, futuro PR4 — ver ADR-0006 y HANDOFF entrada 218) — no antes, porque hoy no existe el
+mecanismo que detectaría "sesión ya activa".
+
+Con esto, las 6 pantallas del wizard (§0) + la pantalla de login quedan todas bocetadas y aprobadas.
+Queda pendiente PR4: el esqueleto real de `apps/web` en código.
