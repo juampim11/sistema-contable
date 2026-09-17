@@ -26,7 +26,7 @@ que el listado original tenía por separado.
 | 1 | Elegir cliente | Ya bocetado y aprobado (Artifact publicado) |
 | 2 | Subir extracto bancario | Bocetado 2026-09-16, dentro del marco de doc 36 (header global + sidebar + panel), identidad visual v7 (§6) — [Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F). Aprobado por el titular 2026-09-16 |
 | 3 | Resumen de la extracción | Bocetado 2026-09-16, directo en v7 (§6) — [Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX). Aprobado por el titular 2026-09-16 |
-| 4 | Procesar y tipificar | Pendiente de boceto |
+| 4 | Procesar y tipificar | Bocetado 2026-09-16, directo en v7 (§6) — [Artifact](https://claude.ai/artifact/PC8iw6y82qvoFm6cop6nQj). Aprobado por el titular 2026-09-16 |
 | 5 | Revisar e imputar (fusión de "revisar tipificaciones" + "imputación a cuentas contables", ver §1.2) | Pendiente de boceto |
 | 6 | Generar asiento contable | Pendiente de boceto |
 
@@ -592,3 +592,47 @@ breadcrumb con los dos valores esperados, ficha de resumen con sus 3 cifras inta
 declarado con 0 usos en el cuerpo, `--advertencia-sistema` usado exactamente 3 veces (todas dentro de
 `.nota-calidad`), acento bordó limitado a exactamente 3 apariciones (círculo del paso activo ×2 + botón
 "Continuar" ×1) — ninguna fuga a otro elemento. **Aprobada por el titular.**
+
+### Pantalla 4 bocetada directo en v7 (2026-09-16)
+
+Convocatoria puntual a `ux-designer`, mismo criterio que Pantalla 3: copió tal cual el `:root`,
+`.header-global`, `.sidebar`/`.nav-item`, `.stepper`/`.paso` y `.breadcrumb` de Pantalla 3 v7, y diseñó
+desde cero solo el contenido de "Procesar y tipificar". Con la lección de la corrección anterior
+(Pantalla 3) ya incorporada en la consigna, el agente evitó de entrada el mismo error: no tocó
+`--estado-indeterminado`/`--estado-conciliado`/`--estado-rechazado` (siguen intactos, reservados para
+Pantalla 5, comentados en el `:root` con la razón), ni reusó `--advertencia-sistema` (declarado el mismo
+día para una falla de *lectura* del extracto — no aplica a la clasificación automática normal de esta
+pantalla).
+
+**Stepper**: pasos 1, 2 y 3 en `.paso.default-navegable`, paso 4 `.paso.activo`, pasos 5-6 sin estado
+especial. Breadcrumb idéntico al de Pantalla 3 (cliente + cuenta), mismos 47 movimientos (continuidad del
+dataset sintético a través del wizard).
+
+**Contenido — cumple la regla dura más importante del producto (CLAUDE.md §1.7: el sistema es asistido,
+nunca automático)**: un aviso `.aviso-no-registro`, primero en la pantalla, antes de cualquier cifra, en
+tono neutro (sobre `--papel`, borde `--linea`, ícono en `--tinta-suave` — nunca ámbar de advertencia ni
+verde de confirmado): *"Esto es una propuesta del sistema, no un registro. Ningún asiento se contabilizó
+todavía — en el próximo paso vas a confirmar, corregir o dejar pendiente cada movimiento, uno por uno."*
+Debajo, una ficha de resultado sobre `--papel` (mismo criterio de primer plano que Pantalla 3): "47 de 47
+movimientos analizados" + barra de progreso llena, y dos cifras agregadas sin listar movimiento por
+movimiento — "Con propuesta de asiento" (39) y "Para revisar en el próximo paso" (8). No lista los 47
+movimientos uno por uno — esta pantalla reduce la decisión, no la información; la cola real fila por fila
+es Pantalla 5.
+
+**Ajustes de criterio que `ux-designer` tomó, ninguno pedido explícito, ninguno pendiente**:
+1. Las dos cifras (39/8) usan la misma tipografía y el mismo `--tinta` neutro, sin distinguir por color.
+   Motivo: colorear "alta confianza" vs. "necesita revisión" sugeriría que una categoría ya está resuelta
+   y la otra no — mismo riesgo que ya motivó separar `--advertencia-sistema` de `--estado-indeterminado`
+   en Pantalla 3. Las dos son igual de "propuesta sin registrar" frente a la regla dura §1.7.
+2. El check de "proceso completo" y la barra de progreso usan `--tinta` neutro, deliberadamente no
+   `--confirmado` (verde) — ese token es específicamente el estado de paso/fila ya confirmado por una
+   persona (§1.3/§4); "el motor terminó de clasificar" es un evento automático sin decisión humana.
+3. No hizo falta ningún token nuevo de confianza/incertidumbre — el punto 1 evitó la necesidad y evita
+   repetir el patrón que motivó la corrección anterior.
+
+[Artifact](https://claude.ai/artifact/PC8iw6y82qvoFm6cop6nQj). Verificado antes de publicar y releído en
+vivo contra el contenido publicado: balance de divs 48/48, 6 pasos con etiqueta, 4 ítems de sidebar,
+header-global, breadcrumb con cliente + cuenta, cero ocurrencias de `var(--estado-indeterminado)`,
+`var(--estado-conciliado)`, `var(--estado-rechazado)` ni `var(--advertencia-sistema)` en el cuerpo (los
+cuatro quedan declarados con comentario explicando por qué no aplican acá), acento bordó limitado a
+exactamente 3 apariciones. **Aprobada por el titular.**
