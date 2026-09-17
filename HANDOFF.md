@@ -6,6 +6,40 @@
 
 ---
 
+## 2026-09-16 (226) — Pantalla 4 ("Procesar y tipificar") bocetada directo en v7, aprobada.
+**Siguiente: Pantalla 5 ("Revisar e imputar"), la más compleja de las seis.**
+
+**Herramienta:** Claude Code, sesión interactiva. Rama nueva `docs/pantalla4-boceto-v7`, **desde `main`**
+(declarado explícito) — `docs/pantalla3-boceto-v7` ya se había mergeado en el paso anterior, así que
+Pantalla 4 necesitaba rama propia.
+
+### Qué se hizo
+
+Convocatoria puntual a `ux-designer`, con la lección de la corrección de Pantalla 3 (225) incorporada de
+entrada en la consigna: los tres `--estado-*` de cola de revisión y `--advertencia-sistema` quedan
+reservados/ajenos a esta pantalla, sin reutilizarlos. Contenido: aviso `.aviso-no-registro` primero en la
+pantalla, en tono neutro, dejando explícito que el motor **propone**, nunca registra (regla dura CLAUDE.md
+§1.7) — seguido de una ficha de resultado con "47 de 47 movimientos analizados" y dos cifras agregadas
+sin distinguir por color ("Con propuesta de asiento": 39, "Para revisar en el próximo paso": 8), a
+propósito sin verde/ámbar para no sugerir que una categoría ya está resuelta.
+
+### Verificado (contra el contenido publicado en vivo)
+
+Balance de divs 48/48, 6 pasos con etiqueta, 4 ítems de sidebar, breadcrumb con cliente + cuenta, cero
+uso de los 4 tokens reservados (`--estado-indeterminado`/`--estado-conciliado`/`--estado-rechazado`/
+`--advertencia-sistema`) en el cuerpo, acento bordó limitado a 3 apariciones sin fugas. `git status --short`
+limpio.
+
+### Estado
+
+[Artifact](https://claude.ai/artifact/PC8iw6y82qvoFm6cop6nQj). Doc 34 §0 y §6 actualizados (nueva
+sub-sección "Pantalla 4 bocetada directo en v7"). **Aprobada por el titular.** Sigue Pantalla 5
+("Revisar e imputar") — la más compleja de las seis: candado por fila vía `confirmarGrupo()`, el círculo
+del stepper nunca "cerrado sin puntero" mientras la sesión sigue abierta, contador de progreso n/m, y
+ahí sí entran en uso los tres `--estado-*` reservados desde Pantalla 1.
+
+---
+
 ## 2026-09-16 (225) — Corrección de (224): nota de calidad de Pantalla 3 pasa a token propio
 `--advertencia-sistema`; `--estado-indeterminado` queda intacto y reservado para Pantalla 5. Pantalla 3
 **aprobada**.
