@@ -118,7 +118,7 @@ export async function lockearMovimientosDelLote(
 const CONDICION_SIN_ASIENTO_NI_PENDIENTE_TERMINAL = `
   not exists (
     select 1 from asiento_propuesto_renglon apr
-     where apr.cliente_id = r.cliente_id and apr.referencia_origen = r.movimiento_id::text
+     where apr.cliente_id = r.cliente_id and apr.movimiento_bancario_id = r.movimiento_id
   )
   and not exists (
     select 1 from pendiente_cierre pc
@@ -505,6 +505,10 @@ export type RenglonCandidato = {
   readonly cuentaRef: CuentaRef;
   readonly lado: 'debe' | 'haber';
   readonly importe: string;
+  /** ADR-0007 §2: puntero al movimiento bancario de origen de ESTE renglón — `null` cuando el
+   *  renglón no nace de un movimiento (p. ej. la contrapartida). No se asume igual al del otro
+   *  renglón del mismo asiento: cada uno lleva el suyo tal cual está en la base. */
+  readonly movimientoBancarioId: string | null;
 };
 
 export type CandidatoDeReproceso = {
@@ -549,10 +553,12 @@ export async function leerCandidatosDeReproceso(
     cuenta_ref: CuentaRef;
     debe: string;
     haber: string;
+    movimiento_bancario_id: string | null;
   }>(
     `select a.id as asiento_id, a.asiento_estado, a.cierre_id::text as cierre_id, a.tipo,
             a.fecha_imputacion::text as fecha_imputacion,
-            r.id as renglon_id, r.cuenta_id::text as cuenta_id, r.cuenta_ref, r.debe, r.haber
+            r.id as renglon_id, r.cuenta_id::text as cuenta_id, r.cuenta_ref, r.debe, r.haber,
+            r.movimiento_bancario_id::text as movimiento_bancario_id
        from asiento_propuesto a
        join asiento_propuesto_renglon r on r.cliente_id = a.cliente_id and r.asiento_id = a.id
       where a.cliente_id = $1
@@ -602,6 +608,7 @@ export async function leerCandidatosDeReproceso(
       cuentaRef: f.cuenta_ref,
       lado: Number(f.debe) > 0 ? 'debe' : 'haber',
       importe: Number(f.debe) > 0 ? f.debe : f.haber,
+      movimientoBancarioId: f.movimiento_bancario_id,
     });
     candidatos.push({
       asientoId,

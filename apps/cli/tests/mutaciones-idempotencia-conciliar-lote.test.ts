@@ -184,7 +184,7 @@ async function crearMovimientoPropuesta(ej: Ejecutar, loteId: string, fecha: str
   return movimientoId;
 }
 
-/** Inserta un asiento dummy (2 renglones, ambos citando `movimientoId` como `referencia_origen` —
+/** Inserta un asiento dummy (2 renglones, ambos citando `movimientoId` como `movimiento_bancario_id` —
  *  mismo criterio que `escribirAsientoAutomatico` real) directo por SQL: el test ejercita el par
  *  lock/lectura, no el resolver ni el escritor real (ya cubiertos en `conciliar-lote.test.ts`). */
 async function insertarAsientoDummy(ej: Ejecutar, cierreId: string, movimientoId: string, fecha: string): Promise<void> {
@@ -196,19 +196,19 @@ async function insertarAsientoDummy(ej: Ejecutar, cierreId: string, movimientoId
   );
   const asientoId = String(asiento['id']);
   await ej(
-    `insert into asiento_propuesto_renglon (cliente_id, asiento_id, orden, cuenta_id, debe, haber, fecha_imputacion, referencia_origen)
-     values ($1, $2, 1, $3, 0, 500.00, $4::date, $5)`,
+    `insert into asiento_propuesto_renglon (cliente_id, asiento_id, orden, cuenta_id, debe, haber, fecha_imputacion, movimiento_bancario_id)
+     values ($1, $2, 1, $3, 0, 500.00, $4::date, $5::uuid)`,
     [base.clienteId, asientoId, base.cuentaBancoId, fecha, movimientoId],
   );
   await ej(
-    `insert into asiento_propuesto_renglon (cliente_id, asiento_id, orden, cuenta_id, debe, haber, fecha_imputacion, referencia_origen)
-     values ($1, $2, 2, $3, 500.00, 0, $4::date, $5)`,
+    `insert into asiento_propuesto_renglon (cliente_id, asiento_id, orden, cuenta_id, debe, haber, fecha_imputacion, movimiento_bancario_id)
+     values ($1, $2, 2, $3, 500.00, 0, $4::date, $5::uuid)`,
     [base.clienteId, asientoId, base.cuentaGastosId, fecha, movimientoId],
   );
 }
 
 async function contarRenglonesPorMovimiento(movimientoId: string): Promise<number> {
-  const filas = await comoSocio((ej) => ej(`select 1 from asiento_propuesto_renglon where referencia_origen = $1`, [movimientoId]));
+  const filas = await comoSocio((ej) => ej(`select 1 from asiento_propuesto_renglon where movimiento_bancario_id = $1`, [movimientoId]));
   return filas.length;
 }
 

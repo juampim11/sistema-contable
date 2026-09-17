@@ -324,10 +324,10 @@ escritores de renglones (`escribirAsientoAutomatico`, `reprocesarAsientoNoRevisa
 `corregirAsientoEntregado`) escriben `movimiento_bancario_id` de forma consistente, y Pantalla 5/6
 reflejan la granularidad real (una línea por movimiento) o documentan explícitamente por qué no.
 
-### Estado de implementación (actualizado 2026-09-17) — PARCIAL, no cerrado
+### Estado de implementación (actualizado 2026-09-17) — Frente 1 (datos/backend) CERRADO; ADR completo sigue PARCIAL por Pantalla 5/6
 
-`HANDOFF.md` (entrada de implementación, 2026-09-17) — no reescribir acá el detalle, solo el estado
-contra el criterio de arriba:
+`HANDOFF.md` (entradas 229 y 230) — no reescribir acá el detalle, solo el estado contra el criterio de
+arriba:
 
 - ✅ Migración `0048` escrita, aplicada y verificada localmente — con una desviación real y documentada
   respecto de la "Forma de la migración propuesta" de este mismo ADR: `asiento_correlativo_cliente` es
@@ -340,17 +340,21 @@ contra el criterio de arriba:
   migración) corregido a `insert (cliente_id)` — verificado en vivo.
 - ✅ Gate verde con el mismo baseline preexistente (8 rojos ya conocidos, ninguno nuevo);
   `grants-conjunto-cerrado.test.ts` actualizado y 23/23 verde.
-- ❌ **NO cerrado**: `escrituras.ts`/`lecturas.ts` (y los dos sitios de lectura adicionales,
-  `CONDICION_SIN_ASIENTO_NI_PENDIENTE_TERMINAL` en `lecturas.ts` y el join de
-  `agrupar-decisiones-pendientes.ts`) siguen escribiendo/leyendo `referencia_origen` — **ningún
-  escritor/lector de producción usa `movimiento_bancario_id` todavía**. La migración agrega la columna
-  y la FK tipada, nada más. Tarea de `backend-dev`, sin arrancar.
-- ❌ **NO cerrado**: prueba de mutación (CLAUDE.md §1.8) de la FK compuesta, el `unique` del correlativo
-  y el trigger de asignación — corresponde a `qa-automation`, pendiente.
-- ❌ **NO cerrado**: Pantalla 5/6 siguen sin reflejar la granularidad real (una línea por movimiento) —
-  pendiente de diseño visual separado (ver este mismo ADR, sección de Pendientes, y doc 34).
+- ✅ **Cerrado (entrada 230)**: `escrituras.ts`/`lecturas.ts`, `reprocesar-capa-d.ts`,
+  `agrupar-decisiones-pendientes.ts` y dos lectores adicionales encontrados en vivo durante la propia
+  tarea (`relevamiento-laura.ts`, `paquete-cierre-bracci-roka-2026-05-a-08.ts`) ya escriben/leen
+  `movimiento_bancario_id` — ningún escritor/lector de producción de `asiento_propuesto_renglon` sigue
+  citando `referencia_origen`. `pendiente_cierre.referencia_origen` sigue vigente a propósito (hallazgo
+  declarado aparte, `0048` no lo migra).
+- ✅ **Cerrado (entrada 230)**: `packages/data/tests/mutaciones-0048.test.ts` — 16 tests (7 mutaciones +
+  9 legítimos), incluida la autoprovisión del contador y la concurrencia real del `FOR UPDATE`
+  (`qa-automation` encontró que ninguno de los dos tenía test automatizado, solo la reproducción manual
+  documentada en la cabecera de `0048`, y los cerró).
+- ❌ **Sigue sin cerrar, fuera del alcance de la entrada 230**: Pantalla 5/6 siguen sin reflejar la
+  granularidad real (una línea por movimiento) — pendiente de diseño visual separado (ver este mismo
+  ADR, sección de Pendientes, y doc 34).
 
-**Conclusión**: el ADR queda con dueño y con la migración de datos aplicada, pero **no cumple el
-criterio de cierre completo de arriba** — sigue abierto hasta que el paso de aplicación
-(`escrituras.ts`/`lecturas.ts`), la prueba de mutación y el ajuste de boceto cierren, o hasta que el
-titular decida un cierre parcial explícito.
+**Conclusión**: el Frente 1 (modelo de datos + aplicación) queda **completamente cerrado** — cumple los
+primeros tres puntos del criterio de arriba. El ADR como un todo sigue **parcialmente abierto** por el
+cuarto punto (ajuste de boceto de Pantalla 5/6), que es una tarea de diseño visual separada, no de
+backend, y no bloquea el trabajo siguiente sobre datos/backend (PR4).

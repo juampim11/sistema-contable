@@ -6,6 +6,116 @@
 
 ---
 
+## 2026-09-17 (230) — ADR-0007, Frente 1 Paso 2: `escrituras.ts`/`lecturas.ts` y todos los
+lectores de producción migran a `movimiento_bancario_id`. **Frente 1 (datos/backend) CERRADO
+COMPLETO** — el ADR como un todo sigue parcial solo por el ajuste de boceto de Pantalla 5/6 (fuera de
+alcance de esta tarea).
+
+**Herramienta:** Claude Code, sesión interactiva. Continúa la rama `feat/adr-0007-correlativo-
+trazabilidad` (ya existente, declarado explícito — no nueva, CLAUDE.md §1 regla 11). Modo plan
+obligatorio por CLAUDE.md §3.2 (trigger b: clasificación de campos de datos de cliente; trigger c:
+modifica adaptadores/lecturas que ya corren en producción; trigger d: más de 3 archivos). Convocatoria
+real vía `Agent()`: `backend-dev` (implementación), `code-reviewer`, `seguridad-datos-financieros` y
+`qa-automation` (revisión), los cuatro convocados de verdad, no narrados.
+
+### 1. Contexto y alcance original (4 puntos, ya aprobados por el titular)
+
+La entrada 229 cerró la migración `0048` como PARCIAL: la base ya tenía
+`asiento_propuesto_renglon.movimiento_bancario_id` (FK compuesta tenant-safe) y
+`asiento_propuesto.numero_correlativo`, pero ningún escritor ni lector de producción los usaba —
+todo seguía citando `referencia_origen` (texto libre, deprecada, no dropeada). El pedido original: (1)
+`escribirAsientoAutomatico`/`reprocesarAsientoNoRevisado`/`corregirAsientoEntregado` escriben
+`movimiento_bancario_id`; (2) `CONDICION_SIN_ASIENTO_NI_PENDIENTE_TERMINAL` y
+`leerCandidatosDeReproceso` migran; (3) `agrupar-decisiones-pendientes.ts`/`reprocesar-capa-d.ts`
+ajustados igual; (4) `tipos.ts`/`clasificacion-campos.ts` con los campos nuevos, más
+`mutaciones-0048.test.ts` y los test files que dependían de `referencia_origen`.
+
+**Corrección al pedido, verificada por grep antes de convocar**: de los "5 test files" señalados como
+dependientes de `referencia_origen`, solo 2 (`agrupar-decisiones-pendientes.test.ts` y su variante
+`-con-confirmaciones`) tocaban `asiento_propuesto_renglon.referencia_origen` de verdad; los otros 3
+(`mutaciones-0028`, `mutaciones-0029`, `mutaciones-savepoint-pendiente-cierre`) tocan exclusivamente
+`pendiente_cierre.referencia_origen`, columna fuera de alcance de `0048` — quedaron sin tocar, tal como
+predijo el plan aprobado.
+
+### 2. `backend-dev` — implementación, con dos rondas de scope-creep real, encontrado y confirmado en vivo
+
+Escribió los 7 archivos del alcance original. Al re-verificar con el grep completo pedido por el plan,
+encontró — y NO resolvió por su cuenta, reportó explícito — **un tercer lector real no anticipado**:
+`packages/ingesta/src/planilla/relevamiento-laura.ts:445` (Hoja 3 del relevamiento real de Laura),
+invisible al primer grep porque el archivo tiene un byte `\x00` embebido a propósito (separador de
+clave de `Map`) que hace que `ripgrep`/`grep` normal lo trate como binario y lo salteen. Confirmado el
+hallazgo por quien conduce con `grep -a` independiente antes de autorizar el fix — **punto ciego real
+de grep para cualquier auditoría futura de este tipo en este repo**, dejado como memoria.
+
+Titular confirmó el fix del tercer lector. Al re-verificar de nuevo con `grep -a` sobre todo el repo
+(no solo las carpetas originales), aparecieron **dos hallazgos más, confirmados con números reales, no
+especulados**:
+- `packages/ingesta/scripts/paquete-cierre-bracci-roka-2026-05-a-08.ts:321` — cuarto lector real, un
+  script de un cierre puntual ya corrido (Bracci/ROKA), sin test que lo cubra.
+- `apps/cli/tests/alta-regla-imputacion.test.ts` y `apps/cli/tests/mutaciones-idempotencia-conciliar-
+  lote.test.ts` — dos fixtures de test rotas por el cambio YA aprobado en `lecturas.ts` (punto 2 del
+  alcance original), en un paquete (`apps/cli`) que el plan de verificación no había incluido. Conteos
+  reales confirmados por `backend-dev` antes de tocar nada: 3 en vez de 2, y 4 en vez de 2.
+
+Titular confirmó los tres. Cerrados con el mismo patrón mecánico de una línea que los lectores ya
+migrados. **11 archivos modificados + 1 nuevo en total** (ver lista completa en el commit).
+
+### 3. Revisión en paralelo — 3 agentes, sin bloqueantes
+
+- **`code-reviewer`**: sin bugs de correctitud en los 12 archivos. Typecheck completo del monorepo
+  limpio. Confirmó que los cambios de tipo (`RenglonParaEscribir`, `RenglonCandidato`) son puramente
+  aditivos — cero riesgo de romper consumidores no tocados.
+- **`seguridad-datos-financieros`**: cierre genuino del hallazgo de la entrada 229, sin ventana de fuga
+  entre clientes (reemplazo limpio, sin fallback dual entre `referencia_origen`/`movimiento_bancario_id`
+  que pudiera saltear el filtro de `cliente_id`). Clasificación de `movimiento_bancario_id`/
+  `numero_correlativo` (ya hecha en Paso 1) sigue vigente, el uso activo no la cambia. **Hallazgo no
+  bloqueante, para cuando `0048` se aplique al piloto**: revisar el `RAISE NOTICE` del backfill contra
+  los datos reales de Bracci/ROKA antes de asumir que `paquete-cierre-bracci-roka-2026-05-a-08.ts` da
+  los mismos resultados que con `referencia_origen` — el backfill solo está medido en local (0 filas
+  reales que backfillear), nunca contra datos reales de piloto.
+- **`qa-automation`**: encontró que `mutaciones-0048.test.ts` (11 tests originales, 5 mutaciones + 6
+  legítimos) **nunca ejercitaba el propio trigger de asignación del correlativo** — todo se escribía
+  directo por SQL, nunca vía la transición real `propuesto→confirmado`. Verificado en vivo instalando
+  el trigger sin autoprovisión: los 11 tests originales seguían en verde igual (hueco real, no
+  hipotético). Agregó Bloque E (autoprovisión, 3 tests) y Bloque F (concurrencia real del `FOR UPDATE`
+  con dos conexiones reales y `pg_sleep`, mismo método que `mutaciones-0041.test.ts`, 2 tests) —
+  **16 tests finales (7 mutaciones + 9 legítimos)**, verificados con mutación en vivo del trigger
+  (14/16 con el trigger roto, 16/16 restaurado). Primera vez en el repo que una prueba de mutación
+  altera una *policy* en vivo (no una función) — mismo patrón `try/finally`, sin precedente exacto,
+  dejado explícito.
+
+### 4. Verificación final (medida, no de memoria)
+
+- `packages/data`: **571 pasan / 8 fallan / 579 total** (línea de base 555/8/563 + 16 tests nuevos de
+  `mutaciones-0048.test.ts`; mismos 8 rojos preexistentes de siempre — 7 de `mutaciones-0038.test.ts` +
+  1 de `reglas-de-codigo.test.ts` — ninguno nuevo).
+- `packages/ingesta`: **988 pasan / 4 fallan / 7 todo / 999 total** — idéntico a la línea de base
+  medida antes de tocar el primer archivo (los 4 rojos son los preexistentes de
+  `aislamiento-modulo-1.test.ts`, sin relación).
+- `apps/cli` (los 2 archivos con fixtures corregidas): **12/12**.
+- `pnpm typecheck` limpio de punta a punta.
+- `grep -a -rn "referencia_origen" --include="*.ts" packages apps`: solo quedan ocurrencias de
+  `pendiente_cierre.referencia_origen` (fuera de alcance, declarado aparte) y comentarios/notas de
+  deprecación — cero ocurrencias vivas contra `asiento_propuesto_renglon`.
+
+### Estado final
+
+- **Frente 1 (modelo de datos + aplicación de ADR-0007): CERRADO COMPLETO.** Los tres primeros puntos
+  del "Criterio de cierre" del ADR-0007 quedan cumplidos — ver esa sección, actualizada.
+- **ADR-0007 como un todo: sigue parcial** — el cuarto punto del criterio (Pantalla 5/6 reflejando la
+  granularidad real) es una tarea de diseño visual separada, declarada desde la entrada 228, fuera del
+  alcance de esta tarea. No bloquea el trabajo siguiente sobre datos/backend.
+- **Sin mergear a `main` todavía** — el titular decide cuándo. Este commit cierra Paso 2 sobre la misma
+  rama `feat/adr-0007-correlativo-trazabilidad`.
+- **Hallazgo declarado, no resuelto en esta tarea** (para cuando se planifique aplicar `0048` a
+  piloto): revisar el `RAISE NOTICE` del backfill de `movimiento_bancario_id` contra los datos reales
+  de Bracci/ROKA antes de asumir que `paquete-cierre-bracci-roka-2026-05-a-08.ts` sigue dando los
+  mismos resultados.
+- **CHANGELOG.md: sin cambios** — mismo criterio que la entrada 229 (cambio puramente de aplicación
+  sobre una migración ya aditiva, nada de lo reportado antes cambia de significado).
+
+---
+
 ## 2026-09-17 (229) — ADR-0007 implementado: migración `0048` (correlativo + FK de trazabilidad)
 aplicada y verificada. **PARCIALMENTE cerrado** — falta el ajuste de `escrituras.ts`/`lecturas.ts`
 (Paso 2, `backend-dev`) y la prueba de mutación (`qa-automation`). Sin mergear a `main`.
