@@ -25,7 +25,7 @@ que el listado original tenía por separado.
 |---|---|---|
 | 1 | Elegir cliente | Ya bocetado y aprobado (Artifact publicado) |
 | 2 | Subir extracto bancario | Bocetado 2026-09-16, dentro del marco de doc 36 (header global + sidebar + panel), identidad visual v7 (§6) — [Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F). Aprobado por el titular 2026-09-16 |
-| 3 | Resumen de la extracción | Bocetado 2026-09-16, directo en v7 (§6) — [Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX). Pendiente de aprobación del titular |
+| 3 | Resumen de la extracción | Bocetado 2026-09-16, directo en v7 (§6) — [Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX). Aprobado por el titular 2026-09-16 |
 | 4 | Procesar y tipificar | Pendiente de boceto |
 | 5 | Revisar e imputar (fusión de "revisar tipificaciones" + "imputación a cuentas contables", ver §1.2) | Pendiente de boceto |
 | 6 | Generar asiento contable | Pendiente de boceto |
@@ -565,19 +565,30 @@ de Galicia extrae y verifica por triangulación (`docs/diseno/02-formato-galicia
 por min/max de fecha, saldos derivados por aritmética de la cadena, cantidad de movimientos como medida
 de "Done"). Todos los datos son **sintéticos**, coherentes con el resto del wizard.
 
-**Ajuste de criterio que `ux-designer` tomó sin que se le pidiera explícito, pendiente de confirmación
-del titular**: usó `--estado-indeterminado` (declarado desde Pantalla 1, doc 34 §6, reservado en el
-comentario original "para cuando Pantalla 5 lo necesite") para una nota de calidad de extracción ("2
-movimientos con importe no pudieron leerse automáticamente — se van a marcar para revisión manual en el
-paso 5"), en vez de esperar a que exista la cola de revisión. Motivo del agente: un movimiento que el
-motor no pudo leer es exactamente el caso "indeterminado, con su motivo" — no vio razón para inventar un
-color nuevo ni forzarlo a tono neutro habiendo ya un token declarado sin uso para ese rol exacto. Los
-otros dos tokens de cola de revisión (`--estado-conciliado`, `--estado-rechazado`) siguen sin uso, como
-estaban. Nunca solo color: la nota lleva ícono + texto.
+**Corrección del titular sobre el primer boceto**: `ux-designer` había reusado `--estado-indeterminado`
+(reservado desde Pantalla 1 "para cuando Pantalla 5 lo necesite") para la nota de calidad de extracción
+de esta pantalla ("2 movimientos con importe no pudieron leerse automáticamente — se van a marcar para
+revisión manual en el paso 5"). El titular la rechazó: son dos significados semánticamente distintos
+aunque el peso visual sea parecido. `--estado-indeterminado` (y sus dos hermanos, `--estado-conciliado`/
+`--estado-rechazado`) son sobre una **decisión humana todavía no tomada** — la cola de revisión de
+Pantalla 5, donde alguien decide si un movimiento concilia. La nota de Pantalla 3 es sobre **una falla de
+lectura automática del motor**, sin ninguna decisión humana pendiente todavía. Corrección aplicada:
 
-[Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX). Verificado antes de publicar y releído en
-vivo contra el contenido publicado (no solo el reporte del agente): balance de divs 52/52, 6 pasos con
-etiqueta, 4 ítems de sidebar, header-global, breadcrumb con los dos valores esperados, cero rastro de
-`IBM Plex`/`--registro`, uso del acento bordó limitado a exactamente 3 apariciones (círculo del paso
-activo ×2 + botón "Continuar" ×1) — ninguna fuga a otro elemento. **Pendiente de aprobación del titular**
-— no se avanza a Pantalla 4 hasta entonces.
+- `--estado-indeterminado`/`--estado-conciliado`/`--estado-rechazado` quedan **intactos, sin uso**,
+  reservados tal cual para Pantalla 5 — comentario del `:root` reescrito para dejar explícita la
+  distinción ("sobre una decisión humana todavía no tomada", nota de la corrección del titular).
+- Token nuevo, propio: **`--advertencia-sistema: #C99A3B`** — mismo valor ámbar que
+  `--estado-indeterminado` (misma familia visual de "atención"), pero declarado como un token
+  semánticamente distinto, no un alias. Es el único token de esta pantalla para "el sistema no pudo leer
+  algo automáticamente", sin relación con la cola de revisión.
+- `.nota-calidad` (fondo, borde, color del ícono) pasó de `var(--estado-indeterminado)` a
+  `var(--advertencia-sistema)` — verificado con grep: cero ocurrencias de `var(--estado-indeterminado)`
+  en el cuerpo de la pantalla, la declaración del token sigue en `:root` sin usar.
+
+[Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX) (versión 2, con esta corrección ya
+aplicada). Verificado antes de publicar y releído en vivo contra el contenido publicado (no solo el
+reporte del agente): balance de divs 52/52, 6 pasos con etiqueta, 4 ítems de sidebar, header-global,
+breadcrumb con los dos valores esperados, ficha de resumen con sus 3 cifras intacta, `--estado-indeterminado`
+declarado con 0 usos en el cuerpo, `--advertencia-sistema` usado exactamente 3 veces (todas dentro de
+`.nota-calidad`), acento bordó limitado a exactamente 3 apariciones (círculo del paso activo ×2 + botón
+"Continuar" ×1) — ninguna fuga a otro elemento. **Aprobada por el titular.**

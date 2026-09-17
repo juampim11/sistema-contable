@@ -6,6 +6,42 @@
 
 ---
 
+## 2026-09-16 (225) — Corrección de (224): nota de calidad de Pantalla 3 pasa a token propio
+`--advertencia-sistema`; `--estado-indeterminado` queda intacto y reservado para Pantalla 5. Pantalla 3
+**aprobada**.
+
+**Herramienta:** Claude Code, sesión interactiva. Continúa en `docs/pantalla3-boceto-v7`.
+
+### Por qué
+
+El titular rechazó que la nota de calidad de extracción de Pantalla 3 reusara `--estado-indeterminado`
+(reservado desde Pantalla 1 para la cola de revisión de Pantalla 5): son dos significados distintos aun
+compartiendo peso visual — uno es una decisión humana todavía no tomada, el otro una falla de lectura
+automática del sistema, sin decisión humana pendiente.
+
+### Qué se hizo
+
+Convocatoria puntual a `ux-designer`, corrección acotada sobre el Artifact ya publicado: `:root` de
+Pantalla 3 recibe un token nuevo, `--advertencia-sistema: #C99A3B` (mismo ámbar que
+`--estado-indeterminado`, declarado explícitamente como token propio, no alias), y `.nota-calidad` pasa a
+usarlo en sus 3 propiedades (fondo, borde, ícono). `--estado-indeterminado`/`--estado-conciliado`/
+`--estado-rechazado` quedan intactos, sin uso, con su comentario reescrito para dejar explícita la
+distinción "decisión humana pendiente" vs. "falla de lectura del sistema".
+
+### Verificado (contra el contenido publicado en vivo)
+
+`--estado-indeterminado`: 1 declaración, 0 usos en el cuerpo (confirmado por grep). `--advertencia-sistema`:
+1 declaración, 3 usos, todos dentro de `.nota-calidad`. Resto de la pantalla sin cambios: balance de divs
+52/52, 6 pasos, 4 ítems de sidebar, header-global, breadcrumb, ficha de resumen con sus 3 cifras intacta,
+acento bordó limitado a 3 apariciones sin fugas.
+
+### Estado
+
+[Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX) (versión 2). Doc 34 §0 y §6 actualizados.
+**Pantalla 3 queda aprobada.** Rama `docs/pantalla3-boceto-v7` lista para mergear.
+
+---
+
 ## 2026-09-16 (224) — Pantalla 3 ("Resumen de la extracción") bocetada directo en v7, sin pase de
 identidad aparte. **Esperando aprobación del titular antes de Pantalla 4.**
 
