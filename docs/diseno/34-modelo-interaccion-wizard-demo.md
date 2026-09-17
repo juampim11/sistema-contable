@@ -25,7 +25,7 @@ que el listado original tenía por separado.
 |---|---|---|
 | 1 | Elegir cliente | Ya bocetado y aprobado (Artifact publicado) |
 | 2 | Subir extracto bancario | Bocetado 2026-09-16, dentro del marco de doc 36 (header global + sidebar + panel), identidad visual v7 (§6) — [Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F). Aprobado por el titular 2026-09-16 |
-| 3 | Resumen de la extracción | Pendiente de boceto |
+| 3 | Resumen de la extracción | Bocetado 2026-09-16, directo en v7 (§6) — [Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX). Aprobado por el titular 2026-09-16 |
 | 4 | Procesar y tipificar | Pendiente de boceto |
 | 5 | Revisar e imputar (fusión de "revisar tipificaciones" + "imputación a cuentas contables", ver §1.2) | Pendiente de boceto |
 | 6 | Generar asiento contable | Pendiente de boceto |
@@ -543,3 +543,52 @@ cuentas bancarias con sus últimos 4 dígitos, mismo archivo de ejemplo ("extrac
 en v7** — con esto, Pantalla 1 y Pantalla 2 comparten el mismo lenguaje visual completo (tokens,
 tipografía, disciplina de exclusividad del acento). No queda ninguna pantalla bocetada con la paleta
 "libro contable" vieja de §5.
+
+### Pantalla 3 bocetada directo en v7 (2026-09-16, sin pase de identidad aparte)
+
+Primera pantalla nueva del wizard bocetada ya con v7 desde el arranque — no hubo palette vieja que
+reemplazar ni pase de identidad posterior, a diferencia de Pantalla 1 y Pantalla 2. Convocatoria puntual
+a `ux-designer`, mismo criterio de siempre: copió tal cual el `:root`, `.header-global`, `.sidebar`/
+`.nav-item`, `.stepper`/`.paso` y `.breadcrumb` de Pantalla 2 v7, y diseñó desde cero solo lo específico
+de esta pantalla.
+
+**Stepper**: pasos 1 y 2 en `.paso.default-navegable` (navegables hacia atrás — ya no hay nada que
+mostrar de esos pasos en esta pantalla), paso 3 `.paso.activo`, pasos 4-6 sin estado especial. Breadcrumb
+extendido con un segundo segmento respecto de Pantalla 2 ("Cliente: Estudio Demo S.A. · Cuenta: Banco
+Galicia ····4821") — necesario acá porque el resumen es específico de una cuenta, no solo de un cliente.
+
+**Contenido — grounding en lo que el motor de ingesta real extrae** (no inventado): una ficha de resumen
+sobre `--papel` (mismo criterio de primer plano que la tarjeta de Pantalla 1 y el selector/dropzone de
+Pantalla 2) con período (`01/08/2026 – 31/08/2026`), saldo inicial (`$ 1.482.350,00`), saldo final
+(`$ 1.647.910,55`) y cantidad de movimientos detectados (`47`) — exactamente los campos que el adaptador
+de Galicia extrae y verifica por triangulación (`docs/diseno/02-formato-galicia.md` §3.2/§6/§11: período
+por min/max de fecha, saldos derivados por aritmética de la cadena, cantidad de movimientos como medida
+de "Done"). Todos los datos son **sintéticos**, coherentes con el resto del wizard.
+
+**Corrección del titular sobre el primer boceto**: `ux-designer` había reusado `--estado-indeterminado`
+(reservado desde Pantalla 1 "para cuando Pantalla 5 lo necesite") para la nota de calidad de extracción
+de esta pantalla ("2 movimientos con importe no pudieron leerse automáticamente — se van a marcar para
+revisión manual en el paso 5"). El titular la rechazó: son dos significados semánticamente distintos
+aunque el peso visual sea parecido. `--estado-indeterminado` (y sus dos hermanos, `--estado-conciliado`/
+`--estado-rechazado`) son sobre una **decisión humana todavía no tomada** — la cola de revisión de
+Pantalla 5, donde alguien decide si un movimiento concilia. La nota de Pantalla 3 es sobre **una falla de
+lectura automática del motor**, sin ninguna decisión humana pendiente todavía. Corrección aplicada:
+
+- `--estado-indeterminado`/`--estado-conciliado`/`--estado-rechazado` quedan **intactos, sin uso**,
+  reservados tal cual para Pantalla 5 — comentario del `:root` reescrito para dejar explícita la
+  distinción ("sobre una decisión humana todavía no tomada", nota de la corrección del titular).
+- Token nuevo, propio: **`--advertencia-sistema: #C99A3B`** — mismo valor ámbar que
+  `--estado-indeterminado` (misma familia visual de "atención"), pero declarado como un token
+  semánticamente distinto, no un alias. Es el único token de esta pantalla para "el sistema no pudo leer
+  algo automáticamente", sin relación con la cola de revisión.
+- `.nota-calidad` (fondo, borde, color del ícono) pasó de `var(--estado-indeterminado)` a
+  `var(--advertencia-sistema)` — verificado con grep: cero ocurrencias de `var(--estado-indeterminado)`
+  en el cuerpo de la pantalla, la declaración del token sigue en `:root` sin usar.
+
+[Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX) (versión 2, con esta corrección ya
+aplicada). Verificado antes de publicar y releído en vivo contra el contenido publicado (no solo el
+reporte del agente): balance de divs 52/52, 6 pasos con etiqueta, 4 ítems de sidebar, header-global,
+breadcrumb con los dos valores esperados, ficha de resumen con sus 3 cifras intacta, `--estado-indeterminado`
+declarado con 0 usos en el cuerpo, `--advertencia-sistema` usado exactamente 3 veces (todas dentro de
+`.nota-calidad`), acento bordó limitado a exactamente 3 apariciones (círculo del paso activo ×2 + botón
+"Continuar" ×1) — ninguna fuga a otro elemento. **Aprobada por el titular.**

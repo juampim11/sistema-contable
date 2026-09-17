@@ -6,6 +6,76 @@
 
 ---
 
+## 2026-09-16 (225) — Corrección de (224): nota de calidad de Pantalla 3 pasa a token propio
+`--advertencia-sistema`; `--estado-indeterminado` queda intacto y reservado para Pantalla 5. Pantalla 3
+**aprobada**.
+
+**Herramienta:** Claude Code, sesión interactiva. Continúa en `docs/pantalla3-boceto-v7`.
+
+### Por qué
+
+El titular rechazó que la nota de calidad de extracción de Pantalla 3 reusara `--estado-indeterminado`
+(reservado desde Pantalla 1 para la cola de revisión de Pantalla 5): son dos significados distintos aun
+compartiendo peso visual — uno es una decisión humana todavía no tomada, el otro una falla de lectura
+automática del sistema, sin decisión humana pendiente.
+
+### Qué se hizo
+
+Convocatoria puntual a `ux-designer`, corrección acotada sobre el Artifact ya publicado: `:root` de
+Pantalla 3 recibe un token nuevo, `--advertencia-sistema: #C99A3B` (mismo ámbar que
+`--estado-indeterminado`, declarado explícitamente como token propio, no alias), y `.nota-calidad` pasa a
+usarlo en sus 3 propiedades (fondo, borde, ícono). `--estado-indeterminado`/`--estado-conciliado`/
+`--estado-rechazado` quedan intactos, sin uso, con su comentario reescrito para dejar explícita la
+distinción "decisión humana pendiente" vs. "falla de lectura del sistema".
+
+### Verificado (contra el contenido publicado en vivo)
+
+`--estado-indeterminado`: 1 declaración, 0 usos en el cuerpo (confirmado por grep). `--advertencia-sistema`:
+1 declaración, 3 usos, todos dentro de `.nota-calidad`. Resto de la pantalla sin cambios: balance de divs
+52/52, 6 pasos, 4 ítems de sidebar, header-global, breadcrumb, ficha de resumen con sus 3 cifras intacta,
+acento bordó limitado a 3 apariciones sin fugas.
+
+### Estado
+
+[Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX) (versión 2). Doc 34 §0 y §6 actualizados.
+**Pantalla 3 queda aprobada.** Rama `docs/pantalla3-boceto-v7` lista para mergear.
+
+---
+
+## 2026-09-16 (224) — Pantalla 3 ("Resumen de la extracción") bocetada directo en v7, sin pase de
+identidad aparte. **Esperando aprobación del titular antes de Pantalla 4.**
+
+**Herramienta:** Claude Code, sesión interactiva. Rama nueva `docs/pantalla3-boceto-v7`, **desde `main`**
+(declarado explícito).
+
+### Qué se hizo
+
+Convocatoria puntual a `ux-designer`: primera pantalla del wizard bocetada ya en v7 desde el arranque —
+copió tal cual el `:root`/`.header-global`/`.sidebar`/`.stepper`/`.breadcrumb` de Pantalla 2 v7 y diseñó
+desde cero el contenido específico: una ficha de resumen (período, saldo inicial, saldo final, cantidad
+de movimientos) sobre `--papel`, con datos sintéticos calcados de los campos reales que el adaptador de
+Galicia extrae (`docs/diseno/02-formato-galicia.md`). Breadcrumb extendido con un segundo segmento
+(cuenta, además de cliente) — necesario porque el resumen es de una cuenta puntual.
+
+**Ajuste no pedido, pendiente de confirmación**: usó `--estado-indeterminado` (declarado desde Pantalla 1
+para "cuando Pantalla 5 lo necesite") en una nota de calidad de extracción de esta pantalla — un
+movimiento no leído es, para el agente, exactamente ese caso. Los otros dos tokens de cola de revisión
+siguen sin uso.
+
+### Verificado (por mí, contra el contenido publicado en vivo)
+
+Balance de divs 52/52, 6 pasos con etiqueta, 4 ítems de sidebar, header-global, breadcrumb con cliente +
+cuenta, cero rastro de `IBM Plex`/`--registro`, acento bordó usado exactamente 3 veces (paso activo ×2 +
+botón "Continuar" ×1, sin fugas). `git status --short` limpio.
+
+### Estado
+
+[Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX). Doc 34 §0 y §6 actualizados (nueva
+sub-sección "Pantalla 3 bocetada directo en v7"). No mergeado todavía — a la espera de que el titular
+revise el boceto y confirme (o corrija) el uso adelantado de `--estado-indeterminado`.
+
+---
+
 ## 2026-09-16 (223) — Pantalla 2 traída a identidad v7 (mismo lenguaje visual que Pantalla 1). Aprobada.
 Nota de proceso: este cambio se había publicado como Artifact en el turno anterior sin la entrada de
 HANDOFF/doc correspondiente — se cierra ahora, antes de mergear, para no perder la traza (regla dura
