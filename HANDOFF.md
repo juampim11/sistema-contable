@@ -6,6 +6,50 @@
 
 ---
 
+## 2026-09-17 (227) — Pantalla 5 ("Revisar e imputar") bocetada directo en v7, la más compleja de las
+seis, aprobada. **Siguiente: Pantalla 6 ("Generar asiento contable").**
+
+**Herramienta:** Claude Code, sesión interactiva. Rama nueva `docs/pantalla5-boceto-v7`, **desde `main`**
+(declarado explícito).
+
+### Qué se hizo
+
+Convocatoria puntual a `ux-designer`, con grounding contra código real (no solo contra doc 34):
+`agrupar-decisiones-pendientes.ts`, `escrituras.ts` (confirmó que `confirmarGrupo()` exige `cuentaId`
+siempre — no existe `indeterminado` persistido en el esquema hoy), `texto-humano.ts`. Implementó:
+
+- **Candado por fila** (`.grupo.cerrado`, distinto de `.paso.cerrado` del stepper) — detalle siempre
+  visible en línea, no solo en hover como el stepper (ajuste de criterio: más legible al escanear muchas
+  filas).
+- **Cuarto estado del stepper**, `.paso.en-progreso` — círculo 5 siempre clickeable con chip `n/m`
+  ("2/21 grupos"), nunca "cerrado sin puntero" mientras la sesión sigue abierta (§4 puntos 2-3).
+- **Primer uso real de los 3 `--estado-*`** reservados desde Pantalla 1 — mapeo semántico propuesto por
+  el agente y **aprobado por el titular tal cual** (detalle completo en doc 34 §6).
+- **"Marcar indeterminado con motivo"**, declarado sin backing real en el esquema — mismo criterio de
+  honestidad que doc 34 §4 punto 4.
+
+**Corrección del titular sobre el primer boceto**: el asiento propuesto se mostraba como oración con
+flecha ("Debe X — Haber Y"). Se corrigió a una **tabla real Cuenta/Debe/Haber** por fila (7 de 9 filas
+tienen asiento), importes en JetBrains Mono tabular alineados a la derecha, mismo patrón que un libro
+diario contable real. [Artifact](https://claude.ai/artifact/56z4WvmKMUUtq9m95arYZK) (versión 3).
+
+**Nota anticipada, no una decisión tomada**: Pantalla 6 probablemente reuse el componente
+`.tabla-asiento` construido acá (ya soporta N filas) para el asiento consolidado final, más un total al
+pie (suma Debe = suma Haber) — queda anotado en doc 34 §6 para cuando se boceté esa pantalla.
+
+### Verificado (contra el contenido publicado en vivo, en ambas rondas)
+
+Balance de divs 109/109, botones 28/28, selects 1/1, 7 tablas de asiento con `<tr>`/`<td>` balanceados
+(21/21, 42/42), 6 pasos con etiqueta, 4 ítems de sidebar, breadcrumb, los 3 `--estado-*` con usos reales,
+acento bordó limitado a la acción primaria + el stepper. `git status --short` limpio en ambas rondas.
+
+### Estado
+
+Doc 34 §0 y §6 actualizados. **Pantalla 5 aprobada.** Sigue Pantalla 6 ("Generar asiento contable") — la
+última del wizard, cierra el bucle hacia la pantalla de "elegir otra cuenta / elegir otro cliente" (§1.1).
+
+---
+
 ## 2026-09-16 (226) — Pantalla 4 ("Procesar y tipificar") bocetada directo en v7, aprobada.
 **Siguiente: Pantalla 5 ("Revisar e imputar"), la más compleja de las seis.**
 

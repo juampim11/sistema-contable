@@ -27,7 +27,7 @@ que el listado original tenía por separado.
 | 2 | Subir extracto bancario | Bocetado 2026-09-16, dentro del marco de doc 36 (header global + sidebar + panel), identidad visual v7 (§6) — [Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F). Aprobado por el titular 2026-09-16 |
 | 3 | Resumen de la extracción | Bocetado 2026-09-16, directo en v7 (§6) — [Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX). Aprobado por el titular 2026-09-16 |
 | 4 | Procesar y tipificar | Bocetado 2026-09-16, directo en v7 (§6) — [Artifact](https://claude.ai/artifact/PC8iw6y82qvoFm6cop6nQj). Aprobado por el titular 2026-09-16 |
-| 5 | Revisar e imputar (fusión de "revisar tipificaciones" + "imputación a cuentas contables", ver §1.2) | Pendiente de boceto |
+| 5 | Revisar e imputar (fusión de "revisar tipificaciones" + "imputación a cuentas contables", ver §1.2) | Bocetado 2026-09-17, directo en v7 (§6) — [Artifact](https://claude.ai/artifact/56z4WvmKMUUtq9m95arYZK). Aprobado por el titular |
 | 6 | Generar asiento contable | Pendiente de boceto |
 
 **Pantalla de cierre del bucle — fuera de la numeración principal** (resolución completa en §1.1): no es
@@ -636,3 +636,79 @@ header-global, breadcrumb con cliente + cuenta, cero ocurrencias de `var(--estad
 `var(--estado-conciliado)`, `var(--estado-rechazado)` ni `var(--advertencia-sistema)` en el cuerpo (los
 cuatro quedan declarados con comentario explicando por qué no aplican acá), acento bordó limitado a
 exactamente 3 apariciones. **Aprobada por el titular.**
+
+### Pantalla 5 bocetada directo en v7 (2026-09-17) — la más compleja de las seis
+
+Convocatoria puntual a `ux-designer`, con grounding contra código real (no solo contra el texto de este
+documento): `packages/ingesta/src/cierre/agrupar-decisiones-pendientes.ts` (contrato
+`GrupoDecisionPendiente`, cálculo de `cuentaPropuesta`/`requiereRevision`), `packages/data/src/cierre/
+escrituras.ts` (`confirmarGrupo`/`revocaId` — confirmado: exige `cuentaId` siempre, no existe un
+`indeterminado` persistido en el esquema hoy) y `packages/contabilidad/src/nucleo/texto-humano.ts`
+(vocabulario real de movimientos, para no inventar texto).
+
+**Candado por fila, no por paso (§4 punto 1)**: clase nueva `.grupo.cerrado` (distinta de `.paso.cerrado`
+del stepper — objetos DOM distintos) — candado + check + "Confirmada por Laura · 16/09/2026 14:32" +
+"Corregir esta decisión" → `revocaId`. A diferencia de `.paso.cerrado` (que muestra ese detalle solo en
+hover), acá queda **siempre visible en línea** — ajuste de criterio del agente: con el ancho de una fila
+completa es más legible para escanear muchas filas cerradas seguidas que esconder el detalle detrás de
+un hover.
+
+**Cuarto estado del stepper — `.paso.en-progreso` (§4 puntos 2-3)**: el círculo 5 sigue siendo un
+`<button>` real, siempre clickeable mientras la sesión sigue abierta — nunca "cerrado sin puntero"
+mientras haya grupos sin resolver, sin importar cuántos ya estén confirmados. Muestra un chip `n/m`
+("2/21 grupos") con el mismo acento bordó que el círculo activo (no es un cuarto uso del acento, es el
+mismo uso ya permitido en "paso activo/en-progreso"). Declarado en el CSS, como intención de diseño no
+verificada todavía: si en un futuro paso posterior se mirara hacia atrás un paso 5 "en progreso pero no
+activo" (sesión distinta), `.paso.en-progreso` sin `.activo` mostraría el mismo chip en tono neutro — no
+construido ni verificado, queda anotado para cuando corresponda.
+
+**Primer uso real de los 3 tokens `--estado-*`** (reservados desde Pantalla 1, doc 34 §6 anterior),
+mapeo semántico **aprobado por el titular tal cual**:
+- `--estado-conciliado` (verde-azulado): badge inicial de fila cuando el motor propone con alta
+  confianza (`cuentaPropuesta !== null && !requiereRevision`). No implica fila resuelta.
+- `--estado-indeterminado` (ámbar): un solo significado — "la cuenta correcta no está determinada" — en
+  dos momentos: badge inicial cuando el motor tiene candidato pero duda (`requiereRevision === true`), y
+  estado final de fila cuando la contadora la marca explícita "No sé" con motivo.
+- `--estado-rechazado` (rojo): un solo significado — "no hay ninguna cuenta propuesta vigente que valga
+  aceptar" — en dos caminos: badge inicial cuando `cuentaPropuesta === null` ("sin regla"), y el botón
+  "No es esta cuenta" cuando la contadora rechaza explícitamente la propuesta del motor.
+- `--confirmado` (reusado, no uno de los 3 nuevos): candado de fila ya confirmada — mismo verde que ya
+  usan los pasos cerrados del stepper, evita inventar un cuarto color.
+
+**"Marcar indeterminado con motivo" — honestidad declarada, sin backing real en el esquema hoy**:
+`confirmarGrupo()` exige `cuentaId` siempre; no existe columna de estado/motivo en `confirmacion_grupo`.
+Botón terciario "No sé / marcar para después" (`--estado-indeterminado`, nunca acento) deja la fila en
+`.grupo.indeterminado-marcado` con el motivo entre comillas y un link "Volver a revisar" — deliberadamente
+distinto de "Corregir esta decisión" (no hay `revocaId` real detrás, la fila es trivialmente reabrible sin
+candado real). Mismo criterio de honestidad que ya usa doc 34 §4 punto 4 ("propuesto, no verificado").
+
+**Asiento propuesto — corrección del titular sobre el primer boceto**: la primera versión mostraba el
+asiento como una oración en prosa con flecha ("Debe X $N — Haber Y $N"). El titular la rechazó: pidió una
+**tabla real de dos columnas (Debe | Haber)**, mismo patrón que un libro diario contable real. Corrección
+aplicada: tabla `Cuenta | Debe | Haber` por fila con asiento propuesto (7 de las 9 filas del boceto — las
+2 restantes son "sin regla"/marcadas indeterminado, sin asiento que mostrar) — la cuenta debitada con su
+importe en la celda Debe (Haber vacío en esa fila), la acreditada con su importe en Haber (Debe vacío),
+importes en JetBrains Mono tabular (`.num`) alineados a la derecha con ancho de columna fijo (130px) para
+que alineen entre las 7 tablas. Se sacó el ícono de flecha (sin equivalente natural en una tabla de dos
+filas). [Artifact](https://claude.ai/artifact/56z4WvmKMUUtq9m95arYZK) (versión 3, con la corrección ya
+aplicada).
+
+**Nota anticipada para Pantalla 6** (opinión del agente, no una decisión tomada ni un boceto): Pantalla 6
+("Generar asiento contable") consolida los grupos ya resueltos del paso 5 en el asiento final que
+efectivamente se registra — el momento real de `confirmarAsiento()` (CLAUDE.md regla dura §1.7). Ese
+asiento consolidado probablemente tenga más de 2 líneas (varios grupos, posible agrupación de líneas que
+comparten cuenta y lado — decisión de `contador-dominio`, no de diseño) y casi seguro va a necesitar el
+mismo componente `.tabla-asiento` construido acá, que ya soporta N filas sin cambio de estructura, más
+un total al pie (suma Debe = suma Haber, el chequeo de balance que toda contadora espera ver antes de
+confirmar). Queda anotado para cuando se boceté Pantalla 6 — no es un compromiso de diseño cerrado.
+
+**Dataset**: 9 de 21 grupos representativos mostrados (de los 47 movimientos totales de Pantalla 3/4),
+con "Cargar más grupos" al pie. Gate hacia paso 6: botón "Continuar" deshabilitado + "Te faltan resolver
+19 de 21 grupos para continuar — confirmados o marcados indeterminado, los dos cuentan" — marcado en el
+propio CSS como "propuesto, no verificado contra código real", mismo criterio que doc 34 §4 punto 4.
+
+Verificado antes de publicar y releído en vivo contra el contenido publicado, en ambas rondas (boceto
+inicial y corrección de la tabla): balance de divs 109/109, botones 28/28, selects 1/1, tablas 7/7 con
+sus `<tr>`/`<td>` balanceados, 6 pasos con etiqueta, 4 ítems de sidebar, header-global, breadcrumb, los 3
+`--estado-*` con usos reales (a diferencia de Pantallas 1-4, donde quedaban reservados sin uso), acento
+bordó limitado a la acción primaria + el stepper (nunca en botones de fila). **Aprobada por el titular.**
