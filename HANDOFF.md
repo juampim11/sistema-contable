@@ -6,6 +6,74 @@
 
 ---
 
+## 2026-09-16 (221) — Exploración de 3 direcciones visuales + síntesis final, Pantalla 1 (v6). Reemplaza
+la identidad "libro contable" de (220). **Esperando revisión del titular antes de tocar Pantalla 2.**
+
+**Herramienta:** Claude Code, sesión interactiva. Continúa en la misma rama `docs/identidad-visual-pantalla1-2`
+(declarado explícito: es continuación directa del mismo tema abierto ahí, no una rama nueva).
+
+### Por qué
+
+El titular rechazó la identidad "libro contable" de (220) por acercarse demasiado a la estética SaaS
+genérica (Odoo/Salesforce). Pidió 3 exploraciones reales, no convergentes entre sí, con espíritu de
+referencia Mercury (banking) — tipografía distintiva, uso audaz del blanco, layout no obvio, sin dejar de
+ser software de trabajo (2 horas diarias, no una landing).
+
+### Qué se hizo
+
+**Paso 1 — 3 direcciones, cada una en su propio Artifact nuevo** (lección de colisión de agentes en
+paralelo ya aplicada: sin archivo compartido entre ellas):
+
+- **Dirección A (tipografía)**: [Artifact](https://claude.ai/artifact/T9UTzxcAZs9FfVBmp9dZwa). Fraunces
+  (nombre/título) + JetBrains Mono tabular (toda cifra) + Inter retirado a rótulo/nav/acción. Reestructuró
+  en folio de filas con regla, estilo libro mayor.
+- **Dirección B (layout)**: [Artifact](https://claude.ai/artifact/QoUVSwkqfw59QXdS4U76P6). Cola
+  priorizada en vez de grilla de clientes. **Descartada por completo** por el titular.
+- **Dirección C (paleta)**: [Artifact](https://claude.ai/artifact/NMQwcNbd8UBTFa4Lxr6nEJ). Escritorio
+  oscuro + tarjetas claras + acento bordó exclusivo de acción/paso activo. Superficie oscura de la
+  exploración: casi negra, ajustada en la síntesis.
+
+**Paso 2 — síntesis final, un solo Artifact, no una cuarta exploración.** Decisión del titular, punto por
+punto: B descartada del todo (vuelve la grilla de 6 tarjetas original); C como base con
+`--escritorio: #322D26`/`--escritorio-hondo: #26221C` (ajustado, menos extremo que la exploración) y
+`--acento: #8C2F39` exclusivo de botón primario + paso activo del stepper (nunca sidebar activa, nunca
+focus ring, nunca texto de cuerpo); A combinada con C (Fraunces + JetBrains Mono tabular + Inter, mismo
+reparto de roles); estructura de contenido a criterio de `ux-designer` como pidió el titular — mantuvo la
+grilla de tarjetas (no el folio de A), aplicando la tipografía de A sobre la tarjeta existente y
+cambiándola de borde a sombra. Modo claro/oscuro: **no se construye ahora** — una sola paleta clara y
+definitiva; nota explícita en doc 34 §6 de que un modo oscuro futuro necesita un segundo set de tokens
+revisado a mano (no una inversión automática) más la lógica de preferencia guardada.
+
+### Verificado antes de publicar
+
+Splice quirúrgico del JSON (`json.loads`/`json.dumps`, re-escapado de `<` a `<`, mismo método de
+siempre) sobre el Artifact canónico de Pantalla 1, leído en vivo antes de editar. Verificación
+estructural: 6 `.tarjeta` (mismos 6 clientes, mismos datos byte a byte — nombre, cantidad de cuentas,
+fecha de último extracto), 4 `.nav-item`, 6 `.paso` con etiqueta, `.header-global`, `.breadcrumb`,
+`.sidebar`, balance de divs 73/73. Releído en vivo después de publicar: tokens `--escritorio`/`--acento`/
+Fraunces/JetBrains Mono presentes en el `Main.dc.html` real dentro del JSON publicado, no solo en el
+archivo local.
+
+### Ajustes de criterio que `ux-designer` tomó sin pedido explícito (declarados, no aprobados aún)
+
+1. Valores exactos de `--escritorio`/`--escritorio-hondo` (el titular pidió "menos invasivo" en prosa,
+   sin hex).
+2. Header y sidebar también pasan a fondo oscuro, no solo el panel de contenido.
+3. Ítem activo de sidebar usa realce neutro, no el acento bordó (preserva la exclusividad).
+4. Focus rings usan texto claro neutro, nunca el acento.
+5. Tarjetas de borde a sombra; se quitó el rayado de "papel de libro contable" de (220).
+
+### Estado
+
+[Artifact final](https://claude.ai/artifact/2i58PAMpUiWay4UDxLkG6Q) (versión 6). Doc 34 §6 y doc 36 §6
+actualizados con el detalle completo y los links de las 3 exploraciones. **Pantalla 2 queda fuera de
+alcance** — su Artifact sigue con la paleta "libro contable" de (220), ahora divergente de la nueva de
+Pantalla 1; reconciliarla es trabajo pendiente, no resuelto acá, para cuando el titular autorice seguir
+con Pantalla 2 en adelante. Rama `docs/identidad-visual-pantalla1-2` sigue sin mergear — a la espera de
+que el titular revise el resultado.
+
+---
+
 ## 2026-09-16 (220) — PASO A: pase de identidad visual sobre Pantalla 1 (v5) y Pantalla 2 (v4).
 Convocatoria puntual a `ux-designer`. **Esperando aprobación del titular antes de PASO B** (boceto de
 Pantalla 3).
