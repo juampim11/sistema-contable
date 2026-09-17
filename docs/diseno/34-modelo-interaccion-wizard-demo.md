@@ -25,7 +25,7 @@ que el listado original tenía por separado.
 |---|---|---|
 | 1 | Elegir cliente | Ya bocetado y aprobado (Artifact publicado) |
 | 2 | Subir extracto bancario | Bocetado 2026-09-16, dentro del marco de doc 36 (header global + sidebar + panel), identidad visual v7 (§6) — [Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F). Aprobado por el titular 2026-09-16 |
-| 3 | Resumen de la extracción | Pendiente de boceto |
+| 3 | Resumen de la extracción | Bocetado 2026-09-16, directo en v7 (§6) — [Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX). Pendiente de aprobación del titular |
 | 4 | Procesar y tipificar | Pendiente de boceto |
 | 5 | Revisar e imputar (fusión de "revisar tipificaciones" + "imputación a cuentas contables", ver §1.2) | Pendiente de boceto |
 | 6 | Generar asiento contable | Pendiente de boceto |
@@ -543,3 +543,41 @@ cuentas bancarias con sus últimos 4 dígitos, mismo archivo de ejemplo ("extrac
 en v7** — con esto, Pantalla 1 y Pantalla 2 comparten el mismo lenguaje visual completo (tokens,
 tipografía, disciplina de exclusividad del acento). No queda ninguna pantalla bocetada con la paleta
 "libro contable" vieja de §5.
+
+### Pantalla 3 bocetada directo en v7 (2026-09-16, sin pase de identidad aparte)
+
+Primera pantalla nueva del wizard bocetada ya con v7 desde el arranque — no hubo palette vieja que
+reemplazar ni pase de identidad posterior, a diferencia de Pantalla 1 y Pantalla 2. Convocatoria puntual
+a `ux-designer`, mismo criterio de siempre: copió tal cual el `:root`, `.header-global`, `.sidebar`/
+`.nav-item`, `.stepper`/`.paso` y `.breadcrumb` de Pantalla 2 v7, y diseñó desde cero solo lo específico
+de esta pantalla.
+
+**Stepper**: pasos 1 y 2 en `.paso.default-navegable` (navegables hacia atrás — ya no hay nada que
+mostrar de esos pasos en esta pantalla), paso 3 `.paso.activo`, pasos 4-6 sin estado especial. Breadcrumb
+extendido con un segundo segmento respecto de Pantalla 2 ("Cliente: Estudio Demo S.A. · Cuenta: Banco
+Galicia ····4821") — necesario acá porque el resumen es específico de una cuenta, no solo de un cliente.
+
+**Contenido — grounding en lo que el motor de ingesta real extrae** (no inventado): una ficha de resumen
+sobre `--papel` (mismo criterio de primer plano que la tarjeta de Pantalla 1 y el selector/dropzone de
+Pantalla 2) con período (`01/08/2026 – 31/08/2026`), saldo inicial (`$ 1.482.350,00`), saldo final
+(`$ 1.647.910,55`) y cantidad de movimientos detectados (`47`) — exactamente los campos que el adaptador
+de Galicia extrae y verifica por triangulación (`docs/diseno/02-formato-galicia.md` §3.2/§6/§11: período
+por min/max de fecha, saldos derivados por aritmética de la cadena, cantidad de movimientos como medida
+de "Done"). Todos los datos son **sintéticos**, coherentes con el resto del wizard.
+
+**Ajuste de criterio que `ux-designer` tomó sin que se le pidiera explícito, pendiente de confirmación
+del titular**: usó `--estado-indeterminado` (declarado desde Pantalla 1, doc 34 §6, reservado en el
+comentario original "para cuando Pantalla 5 lo necesite") para una nota de calidad de extracción ("2
+movimientos con importe no pudieron leerse automáticamente — se van a marcar para revisión manual en el
+paso 5"), en vez de esperar a que exista la cola de revisión. Motivo del agente: un movimiento que el
+motor no pudo leer es exactamente el caso "indeterminado, con su motivo" — no vio razón para inventar un
+color nuevo ni forzarlo a tono neutro habiendo ya un token declarado sin uso para ese rol exacto. Los
+otros dos tokens de cola de revisión (`--estado-conciliado`, `--estado-rechazado`) siguen sin uso, como
+estaban. Nunca solo color: la nota lleva ícono + texto.
+
+[Artifact](https://claude.ai/artifact/TcfskR3FGnpPYMhHLiEbqX). Verificado antes de publicar y releído en
+vivo contra el contenido publicado (no solo el reporte del agente): balance de divs 52/52, 6 pasos con
+etiqueta, 4 ítems de sidebar, header-global, breadcrumb con los dos valores esperados, cero rastro de
+`IBM Plex`/`--registro`, uso del acento bordó limitado a exactamente 3 apariciones (círculo del paso
+activo ×2 + botón "Continuar" ×1) — ninguna fuga a otro elemento. **Pendiente de aprobación del titular**
+— no se avanza a Pantalla 4 hasta entonces.
