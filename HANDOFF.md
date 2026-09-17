@@ -6,6 +6,81 @@
 
 ---
 
+## 2026-09-17 (228) — ADR-0007: modelo de datos del asiento contable (número correlativo +
+trazabilidad movimiento↔renglón). Solo diseño — sin implementar. **Bloquea Pantalla 6, y reabre
+Pantalla 5 (ya mergeada) como pendiente de ajuste.**
+
+**Herramienta:** Claude Code, sesión interactiva. Modo plan obligatorio (esquema de por medio, CLAUDE.md
+§3.2(a)). Rama nueva `docs/adr-0007-modelo-asiento-contable`, **desde `main`** (declarado explícito).
+
+### Por qué
+
+Antes de bocetar Pantalla 6 ("Generar asiento contable"), el titular pidió diseñar el modelo de datos
+del asiento (número correlativo, granularidad, trazabilidad movimiento↔línea) — pero primero verificar
+contra el esquema y código real qué de esto ya existe, para no inventar trabajo sobre algo resuelto
+(PASO 0, obligatorio antes de diseñar).
+
+### PASO 0 — 3 Explore agents en paralelo, verificado contra migraciones/código real
+
+- **Encabezado/líneas**: ya existe desde `0027_cierre_mensual.sql` — no se toca.
+- **Número correlativo**: confirmado ausente, grep exhaustivo de las 47 migraciones da cero resultados.
+- **Trazabilidad movimiento↔renglón**: `referencia_origen` es texto libre sin FK, comparado por cast en
+  3 puntos del código, nunca integridad referencial real. Split 1 movimiento→2 renglones es siempre fijo
+  (partida doble); **consolidación N→1 no existe en ningún punto del código de producción**; el camino
+  de reproceso pierde la traza por completo (bug, no diseño).
+- **`confirmacion_grupo` vs. `GrupoDecisionPendiente`**: confirmadas dos entidades distintas sin dato
+  compartido.
+
+**Hallazgo central**: el boceto ya aprobado de Pantalla 5/6 muestra "grupos" consolidando varios
+movimientos en una línea de asiento — Capa D no tiene ningún mecanismo real de consolidación.
+
+### Convocatoria de diseño — 5 agentes en paralelo
+
+- `contador-dominio`: **una línea por movimiento, sin consolidar** — sin necesidad demostrada de
+  consolidación, precedente real (ROKA, 267 movimientos → 267 asientos, 0 desbalanceados). No hay RT de
+  FACPCE cargada en `knowledge/` para respaldo normativo — declarado pendiente, no inventado.
+- `arquitecto-software`: confirma — formalizar `referencia_origen` como FK compuesta *nullable*. El bug
+  del camino de reproceso se corrige independiente de cualquier otra decisión.
+- `dba-data`: correlativo por `cliente_id` (nunca por cierre ni global), tabla contadora +
+  `SELECT ... FOR UPDATE` dentro de la transacción de confirmación (nunca `SEQUENCE` —no transaccional—
+  ni `COUNT(*)` —race real—), asignado en la transición `propuesto→confirmado`, protegido gratis por el
+  trigger de inmutabilidad ya existente (`0028`).
+- `security-engineer`: sin `SECURITY DEFINER` nuevo; la FK tiene que ser compuesta tenant-safe (una FK
+  simple no respeta RLS de la tabla referenciada); encontró un desajuste de clasificación en
+  `pendiente_cierre.referencia_origen` (dice "digest", el código escribe UUID crudo).
+- `seguridad-datos-financieros`: confirma que `referencia_origen` hoy NO es un vector de fuga entre
+  clientes (verificado), pero es un hallazgo ya declarado y sin dueño desde antes
+  (`HANDOFF.md:1958-1959`) — este ADR lo cierra. R25 (secuencial compartido entre tenants) exige que el
+  correlativo sea por cliente, nunca global — confirma el diseño de `dba-data`.
+
+### Decisión final
+
+Una línea de asiento por movimiento (sin consolidar); FK compuesta nullable
+`(cliente_id, movimiento_bancario_id)` reemplazando `referencia_origen`; corrección del bug de reproceso;
+correlativo por cliente vía tabla contadora + `FOR UPDATE`, asignado al confirmar. Sin columna de glosa
+nueva (sin necesidad demostrada). Clasificación N1 para ambas columnas nuevas. Migración propuesta:
+`0048_correlativo_asiento_propuesto.sql` — **no aplicada, forma descripta en el ADR para una tarea de
+implementación separada**.
+
+### Pendientes declarados, no resueltos en esta tarea
+
+Tabla puente de consolidación (sin necesidad demostrada); respaldo normativo FACPCE (sin fuente en
+`knowledge/`); `pendiente_cierre.referencia_origen` (mismo patrón, no tocado); corrección de la nota de
+clasificación de ese mismo campo; prueba de mutación de las reglas nuevas (corresponde a la
+implementación real). **Ajuste de boceto — Pantalla 5 (v3, ya mergeada) Y Pantalla 6**: ambas muestran
+consolidación por "grupo" que no corresponde a la granularidad real decidida acá. Camino sugerido por
+`contador-dominio`: solución de presentación sobre el modelo 1:1, mismo patrón que
+`agrupar-decisiones-pendientes.ts`, sin tocar persistencia — no resuelto en esta tarea.
+
+### Estado
+
+[ADR-0007](docs/arquitectura/ADR-0007-modelo-datos-asiento-contable.md) escrito. **Sin implementar —
+ninguna migración aplicada.** Rama `docs/adr-0007-modelo-asiento-contable` lista para mergear, a la
+espera de revisión del diff por el titular. Pantalla 6 sigue bloqueada; Pantalla 5 queda marcada como
+pendiente de ajuste visual futuro, no revertida.
+
+---
+
 ## 2026-09-17 (227) — Pantalla 5 ("Revisar e imputar") bocetada directo en v7, la más compleja de las
 seis, aprobada. **Siguiente: Pantalla 6 ("Generar asiento contable").**
 
