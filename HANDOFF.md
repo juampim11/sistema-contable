@@ -6,6 +6,43 @@
 
 ---
 
+## 2026-09-16 (223) — Pantalla 2 traída a identidad v7 (mismo lenguaje visual que Pantalla 1). Aprobada.
+Nota de proceso: este cambio se había publicado como Artifact en el turno anterior sin la entrada de
+HANDOFF/doc correspondiente — se cierra ahora, antes de mergear, para no perder la traza (regla dura
+CLAUDE.md §4: "lo que no está en HANDOFF o en los docs no existe para la otra herramienta").
+
+**Herramienta:** Claude Code, sesión interactiva. Rama nueva `docs/pantalla2-identidad-v7`, **desde
+`main`** (declarado explícito) — no continúa `docs/identidad-visual-pantalla1-2` porque esa rama ya se
+mergeó a `main` en el paso anterior.
+
+### Qué se hizo
+
+Convocatoria puntual a `ux-designer`: mismo mapeo de tokens y tipografía que Pantalla 1 v7
+(`--marco`/`--lienzo`/`--papel`, Fraunces/Inter/JetBrains Mono, acento bordó `#8C2F39` exclusivo del
+botón "Continuar" + paso activo del stepper) aplicado sobre Pantalla 2 ("Subir extracto bancario"). A
+diferencia de Pantalla 1, el Artifact de Pantalla 2 es formato "Design" canvas moderno (archivos
+publicados discretos) — el agente publicó él mismo, sin necesitar la cirugía de JSON del formato viejo.
+El selector de cuenta bancaria y el dropzone/archivo-cargado (específicos de Pantalla 2) pasaron a vivir
+sobre `--papel`, mismo criterio que la tarjeta de cliente de Pantalla 1.
+
+### Verificado (por mí, contra el contenido publicado en vivo — no solo el reporte del agente)
+
+Bloque `<script data-dc-script>` (lógica de estado `Component extends DCLogic`) byte a byte idéntico
+antes/después. Balance de divs 52/52. Datos funcionales sin cambio: Galicia/····4821, Nación/····1190,
+Santander/····0037, "Estudio Demo S.A.", "extracto_agosto_2026.pdf"/"340 KB". Cero rastro de `IBM Plex`
+o `--registro` (paleta vieja totalmente reemplazada, no mezclada). `git status --short` limpio, sin
+carpetas `.scratch-*` residuales del agente.
+
+### Estado
+
+[Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F) (versión 5). Doc 34 §0 (tabla de estado) y
+§6 (nueva sub-sección "Pantalla 2 traída a v7") actualizados; doc 36 §6 actualizado con el mismo cruce.
+**Pantalla 1 y Pantalla 2 comparten hoy el mismo lenguaje visual completo** — no queda ninguna pantalla
+en la paleta "libro contable" vieja. Aprobada por el titular junto con la instrucción de seguir con
+Pantalla 3 usando v7 directo, sin pase de identidad aparte.
+
+---
+
 ## 2026-09-16 (222) — Corrección de rumbo: Pantalla 1 pasa a v7 (superficie clara por defecto); v6
 (escritorio oscuro) de (221) queda archivada como base para modo oscuro futuro, no descartada.
 **Esperando revisión del titular antes de tocar Pantalla 2.**

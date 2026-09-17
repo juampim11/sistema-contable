@@ -372,9 +372,10 @@ stepper.
   (`--marco`/`--lienzo`/`--papel`), mismo acento bordó exclusivo de acción primaria y paso activo, mismo
   reparto Fraunces/JetBrains Mono/Inter por rol de texto. Ambas reemplazan la paleta "libro contable" que
   traía Pantalla 1 desde el pase de identidad anterior. Detalle completo, las 3 direcciones exploradas y
-  la decisión del titular punto por punto (incluida la corrección v6→v7): doc 34 §6. **Pantalla 2 queda
-  fuera de esta síntesis** — su Artifact sigue con la paleta "libro contable" vieja, divergente tanto de
-  v6 como de v7, pendiente de reconciliar cuando el titular autorice seguir con Pantalla 2 en adelante.
+  la decisión del titular punto por punto (incluida la corrección v6→v7): doc 34 §6. **Pantalla 2 ya fue
+  traída a v7 el mismo día** (mismos tokens, tipografía y acento exclusivo — detalle en doc 34 §6,
+  sub-sección "Pantalla 2 traída a v7") — Pantalla 1 y Pantalla 2 comparten hoy el mismo lenguaje visual
+  completo, sin ninguna pantalla bocetada que siga en la paleta "libro contable" vieja.
 
 ### 7. Pendiente antes de construir esto en código
 
