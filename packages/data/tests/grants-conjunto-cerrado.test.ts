@@ -175,6 +175,13 @@ const GRANTS_POR_COLUMNA: readonly {
   { tabla: 'acceso_auditoria', rol: 'app_request', privilegio: 'SELECT', columnas: ['accion', 'cliente_id', 'correlacion', 'id', 'motivo', 'ocurrido_en', 'recurso', 'recurso_id', 'user_id'] },
   { tabla: 'anexo_extracto', rol: 'app_request', privilegio: 'INSERT', columnas: ['alicuota_publicada', 'atribucion_cuenta', 'cliente_id', 'concepto_literal', 'created_at', 'cuenta_bancaria_id', 'id', 'importe_declarado', 'lote_ingesta_id', 'moneda', 'orden_en_lote', 'pagina_pdf', 'periodo_dato', 'periodo_desde', 'periodo_hasta', 'relacion_con_movimientos'] },
   { tabla: 'anexo_extracto', rol: 'app_request', privilegio: 'SELECT', columnas: ['alicuota_publicada', 'atribucion_cuenta', 'cliente_id', 'concepto_literal', 'created_at', 'cuenta_bancaria_id', 'id', 'importe_declarado', 'lote_ingesta_id', 'moneda', 'orden_en_lote', 'pagina_pdf', 'periodo_dato', 'periodo_desde', 'periodo_hasta', 'relacion_con_movimientos'] },
+  // `asiento_correlativo_cliente` (`0048`, ADR-0007): INSERT acotado a `cliente_id` SOLO -- corrección
+  // de `security-engineer` sobre la primera versión de la migración, que otorgaba INSERT de tabla
+  // completa y dejaba a `siguiente_numero` escribible con cualquier valor desde `app_request`. Con
+  // `insert (cliente_id)`, `siguiente_numero` únicamente puede tomar su `default 1`.
+  { tabla: 'asiento_correlativo_cliente', rol: 'app_request', privilegio: 'INSERT', columnas: ['cliente_id'] },
+  { tabla: 'asiento_correlativo_cliente', rol: 'app_request', privilegio: 'SELECT', columnas: ['cliente_id', 'creado_en', 'siguiente_numero'] },
+  { tabla: 'asiento_correlativo_cliente', rol: 'app_request', privilegio: 'UPDATE', columnas: ['siguiente_numero'] },
   { tabla: 'banco', rol: 'app_job', privilegio: 'SELECT', columnas: ['activo', 'capacidades', 'codigo', 'created_at', 'nombre'] },
   { tabla: 'banco', rol: 'app_request', privilegio: 'SELECT', columnas: ['activo', 'capacidades', 'codigo', 'created_at', 'nombre'] },
   // `cotizacion_bna` (0022): grants acotados por columna, no de tabla — `app_job` puede insertar y
@@ -369,15 +376,26 @@ const GRANTS_POR_COLUMNA: readonly {
   // Postgres extiende un privilegio de tabla a toda columna agregada después, aunque la migración
   // solo haya otorgado UPDATE de forma explícita. `information_schema.column_privileges` los reporta
   // igual, por columna.
-  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'confirmado_en', 'confirmado_por', 'corrige_asiento_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
-  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'confirmado_en', 'confirmado_por', 'corrige_asiento_id', 'creado_en', 'fecha_imputacion', 'id', 'superseded_by_id', 'tipo'] },
+  // `numero_correlativo` (`0048`, ADR-0007) entra en INSERT/SELECT porque esos dos privilegios de
+  // `asiento_propuesto` son de TABLA COMPLETA desde `0027` (ver GRANTS_A_NIVEL_TABLA) -- una columna
+  // nueva los hereda en silencio, sin una línea de migración que lo otorgue. El escritor real
+  // (`confirmarAsiento()`) nunca especifica `numero_correlativo` en su INSERT/UPDATE: lo asigna
+  // exclusivamente `app.asignar_numero_correlativo_asiento()` (trigger), pero el privilegio de
+  // COLUMNA sigue existiendo igual por la forma del grant -- es justo lo que R41b (M9) existe para
+  // distinguir de la capacidad real.
+  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'confirmado_en', 'confirmado_por', 'corrige_asiento_id', 'creado_en', 'fecha_imputacion', 'id', 'numero_correlativo', 'superseded_by_id', 'tipo'] },
+  { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_estado', 'cierre_id', 'cliente_id', 'confirmado_en', 'confirmado_por', 'corrige_asiento_id', 'creado_en', 'fecha_imputacion', 'id', 'numero_correlativo', 'superseded_by_id', 'tipo'] },
   // `0045` (R44): agrega confirmado_por/confirmado_en (columnas nuevas) -- confirmarAsiento()
   // (escrituras.ts:619-629) los escribe en el mismo UPDATE que asiento_estado.
   { tabla: 'asiento_propuesto', rol: 'app_request', privilegio: 'UPDATE', columnas: ['asiento_estado', 'confirmado_en', 'confirmado_por', 'superseded_by_id'] },
   { tabla: 'asiento_propuesto_reproceso', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_id', 'asiento_nuevo_id', 'caso', 'cliente_id', 'hecho_por', 'id', 'motivo', 'ocurrido_en', 'regla_imputacion_id_anterior', 'regla_imputacion_id_nueva', 'reproceso_motivo_codigo'] },
   { tabla: 'asiento_propuesto_reproceso', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_id', 'asiento_nuevo_id', 'caso', 'cliente_id', 'hecho_por', 'id', 'motivo', 'ocurrido_en', 'regla_imputacion_id_anterior', 'regla_imputacion_id_nueva', 'reproceso_motivo_codigo'] },
-  { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_contraparte_id', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
-  { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'orden', 'padron_contraparte_id', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
+  // `movimiento_bancario_id` (`0048`, ADR-0007): mismo mecanismo que `numero_correlativo` arriba --
+  // INSERT/SELECT de `asiento_propuesto_renglon` son de tabla completa desde `0027`, así que la
+  // columna nueva ya viene con el privilegio de columna, aunque `referencia_origen` (el campo que
+  // reemplaza, todavía sin dropear) siga siendo lo que la aplicación escribe hoy.
+  { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'INSERT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'movimiento_bancario_id', 'orden', 'padron_contraparte_id', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
+  { tabla: 'asiento_propuesto_renglon', rol: 'app_request', privilegio: 'SELECT', columnas: ['asiento_id', 'cliente_id', 'creado_en', 'cuenta_id', 'cuenta_ref', 'debe', 'fecha_imputacion', 'fuente_cierre_id', 'haber', 'id', 'movimiento_bancario_id', 'orden', 'padron_contraparte_id', 'padron_manifestacion_id', 'referencia_origen', 'valuacion_ref', 'verificacion_heredada'] },
   // La vista `asiento_propuesto_totales` (`security_invoker=true`, D-16 de HANDOFF 128): sin este
   // grant, el dueño del esquema bypassea RLS al resolverla — SELECT únicamente, nunca escritura (es
   // un agregado, no una tabla).
@@ -491,6 +509,10 @@ const GRANTS_A_NIVEL_TABLA: readonly string[] = [
   'acceso_auditoria|app_request|SELECT',
   'anexo_extracto|app_request|INSERT',
   'anexo_extracto|app_request|SELECT',
+  // `asiento_correlativo_cliente` (`0048`): SOLO el SELECT es de tabla completa. El INSERT es
+  // `insert (cliente_id)` -- columna acotada, corrección de `security-engineer` -- así que NO entra
+  // acá, va en GRANTS_POR_COLUMNA nada más. Mismo criterio para UPDATE (siguiente_numero).
+  'asiento_correlativo_cliente|app_request|SELECT',
   // `0028`: SELECT/INSERT siguen sin acotar por columna (nunca fueron el problema); solo UPDATE se
   // acotó — por eso no aparece acá, ver GRANTS_POR_COLUMNA.
   'asiento_propuesto|app_request|INSERT',

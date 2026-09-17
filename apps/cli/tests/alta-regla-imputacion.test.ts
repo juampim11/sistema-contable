@@ -151,8 +151,8 @@ async function marcarComoYaImputado(clienteId: string, cuentaContableId: string,
       [clienteId, String(cierre['id']), fecha],
     );
     await ej(
-      `insert into asiento_propuesto_renglon (cliente_id, asiento_id, orden, cuenta_id, debe, haber, fecha_imputacion, referencia_origen)
-       values ($1, $2, 1, $3, 0, 500.00, $4::date, $5)`,
+      `insert into asiento_propuesto_renglon (cliente_id, asiento_id, orden, cuenta_id, debe, haber, fecha_imputacion, movimiento_bancario_id)
+       values ($1, $2, 1, $3, 0, 500.00, $4::date, $5::uuid)`,
       [clienteId, String(asiento['id']), cuentaContableId, fecha, movimientoId],
     );
   });

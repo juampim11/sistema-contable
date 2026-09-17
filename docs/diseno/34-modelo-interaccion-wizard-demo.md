@@ -717,14 +717,25 @@ bordó limitado a la acción primaria + el stepper (nunca en botones de fila). *
 
 ## 7. Pendientes de diseño futuro, declarados — no construir ahora (2026-09-17)
 
-### 7.1. Logo/imagen por cliente — pendiente, no construir ahora
+Dos pendientes anotados en la misma sesión que cerró la implementación de ADR-0007 (`HANDOFF.md`, ver
+entrada correspondiente), sin relación entre sí ni con ese ADR — se registran acá porque son del wizard
+de la demo (Frente 2), no del Frente 1 (correlativo/trazabilidad del asiento).
 
-Idea de diseño futura, inspirada en el patrón ya usado en el proyecto hermano `trazabilidad-obra-gas`:
-mostrar el logo o imagen del cliente elegido una vez seleccionado el tenant (en el header del wizard,
-o donde corresponda una vez que se diseñe). **Requiere antes un campo de logo en la ficha de cliente,
-que no existe hoy en el esquema** — no es solo una pantalla nueva, es una columna nueva primero, con su
-propia convocatoria de esquema (`dba-data` + `security-engineer` + `seguridad-datos-financieros`,
-CLAUDE.md §3.1). Sin dueño ni fecha todavía.
+### 7.1. Logo o imagen por cliente, mostrado una vez elegido el tenant
+
+Inspirado en el patrón ya usado en el proyecto hermano `trazabilidad-obra-gas`: Pantalla 1 ("Elegir
+cliente") o el header global (doc 36) podrían mostrar el logo/imagen del cliente elegido, en vez de (o
+adicional a) el nombre de texto.
+
+**No es solo una pantalla — es un campo nuevo primero.** Hoy no existe ningún campo de logo/imagen en la
+ficha de cliente (`tenant_node` ni ninguna tabla relacionada) — confirmado por lectura del esquema, no
+supuesto. Antes de bocetar nada de esto hace falta: decidir dónde vive el archivo (`ObjectStorage`
+S3-compatible, ADR-0000 §3 — nunca un blob en la base), el campo que referencia esa ubicación en el
+esquema (con su propia convocatoria `dba-data` + `security-engineer` + `seguridad-datos-financieros` y
+su propia clasificación en `clasificacion-campos.ts`, mismo procedimiento que cualquier columna nueva),
+y si el logo de un cliente es N1 o algo más sensible (identifica al cliente por sí solo, a diferencia de
+un UUID interno — a evaluar cuando se retome). **No construir ahora**: queda como pendiente de diseño
+futuro, sin dueño todavía.
 
 ### 7.2. Pantalla de login — bocetada y APROBADA (2026-09-17)
 

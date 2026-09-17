@@ -442,7 +442,7 @@ async function consultarAsientosAutomaticos(tx: Tx, clienteId: string): Promise<
   const filas = await tx.consultar<FilaAsientoSql>(
     `with renglones as (
        select ar.cliente_id, ar.id as asiento_id, ar.fecha_imputacion,
-              arr.referencia_origen::uuid as movimiento_id, arr.orden, arr.cuenta_ref, arr.debe, arr.haber
+              arr.movimiento_bancario_id as movimiento_id, arr.orden, arr.cuenta_ref, arr.debe, arr.haber
        from asiento_propuesto ar
        join asiento_propuesto_renglon arr on arr.cliente_id = ar.cliente_id and arr.asiento_id = ar.id
        where ar.cliente_id = $1

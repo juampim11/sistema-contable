@@ -169,8 +169,8 @@ async function crearMovimiento(args: {
   });
 }
 
-/** Un `asiento_propuesto_renglon` REAL (Capa D) citando el movimiento por `referencia_origen`, con
- *  `cuenta_ref` explícito — la fuente de `cuentaPropuesta`. */
+/** Un `asiento_propuesto_renglon` REAL (Capa D) citando el movimiento por `movimiento_bancario_id`
+ *  (FK, ADR-0007 §2), con `cuenta_ref` explícito — la fuente de `cuentaPropuesta`. */
 async function marcarConCuentaReal(args: {
   readonly clienteId: string;
   readonly movimientoId: string;
@@ -196,8 +196,8 @@ async function marcarConCuentaReal(args: {
     const cuentaRef = JSON.stringify({ codigo: args.codigo, denominacion: args.denominacion, rolFuncional: 'generica' });
     await ej(
       `insert into asiento_propuesto_renglon
-         (cliente_id, asiento_id, orden, cuenta_id, cuenta_ref, debe, haber, fecha_imputacion, referencia_origen)
-       values ($1, $2, 1, $3, $4::jsonb, 100.00, 0, $5::date, $6)`,
+         (cliente_id, asiento_id, orden, cuenta_id, cuenta_ref, debe, haber, fecha_imputacion, movimiento_bancario_id)
+       values ($1, $2, 1, $3, $4::jsonb, 100.00, 0, $5::date, $6::uuid)`,
       [args.clienteId, String(asiento['id']), String(cuenta['id']), cuentaRef, args.fecha, args.movimientoId],
     );
   });

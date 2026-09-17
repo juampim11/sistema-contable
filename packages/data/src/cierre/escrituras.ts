@@ -443,13 +443,18 @@ export type RenglonParaEscribir = {
    *  ausente ⟹ se persiste `{}` (default de la columna) — mismo comportamiento de siempre para lo
    *  que no la usa. */
   readonly verificacionHeredada?: Readonly<{ estado: 'aproximada'; motivo: string }>;
+  /** ADR-0007 §2/§4: puntero FK-safe al movimiento bancario de origen — reemplaza a
+   *  `referencia_origen` (texto libre, deprecada). Nullable: no todo renglón nace de un movimiento
+   *  (p. ej. la contrapartida de un asiento, o un `ajuste_cierre`/`reimputacion`). */
+  readonly movimientoBancarioId?: string | null;
 };
 
 export type PedidoAsientoAutomatico = {
   readonly clienteId: string;
   readonly cierreId: string;
   readonly fechaImputacion: string;
-  /** Para trazabilidad — no es una FK, va en `referencia_origen` (mismo patrón que `pendiente_cierre`). */
+  /** Para trazabilidad — va en `movimiento_bancario_id` (FK compuesta tenant-safe, ADR-0007 §2). El
+   *  patrón de `pendiente_cierre` (texto libre sin FK) sigue vigente SOLO ahí, fuera de esta tarea. */
   readonly movimientoId: string;
   /** [banco, contrapartida] — mismo orden que devuelve `resolverAsiento()`. */
   readonly renglones: readonly [RenglonParaEscribir, RenglonParaEscribir];
@@ -483,8 +488,8 @@ export async function escribirAsientoAutomatico(
       tx.consultar(
         `insert into asiento_propuesto_renglon
            (cliente_id, asiento_id, orden, cuenta_id, cuenta_ref, debe, haber, fecha_imputacion,
-            referencia_origen, verificacion_heredada)
-         values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::date, $9, $10::jsonb)`,
+            movimiento_bancario_id, verificacion_heredada)
+         values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::date, $9::uuid, $10::jsonb)`,
         [
           pedido.clienteId,
           asientoId,
@@ -708,8 +713,9 @@ export async function reprocesarAsientoNoRevisado(
     await conErroresTraducidos(undefined, () =>
       tx.consultar(
         `insert into asiento_propuesto_renglon
-           (cliente_id, asiento_id, orden, cuenta_id, cuenta_ref, debe, haber, fecha_imputacion)
-         values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::date)`,
+           (cliente_id, asiento_id, orden, cuenta_id, cuenta_ref, debe, haber, fecha_imputacion,
+            movimiento_bancario_id)
+         values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::date, $9::uuid)`,
         [
           pedido.clienteId,
           asientoNuevoId,
@@ -719,6 +725,7 @@ export async function reprocesarAsientoNoRevisado(
           renglon.lado === 'debe' ? renglon.importe : '0',
           renglon.lado === 'haber' ? renglon.importe : '0',
           pedido.fechaImputacion,
+          renglon.movimientoBancarioId ?? null,
         ],
       ),
     );
@@ -810,8 +817,9 @@ export async function corregirAsientoEntregado(
     await conErroresTraducidos(undefined, () =>
       tx.consultar(
         `insert into asiento_propuesto_renglon
-           (cliente_id, asiento_id, orden, cuenta_id, cuenta_ref, debe, haber, fecha_imputacion)
-         values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::date)`,
+           (cliente_id, asiento_id, orden, cuenta_id, cuenta_ref, debe, haber, fecha_imputacion,
+            movimiento_bancario_id)
+         values ($1, $2, $3, $4, $5::jsonb, $6, $7, $8::date, $9::uuid)`,
         [
           pedido.clienteId,
           asientoAjusteId,
@@ -821,6 +829,7 @@ export async function corregirAsientoEntregado(
           renglon.lado === 'debe' ? renglon.importe : '0',
           renglon.lado === 'haber' ? renglon.importe : '0',
           pedido.fechaImputacion,
+          renglon.movimientoBancarioId ?? null,
         ],
       ),
     );

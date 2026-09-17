@@ -293,6 +293,10 @@ export type AsientoPropuesto = {
   readonly asientoEstado: AsientoEstado;
   readonly supersededById: string | null;
   readonly creadoEn: string;
+  /** ADR-0007 §3/§4: folio del Libro Diario por cliente, asignado SOLO en la transición
+   *  propuesto→confirmado (trigger `trg_asiento_propuesto_correlativo`, `0048`). `null` mientras el
+   *  asiento sigue `'propuesto'`. */
+  readonly numeroCorrelativo: number | null;
 };
 
 /** Fila de la vista `asiento_propuesto_totales` — nunca una tabla física (ver comentario de la migración). */
@@ -334,6 +338,9 @@ export type AsientoPropuestoRenglon = {
   readonly fechaImputacion: string;
   readonly fuenteCierreId: string | null;
   readonly referenciaOrigen: string | null;
+  /** ADR-0007 §2/§4: FK compuesta tenant-safe al movimiento bancario de origen — reemplaza a
+   *  `referenciaOrigen` (deprecada, preservada). Nullable: no todo renglón nace de un movimiento. */
+  readonly movimientoBancarioId: string | null;
   readonly verificacionHeredada: VerificacionHeredada;
   readonly padronManifestacionId: string | null;
   readonly valuacionRef: Readonly<Record<string, unknown>> | null;

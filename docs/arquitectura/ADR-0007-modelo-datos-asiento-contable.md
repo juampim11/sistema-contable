@@ -323,3 +323,38 @@ momento real) está aplicada, la FK compuesta y el correlativo pasan su prueba d
 escritores de renglones (`escribirAsientoAutomatico`, `reprocesarAsientoNoRevisado`,
 `corregirAsientoEntregado`) escriben `movimiento_bancario_id` de forma consistente, y Pantalla 5/6
 reflejan la granularidad real (una línea por movimiento) o documentan explícitamente por qué no.
+
+### Estado de implementación (actualizado 2026-09-17) — Frente 1 (datos/backend) CERRADO; ADR completo sigue PARCIAL por Pantalla 5/6
+
+`HANDOFF.md` (entradas 229 y 230) — no reescribir acá el detalle, solo el estado contra el criterio de
+arriba:
+
+- ✅ Migración `0048` escrita, aplicada y verificada localmente — con una desviación real y documentada
+  respecto de la "Forma de la migración propuesta" de este mismo ADR: `asiento_correlativo_cliente` es
+  **autoprovisora** (`INSERT (cliente_id) ... ON CONFLICT DO NOTHING` dentro del trigger de asignación),
+  no depende de un `conJob('alta_estudio')` futuro como preveía §3 — medido en vivo que sin
+  autoprovisión, un `SELECT ... FOR UPDATE` sin policy de `UPDATE` sobre esa tabla devuelve 0 filas en
+  silencio (no un `42501`) para un cliente efímero de test, rompiendo un test de seguridad real. Ver la
+  migración (cabecera) para el detalle medido completo.
+- ✅ El hallazgo de `security-engineer` sobre el `grant insert` de tabla completa (primera versión de la
+  migración) corregido a `insert (cliente_id)` — verificado en vivo.
+- ✅ Gate verde con el mismo baseline preexistente (8 rojos ya conocidos, ninguno nuevo);
+  `grants-conjunto-cerrado.test.ts` actualizado y 23/23 verde.
+- ✅ **Cerrado (entrada 230)**: `escrituras.ts`/`lecturas.ts`, `reprocesar-capa-d.ts`,
+  `agrupar-decisiones-pendientes.ts` y dos lectores adicionales encontrados en vivo durante la propia
+  tarea (`relevamiento-laura.ts`, `paquete-cierre-bracci-roka-2026-05-a-08.ts`) ya escriben/leen
+  `movimiento_bancario_id` — ningún escritor/lector de producción de `asiento_propuesto_renglon` sigue
+  citando `referencia_origen`. `pendiente_cierre.referencia_origen` sigue vigente a propósito (hallazgo
+  declarado aparte, `0048` no lo migra).
+- ✅ **Cerrado (entrada 230)**: `packages/data/tests/mutaciones-0048.test.ts` — 16 tests (7 mutaciones +
+  9 legítimos), incluida la autoprovisión del contador y la concurrencia real del `FOR UPDATE`
+  (`qa-automation` encontró que ninguno de los dos tenía test automatizado, solo la reproducción manual
+  documentada en la cabecera de `0048`, y los cerró).
+- ❌ **Sigue sin cerrar, fuera del alcance de la entrada 230**: Pantalla 5/6 siguen sin reflejar la
+  granularidad real (una línea por movimiento) — pendiente de diseño visual separado (ver este mismo
+  ADR, sección de Pendientes, y doc 34).
+
+**Conclusión**: el Frente 1 (modelo de datos + aplicación) queda **completamente cerrado** — cumple los
+primeros tres puntos del criterio de arriba. El ADR como un todo sigue **parcialmente abierto** por el
+cuarto punto (ajuste de boceto de Pantalla 5/6), que es una tarea de diseño visual separada, no de
+backend, y no bloquea el trabajo siguiente sobre datos/backend (PR4).

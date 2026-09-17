@@ -318,7 +318,7 @@ async function leerCliente(tx: Tx, clienteId: string): Promise<ResultadoLectura>
        from reconocimiento_movimiento r
        join movimiento_bancario_crudo m on m.cliente_id = r.cliente_id and m.id = r.movimiento_id
        join asiento_propuesto_renglon arr
-         on arr.cliente_id = r.cliente_id and arr.referencia_origen::uuid = r.movimiento_id
+         on arr.cliente_id = r.cliente_id and arr.movimiento_bancario_id = r.movimiento_id
        where r.cliente_id = $1 and r.superseded_por is null and r.clase = 'propuesta'
          and m.fecha between $2::date and $3::date`,
       [clienteId, DESDE, HASTA],

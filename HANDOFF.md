@@ -6,7 +6,124 @@
 
 ---
 
-## 2026-09-17 (229) — Pantalla de login bocetada y APROBADA (4 estados + layout de dos paneles). Con
+## 2026-09-17 (231) — ADR-0007, Frente 1 Paso 2: `escrituras.ts`/`lecturas.ts` y todos los
+lectores de producción migran a `movimiento_bancario_id`. **Frente 1 (datos/backend) CERRADO
+COMPLETO** — el ADR como un todo sigue parcial solo por el ajuste de boceto de Pantalla 5/6 (fuera de
+alcance de esta tarea).
+
+**Herramienta:** Claude Code, sesión interactiva. Continúa la rama `feat/adr-0007-correlativo-
+trazabilidad` (ya existente, declarado explícito — no nueva, CLAUDE.md §1 regla 11). Modo plan
+obligatorio por CLAUDE.md §3.2 (trigger b: clasificación de campos de datos de cliente; trigger c:
+modifica adaptadores/lecturas que ya corren en producción; trigger d: más de 3 archivos). Convocatoria
+real vía `Agent()`: `backend-dev` (implementación), `code-reviewer`, `seguridad-datos-financieros` y
+`qa-automation` (revisión), los cuatro convocados de verdad, no narrados.
+
+**Nota de numeración**: esta rama y la rama que aprobó el login (entrada de abajo) numeraron cada una su
+propia entrada como "229" en paralelo, sin verse entre sí — ambas partían de la entrada 228 en `main` al
+momento de escribirse. Resuelto al mergear por orden cronológico real de los commits (migración `0048`
+14:30, login 15:57, esta entrada 19:16): la migración conserva el 229, el login pasa a 230, esta entrada
+es la 231. Ver `[[verificar-numeracion-antes-de-usarla]]` en memoria — el grep previo a asignar un
+número no alcanza cuando la colisión viene de dos ramas que corren en paralelo sin verse.
+
+### 1. Contexto y alcance original (4 puntos, ya aprobados por el titular)
+
+La entrada 229 cerró la migración `0048` como PARCIAL: la base ya tenía
+`asiento_propuesto_renglon.movimiento_bancario_id` (FK compuesta tenant-safe) y
+`asiento_propuesto.numero_correlativo`, pero ningún escritor ni lector de producción los usaba —
+todo seguía citando `referencia_origen` (texto libre, deprecada, no dropeada). El pedido original: (1)
+`escribirAsientoAutomatico`/`reprocesarAsientoNoRevisado`/`corregirAsientoEntregado` escriben
+`movimiento_bancario_id`; (2) `CONDICION_SIN_ASIENTO_NI_PENDIENTE_TERMINAL` y
+`leerCandidatosDeReproceso` migran; (3) `agrupar-decisiones-pendientes.ts`/`reprocesar-capa-d.ts`
+ajustados igual; (4) `tipos.ts`/`clasificacion-campos.ts` con los campos nuevos, más
+`mutaciones-0048.test.ts` y los test files que dependían de `referencia_origen`.
+
+**Corrección al pedido, verificada por grep antes de convocar**: de los "5 test files" señalados como
+dependientes de `referencia_origen`, solo 2 (`agrupar-decisiones-pendientes.test.ts` y su variante
+`-con-confirmaciones`) tocaban `asiento_propuesto_renglon.referencia_origen` de verdad; los otros 3
+(`mutaciones-0028`, `mutaciones-0029`, `mutaciones-savepoint-pendiente-cierre`) tocan exclusivamente
+`pendiente_cierre.referencia_origen`, columna fuera de alcance de `0048` — quedaron sin tocar, tal como
+predijo el plan aprobado.
+
+### 2. `backend-dev` — implementación, con dos rondas de scope-creep real, encontrado y confirmado en vivo
+
+Escribió los 7 archivos del alcance original. Al re-verificar con el grep completo pedido por el plan,
+encontró — y NO resolvió por su cuenta, reportó explícito — **un tercer lector real no anticipado**:
+`packages/ingesta/src/planilla/relevamiento-laura.ts:445` (Hoja 3 del relevamiento real de Laura),
+invisible al primer grep porque el archivo tiene un byte `\x00` embebido a propósito (separador de
+clave de `Map`) que hace que `ripgrep`/`grep` normal lo trate como binario y lo salteen. Confirmado el
+hallazgo por quien conduce con `grep -a` independiente antes de autorizar el fix — **punto ciego real
+de grep para cualquier auditoría futura de este tipo en este repo**, dejado como memoria.
+
+Titular confirmó el fix del tercer lector. Al re-verificar de nuevo con `grep -a` sobre todo el repo
+(no solo las carpetas originales), aparecieron **dos hallazgos más, confirmados con números reales, no
+especulados**:
+- `packages/ingesta/scripts/paquete-cierre-bracci-roka-2026-05-a-08.ts:321` — cuarto lector real, un
+  script de un cierre puntual ya corrido (Bracci/ROKA), sin test que lo cubra.
+- `apps/cli/tests/alta-regla-imputacion.test.ts` y `apps/cli/tests/mutaciones-idempotencia-conciliar-
+  lote.test.ts` — dos fixtures de test rotas por el cambio YA aprobado en `lecturas.ts` (punto 2 del
+  alcance original), en un paquete (`apps/cli`) que el plan de verificación no había incluido. Conteos
+  reales confirmados por `backend-dev` antes de tocar nada: 3 en vez de 2, y 4 en vez de 2.
+
+Titular confirmó los tres. Cerrados con el mismo patrón mecánico de una línea que los lectores ya
+migrados. **11 archivos modificados + 1 nuevo en total** (ver lista completa en el commit).
+
+### 3. Revisión en paralelo — 3 agentes, sin bloqueantes
+
+- **`code-reviewer`**: sin bugs de correctitud en los 12 archivos. Typecheck completo del monorepo
+  limpio. Confirmó que los cambios de tipo (`RenglonParaEscribir`, `RenglonCandidato`) son puramente
+  aditivos — cero riesgo de romper consumidores no tocados.
+- **`seguridad-datos-financieros`**: cierre genuino del hallazgo de la entrada 229, sin ventana de fuga
+  entre clientes (reemplazo limpio, sin fallback dual entre `referencia_origen`/`movimiento_bancario_id`
+  que pudiera saltear el filtro de `cliente_id`). Clasificación de `movimiento_bancario_id`/
+  `numero_correlativo` (ya hecha en Paso 1) sigue vigente, el uso activo no la cambia. **Hallazgo no
+  bloqueante, para cuando `0048` se aplique al piloto**: revisar el `RAISE NOTICE` del backfill contra
+  los datos reales de Bracci/ROKA antes de asumir que `paquete-cierre-bracci-roka-2026-05-a-08.ts` da
+  los mismos resultados que con `referencia_origen` — el backfill solo está medido en local (0 filas
+  reales que backfillear), nunca contra datos reales de piloto.
+- **`qa-automation`**: encontró que `mutaciones-0048.test.ts` (11 tests originales, 5 mutaciones + 6
+  legítimos) **nunca ejercitaba el propio trigger de asignación del correlativo** — todo se escribía
+  directo por SQL, nunca vía la transición real `propuesto→confirmado`. Verificado en vivo instalando
+  el trigger sin autoprovisión: los 11 tests originales seguían en verde igual (hueco real, no
+  hipotético). Agregó Bloque E (autoprovisión, 3 tests) y Bloque F (concurrencia real del `FOR UPDATE`
+  con dos conexiones reales y `pg_sleep`, mismo método que `mutaciones-0041.test.ts`, 2 tests) —
+  **16 tests finales (7 mutaciones + 9 legítimos)**, verificados con mutación en vivo del trigger
+  (14/16 con el trigger roto, 16/16 restaurado). Primera vez en el repo que una prueba de mutación
+  altera una *policy* en vivo (no una función) — mismo patrón `try/finally`, sin precedente exacto,
+  dejado explícito.
+
+### 4. Verificación final (medida, no de memoria)
+
+- `packages/data`: **571 pasan / 8 fallan / 579 total** (línea de base 555/8/563 + 16 tests nuevos de
+  `mutaciones-0048.test.ts`; mismos 8 rojos preexistentes de siempre — 7 de `mutaciones-0038.test.ts` +
+  1 de `reglas-de-codigo.test.ts` — ninguno nuevo).
+- `packages/ingesta`: **988 pasan / 4 fallan / 7 todo / 999 total** — idéntico a la línea de base
+  medida antes de tocar el primer archivo (los 4 rojos son los preexistentes de
+  `aislamiento-modulo-1.test.ts`, sin relación).
+- `apps/cli` (los 2 archivos con fixtures corregidas): **12/12**.
+- `pnpm typecheck` limpio de punta a punta.
+- `grep -a -rn "referencia_origen" --include="*.ts" packages apps`: solo quedan ocurrencias de
+  `pendiente_cierre.referencia_origen` (fuera de alcance, declarado aparte) y comentarios/notas de
+  deprecación — cero ocurrencias vivas contra `asiento_propuesto_renglon`.
+
+### Estado final
+
+- **Frente 1 (modelo de datos + aplicación de ADR-0007): CERRADO COMPLETO.** Los tres primeros puntos
+  del "Criterio de cierre" del ADR-0007 quedan cumplidos — ver esa sección, actualizada.
+- **ADR-0007 como un todo: sigue parcial** — el cuarto punto del criterio (Pantalla 5/6 reflejando la
+  granularidad real) es una tarea de diseño visual separada, declarada desde la entrada 228, fuera del
+  alcance de esta tarea. No bloquea el trabajo siguiente sobre datos/backend.
+- **Mergeado a `main`** — commit de Paso 2 (`fde2c39`) + este merge cierran la rama
+  `feat/adr-0007-correlativo-trazabilidad` sobre `main`.
+- **Hallazgo declarado, no resuelto en esta tarea** (para cuando se planifique aplicar `0048` a
+  piloto): revisar el `RAISE NOTICE` del backfill de `movimiento_bancario_id` contra los datos reales
+  de Bracci/ROKA antes de asumir que `paquete-cierre-bracci-roka-2026-05-a-08.ts` sigue dando los
+  mismos resultados.
+- **CHANGELOG.md: sin cambios** — mismo criterio que la entrada 229 (cambio puramente de aplicación
+  sobre una migración ya aditiva, nada de lo reportado antes cambia de significado).
+
+---
+
+## 2026-09-17 (230) — Pantalla de login bocetada y APROBADA (4 estados + layout de dos paneles). Con
 esto, las 6 pantallas del wizard + el login quedan todas bocetadas y aprobadas.
 
 **Herramienta:** Claude Code, sesión interactiva. Rama nueva `docs/login-aprobado-4-estados-layout`,
@@ -61,6 +178,122 @@ ficha de cliente).
 
 Doc 34 §7 (nueva) sincronizado. **Login aprobado.** Sigue PR4 (esqueleto real de `apps/web` en código) —
 sin fecha ni convocatoria todavía, a la espera de que el titular lo encare.
+
+---
+
+## 2026-09-17 (229) — ADR-0007 implementado: migración `0048` (correlativo + FK de trazabilidad)
+aplicada y verificada. **PARCIALMENTE cerrado** — falta el ajuste de `escrituras.ts`/`lecturas.ts`
+(Paso 2, `backend-dev`) y la prueba de mutación (`qa-automation`). Sin mergear a `main`.
+
+**Herramienta:** Claude Code, sesión interactiva. Rama `feat/adr-0007-correlativo-trazabilidad`, **ya
+existente, continuada** (no nueva — declarado explícito, CLAUDE.md §1 regla 11). Modo plan obligatorio
+por tocar esquema (CLAUDE.md §3.2(a)); convocatoria formal de IMPLEMENTACIÓN (§3.1/§3.2), distinta de la
+convocatoria de DISEÑO que ya cerró la entrada (228): `dba-data`, `security-engineer`,
+`seguridad-datos-financieros`, los tres convocados de verdad vía `Agent()`.
+
+### 1. Contexto
+
+[ADR-0007](docs/arquitectura/ADR-0007-modelo-datos-asiento-contable.md) (entrada 228) ya tenía el
+diseño cerrado, incluida la "Forma de la migración propuesta". Esta tarea es su implementación real.
+
+### 2. `dba-data` — migración `0048_correlativo_asiento_propuesto.sql`
+
+Tabla `asiento_correlativo_cliente` (contador por cliente), `asiento_propuesto.numero_correlativo` +
+`unique (cliente_id, numero_correlativo)`, trigger `trg_asiento_propuesto_correlativo` (invoker, sin
+`SECURITY DEFINER` — confirmado que el grant de columna alcanza, a diferencia de `0041`), FK compuesta
+tenant-safe `fk_asiento_renglon_movimiento`
+(`asiento_propuesto_renglon.movimiento_bancario_id` → `movimiento_bancario_crudo`), con backfill desde
+`referencia_origen`.
+
+**Desviación real y documentada del ADR**: `asiento_correlativo_cliente` es **autoprovisora**
+(`INSERT (cliente_id) ... ON CONFLICT DO NOTHING` dentro del propio trigger), no nace solo de un
+`conJob('alta_estudio')` futuro como preveía el diseño literal — medido en vivo: sin autoprovisión, el
+trigger nuevo tapaba un `42501` de RLS que un test de seguridad real (`mutaciones-0045-usuario-
+identidad-r44.test.ts`, cliente efímero sin alta "oficial") esperaba, devolviendo en cambio `P0006`
+("alta de cliente incompleta") — mismo patrón de "un control nuevo tapa a otro" que ya pasó en `0041`.
+
+Confirmado en vivo, no de memoria: el grant de columna (`select, update (siguiente_numero)`) alcanza
+para que `SELECT ... FOR UPDATE` funcione bajo invoker — a diferencia de `0041`
+(`padron_manifestacion`), donde `app_request` no tenía privilegio de `UPDATE` y moría con `42501` antes
+de tocar RLS. Acá apareció un obstáculo distinto y no anticipado por el ADR: **sin policy de `UPDATE`,
+`SELECT ... FOR UPDATE` devuelve 0 filas, sin error** — Postgres exige policies de `UPDATE` aplicables
+además de las de `SELECT` para el lock de fila, y conjunto vacío es `DENY`, no no-op. Corregido
+agregando la policy de `UPDATE` que el ADR no incluía (solo mencionaba "policy de select estándar").
+Con eso, la conclusión del ADR ("no hace falta `SECURITY DEFINER`") seguía siendo correcta, pero por un
+motivo adicional al anticipado: hacen falta el grant de columna **y** la policy de `UPDATE`, ninguna
+alcanza sola.
+
+### 3. `security-engineer` — revisión + hallazgo real
+
+Confirmó FK tenant-safe, invoker sin escalación, índice nuevo justificado (`movimiento_bancario_crudo`
+es la única FK de esa tabla con `DELETE` real a `app_request`, las otras tres FK compuestas de
+`asiento_propuesto_renglon` no lo necesitan). Encontró un hallazgo real: el primer `grant insert` sobre
+`asiento_correlativo_cliente` era de **tabla completa**, dejando a `app_request` insertar
+`siguiente_numero` con cualquier valor arbitrario sin pasar por el trigger. Corregido a `grant insert
+(cliente_id)` únicamente — verificado en vivo que el agujero cierra y que la autoprovisión legítima
+sigue funcionando igual (`siguiente_numero` solo puede tomar su `default 1`).
+
+### 4. `seguridad-datos-financieros` — revisión, confirma aislamiento, marca el trabajo pendiente
+
+Confirmó aislamiento genuino del correlativo por tenant (con evidencia de las policies reales) y que el
+autoprovisionamiento no abre ninguna vía de fuga de "¿existe este cliente?". **Pero encontró que el
+hallazgo de `HANDOFF.md` — hoy en la línea ~2033-2034, no 1958-1959 como decía el ADR, la bitácora
+creció — NO queda cerrado en la práctica todavía**: la migración agrega la columna/FK tipada, pero
+`packages/data/src/cierre/escrituras.ts` y `lecturas.ts` siguen escribiendo/leyendo
+`referencia_origen` — **ningún escritor/lector de producción usa `movimiento_bancario_id` todavía**.
+Esa es la tarea de `backend-dev` (Paso 2, siguiente), sin arrancar.
+
+### 5. Grants: 12 tests rojos nuevos, reales, en `grants-conjunto-cerrado.test.ts` — corregidos
+
+Al aplicar el fix del grant (punto 3), aparecieron 12 tests rojos NUEVOS y reales (R41) — el manifiesto
+declarado a mano no reflejaba los grants nuevos. `dba-data` lo corrigió con los grants ya arreglados.
+Verificado: `grants-conjunto-cerrado.test.ts` **23/23 verde**; suite completa `packages/data` da
+**EXACTAMENTE 8 rojos**, los mismos 8 ya preexistentes (7 de `mutaciones-0038.test.ts`, `HANDOFF.md:
+2549` + 1 de `reglas-de-codigo.test.ts`, `HANDOFF.md:1280`) — **ninguno nuevo**. `catalogo.test.ts`
+90/90, typecheck limpio.
+
+### 6. Hallazgo adyacente, reportado y NO resuelto en esta tarea
+
+`pnpm db:seed` está roto — al `TRUNCATE` de `packages/data/scripts/sembrar.ts` le faltan al menos 5
+tablas (`movimiento_contraparte_identificador`, `reconocimiento_movimiento`,
+`reconocimiento_contrapartida`, `membership_historia`, y ahora `asiento_correlativo_cliente`) — más
+grande de lo que se pensaba al principio (se creía que eran 2). Preexistente, no causado por esta
+migración, pero la tabla nueva se suma a la lista incompleta. **Candidato a tarea propia y chica**, no
+resuelto acá.
+
+### Estado final
+
+- **Frente 1: PARCIALMENTE cerrado.** Migración `0048` aplicada, verificada, gate en verde (mismo
+  baseline preexistente que antes: 8 rojos). El hallazgo sobre `referencia_origen` **NO se marca ✅** —
+  queda explícitamente "parcialmente cerrado, falta el Paso 2: ajustes de TypeScript en
+  `escrituras.ts`/`lecturas.ts` (y los 2 sitios de lectura adicionales:
+  `CONDICION_SIN_ASIENTO_NI_PENDIENTE_TERMINAL` en `lecturas.ts`, y el join de
+  `agrupar-decisiones-pendientes.ts`) para que la aplicación use `movimiento_bancario_id` de verdad".
+  Prueba de mutación (CLAUDE.md §1.8) de la FK/unique/trigger — TODAVÍA NO ESCRITA, tarea de
+  `qa-automation`, pendiente también.
+- **Sin mergear a `main`** — la rama sigue abierta, a la espera de que el Paso 2 (`backend-dev`) y la
+  prueba de mutación cierren el ADR completo, o de que el titular decida mergear parcial.
+- [ADR-0007](docs/arquitectura/ADR-0007-modelo-datos-asiento-contable.md), sección "Criterio de
+  cierre", actualizado con el estado de implementación real (parcial, no cumple el criterio completo
+  todavía).
+- **CHANGELOG.md: sin cambios.** Verificado contra la regla de oro 4 (`02-sdlc-git-flow.md` §5): esta
+  migración es puramente aditiva (`referencia_origen` queda deprecada, no se dropea) y nada de lo que
+  agrega ya había sido reportado antes — no hay dato ya reportado cuyo significado cambie. No aplica
+  entrada nueva.
+
+### Nota de diseño pendiente, sin relación con lo de arriba (Frente 2, pedido del titular)
+
+Agregado a [doc 34 §7](docs/diseno/34-modelo-interaccion-wizard-demo.md#7-pendientes-de-diseño-futuro-declarados--no-construir-ahora-2026-09-17),
+como pendiente de diseño futuro, **no construir ahora**:
+
+- **Logo/imagen por cliente** (patrón del proyecto hermano `trazabilidad-obra-gas`) — requiere ANTES un
+  campo de logo en la ficha de cliente, que no existe hoy en el esquema. No es solo una pantalla, es un
+  campo nuevo primero (con su propia convocatoria de esquema).
+- **Pantalla de login** — bocetada (4 estados: vacío, cargando, error de credenciales, falla de
+  infraestructura), publicada como Artifact, **pendiente de aprobación separada del titular todavía —
+  no se da por aprobada ni se cierra en esta entrada**. El caso "sesión ya activa en `/login`" quedó
+  explícitamente fuera de ese boceto, con inclinación ya anotada (probablemente redirect directo) a
+  confirmar cuando se construya el guard real (`conSesion`, futuro PR4).
 
 ---
 

@@ -1499,6 +1499,15 @@ export const CLASIFICACION = {
           'en toda la base (membership_historia.hecho_por).',
       },
       confirmado_en: { nivel: 'N1', exportable: true, nota: 'Mismo tier que membership_historia.ocurrido_en.' },
+      numero_correlativo: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'ADR-0007 §3/§6, migración 0048: folio del Libro Diario, asignado por ' +
+          'trg_asiento_propuesto_correlativo solo en la transición propuesto→confirmado. No revela ' +
+          'contenido económico por sí solo, mismo tier que corrige_asiento_id. R25 '
+          + '(ADR-0002-seguridad.md): es por cliente, nunca global — no es un secuencial COMPARTIDO ' +
+          'entre tenants, así que no cae en la clase prohibida de tenant_node.nid/acceso_auditoria.id.',
+      },
     },
   },
 
@@ -1546,6 +1555,29 @@ export const CLASIFICACION = {
         nivel: 'N2',
         exportable: true,
         nota: 'Cotización usada o capas de FCI consumidas — plata del propio cliente, mismo tier que valuacion en general (D-7/D-20).',
+      },
+      creado_en: MARCA_TIEMPO,
+      movimiento_bancario_id: {
+        nivel: 'N1',
+        exportable: true,
+        nota: 'ADR-0007 §2/§4/§5, migración 0048: reemplaza referencia_origen (text libre, sin FK) ' +
+          'como puntero al movimiento bancario de origen — FK compuesta tenant-safe hacia ' +
+          'movimiento_bancario_crudo. Mismo tier que movimiento_bancario_crudo.id: no revela ' +
+          'contenido por sí solo. referencia_origen queda deprecada (no se dropea en 0048).',
+      },
+    },
+  },
+
+  asiento_correlativo_cliente: {
+    columnaTenant: 'cliente_id',
+    campos: {
+      cliente_id: UUID_INTERNO,
+      siguiente_numero: {
+        nivel: 'N1',
+        exportable: false,
+        nota: 'ADR-0007 §3, migración 0048: contador de folio del Libro Diario, uno por cliente. ' +
+          'Mismo tier que numero_correlativo (no revela contenido económico), pero sin motivo de ' +
+          'exportarlo: es un valor interno de mecanismo, nunca "el folio de un asiento real".',
       },
       creado_en: MARCA_TIEMPO,
     },
