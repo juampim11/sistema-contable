@@ -6,6 +6,190 @@
 
 ---
 
+## 2026-09-16 (222) — Corrección de rumbo: Pantalla 1 pasa a v7 (superficie clara por defecto); v6
+(escritorio oscuro) de (221) queda archivada como base para modo oscuro futuro, no descartada.
+**Esperando revisión del titular antes de tocar Pantalla 2.**
+
+**Herramienta:** Claude Code, sesión interactiva. Continúa en `docs/identidad-visual-pantalla1-2`.
+
+### Por qué
+
+El titular probó la v6 de (221) (escritorio oscuro) y confirmó que resulta demasiado invasiva para 2
+horas diarias de uso. Instrucción explícita: la v6 **no se descarta**, queda guardada como referencia
+para un modo oscuro real futuro. Se pide una v7 — corrección de rumbo, no una cuarta exploración —
+manteniendo el mismo criterio de tipografía A + estrategia de paleta C, pero con superficie clara como
+base.
+
+### Qué se hizo
+
+Convocatoria puntual a `ux-designer` (un solo agente, un solo Artifact nuevo local para comparar antes
+de publicar). Reemplazó la oposición dura "escritorio oscuro / papel claro" de v6 por **tres niveles de
+luminosidad ascendente** dentro de una sola familia cálida de "papel envejecido" (nunca blanco puro):
+`--marco: #EAE1CD` (header/sidebar/stepper-bar), `--lienzo: #F2ECE0` (fondo del panel), `--papel:
+#FBF8F1` (tarjeta de cliente). Consolidó la familia de texto/borde en una sola (`--tinta-mudo` fusiona
+`--texto-claro-mudo` y `--tinta-inactiva`; `--linea` fusiona `--linea-clara` y `--linea-papel`). Sin
+cambio de valor: acento bordó `#8C2F39` (exclusivo de botón primario + paso activo), `--confirmado`, los
+3 `--estado-*` de cola de revisión, los 6 `--banco-*`, y la tipografía A completa (Fraunces/JetBrains
+Mono/Inter). Grilla de tarjetas y los 6 registros sintéticos, sin cambio.
+
+**Ajuste de criterio no pedido, declarado**: `.tarjeta` pasó a borde + sombra liviana (antes solo sombra
+dura, pensada para separar contra el fondo oscuro de v6 — contra un `--lienzo` de luminosidad parecida a
+`--papel` ya no alcanzaba sola).
+
+### Verificado antes y después de publicar
+
+Splice quirúrgico del JSON sobre el Artifact canónico (mismo método de siempre). Estructural: 6
+`.tarjeta` byte a byte iguales, 4 `.nav-item`, 6 `.paso`, `.header-global`, `.breadcrumb`, `.sidebar`,
+balance de divs 73/73, y verificación explícita de que **cero** rastro de `--escritorio`/`--texto-claro`
+de v6 quedó en el contenido publicado (v7 reemplaza, no mezcla). Releído en vivo después de publicar:
+`--marco`/`--lienzo`/`--papel`/`#8C2F39` presentes, `--escritorio` ausente.
+
+### Estado
+
+[Artifact final](https://claude.ai/artifact/2i58PAMpUiWay4UDxLkG6Q) (versión 7, mismo Artifact — v6 sigue
+disponible en el historial de versiones del propio Artifact, no se perdió). Doc 34 §6 actualizado: la
+sub-sección de v6 se marca "SUPERADA" con nota explícita de que se archiva para modo oscuro futuro, y se
+agrega la sub-sección "Corrección de rumbo — v7" con el detalle completo. Doc 36 §6 actualizado con el
+mismo cruce. **Pantalla 2 sigue fuera de alcance** — su Artifact conserva la paleta "libro contable" de
+(220), ahora divergente tanto de v6 como de v7. Rama `docs/identidad-visual-pantalla1-2` sigue sin
+mergear, a la espera de que el titular revise v7.
+
+---
+
+## 2026-09-16 (221) — Exploración de 3 direcciones visuales + síntesis final, Pantalla 1 (v6). Reemplaza
+la identidad "libro contable" de (220). **Esperando revisión del titular antes de tocar Pantalla 2.**
+
+**Herramienta:** Claude Code, sesión interactiva. Continúa en la misma rama `docs/identidad-visual-pantalla1-2`
+(declarado explícito: es continuación directa del mismo tema abierto ahí, no una rama nueva).
+
+### Por qué
+
+El titular rechazó la identidad "libro contable" de (220) por acercarse demasiado a la estética SaaS
+genérica (Odoo/Salesforce). Pidió 3 exploraciones reales, no convergentes entre sí, con espíritu de
+referencia Mercury (banking) — tipografía distintiva, uso audaz del blanco, layout no obvio, sin dejar de
+ser software de trabajo (2 horas diarias, no una landing).
+
+### Qué se hizo
+
+**Paso 1 — 3 direcciones, cada una en su propio Artifact nuevo** (lección de colisión de agentes en
+paralelo ya aplicada: sin archivo compartido entre ellas):
+
+- **Dirección A (tipografía)**: [Artifact](https://claude.ai/artifact/T9UTzxcAZs9FfVBmp9dZwa). Fraunces
+  (nombre/título) + JetBrains Mono tabular (toda cifra) + Inter retirado a rótulo/nav/acción. Reestructuró
+  en folio de filas con regla, estilo libro mayor.
+- **Dirección B (layout)**: [Artifact](https://claude.ai/artifact/QoUVSwkqfw59QXdS4U76P6). Cola
+  priorizada en vez de grilla de clientes. **Descartada por completo** por el titular.
+- **Dirección C (paleta)**: [Artifact](https://claude.ai/artifact/NMQwcNbd8UBTFa4Lxr6nEJ). Escritorio
+  oscuro + tarjetas claras + acento bordó exclusivo de acción/paso activo. Superficie oscura de la
+  exploración: casi negra, ajustada en la síntesis.
+
+**Paso 2 — síntesis final, un solo Artifact, no una cuarta exploración.** Decisión del titular, punto por
+punto: B descartada del todo (vuelve la grilla de 6 tarjetas original); C como base con
+`--escritorio: #322D26`/`--escritorio-hondo: #26221C` (ajustado, menos extremo que la exploración) y
+`--acento: #8C2F39` exclusivo de botón primario + paso activo del stepper (nunca sidebar activa, nunca
+focus ring, nunca texto de cuerpo); A combinada con C (Fraunces + JetBrains Mono tabular + Inter, mismo
+reparto de roles); estructura de contenido a criterio de `ux-designer` como pidió el titular — mantuvo la
+grilla de tarjetas (no el folio de A), aplicando la tipografía de A sobre la tarjeta existente y
+cambiándola de borde a sombra. Modo claro/oscuro: **no se construye ahora** — una sola paleta clara y
+definitiva; nota explícita en doc 34 §6 de que un modo oscuro futuro necesita un segundo set de tokens
+revisado a mano (no una inversión automática) más la lógica de preferencia guardada.
+
+### Verificado antes de publicar
+
+Splice quirúrgico del JSON (`json.loads`/`json.dumps`, re-escapado de `<` a `<`, mismo método de
+siempre) sobre el Artifact canónico de Pantalla 1, leído en vivo antes de editar. Verificación
+estructural: 6 `.tarjeta` (mismos 6 clientes, mismos datos byte a byte — nombre, cantidad de cuentas,
+fecha de último extracto), 4 `.nav-item`, 6 `.paso` con etiqueta, `.header-global`, `.breadcrumb`,
+`.sidebar`, balance de divs 73/73. Releído en vivo después de publicar: tokens `--escritorio`/`--acento`/
+Fraunces/JetBrains Mono presentes en el `Main.dc.html` real dentro del JSON publicado, no solo en el
+archivo local.
+
+### Ajustes de criterio que `ux-designer` tomó sin pedido explícito (declarados, no aprobados aún)
+
+1. Valores exactos de `--escritorio`/`--escritorio-hondo` (el titular pidió "menos invasivo" en prosa,
+   sin hex).
+2. Header y sidebar también pasan a fondo oscuro, no solo el panel de contenido.
+3. Ítem activo de sidebar usa realce neutro, no el acento bordó (preserva la exclusividad).
+4. Focus rings usan texto claro neutro, nunca el acento.
+5. Tarjetas de borde a sombra; se quitó el rayado de "papel de libro contable" de (220).
+
+### Estado
+
+[Artifact final](https://claude.ai/artifact/2i58PAMpUiWay4UDxLkG6Q) (versión 6). Doc 34 §6 y doc 36 §6
+actualizados con el detalle completo y los links de las 3 exploraciones. **Pantalla 2 queda fuera de
+alcance** — su Artifact sigue con la paleta "libro contable" de (220), ahora divergente de la nueva de
+Pantalla 1; reconciliarla es trabajo pendiente, no resuelto acá, para cuando el titular autorice seguir
+con Pantalla 2 en adelante. Rama `docs/identidad-visual-pantalla1-2` sigue sin mergear — a la espera de
+que el titular revise el resultado.
+
+---
+
+## 2026-09-16 (220) — PASO A: pase de identidad visual sobre Pantalla 1 (v5) y Pantalla 2 (v4).
+Convocatoria puntual a `ux-designer`. **Esperando aprobación del titular antes de PASO B** (boceto de
+Pantalla 3).
+
+**Herramienta:** Claude Code, sesión interactiva. Rama `docs/identidad-visual-pantalla1-2`, desde
+`main`.
+
+### Qué se hizo
+
+Metáfora rectora, fundamentada por `ux-designer`: **papel de libro contable rubricado**, no dashboard de
+oficina — el sistema hoy leía como "planilla prolija" sin ninguna seña de que es la herramienta de un
+profesional matriculado. Tres movimientos, mismos 9 nombres de token de siempre, valores nuevos:
+
+- **Paleta**: `--papel` de gris frío a hueso de papel timbrado (#F2EFE6); `--tinta` más profunda
+  (#181D2A); `--registro`/`--propuesta`/`--confirmado`/`--alerta` con densidad de "sello de goma real"
+  en vez de tonos planos de alerta de UI genérica.
+- **Tipografía**: se suma IBM Plex Serif (misma superfamilia que el Sans/Mono ya en uso — mismas
+  métricas), reservada **exclusivamente** a identidad: nombre del estudio, título de pantalla (h1),
+  razón social del cliente en las tarjetas. Nunca en botones ni labels — la disciplina que evita el tell
+  de "serif para dar onda vintage en todos lados".
+- **Tratamiento**: rayado sutil de papel de libro contable en el `body` (una sola propiedad,
+  reversible), visible solo donde no hay una superficie blanca encima.
+
+**Monograma de banco** (reemplaza el dropdown de texto plano en Pantalla 2): cuadrado de 28×28px, letras
+en IBM Plex Serif 600, fondo al 14% del color de marca, borde al 55%, color de marca a intensidad
+completa solo en el trazo de las letras — nunca bloque sólido (evita el tell de "grid de iconos
+saturados"). Aplicado a los 6 bancos reales que el Módulo 1 sabe parsear (Galicia, Macro, Santander,
+Bancor, Nación, ICBC — verificado contra `docs/diseno/02/06/07/20/21/22-formato-*.md` antes de
+convocar). Colores de marca públicos aproximados, **nunca el logo/isotipo real**.
+
+**Hallazgo encontrado y corregido en el camino**: el dropdown de ejemplo de Pantalla 2 usaba "Banco
+Provincia", que no es uno de los 6 bancos reales soportados — corregido a Galicia/Nación/Santander.
+
+**División del trabajo, por formato de Artifact** (mismo criterio que ya usamos hoy): Pantalla 2 (canvas
+tipo "Design" moderno) la editó `ux-designer` directo. Pantalla 1 (formato `appifact` viejo) la edité yo
+con cirugía quirúrgica del JSON — 6 reemplazos, `count==1` cada uno. Un ajuste en el camino: el anclaje
+que `ux-designer` especificó para el `:root` asumía comentarios inline que mi edición anterior (tokens
+"confirmado/cerrado"+"próximamente") no había incluido — verificado contra el archivo real antes de
+reintentar, no se asumió el texto del reporte.
+
+### Verificado
+
+Balance de divs 73/73 en Pantalla 1 (sin cambio — el pase no toca estructura, solo tokens/tipografía).
+Los 21 valores de `:root` son byte-idénticos entre Pantalla 1 y Pantalla 2 (comparación directa de los
+dos archivos) — coherencia real, no solo declarada. `grep` de "Provincia" en Pantalla 2: 0 resultados.
+
+### Hallazgos declarados por `ux-designer`, no resueltos
+
+1. **3 de los 6 colores de marca son rojos** (Macro, Santander, ICBC) — es la realidad del mercado
+   bancario argentino, no un error de elección. La disambiguación real depende de las letras del
+   monograma + el nombre completo al lado, nunca del tono de rojo.
+2. **Contraste WCAG no verificado con herramienta** — los valores de `--tinta-suave`/`--alerta` nuevos
+   se eligieron a ojo sobre el `--papel`/`--superficie` nuevos, sin checker real disponible en este
+   entorno. Pendiente antes de producción.
+3. `color-mix()` en el CSS del monograma es válido para el mockup (navegador moderno) pero
+   `frontend-dev` va a necesitar precomputar los valores si `apps/web` necesita soportar navegadores más
+   viejos — nota para cuando esto se implemente de verdad, no bloqueante para el mockup.
+
+### Estado
+
+Rama `docs/identidad-visual-pantalla1-2` lista, esperando que el titular revise los dos Artifacts
+actualizados (Pantalla 1 v5, Pantalla 2 v4) antes de autorizar PASO B (boceto de Pantalla 3 con el
+lenguaje visual ya actualizado, sin un tercer pase después).
+
+---
+
 ## 2026-09-16 (219) — Tokens de "confirmado/cerrado" + "próximamente" agregados al sistema real del
 Artifact de Pantalla 1 (versión 3); Pantalla 2 ("Subir extracto bancario") bocetada dentro del marco de
 doc 36. Convocatoria puntual a `ux-designer`.
