@@ -24,7 +24,7 @@ que el listado original tenía por separado.
 | # | Paso | Estado |
 |---|---|---|
 | 1 | Elegir cliente | Ya bocetado y aprobado (Artifact publicado) |
-| 2 | Subir extracto bancario | Bocetado 2026-09-16, dentro del marco de doc 36 (header global + sidebar + panel) — [Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F). Pendiente de aprobación del titular |
+| 2 | Subir extracto bancario | Bocetado 2026-09-16, dentro del marco de doc 36 (header global + sidebar + panel), identidad visual v7 (§6) — [Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F). Aprobado por el titular 2026-09-16 |
 | 3 | Resumen de la extracción | Pendiente de boceto |
 | 4 | Procesar y tipificar | Pendiente de boceto |
 | 5 | Revisar e imputar (fusión de "revisar tipificaciones" + "imputación a cuentas contables", ver §1.2) | Pendiente de boceto |
@@ -513,6 +513,33 @@ de divs 73/73, cero rastro de `--escritorio`/`--texto-claro` (confirmado por gre
 publicado — la v6 quedó totalmente reemplazada en esta versión del Artifact, no mezclada).
 
 **A partir de acá, toda referencia a "la identidad visual de Pantalla 1" en este documento y en doc 36
-es la v7 (superficie clara)**, salvo que se diga explícitamente "v6" o "modo oscuro archivado". Pantalla
-2 sigue fuera de alcance — su Artifact conserva la paleta "libro contable" de §5, ahora divergente tanto
-de v6 como de v7, pendiente de reconciliar cuando el titular autorice avanzar con Pantalla 2.
+es la v7 (superficie clara)**, salvo que se diga explícitamente "v6" o "modo oscuro archivado".
+
+### Pantalla 2 traída a v7 (2026-09-16, mismo día)
+
+Convocatoria puntual a `ux-designer`, un solo agente. A diferencia de Pantalla 1, el Artifact de
+Pantalla 2 es del formato "Design" canvas moderno (archivos publicados discretos, no JSON embebido), así
+que el agente pudo leer y publicar directo, sin la cirugía de JSON que exige el formato viejo de
+Pantalla 1 — publicó él mismo, verificó él mismo antes de publicar, y yo verifiqué de nuevo contra el
+contenido publicado en vivo antes de darlo por cerrado (misma disciplina de "nunca confiar en el reporte
+del agente sin releer el estado real" de toda esta sesión).
+
+**Qué cambió**: mismo mapeo de tokens y tipografía que Pantalla 1 v7 — `--marco`/`--lienzo`/`--papel` en
+vez de la paleta "libro contable" vieja, Fraunces/Inter/JetBrains Mono en vez de IBM Plex Sans/Mono/
+Serif, acento bordó `#8C2F39` exclusivo del botón "Continuar" (equivalente de "Elegir cliente" en
+Pantalla 1) y del círculo del paso activo del stepper. El selector de cuenta bancaria (monogramas
+Galicia/Nación/Santander) y el dropzone/archivo-cargado — específicos de Pantalla 2, sin equivalente en
+Pantalla 1 — pasaron a vivir sobre `--papel` (mismo criterio que la tarjeta de cliente de Pantalla 1: un
+objeto de primer plano se separa del `--lienzo` por luminosidad, no por oposición). Los 6 tokens
+`--banco-*` no cambiaron de valor.
+
+**Qué NO cambió**: la lógica interactiva completa (`<script data-dc-script>` con `Component extends
+DCLogic`, todos los `onClick`/`sc-if`/bindings de estado) quedó byte a byte idéntica — verificado por
+comparación de string exacta, no a ojo. Mismo cliente en el breadcrumb ("Estudio Demo S.A."), mismas 3
+cuentas bancarias con sus últimos 4 dígitos, mismo archivo de ejemplo ("extracto_agosto_2026.pdf",
+"340 KB"). Balance de divs 52/52 antes y después.
+
+[Artifact](https://claude.ai/artifact/9aPArKYhBdMjX9zj6WLh6F) (versión 5). **Pantalla 2 queda aprobada
+en v7** — con esto, Pantalla 1 y Pantalla 2 comparten el mismo lenguaje visual completo (tokens,
+tipografía, disciplina de exclusividad del acento). No queda ninguna pantalla bocetada con la paleta
+"libro contable" vieja de §5.
