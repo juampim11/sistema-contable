@@ -14,6 +14,7 @@
  */
 
 import ExcelJS from 'exceljs';
+import { TEXTO_SIN_TIPO } from '@sistema-contable/contabilidad';
 import { importeCanonicoACentavos } from '../parseo-ar.ts';
 
 // -----------------------------------------------------------------------------
@@ -872,7 +873,20 @@ function construirGrupo(
 
   const identificaciones = new Set(miembros.map((m) => m.identificacion));
   const categorias = new Set(miembros.map((m) => m.categoriaEspecial));
-  const homogeneo = identificaciones.size <= 1 && categorias.size <= 1;
+  // Cuando TODOS los miembros comparten la identificación centinela de `sin_reconocer`
+  // (`TEXTO_SIN_TIPO`, `identificacionDe()` de `agrupar-decisiones-pendientes.ts`), `identificaciones.
+  // size <= 1` no distingue "coincidencia real" de "ausencia total de señal" — bug real medido (HANDOFF
+  // 233/234): 374 movimientos de ROKA, 8+ naturalezas económicas distintas (liquidaciones de tarjeta,
+  // un pago a AFIP de $5,87M, cheques rechazados...), marcados homogéneos por este motivo. Se agrega
+  // `pendiente` (motivo real de por qué no se reconoció, poblado por el llamador desde `motivo_codigo`)
+  // como segunda señal SOLO para este caso — acotado a `sin_reconocer`, a propósito: generalizar a
+  // `decision_humana`/`propuesta` fragmentaría grupos que hoy son genuinamente homogéneos (convocatoria
+  // de diseño, HANDOFF 233).
+  const todosSinReconocer = identificaciones.size === 1 && identificaciones.has(TEXTO_SIN_TIPO);
+  const pendientes = new Set(miembros.map((m) => m.pendiente));
+  const homogeneo = todosSinReconocer
+    ? pendientes.size <= 1 && categorias.size <= 1
+    : identificaciones.size <= 1 && categorias.size <= 1;
 
   const ejemplo = ejemploDelGrupo(miembros);
   const cabeceraEjemplo = cabecerasPorCuenta.get(ejemplo.cuentaBancariaId);

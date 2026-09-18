@@ -215,6 +215,51 @@ describe('agruparFilas', () => {
     expect(grupos[0]!.categoriaEspecial).toBe('tarjeta_pendiente' satisfies CategoriaEspecial);
   });
 
+  it('🔴 bug real (HANDOFF 233/234): sin_reconocer con MISMA identificación centinela pero ' +
+    'DISTINTO motivo (`pendiente`) ya NO es homogéneo — antes del fix, `Set.size<=1` sobre ' +
+    '"Indeterminado" repetido daba homogéneo=true por ausencia de señal, no por coincidencia real', () => {
+    const cabeceras = new Map([['cta-1', cabeceraDePrueba({ bancoCodigo: 'macro' })]] as const);
+    const filas = [
+      filaDePrueba({
+        filaNumero: 1,
+        conceptoBanco: null,
+        identificacion: 'Indeterminado',
+        pendiente: 'Concepto no catalogado',
+      }),
+      filaDePrueba({
+        filaNumero: 2,
+        conceptoBanco: null,
+        identificacion: 'Indeterminado',
+        pendiente: 'Evidencia contradictoria',
+      }),
+    ];
+    const grupos = agruparFilas(filas, cabeceras);
+    expect(grupos).toHaveLength(1); // misma clave: se juntan igual, la agrupación no cambia
+    expect(grupos[0]!.tipoDeMovimiento).toBe('Mixto — ver detalle');
+  });
+
+  it('caso legítimo: sin_reconocer con MISMO motivo (`pendiente`) sigue homogéneo — el fix no ' +
+    'fragmenta un bucket genuinamente uniforme', () => {
+    const cabeceras = new Map([['cta-1', cabeceraDePrueba({ bancoCodigo: 'macro' })]] as const);
+    const filas = [
+      filaDePrueba({
+        filaNumero: 1,
+        conceptoBanco: null,
+        identificacion: 'Indeterminado',
+        pendiente: 'Concepto no catalogado',
+      }),
+      filaDePrueba({
+        filaNumero: 2,
+        conceptoBanco: null,
+        identificacion: 'Indeterminado',
+        pendiente: 'Concepto no catalogado',
+      }),
+    ];
+    const grupos = agruparFilas(filas, cabeceras);
+    expect(grupos).toHaveLength(1);
+    expect(grupos[0]!.tipoDeMovimiento).toBe('Indeterminado');
+  });
+
   it('🔴 distinguir_tercero_de_socio NUNCA se agrupa con otro, aunque comparta banco+concepto — ' +
     'dos contrapartes reales pueden compartir el mismo texto genérico del banco', () => {
     const cabeceras = new Map([['cta-1', cabeceraDePrueba()]] as const);
