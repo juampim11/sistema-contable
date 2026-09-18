@@ -183,10 +183,12 @@ describe('cobertura del barrido', () => {
     // glob, R-R/R-V/R-X de más abajo pasarían por vacío sin avisar.
     expect(FUENTES.map(rel)).toContain('packages/auth/src/index.ts');
     // `apps/web` (PR4, ADR-0006 §4): mismo motivo — si quedara fuera del glob (o si `.tsx` dejara de
-    // barrerse), R-S/R-T/R-U/R-W pasarían por vacío sin avisar. `sesion.ts` todavía no existe en este
-    // paso (llega en la pieza siguiente del scaffold) — se agrega esta aserción a esta lista el día
-    // que exista, mismo criterio que el resto de este bloque.
+    // barrerse), R-S/R-T/R-U/R-W pasarían por vacío sin avisar.
     expect(FUENTES.map(rel)).toContain('apps/web/src/app/page.tsx');
+    // `sesion.ts` en particular (ADR-0006 §4, exigencia explícita): si quedara fuera del glob, R-T no
+    // podría distinguir "nadie llama conUsuario/conJob fuera de acá" de "el barrido no ve ni siquiera
+    // el archivo permitido".
+    expect(FUENTES.map(rel)).toContain('apps/web/src/servidor/sesion.ts');
   });
 });
 // -----------------------------------------------------------------------------
@@ -1608,7 +1610,15 @@ describe('R-S — SERVICE_ROLE/auth.admin. solo en el adapter de Supabase (ADR-0
    * permitidos lo declara de antemano para no tener que volver a tocar esta regla cuando se cree.
    */
   const PATRON_SERVICE_ROLE = /SUPABASE_SERVICE_ROLE_KEY|\.auth\.admin\./;
-  const PERMITIDOS_R_S = ['packages/auth/src/adapters/supabase.ts', 'apps/cli/src/invitar-usuario.ts'];
+  const PERMITIDOS_R_S = [
+    'packages/auth/src/adapters/supabase.ts',
+    'apps/cli/src/invitar-usuario.ts',
+    // Nombra la variable para chequear su AUSENCIA (guard de arranque, ADR-0006) — nunca lee su valor
+    // para usarla. Mismo tipo de excepción que R37 (barrido de secretos) ya reserva para el código que
+    // detecta un patrón, no el que lo usa.
+    'apps/web/src/servidor/guard-arranque.ts',
+    'apps/web/tests/guard-arranque.test.ts',
+  ];
 
   it('SUPABASE_SERVICE_ROLE_KEY / auth.admin.* no aparecen fuera del adapter (ni de apps/web)', () => {
     expect(
