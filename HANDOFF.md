@@ -193,7 +193,51 @@ para estos 3 literales específicamente, a diferencia de sus hermanos?), o si co
 tal vez ese campo no necesita cambiar) — **decisión que le corresponde al titular o a una convocatoria
 de `contador-dominio`/`backend-dev` en horario normal, no a un segundo intento nocturno.**
 
-*(Tareas 3-4 se documentan abajo a medida que cada una cierra.)*
+### Tarea 3 — Hallazgo #1, investigación (solo lectura, sin dar de alta nada)
+
+**Confirmado con consulta real, hallazgo importante**: **la regla `regla_imputacion` de
+`comision_bancaria` YA EXISTE HOY para los dos clientes**, y apunta a `4.2.5.200 "Gastos y comisiones
+bancarias"` — exactamente la cuenta que Laura identificó como incorrecta. No es un caso hipotético de
+"qué pasaría si no hay regla": **cada movimiento de comisión bancaria de Bracci y ROKA se está
+imputando HOY a gasto duplicado**, corriendo en vivo (mismo patrón que el hallazgo de Ley 25413 de
+esta misma noche — una regla activa con un criterio ya cuestionado por evidencia real).
+
+| Cliente | Cuenta actual | Vigente desde |
+|---|---|---|
+| Bracci | `4.2.5.200` "Gastos y comisiones bancarias" | 2026-04-30 |
+| ROKA | `4.2.5.200` "Gastos y comisiones bancarias" | 2025-10-20 |
+
+La regla es de TIPO ENTERO (`concepto = null`) — cubre, sin distinguir, los 10 conceptos de comisión
+bancaria del catálogo compartido (5 de Galicia, 2 de Santander, 3 de Macro) por igual. Esto responde
+indirectamente la pregunta de "¿las 6/8 sub-variantes van todas igual?": **el sistema hoy ya las trata
+todas igual**, con una sola regla de tipo entero — el "grupo por grupo" que pidió el titular no puede
+verificarse por sub-concepto distinto porque el sistema no discrimina entre ellos hoy.
+
+**Cuenta candidata para la corrección**: no existe una cuenta dedicada "Proveedores – Banco" en el plan
+de ninguno de los dos clientes — existe una única cuenta genérica de Proveedores en cada uno:
+
+| Cliente | Código | Denominación |
+|---|---|---|
+| Bracci | `2.1.1.100` | Proveedores |
+| ROKA | `2.1.1.100` | Proveedores |
+
+**Lo que NO pude verificar desde el código/la base, límite real declarado, no salteado**: si la
+liquidación/factura del banco efectivamente se carga como comprobante de Compras contra ESTA cuenta
+para cada uno de los "6 grupos de ROKA / 8 grupos de Bracci" que cita el material de Laura. El esquema
+de este repo no modela (hasta donde relevé) un vínculo trazable entre `fuente_cierre`/`documento_
+ingerido` y un proveedor identificado como "el banco" — esa verificación, si existe, vive en el Libro
+IVA Compras real del cliente (fuera de este sistema) o en el propio material Excel de Laura (que esta
+sesión no tiene cargado). **No lo inventé ni lo di por sentado**: queda como pregunta abierta real para
+la revisión de la mañana, no resuelta acá.
+
+**Mi lectura, no una decisión — para que el titular la contraste**: dado que la regla YA se aplica de
+forma uniforme (tipo entero, sin distinguir sub-concepto) y que existe una única cuenta Proveedores
+candidata en cada plan, el cambio técnico (cerrar la regla actual + alta de una nueva contra
+`2.1.1.100`) es mecánicamente simple SI el titular confirma que el circuito de Compras real de estos
+dos clientes efectivamente carga la liquidación del banco — lo cual no puedo confirmar yo mismo. **No
+di de alta nada** — queda para revisión en persona, tal como pidió la consigna de esta tarea.
+
+*(Tarea 4 se documenta abajo a medida que cierra.)*
 
 ---
 
