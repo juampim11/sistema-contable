@@ -39,7 +39,7 @@ export class SesionInvalidaError extends Error {
  * a propósito, mismo criterio que el proyecto hermano `trazabilidad-obra-gas`: el refresco de cookies
  * de sesión ocurre en la Server Action de login/logout, que sí puede escribirlas.
  */
-async function cookiesDeNextHeaders(): Promise<LectorEscritorDeCookies> {
+export async function cookiesDeNextHeaders(): Promise<LectorEscritorDeCookies> {
   const store = await cookies();
   return {
     obtenerTodas: () => store.getAll().map(({ name, value }) => ({ nombre: name, valor: value })),
