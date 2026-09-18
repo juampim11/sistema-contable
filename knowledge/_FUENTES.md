@@ -18,7 +18,8 @@ y anotarlo acá con su fecha de descarga.
 
 | Norma / documento | Nivel | Dónde (URL oficial) | Guardar como | Descargado |
 |---|---|---|---|---|
-| _(vacío — no hay descargas todavía)_ | | | | |
+| Decreto 409/2018 (modifica art. 13, Decreto 380/2001 — cómputo Ley 25413 a cuenta de Ganancias) | Nacional | [infoleg.gob.ar](https://servicios.infoleg.gob.ar/infolegInternet/anexos/305000-309999/309791/norma.htm) | **NO descargado como archivo** — leído vía `WebFetch`, citado en `nacional/ganancias/06-computo-a-cuenta-impuesto-creditos-y-debitos.md`. Falta guardar el HTML/PDF en `fuentes/` junto a ese archivo. | 2026-09-18 (lectura, no descarga) |
+| Resolución 1/2026 SICyPyME (categorización MiPyME, topes vigentes desde 2026-04-01) | Nacional | Boletín Oficial / `pyme.produccion.gob.ar` — **NO consultada directamente**, tabla tomada de fuentes secundarias (ver `nacional/mipyme/01-categorizacion-resolucion-1-2026.md`) | **NO descargado** — hueco explícito, la tabla completa vive solo como imagen en el anexo oficial | 2026-09-18 (fuentes secundarias, no la norma en sí) |
 
 ## Parte 2 — Huecos pendientes, por prioridad
 
@@ -59,6 +60,20 @@ Todo lo del **mínimo viable** de `docs/agents/guia-carga-conocimiento.md` está
 15. Convenios de corresponsabilidad, regímenes simplificados provinciales y demás particularidades que
     aparezcan con clientes reales.
 
+### 🆕 Cargado 2026-09-18, parcial — huecos reales dentro de lo ya cargado
+
+16. **Cómputo a cuenta de Ganancias del impuesto Ley 25413** (`nacional/ganancias/06-computo-...md`) —
+    cargado y cruzado contra 3+ fuentes, con dos huecos reales sin resolver: (a) % para Mediana Tramo 2
+    (ninguna fuente lo especifica); (b) discrepancia real entre fuentes sobre el límite de traslado del
+    remanente para MiPyME (infoleg dice "hasta su agotamiento", ARCA dice "solo 33% del remanente").
+    **No confirmado contra el texto completo del Decreto 409/2018 para el punto (b).**
+17. **Categorización MiPyME — Resolución 1/2026** (`nacional/mipyme/01-categorizacion-...md`) — tabla de
+    topes cargada y cruzada contra 5+ fuentes secundarias, **ninguna oficial primaria** (el anexo con
+    los valores es una imagen en el Boletín Oficial, no extraíble por las herramientas de esta sesión).
+    Falta además: personal ocupado para Construcción/Industria y Minería/Agropecuario, y cómo se
+    calcula la "facturación anual" de un cliente concreto (¿promedio de ejercicios? ¿último ejercicio?).
+    Esta carga no estaba anotada como hueco antes de esta sesión — se agrega acá recién ahora.
+
 ## Parte 3 — Correcciones a la guía de carga
 
 > Cuando el relevamiento contradiga lo que supone `docs/agents/guia-carga-conocimiento.md`, se anota
@@ -73,11 +88,16 @@ Todo lo del **mínimo viable** de `docs/agents/guia-carga-conocimiento.md` está
 
 | Capa | Estado |
 |---|---|
-| Nacional (IVA, Ganancias, SIRE) | 🔴 Carpetas creadas, **sin contenido** |
+| Nacional — IVA | 🔴 Carpeta creada, **sin contenido** |
+| Nacional — Ganancias | 🟡 **Un archivo cargado** (cómputo Ley 25413 a cuenta de Ganancias) — el resto (personas humanas, sociedades, deducciones, escala, anticipos) **sin contenido** |
+| Nacional — SIRE | 🔴 Carpeta creada, **sin contenido** |
+| Nacional — MiPyME (carpeta nueva, 2026-09-18) | 🟡 **Un archivo cargado** (topes de categorización) — solo fuentes secundarias, no la norma oficial primaria |
 | Interjurisdiccional (Convenio Multilateral, SIFERE) | 🔴 Carpetas creadas, **sin contenido** |
 | Provincial (IIBB) | 🔴 **Ninguna provincia creada** — falta saber la del cliente piloto |
 | Normas técnicas (RT FACPCE) | 🔴 Sin relevar |
 | Clientes (jurisdicciones activas) | 🔴 Ningún cliente cargado |
 
-**Nada de esta base fue validado por un profesional matriculado** — no hay contenido para validar
-todavía. Cuando lo haya, esa validación es el paso previo a que los agentes se usen para algo real.
+**Nada de esta base fue validado por un profesional matriculado** — los dos archivos cargados el
+2026-09-18 fueron verificados por Claude vía búsqueda web (múltiples fuentes cruzadas), nunca contra
+el Boletín Oficial descargado directamente ni por un profesional matriculado. Esa validación sigue
+siendo el paso previo a que los agentes se usen para algo real con estos dos archivos.
