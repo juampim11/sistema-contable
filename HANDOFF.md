@@ -6,6 +6,142 @@
 
 ---
 
+## 2026-09-19 (234) — Piloto puesto al día (0043→0048, uno por uno, CLAUDE.md §1.9) + Hallazgo #1
+(comisión bancaria → Proveedores) resuelto con confirmación real de Laura.
+
+**Herramienta:** Claude Code, sesión interactiva de mañana — retoma sobre `docs/overnight-2026-09-18-19`
+(entrada 233) y sobre el hallazgo transversal que dejó esa noche: piloto en migración `0042`, local/main
+en `0048`.
+
+### Protocolo seguido — listar, confirmar, frenar, una por una (nunca `pnpm db:migrate` pelado)
+
+Antes de tocar nada: `pnpm db:migrate --estado` contra `.env.piloto` confirmó el gap exacto (0042 →
+faltan 0043-0048). Se aplicó cada migración con un script puntual que replica el hash-normalizado de
+`packages/data/scripts/migrar.ts` pero aplica UNA sola (nunca el lote completo), mostrando el contenido
+real y pidiendo confirmación explícita antes de cada una.
+
+- **0043 `confirmacion_grupo`**: su cabecera decía "CERO conexión al piloto — solo LOCAL". Investigado
+  con evidencia real (no asumido): el mismo patrón exacto que `0030` (ya aplicada al piloto sin
+  ceremonia), con la MISMA razón explícita — "sesión nocturna autónoma, JP no disponible, límite de la
+  sesión", no una exclusión de diseño. Ninguna entrada posterior de HANDOFF levanta la restricción, y
+  `packages/ingesta/scripts/paquete-cierre-bracci-roka-2026-05-a-08.ts` ya lee/escribe esta tabla —
+  confirma que la ausencia en piloto era un hueco funcional, no una barrera protectora. Aplicada.
+  Verificado: estructura + índices + `relrowsecurity`/`relforcerowsecurity` = `t | t`.
+- **0044 `lote_ingesta.es_dato_real`**: chequeo previo real, no del encabezado — doc 33 §A.2 declaraba
+  explícito "no se corrió la verificación puntual de candidatos post-2026-09-09, queda pendiente para
+  quien aplique 0044 al piloto". Corrida: 1 solo candidato (lote `11f06c03…`, ROKA, `origen='archivo'`,
+  patrón real de upload) — sin rastro del lote contaminante conocido `ae762fda`. Sin candidato a marcar
+  `false`. Aplicada. Verificado: columna `NOT NULL` sin default, backfill 14/14 en `true`, grant de
+  `app_request` sin `UPDATE` sobre la columna, trigger de inmutabilidad activo.
+- **0045 `usuario_identidad` + R44**: encontrado un motivo técnico real, DISTINTO del de 0043 — su
+  propio encabezado decía "el piloto no tiene `membership` real todavía", pero **ya la tiene** (el
+  actor `11111111-…`, socio, alta esta misma semana). Como `accessible_tenant_ids()`/`has_role_on()`
+  quedan con un `JOIN usuario_identidad ... and activo` (interno, no `LEFT JOIN`), aplicar tal cual
+  hubiera dejado a ese actor sin acceso a NINGÚN tenant. Aplicada igual (confirmado explícito), seguida
+  en el mismo movimiento de un backfill puntual (`conJob('alta_estudio', …)` — el motivo ya sancionado
+  para exactamente este bootstrap, confirmado contra el comentario de la propia migración y
+  `grants-conjunto-cerrado.test.ts:420,608`) insertando `usuario_identidad` para ese actor
+  (`proveedor: 'dev-identidad-fija'`, `jmarchini@gmail.com`). Verificado con la función real
+  (`accessible_tenant_ids()`/`has_role_on()`, GUC `app.user_id`): el actor ve exactamente los mismos 7
+  tenants que antes de la migración (ESTUDIO PILOTO + 6 clientes, Bracci y ROKA incluidos), ni uno de
+  más ni de menos.
+- **0046 `pendiente_cierre_ins` + gate de rol**: sin disclaimer de piloto, `WITH CHECK` puro (no toca
+  datos existentes). Verificado antes de aplicar: piloto tiene **una sola** membership real (`socio`),
+  cero `administrativo` — el "no-op para el único caller real" del propio encabezado queda confirmado
+  sin reservas. Aplicada. Verificado el `with_check` real contra `pg_policy`.
+- **0047 `rol_app_web`**: su disclaimer ("NO SE APLICA A piloto EN ESTA TAREA — piloto está 4
+  migraciones atrás") era una afirmación de secuencia, no de diseño — ya resuelta por 0043-0046.
+  Verificado sin dependencias sin cubrir (`es_dato_real`/`confirmado_por` ya aplicadas). Aplicada.
+  Verificado: rol `app_web` `nologin`, sin `bypassrls`, 145 grants de columna.
+- **0048 `asiento_correlativo_cliente` + `movimiento_bancario_id`**: sin disclaimer, pero medida en
+  local contra solo 2 renglones — piloto tiene 20.298 renglones reales, 16.938 con `referencia_origen`.
+  Antes de aplicar, verificados los dos números que JP pidió explícitos: **0 huérfanas** (forma UUID sin
+  `movimiento_bancario_crudo` real) y **100% backfilleable** (16.938/16.938). Aplicada. El `RAISE
+  NOTICE` real del backfill confirmó exactamente esos números — cero sorpresas entre la predicción y el
+  resultado medido.
+
+**Piloto confirmado en `0048`** (48 filas en `_migraciones`, última `0048_correlativo_asiento_
+propuesto.sql`).
+
+### Gate completo — dos verificaciones, no una
+
+**LOCAL (`pnpm verificar`)**: encontró y resolvió, en el camino, un hallazgo real y ajeno a las
+migraciones — `pnpm fixtures:verificar` bloqueaba el gate porque el fixture sintético compartido
+(`packages/ingesta/tests/fixtures/extracto-sintetico.txt`) tenía dos saldos iniciales de miles cerrados
+(uno por cuenta) que colisionaron por casualidad con material real creciente en `privado/` (100
+archivos, 35M caracteres). **Patrón conocido, no incidente aislado**: un valor sintético "redondo" tiene más
+chance de coincidir con un valor real a medida que ese corpus crece — la próxima vez que
+`fixtures:verificar`/`barrido-fuga` marquen un choque así, es este mismo patrón, no una fuga real que
+investigar desde cero. Corregido en la FUENTE (`packages/ingesta/src/seed/texto-extracto-sintetico.ts:
+171`, la constante `saldo` del generador determinístico — nunca a mano en el `.txt`, que se regenera
+con `pnpm fixtures:generar`). Con eso: **13/2.547 rojos — coincide exacto con la deuda preexistente ya
+documentada** (7 de `mutaciones-0038.test.ts` + 1 `R-F` + 4 `aislamiento-modulo-1.test.ts`/`TABLAS_M1` +
+1 `RETENCION IIBB CORDOBA` de `corpus-macro.test.ts`, los cuatro grupos con su propia entrada anterior
+en esta bitácora). **Cero rojos nuevos** por las 6 migraciones aplicadas ni por el fix del fixture.
+
+**PILOTO** — el gate estándar de `vitest` está bloqueado a propósito contra esta base
+(`packages/data/tests/ayuda.ts:132`, `sembrar()` hace `TRUNCATE tenant_node` y lanza si
+`APP_ENTORNO !== 'local'`; 200/213 archivos de test la usan). Corridos los **7 archivos reales** que
+tocan la base sin sembrar datos sintéticos (`auditoria-seguridad-readonly`, `auditoria-solo-lectura`,
+`catalogo`, `grants-conjunto-cerrado`, `pg-temp-shadowing`, `reglas-de-codigo` de `packages/data/tests`,
+más `ingestar-es-dato-real` de `apps/cli/tests`) con `ENV_FILE=.env.piloto`: **207/208 verdes**, único
+rojo `R-F` (mismo preexistente que en local, chequeo estático de código, no depende del entorno).
+
+**R-F confirmado preexistente con evidencia real, no por analogía** — JP pidió no dejarlo pasar como "un
+número más" sin chequear. Los 3 archivos que R-F señala como infractores hoy
+(`packages/data/tests/mutaciones-savepoint-reconocimientos.test.ts`, `packages/ingesta/src/planilla/
+armar-libro.ts`, `packages/ingesta/tests/relevamiento-laura.test.ts`) tienen su `git blame` en commits
+de **2026-09-08 a 2026-09-11** (`81a44599`, `6ee9cd1f`/`fef8a5ba`), y `relevamiento-laura.test.ts`
+además tiene su propia entrada previa en esta bitácora reportándolo rojo desde el commit `9554c87`.
+Ninguno de los tres fue tocado por las migraciones 0043-0048 ni por el fix de comisión bancaria de hoy
+— y el chequeo en sí es puramente estático (`grep` de un literal TypeScript contra el árbol de
+archivos), sin ninguna dependencia de base de datos: da exactamente el mismo resultado corrido contra
+local o contra piloto, porque no toca ninguna de las dos. Confirmado: **cero rojos nuevos**, ni en LOCAL
+ni en PILOTO, por el trabajo de esta entrada.
+
+### Hallazgo #1 (comisión bancaria → Proveedores) — RESUELTO, ya no "en espera"
+
+La entrada 233 lo había dejado pendiente de "confirmar si el circuito de Compras real carga la factura
+del banco". JP trajo la confirmación de Laura, textual: **"todo el IVA compras va contra proveedores"**
+— decisión general del estudio, no condicional por concepto ni por cliente.
+
+Aplicado con el mismo patrón que el fix de Ley 25413 (script puntual,
+`packages/data/scripts/fix-comision-bancaria-proveedores-bracci-roka-2026-09-18.ts`, no comiteado
+todavía): para Bracci y ROKA, cerrada la regla general vieja de `comision_bancaria` (`concepto: null`,
+apuntaba a `4.2.5.200 Gastos y comisiones bancarias`, `vigente_hasta = 2026-09-18`) y alta de la regla
+nueva, mismo tipo entero, contra `2.1.1.100 Proveedores` de cada cliente (`vigente_desde =
+2026-09-18`). Hacia adelante únicamente — ningún asiento ya generado con la regla vieja fue tocado.
+
+**Verificado en vivo con la función real del resolver** (`packages/motor-conciliacion/src/resolver.ts:
+234`, `vigenteA()` — no una reconstrucción manual de la query): para cualquier movimiento fechado hoy
+en adelante, ambos clientes resuelven `comision_bancaria` contra Proveedores
+(`regla_imputacion_id` `41c8918b…` Bracci, `753fe619…` ROKA).
+
+### Renombre de `tenant_node.nombre` — pendiente desde una sesión anterior, ejecutado ahora
+
+Pedido original nunca cumplido (el script del fix de Ley 25413 no lo incluyó). Ejecutado con
+`conUsuario` + `escribirConAuditoria` (`recurso: 'tenant_node'`), mismo criterio ya aplicado a los
+otros 3 clientes reales del piloto (Contenedores Paoluc S.A.S., H y J Servicios y Obras S.A.S., MEB
+Integración y Montaje S.A.S. — razón social real en `tenant_node.nombre`, riesgo N2 aceptado, memoria
+del proyecto "Clientes reales directo al piloto"): `f84d9ecc-…` "CLIENTE PILOTO 01" → **"Bracci"**,
+`69479b8f-…` "CLIENTE PILOTO 03" → **"ROKA"**. `UPDATE ... WHERE id = $1 AND nombre = $2 RETURNING`
+confirmó exactamente 1 fila afectada por cliente (sin sorpresas de nombre ya cambiado o fila
+inexistente). Verificado el estado final por consulta directa. Nombre corto (el mismo usado en toda
+esta bitácora y en los scripts de esta sesión) — si el titular prefiere la razón social completa con
+forma societaria, es un segundo `UPDATE` puntual, no un problema de mecanismo.
+
+### Pendiente, sin tocar hoy (igual que anoche)
+
+- Tarea 2 de la entrada 233 (reclasificación de catálogo, bug b) sigue revertida — necesita investigar
+  qué exige de verdad `queDecide: 'distinguir_tercero_de_socio'` antes de reintentarla.
+- Tarea 1 (bug a, advertencia de heterogeneidad) y Tarea 4 (login en `apps/web`) siguen exactamente
+  donde las dejó la entrada 233.
+- Migración `0049_categorizacion_mipyme` sigue sin apuro, diseño completo en el plan de la entrada 232.
+- Script `packages/data/scripts/fix-comision-bancaria-proveedores-bracci-roka-2026-09-18.ts` sin
+  commitear todavía (mismo criterio que el fix de Ley 25413: revisión antes de commitear).
+
+---
+
 ## 2026-09-18/19 (233) — Merge del fix de Ley 25413 + noche autónoma con límites explícitos.
 **EN CURSO — esta entrada se completa a medida que avanza la noche, no se reescribe desde cero.**
 
