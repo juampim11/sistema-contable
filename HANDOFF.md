@@ -6,6 +6,427 @@
 
 ---
 
+## 2026-09-19 (234) — Piloto puesto al día (0043→0048, uno por uno, CLAUDE.md §1.9) + Hallazgo #1
+(comisión bancaria → Proveedores) resuelto con confirmación real de Laura.
+
+**Herramienta:** Claude Code, sesión interactiva de mañana — retoma sobre `docs/overnight-2026-09-18-19`
+(entrada 233) y sobre el hallazgo transversal que dejó esa noche: piloto en migración `0042`, local/main
+en `0048`.
+
+### Protocolo seguido — listar, confirmar, frenar, una por una (nunca `pnpm db:migrate` pelado)
+
+Antes de tocar nada: `pnpm db:migrate --estado` contra `.env.piloto` confirmó el gap exacto (0042 →
+faltan 0043-0048). Se aplicó cada migración con un script puntual que replica el hash-normalizado de
+`packages/data/scripts/migrar.ts` pero aplica UNA sola (nunca el lote completo), mostrando el contenido
+real y pidiendo confirmación explícita antes de cada una.
+
+- **0043 `confirmacion_grupo`**: su cabecera decía "CERO conexión al piloto — solo LOCAL". Investigado
+  con evidencia real (no asumido): el mismo patrón exacto que `0030` (ya aplicada al piloto sin
+  ceremonia), con la MISMA razón explícita — "sesión nocturna autónoma, JP no disponible, límite de la
+  sesión", no una exclusión de diseño. Ninguna entrada posterior de HANDOFF levanta la restricción, y
+  `packages/ingesta/scripts/paquete-cierre-bracci-roka-2026-05-a-08.ts` ya lee/escribe esta tabla —
+  confirma que la ausencia en piloto era un hueco funcional, no una barrera protectora. Aplicada.
+  Verificado: estructura + índices + `relrowsecurity`/`relforcerowsecurity` = `t | t`.
+- **0044 `lote_ingesta.es_dato_real`**: chequeo previo real, no del encabezado — doc 33 §A.2 declaraba
+  explícito "no se corrió la verificación puntual de candidatos post-2026-09-09, queda pendiente para
+  quien aplique 0044 al piloto". Corrida: 1 solo candidato (lote `11f06c03…`, ROKA, `origen='archivo'`,
+  patrón real de upload) — sin rastro del lote contaminante conocido `ae762fda`. Sin candidato a marcar
+  `false`. Aplicada. Verificado: columna `NOT NULL` sin default, backfill 14/14 en `true`, grant de
+  `app_request` sin `UPDATE` sobre la columna, trigger de inmutabilidad activo.
+- **0045 `usuario_identidad` + R44**: encontrado un motivo técnico real, DISTINTO del de 0043 — su
+  propio encabezado decía "el piloto no tiene `membership` real todavía", pero **ya la tiene** (el
+  actor `11111111-…`, socio, alta esta misma semana). Como `accessible_tenant_ids()`/`has_role_on()`
+  quedan con un `JOIN usuario_identidad ... and activo` (interno, no `LEFT JOIN`), aplicar tal cual
+  hubiera dejado a ese actor sin acceso a NINGÚN tenant. Aplicada igual (confirmado explícito), seguida
+  en el mismo movimiento de un backfill puntual (`conJob('alta_estudio', …)` — el motivo ya sancionado
+  para exactamente este bootstrap, confirmado contra el comentario de la propia migración y
+  `grants-conjunto-cerrado.test.ts:420,608`) insertando `usuario_identidad` para ese actor
+  (`proveedor: 'dev-identidad-fija'`, `jmarchini@gmail.com`). Verificado con la función real
+  (`accessible_tenant_ids()`/`has_role_on()`, GUC `app.user_id`): el actor ve exactamente los mismos 7
+  tenants que antes de la migración (ESTUDIO PILOTO + 6 clientes, Bracci y ROKA incluidos), ni uno de
+  más ni de menos.
+- **0046 `pendiente_cierre_ins` + gate de rol**: sin disclaimer de piloto, `WITH CHECK` puro (no toca
+  datos existentes). Verificado antes de aplicar: piloto tiene **una sola** membership real (`socio`),
+  cero `administrativo` — el "no-op para el único caller real" del propio encabezado queda confirmado
+  sin reservas. Aplicada. Verificado el `with_check` real contra `pg_policy`.
+- **0047 `rol_app_web`**: su disclaimer ("NO SE APLICA A piloto EN ESTA TAREA — piloto está 4
+  migraciones atrás") era una afirmación de secuencia, no de diseño — ya resuelta por 0043-0046.
+  Verificado sin dependencias sin cubrir (`es_dato_real`/`confirmado_por` ya aplicadas). Aplicada.
+  Verificado: rol `app_web` `nologin`, sin `bypassrls`, 145 grants de columna.
+- **0048 `asiento_correlativo_cliente` + `movimiento_bancario_id`**: sin disclaimer, pero medida en
+  local contra solo 2 renglones — piloto tiene 20.298 renglones reales, 16.938 con `referencia_origen`.
+  Antes de aplicar, verificados los dos números que JP pidió explícitos: **0 huérfanas** (forma UUID sin
+  `movimiento_bancario_crudo` real) y **100% backfilleable** (16.938/16.938). Aplicada. El `RAISE
+  NOTICE` real del backfill confirmó exactamente esos números — cero sorpresas entre la predicción y el
+  resultado medido.
+
+**Piloto confirmado en `0048`** (48 filas en `_migraciones`, última `0048_correlativo_asiento_
+propuesto.sql`).
+
+### Gate completo — dos verificaciones, no una
+
+**LOCAL (`pnpm verificar`)**: encontró y resolvió, en el camino, un hallazgo real y ajeno a las
+migraciones — `pnpm fixtures:verificar` bloqueaba el gate porque el fixture sintético compartido
+(`packages/ingesta/tests/fixtures/extracto-sintetico.txt`) tenía dos saldos iniciales de miles cerrados
+(uno por cuenta) que colisionaron por casualidad con material real creciente en `privado/` (100
+archivos, 35M caracteres). **Patrón conocido, no incidente aislado**: un valor sintético "redondo" tiene más
+chance de coincidir con un valor real a medida que ese corpus crece — la próxima vez que
+`fixtures:verificar`/`barrido-fuga` marquen un choque así, es este mismo patrón, no una fuga real que
+investigar desde cero. Corregido en la FUENTE (`packages/ingesta/src/seed/texto-extracto-sintetico.ts:
+171`, la constante `saldo` del generador determinístico — nunca a mano en el `.txt`, que se regenera
+con `pnpm fixtures:generar`). Con eso: **13/2.547 rojos — coincide exacto con la deuda preexistente ya
+documentada** (7 de `mutaciones-0038.test.ts` + 1 `R-F` + 4 `aislamiento-modulo-1.test.ts`/`TABLAS_M1` +
+1 `RETENCION IIBB CORDOBA` de `corpus-macro.test.ts`, los cuatro grupos con su propia entrada anterior
+en esta bitácora). **Cero rojos nuevos** por las 6 migraciones aplicadas ni por el fix del fixture.
+
+**PILOTO** — el gate estándar de `vitest` está bloqueado a propósito contra esta base
+(`packages/data/tests/ayuda.ts:132`, `sembrar()` hace `TRUNCATE tenant_node` y lanza si
+`APP_ENTORNO !== 'local'`; 200/213 archivos de test la usan). Corridos los **7 archivos reales** que
+tocan la base sin sembrar datos sintéticos (`auditoria-seguridad-readonly`, `auditoria-solo-lectura`,
+`catalogo`, `grants-conjunto-cerrado`, `pg-temp-shadowing`, `reglas-de-codigo` de `packages/data/tests`,
+más `ingestar-es-dato-real` de `apps/cli/tests`) con `ENV_FILE=.env.piloto`: **207/208 verdes**, único
+rojo `R-F` (mismo preexistente que en local, chequeo estático de código, no depende del entorno).
+
+**R-F confirmado preexistente con evidencia real, no por analogía** — JP pidió no dejarlo pasar como "un
+número más" sin chequear. Los 3 archivos que R-F señala como infractores hoy
+(`packages/data/tests/mutaciones-savepoint-reconocimientos.test.ts`, `packages/ingesta/src/planilla/
+armar-libro.ts`, `packages/ingesta/tests/relevamiento-laura.test.ts`) tienen su `git blame` en commits
+de **2026-09-08 a 2026-09-11** (`81a44599`, `6ee9cd1f`/`fef8a5ba`), y `relevamiento-laura.test.ts`
+además tiene su propia entrada previa en esta bitácora reportándolo rojo desde el commit `9554c87`.
+Ninguno de los tres fue tocado por las migraciones 0043-0048 ni por el fix de comisión bancaria de hoy
+— y el chequeo en sí es puramente estático (`grep` de un literal TypeScript contra el árbol de
+archivos), sin ninguna dependencia de base de datos: da exactamente el mismo resultado corrido contra
+local o contra piloto, porque no toca ninguna de las dos. Confirmado: **cero rojos nuevos**, ni en LOCAL
+ni en PILOTO, por el trabajo de esta entrada.
+
+### Hallazgo #1 (comisión bancaria → Proveedores) — RESUELTO, ya no "en espera"
+
+La entrada 233 lo había dejado pendiente de "confirmar si el circuito de Compras real carga la factura
+del banco". JP trajo la confirmación de Laura, textual: **"todo el IVA compras va contra proveedores"**
+— decisión general del estudio, no condicional por concepto ni por cliente.
+
+Aplicado con el mismo patrón que el fix de Ley 25413 (script puntual,
+`packages/data/scripts/fix-comision-bancaria-proveedores-bracci-roka-2026-09-18.ts`, no comiteado
+todavía): para Bracci y ROKA, cerrada la regla general vieja de `comision_bancaria` (`concepto: null`,
+apuntaba a `4.2.5.200 Gastos y comisiones bancarias`, `vigente_hasta = 2026-09-18`) y alta de la regla
+nueva, mismo tipo entero, contra `2.1.1.100 Proveedores` de cada cliente (`vigente_desde =
+2026-09-18`). Hacia adelante únicamente — ningún asiento ya generado con la regla vieja fue tocado.
+
+**Verificado en vivo con la función real del resolver** (`packages/motor-conciliacion/src/resolver.ts:
+234`, `vigenteA()` — no una reconstrucción manual de la query): para cualquier movimiento fechado hoy
+en adelante, ambos clientes resuelven `comision_bancaria` contra Proveedores
+(`regla_imputacion_id` `41c8918b…` Bracci, `753fe619…` ROKA).
+
+### Renombre de `tenant_node.nombre` — pendiente desde una sesión anterior, ejecutado ahora
+
+Pedido original nunca cumplido (el script del fix de Ley 25413 no lo incluyó). Ejecutado con
+`conUsuario` + `escribirConAuditoria` (`recurso: 'tenant_node'`), mismo criterio ya aplicado a los
+otros 3 clientes reales del piloto (Contenedores Paoluc S.A.S., H y J Servicios y Obras S.A.S., MEB
+Integración y Montaje S.A.S. — razón social real en `tenant_node.nombre`, riesgo N2 aceptado, memoria
+del proyecto "Clientes reales directo al piloto"): `f84d9ecc-…` "CLIENTE PILOTO 01" → **"Bracci"**,
+`69479b8f-…` "CLIENTE PILOTO 03" → **"ROKA"**. `UPDATE ... WHERE id = $1 AND nombre = $2 RETURNING`
+confirmó exactamente 1 fila afectada por cliente (sin sorpresas de nombre ya cambiado o fila
+inexistente). Verificado el estado final por consulta directa. Nombre corto (el mismo usado en toda
+esta bitácora y en los scripts de esta sesión) — si el titular prefiere la razón social completa con
+forma societaria, es un segundo `UPDATE` puntual, no un problema de mecanismo.
+
+### Pendiente, sin tocar hoy (igual que anoche)
+
+- Tarea 2 de la entrada 233 (reclasificación de catálogo, bug b) sigue revertida — necesita investigar
+  qué exige de verdad `queDecide: 'distinguir_tercero_de_socio'` antes de reintentarla.
+- Tarea 1 (bug a, advertencia de heterogeneidad) y Tarea 4 (login en `apps/web`) siguen exactamente
+  donde las dejó la entrada 233.
+- Migración `0049_categorizacion_mipyme` sigue sin apuro, diseño completo en el plan de la entrada 232.
+- Script `packages/data/scripts/fix-comision-bancaria-proveedores-bracci-roka-2026-09-18.ts` sin
+  commitear todavía (mismo criterio que el fix de Ley 25413: revisión antes de commitear).
+
+---
+
+## 2026-09-18/19 (233) — Merge del fix de Ley 25413 + noche autónoma con límites explícitos.
+**EN CURSO — esta entrada se completa a medida que avanza la noche, no se reescribe desde cero.**
+
+**Herramienta:** Claude Code, sesión interactiva → modo autónomo overnight con reglas explícitas del
+titular (ver Paso 0 de abajo para el límite: **ninguna rama nueva de esta noche se mergea a `main`**,
+eso lo revisa el titular a la mañana).
+
+### Paso 0 — Merge del fix de Ley 25413 a `main` (autorizado explícito, contenido ya revisado)
+
+`fix/ley-25413-bracci-roka-y-conocimiento-mipyme` → `main`, merge commit sin conflictos.
+
+```
+ HANDOFF.md                                                          | 110 +++++++++
+ knowledge/README.md                                                 |   5 +-
+ knowledge/_FUENTES.md                                                |  28 ++-
+ knowledge/nacional/ganancias/06-computo-a-cuenta-impuesto-creditos-y-debitos.md | 105 ++++++++
+ knowledge/nacional/mipyme/01-categorizacion-resolucion-1-2026.md    |  93 ++++++++
+ packages/data/scripts/fix-ley-25413-bracci-roka-2026-09-18.ts       | 263 +++++++++++++++++++++
+ 6 files changed, 598 insertions(+), 6 deletions(-)
+```
+
+Typecheck limpio post-merge. Push a `origin/main` confirmado: **hash local == origin ==
+`736272ebb377d3dd0674c421e37017a7b7c432d1`**, working tree limpio. El fix de Ley 25413 (ver entrada
+232) queda cerrado y en `main` de punta a punta.
+
+### Reglas del modo autónomo de esta noche (para que quien retome mañana las tenga presentes)
+
+- Si algo es ambiguo, requiere criterio de negocio, o no coincide con lo esperado: **parar esa tarea
+  puntual**, documentar con opciones, seguir con la siguiente — nunca "sigo igual, asumo lo más
+  razonable".
+- **Ninguna rama nueva de esta noche se mergea a `main`** bajo ninguna circunstancia.
+- No tocar: lógica del guard de sesión (`conSesion`/`conSesionHttp`) — la inclinación sobre "sesión ya
+  activa en `/login`" (redirect directo) **nunca fue aprobada como decisión final**, solo anotada.
+- No tocar: migración `0049` (`categorizacion_mipyme`) — sigue sin apuro.
+
+### Tarea 1 — Bug (a), consulta real + convocatoria de diseño (en curso)
+
+**Consulta real contra el piloto** (ROKA, cuenta Macro, `concepto_banco is null`):
+
+```
+movimientos: 374 | suma: $146.673.389,05 | min: -$2.935.672,13 | max: $1.937.128,13 | mayo-agosto 2026
+```
+
+**374 exacto** — coincide con el número que citó Laura. Pero el desglose por descripción real
+confirma DEFINITIVAMENTE que el bucket es heterogéneo, no una transacción repetida:
+
+| Descripción (muestra) | Cantidad | Suma |
+|---|---|---|
+| `PAGO27728837-LIQ COMER FISERV [DOC]` | **326** | $148.101.267,97 |
+| `N/D DGR SELLOS CORDOBA 0` | 7 | -$1.704,63 |
+| **`N/D INTER.ADEL.CC C/ACUERD 0`** | **4** | **-$58.498,85** |
+| `N/D AJ.INT.SALDO DEUDOR CC/AC. 0` | 3 | -$37,26 |
+| `N/C DBCR 25413 S/DB TASA GRAL 0` | 3 | $15.907,28 |
+| `AFIP 0` | 2 | -$5.871.344,26 |
+| `N/C RECHAZO CHEQUE FALLA TECNICA [DOC]` | 2 | $2.591.213,00 |
+| 8 liquidaciones CABAL distintas | 1 c/u | variable |
+
+**Confirmación cruzada, precisa**: "N/D INTER.ADEL.CC C/ACUERD 0" — la transacción que Laura describió
+como "~1/mes, ninguno mayor a $30.000" — son **4 movimientos reales** en 4 meses (mayo-agosto),
+promedio $14.624 cada uno. **Laura tenía razón sobre ESA transacción puntual.** El "374" que aparece
+en el material es el bucket completo `(sin concepto)`, del cual esos 4 movimientos son una porción
+mínima (1%) — el resto (99%) son 326 liquidaciones de tarjeta FISERV (un hueco YA DECLARADO del propio
+adaptador de Macro, `macro.ts:480-485`: "`PAGO<########>-LIQ COMER <procesadora>`... ninguna etiqueta
+estática puede ser prefijo de la glosa depurada... queda como hueco declarado, no como bug silencioso"
+— los 8 dígitos del medio están enmascarados por INV-13, no hay forma de anclar un prefijo fijo), más
+AFIP, cheques rechazados, sellos de IIBB Córdoba, y ajustes varios. **Confirma con evidencia dura la
+conclusión de Paso 1**: el riesgo real no es la transacción de Laura, es que CUALQUIER decisión tomada
+sobre el "grupo" completo (pensando que representa el ejemplo mostrado) se aplicaría a estos 374
+movimientos de 8+ naturalezas económicas distintas — incluyendo un pago a AFIP de -$5,87M.
+
+**Convocatoria de diseño** (`backend-dev` + `arquitecto-software` + `ux-designer`, en paralelo, SOLO
+especificación — nada se implementó esta noche). Los tres, independientemente, llegaron al MISMO
+mecanismo exacto y a la MISMA recomendación de alcance — buena señal de que el diseño converge:
+
+**Mecanismo del bug, confirmado por los tres**: `identificacionDe()` (`agrupar-decisiones-
+pendientes.ts:197-199`) devuelve la constante fija `TEXTO_SIN_TIPO` para cualquier `sin_reconocer` —
+`Set.size` no distingue "todos matchearon lo mismo" de "ninguno matcheó nada", así que `homogeneo` da
+`true` por AUSENCIA total de señal, no por coincidencia real.
+
+**Hallazgo cruzado no pedido, confirmado por los tres de forma independiente**: el mismo bug afecta
+Pantalla 5 del wizard (doc 34), no solo el Excel de Bracci/ROKA — `agrupar-decisiones-pendientes.ts`
+importa y reusa literalmente `agruparFilas`/`claveDeAgrupacion` de `armar-libro.ts` (líneas 27-33, 503,
+523). Es el mismo mecanismo, no un problema exclusivo de un camino. **No se toca el wizard esta
+noche** (cambiaría un contrato de un boceto ya aprobado) — queda como hallazgo para convocatoria futura.
+
+**Solución recomendada, barata, SIN migración** (`arquitecto-software` la costeó en detalle): el campo
+`pendiente` de `FilaPlanilla` YA EXISTE y ya varía por fila incluso dentro de `sin_reconocer`
+(`texto-humano.ts:163-189`, 7 textos distintos según `motivo_codigo`) — pero HOY nadie lo mira al
+calcular `homogeneo`. Para el pipeline que generó el caso real de ROKA (`agrupar-decisiones-
+pendientes.ts`), ese campo se fija en `null` a propósito (línea 228, "un campo de menos que traer es
+una superficie de menos") — hay que empezar a poblarlo con `motivo_codigo` (columna que YA EXISTE y YA
+está clasificada N2 en `reconocimiento_movimiento`, sin migración nueva). **Paso más chico
+identificado**: Pieza A (`armar-libro.ts::construirGrupo`, puro, sin tocar base) es aislada y
+mergeable sola; Pieza B (`agrupar-decisiones-pendientes.ts`, agregar `motivo_codigo` al SELECT) es
+lectura nueva de una columna ya clasificada, sin convocatoria de esquema.
+
+**Riesgo real si se generaliza sin criterio** (`arquitecto-software`, `backend-dev` coinciden): sumar
+la nueva señal a TODAS las clases (no solo `sin_reconocer`) fragmentaría grupos de `decision_humana`
+que hoy Laura ve como homogéneos y confía — un cambio de comportamiento real, no un bugfix. Los tres
+agentes recomiendan acotar el fix a `sin_reconocer` únicamente.
+
+**Detección de heterogeneidad propuesta** (`ux-designer`, la más concreta): dos señales sobre datos ya
+disponibles en los dos pipelines — dispersión de signos (débito/crédito mezclados) y bandas de
+magnitud del importe (dígitos de la parte entera, bigint-safe) — SIN inventar un sub-clasificador
+nuevo. Rango de importe del grupo (mínimo/máximo) es la señal de mayor impacto por menor costo
+(`ux-designer`): "$120 a $5.988.400" al lado de un ejemplo de $58.498 delata la mezcla sin abrir nada.
+
+**Comunicación en la Hoja Grupos** (`ux-designer`): NO reemplazar "Ejemplo — Descripción" (sigue
+siendo dato real y útil) — agregar una columna "Alerta" (vocabulario cerrado) + un segundo ejemplo
+determinístico por MAYOR importe (no solo el más antiguo, que ya existe) + resaltado de fila con un
+color nuevo, distinto de los 4 ya usados. El dropdown de decisión NO se puede bloquear estructuralmente
+sin macros VBA (límite real de la plataforma, no elección) — sí se puede cambiar el texto del
+`prompt`/`showInputMessage` que Excel ya muestra al hacer clic.
+
+**3 preguntas abiertas, ninguna resuelta esta noche a criterio propio** (los tres agentes coinciden en
+dejarlas para el titular / convocatoria en horario normal):
+1. **Umbral de severidad** (¿cuántos miembros o qué dispersión amerita advertencia leve vs. bloqueo
+   real?) — necesita medirse contra los archivos reales ya cerrados del piloto, no un número inventado.
+2. **Vale la pena un sub-clasificador** que separe "326 liquidaciones de tarjeta" de "2 pagos AFIP"
+   dentro del bucket (sería una heurística nueva de `motor-conciliacion-contable`, no un dato que ya
+   exista) — o alcanza con los proxies baratos (rango de importe, mezcla débito/crédito).
+3. **Si vale la pena traer `descripcion` real** (columna N2, ya clasificada, hoy excluida a propósito
+   de `agrupar-decisiones-pendientes.ts`) para reforzar la señal — ampliar superficie de un dato N2 en
+   un job entra en la matriz de convocatoria de CLAUDE.md §3.1 si se decide que sí.
+
+**No implementado esta noche** — especificación completa, lista para que el titular la revise y
+convoque la implementación en horario normal.
+
+### 🔴 Hallazgo no anticipado, transversal a toda la noche — el piloto está en `0042`, no en `0048/0049`
+
+Al armar la consulta de la Tarea 2 (`movimiento_bancario_id`), la columna **no existe** en el piloto —
+`_migraciones` confirma que la última aplicada ahí es `0042_revocacion_padron_manifestacion_unica.sql`
+(2026-09-08). Las migraciones `0043` (`confirmacion_grupo`) a `0049` (si se llegara a aplicar) **no
+están en el piloto**. Consecuencia real: el código actual de `main` (Frente 1 de ADR-0007, entrada 231)
+escribe/lee EXCLUSIVAMENTE `movimiento_bancario_id` — si la aplicación apuntara al piloto hoy tal como
+está, esas escrituras/lecturas fallarían contra una columna inexistente. **No toqué ninguna migración
+esta noche** (fuera de alcance, regla dura CLAUDE.md §1.9 "listar, confirmar, frenar" — aplicar 0043-
+0048 al piloto es una decisión del titular, migración por migración, no un lote). Las consultas de
+Tarea 2 se adaptaron a `referencia_origen` (lo que el piloto realmente tiene). **Para la mañana**: antes
+de que cualquier trabajo futuro dé por sentado que el piloto tiene el esquema de `main`, verificar
+`_migraciones` primero — no asumir.
+
+### Tarea 2 — Bug (b), consulta real + reclasificación aplicada (rama propia, sin mergear)
+
+**Consulta real** (piloto, `referencia_origen`, dado el hallazgo de arriba): de los 551 movimientos
+reales con los 3 conceptos (`transferencia_mo_ccdo_distinto_titular`=19,
+`transferencia_con_token`=515, `transferencia_electronica_datanet`=17), **ninguno** tiene un
+`asiento_propuesto_renglon` (confirmado o propuesto) ni un `pendiente_cierre` asociado — los 551 siguen
+sin ninguna etapa de procesamiento posterior, consistente con `resuelve: 'decide_una_persona'` (nunca
+llegaron a `resuelve: 'propone'`). **Conteo de asientos confirmados con el tipo viejo: 0** — el criterio
+de "conteo 0 → aplicar" del titular se cumple.
+
+**🔴 PERO la reclasificación se intentó, rompió tests reales, y se revirtió — no quedó aplicada.**
+Cambié `tipo: 'pago_a_proveedor_transferencia'` → `'cobranza_de_cliente'`, quité `pendienteDeLaura`
+(mismo patrón que `echeq_recibido_debito`, el único precedente real de un pendienteDeLaura cerrado en
+este catálogo), y copié `queDecide: 'distinguir_tercero_de_socio'` de la entrada hermana
+`credito_transferencia_online_banking` (mismo `tipo`). **Corrección sobre mi propia lectura de esta
+misma noche**: dije antes que `acreditacion_credin` era "el precedente ya resuelto" — releyendo el
+código de nuevo, NO lo es: sigue con `resuelve: 'decide_una_persona'` y `pendienteDeLaura` abierto,
+solo tiene un `tipo` provisorio distinto. El único cierre real de un `pendienteDeLaura` en todo el
+catálogo es `echeq_recibido_debito` (línea 820).
+
+**Qué rompió, con evidencia real**: `queDecide` no es una etiqueta descriptiva — el motor
+(`nucleo/motor.ts`) lo usa para invocar un mecanismo de resolución DISTINTO por valor.
+`'distinguir_tercero_de_socio'` dispara un chequeo de coherencia de reversa/contraparte
+(`packages/contabilidad/tests/corpus-macro.test.ts`) que el corpus de prueba de estos 3 literales no
+satisface — el motor devolvió `clase: 'sin_reconocer', motivo: 'reversa_incoherente'` en vez de
+`'decision_humana'` para los 3 literales tocados, y rompió 4 tests reales (3 del corpus + 1 de
+`reglas-de-codigo.test.ts` R-F, que cambió su lista de infractores). **No hice un segundo intento**
+(cambiar solo `tipo`/`ladoEsperado` sin tocar `queDecide`, por ejemplo) — la regla de esta noche es
+parar ante lo inesperado, no iterar hasta que algo pase el test.
+
+**Revertido completo** (`git checkout -- packages/contabilidad/src/nucleo/catalogo.ts`), confirmado
+contra el mismo baseline preexistente de siempre (2 rojos: `reglas-de-codigo.test.ts` R-F +
+`corpus-macro.test.ts` "RETENCION IIBB CORDOBA", este último no relacionado con mi cambio — ya estaba
+así antes de tocar nada). La rama `fix/reclasificar-transferencias-cobranza-cliente` se creó, no llegó
+a tener ningún commit, y se borró (idéntica a `main`, nada que preservar).
+
+**Para la mañana**: la reclasificación de los 3 conceptos SIGUE PENDIENTE, con conteo de riesgo
+retroactivo confirmado en 0 (segura de aplicar en cuanto a datos). Lo que falta resolver antes de
+reintentarla: entender qué necesita `distinguir_tercero_de_socio` para no romper el corpus (¿falta
+poblar `movimiento_contraparte_identificador` en el fixture de test?, ¿es el `queDecide` equivocado
+para estos 3 literales específicamente, a diferencia de sus hermanos?), o si corresponde dejar
+`queDecide: 'confirmar_hipotesis_del_lexico'` tal cual estaba (la pregunta de LADO ya se contestó, pero
+tal vez ese campo no necesita cambiar) — **decisión que le corresponde al titular o a una convocatoria
+de `contador-dominio`/`backend-dev` en horario normal, no a un segundo intento nocturno.**
+
+### Tarea 3 — Hallazgo #1, investigación (solo lectura, sin dar de alta nada)
+
+**Confirmado con consulta real, hallazgo importante**: **la regla `regla_imputacion` de
+`comision_bancaria` YA EXISTE HOY para los dos clientes**, y apunta a `4.2.5.200 "Gastos y comisiones
+bancarias"` — exactamente la cuenta que Laura identificó como incorrecta. No es un caso hipotético de
+"qué pasaría si no hay regla": **cada movimiento de comisión bancaria de Bracci y ROKA se está
+imputando HOY a gasto duplicado**, corriendo en vivo (mismo patrón que el hallazgo de Ley 25413 de
+esta misma noche — una regla activa con un criterio ya cuestionado por evidencia real).
+
+| Cliente | Cuenta actual | Vigente desde |
+|---|---|---|
+| Bracci | `4.2.5.200` "Gastos y comisiones bancarias" | 2026-04-30 |
+| ROKA | `4.2.5.200` "Gastos y comisiones bancarias" | 2025-10-20 |
+
+La regla es de TIPO ENTERO (`concepto = null`) — cubre, sin distinguir, los 10 conceptos de comisión
+bancaria del catálogo compartido (5 de Galicia, 2 de Santander, 3 de Macro) por igual. Esto responde
+indirectamente la pregunta de "¿las 6/8 sub-variantes van todas igual?": **el sistema hoy ya las trata
+todas igual**, con una sola regla de tipo entero — el "grupo por grupo" que pidió el titular no puede
+verificarse por sub-concepto distinto porque el sistema no discrimina entre ellos hoy.
+
+**Cuenta candidata para la corrección**: no existe una cuenta dedicada "Proveedores – Banco" en el plan
+de ninguno de los dos clientes — existe una única cuenta genérica de Proveedores en cada uno:
+
+| Cliente | Código | Denominación |
+|---|---|---|
+| Bracci | `2.1.1.100` | Proveedores |
+| ROKA | `2.1.1.100` | Proveedores |
+
+**Lo que NO pude verificar desde el código/la base, límite real declarado, no salteado**: si la
+liquidación/factura del banco efectivamente se carga como comprobante de Compras contra ESTA cuenta
+para cada uno de los "6 grupos de ROKA / 8 grupos de Bracci" que cita el material de Laura. El esquema
+de este repo no modela (hasta donde relevé) un vínculo trazable entre `fuente_cierre`/`documento_
+ingerido` y un proveedor identificado como "el banco" — esa verificación, si existe, vive en el Libro
+IVA Compras real del cliente (fuera de este sistema) o en el propio material Excel de Laura (que esta
+sesión no tiene cargado). **No lo inventé ni lo di por sentado**: queda como pregunta abierta real para
+la revisión de la mañana, no resuelta acá.
+
+**Mi lectura, no una decisión — para que el titular la contraste**: dado que la regla YA se aplica de
+forma uniforme (tipo entero, sin distinguir sub-concepto) y que existe una única cuenta Proveedores
+candidata en cada plan, el cambio técnico (cerrar la regla actual + alta de una nueva contra
+`2.1.1.100`) es mecánicamente simple SI el titular confirma que el circuito de Compras real de estos
+dos clientes efectivamente carga la liquidación del banco — lo cual no puedo confirmar yo mismo. **No
+di de alta nada** — queda para revisión en persona, tal como pidió la consigna de esta tarea.
+
+### Tarea 4 — Login estático en `apps/web`: PARADA, no coincide con lo esperado
+
+**`apps/web` NO EXISTE todavía** — confirmado, no asumido: `ls apps/` da solo `cli/`. ADR-0000 §2.2 lo
+declara explícito ("`apps/web` sigue sin existir... el Módulo 1 arranca sin app web") y la entrada 229
+ya lo tenía anotado ("Sigue PR4: el esqueleto real de `apps/web` en código — sin fecha ni convocatoria
+todavía"). La consigna de esta tarea asumía que había ALGO en `apps/web` para portar el login ADENTRO
+— no lo hay.
+
+**Por qué no lo resuelvo improvisando un scaffold**: `ADR-0006-autenticacion.md` (líneas 100-265) ya
+diseñó una arquitectura estricta para `apps/web` — Next.js App Router, `conSesion` obligatorio en todo
+`route.ts`/`page.tsx` con datos, y 7 reglas verificables propias (R-S a R-W, ej. "todo archivo con
+datos bajo `apps/web/src/app/**` importa `conSesion`, sin eso no arranca"). Crear el directorio esta
+noche, aunque sea "solo para un componente estático", implica decisiones reales de la Tarea 0/1 de PR4
+(versión de Next.js, config de build, cómo conviven las reglas R-S…R-W desde el primer archivo) que
+**es exactamente PR4 completo**, no una "traducción mecánica pura" — no es la tarea que se pidió, y
+tocar la primera piedra de esa arquitectura sin convocatoria propia (`arquitecto-software` +
+`security-engineer`, matriz CLAUDE.md §3.1, dado que toca autenticación) no es algo para decidir solo
+a la 1 de la mañana.
+
+**No implementado — 3 opciones para la mañana, ninguna aplicada**:
+1. **Arrancar PR4 completo** (scaffold real de `apps/web`, con su propia convocatoria) y portar el
+   login como primera pantalla — la vía "correcta" de largo plazo, pero no es "traducción mecánica".
+2. **Portar el HTML/CSS de los 2 Artifacts a un archivo aislado** (fuera de `apps/web`, ej.
+   `docs/diseno/34-anexo-login-html-css/` o similar), sin decidir NADA de framework — deja la
+   traducción literal lista para el día que arranque PR4, sin comprometerse a ningún andamiaje.
+   Interpretación razonable de "traducción mecánica pura" que no pisa ninguna decisión de PR4 — **no
+   lo hice sin confirmar primero, porque igual es una interpretación mía de qué quiso decir el titular
+   con "en apps/web"**, y la consigna de esta noche es no asumir.
+3. **No tocar nada, esperar instrucción explícita** — la más conservadora.
+
+Recomiendo la opción 2 si el titular la confirma a la mañana, pero **no la ejecuté** — queda
+parada, documentada, tal como pide la regla general de esta noche.
+
+### Resumen ejecutivo de la noche (para una revisión rápida)
+
+| Tarea | Estado | Acción pendiente del titular |
+|---|---|---|
+| Paso 0 (merge Ley 25413) | ✅ Cerrado, en `main`, pusheado | Ninguna |
+| Tarea 1 (bug a, diseño) | ✅ Consulta + diseño completos, nada implementado | Revisar especificación, decidir umbral y alcance (¿solo `sin_reconocer` o generalizar?) |
+| Tarea 2 (bug b, reclasificación) | 🔴 Intentada, rompió tests, revertida | Decidir si `queDecide` corresponde cambiar o no antes de reintentar (ver detalle arriba) |
+| Tarea 3 (hallazgo #1, comisión bancaria) | ✅ Investigado — **regla ya activa contra Gastos, hoy, en los dos clientes** | Confirmar si el circuito de Compras real carga la factura del banco antes de mover la regla a `2.1.1.100 Proveedores` |
+| Tarea 4 (login en apps/web) | 🔴 Parada — `apps/web` no existe | Elegir una de las 3 opciones de arriba |
+| Hallazgo transversal | 🔴 **Piloto en migración `0042`, no `0048/0049`** | Decidir cuándo/si aplicar las migraciones faltantes — nunca en lote, migración por migración (regla dura §1.9) |
+
+**Ramas de esta noche, ninguna mergeada a `main`** (por instrucción explícita): `docs/overnight-
+2026-09-18-19` (esta entrada de HANDOFF, con 4 commits incrementales). No se creó ninguna otra rama con
+código — la Tarea 2 se revirtió antes de commitear, la Tarea 4 no llegó a escribir código.
+
+**Todo lo demás del plan original** (migración `0049_categorizacion_mipyme`, el resto de hallazgo #1
+una vez confirmado el circuito de Compras) sigue exactamente donde quedó anoche — sin tocar, tal como
+pidió la consigna.
+
+---
+
 ## 2026-09-18 (232) — Feedback real de Laura/Ana sobre cierre Bracci/ROKA (may-ago 2026):
 investigación + diseño de dominio completos, **fix urgente de Ley 25413 ya aplicado en el piloto**.
 **PARCIAL** — el resto del plan (los 2 bugs, hallazgo #1 comisión bancaria, migración
