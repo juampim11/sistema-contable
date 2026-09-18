@@ -168,7 +168,10 @@ export function textoExtractoSintetico(opciones: OpcionesTextoSintetico): TextoS
     const numero = `0112-${String(100000 + c).padStart(6, '0')}/${c}`;
     const cbu = `999000009000000000000${c + 1}`;
 
-    let saldo = 1_000_000n + BigInt(c) * 500_000n;
+    // Saldos deliberadamente NO redondos: un monto de miles cerrados colisiona por casualidad con
+    // material real de privado/ a medida que ese corpus crece (`pnpm fixtures:verificar`, chequeo 1;
+    // `pnpm barrido`) — mismo patrón que ya documenta la memoria del proyecto.
+    let saldo = 1_034_782n + BigInt(c) * 554_432n;
     const saldoInicial = saldo;
     let creditos = 0n;
     let debitos = 0n;
