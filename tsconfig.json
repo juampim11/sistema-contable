@@ -37,5 +37,14 @@
     "apps/*/src/**/*.ts",
     "apps/*/tests/**/*.ts",
     "tools/**/*.ts"
-  ]
+  ],
+  // `apps/web` (PR4) es una app Next.js real: necesita `moduleResolution: "bundler"`, `jsx: "preserve"`
+  // y el plugin de Next — incompatible con `nodenext`/sin JSX de acá. Tiene su propio `tsconfig.json`
+  // autocontenido (mismo patrón que el proyecto hermano `trazabilidad-obra-gas`), cubierto por su propio
+  // paso de `pnpm typecheck` (ver `package.json` raíz) — NUNCA se deja fuera del gate en silencio, que
+  // es exactamente el mismo incidente que el comentario de arriba ya describe para `apps/cli`. El
+  // patrón `apps/*/src/**/*.ts` de arriba alcanzaría cualquier `.ts` plano de `apps/web/src` si no se
+  // excluyera explícito acá (la extensión sola no alcanza como barrera: `apps/web` también tiene `.ts`
+  // planos, no solo `.tsx`).
+  "exclude": ["apps/web/**"]
 }

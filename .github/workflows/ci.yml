@@ -112,6 +112,16 @@ jobs:
       - name: Typecheck (TypeScript estricto)
         run: pnpm typecheck
 
+      # `apps/web` (PR4, ADR-0006): mismo criterio que ya costó caro dos veces en este repo (apps/
+      # fuera del typecheck; la brecha .ts/.tsx) — el build real entra en la misma PR que crea la app,
+      # no diferido a "cuando haya entorno de deploy". CI ya levanta Postgres/MinIO y genera un .env
+      # de un solo uso arriba; no hace falta un entorno de deploy real para poder compilar. Si una
+      # ruta futura intenta prerenderizar estático y llama a packages/data/auth en build time, este
+      # paso puede fallar sin DB real en CI — la corrección correcta ahí es `export const dynamic =
+      # 'force-dynamic'` en esa ruta, no relajar este step.
+      - name: Build de apps/web (Next.js)
+        run: pnpm --filter ./apps/web run build
+
       # Incluye los tests de catálogo (R1–R15), los de aislamiento a través de conUsuario/conJob, y
       # el barrido INV-8 sobre los tres caminos dorados de logging.
       #
