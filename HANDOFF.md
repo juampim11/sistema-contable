@@ -6,6 +6,45 @@
 
 ---
 
+## 2026-09-18/19 (233) — Merge del fix de Ley 25413 + noche autónoma con límites explícitos.
+**EN CURSO — esta entrada se completa a medida que avanza la noche, no se reescribe desde cero.**
+
+**Herramienta:** Claude Code, sesión interactiva → modo autónomo overnight con reglas explícitas del
+titular (ver Paso 0 de abajo para el límite: **ninguna rama nueva de esta noche se mergea a `main`**,
+eso lo revisa el titular a la mañana).
+
+### Paso 0 — Merge del fix de Ley 25413 a `main` (autorizado explícito, contenido ya revisado)
+
+`fix/ley-25413-bracci-roka-y-conocimiento-mipyme` → `main`, merge commit sin conflictos.
+
+```
+ HANDOFF.md                                                          | 110 +++++++++
+ knowledge/README.md                                                 |   5 +-
+ knowledge/_FUENTES.md                                                |  28 ++-
+ knowledge/nacional/ganancias/06-computo-a-cuenta-impuesto-creditos-y-debitos.md | 105 ++++++++
+ knowledge/nacional/mipyme/01-categorizacion-resolucion-1-2026.md    |  93 ++++++++
+ packages/data/scripts/fix-ley-25413-bracci-roka-2026-09-18.ts       | 263 +++++++++++++++++++++
+ 6 files changed, 598 insertions(+), 6 deletions(-)
+```
+
+Typecheck limpio post-merge. Push a `origin/main` confirmado: **hash local == origin ==
+`736272ebb377d3dd0674c421e37017a7b7c432d1`**, working tree limpio. El fix de Ley 25413 (ver entrada
+232) queda cerrado y en `main` de punta a punta.
+
+### Reglas del modo autónomo de esta noche (para que quien retome mañana las tenga presentes)
+
+- Si algo es ambiguo, requiere criterio de negocio, o no coincide con lo esperado: **parar esa tarea
+  puntual**, documentar con opciones, seguir con la siguiente — nunca "sigo igual, asumo lo más
+  razonable".
+- **Ninguna rama nueva de esta noche se mergea a `main`** bajo ninguna circunstancia.
+- No tocar: lógica del guard de sesión (`conSesion`/`conSesionHttp`) — la inclinación sobre "sesión ya
+  activa en `/login`" (redirect directo) **nunca fue aprobada como decisión final**, solo anotada.
+- No tocar: migración `0049` (`categorizacion_mipyme`) — sigue sin apuro.
+
+*(Tareas 1-4 se documentan abajo a medida que cada una cierra.)*
+
+---
+
 ## 2026-09-18 (232) — Feedback real de Laura/Ana sobre cierre Bracci/ROKA (may-ago 2026):
 investigación + diseño de dominio completos, **fix urgente de Ley 25413 ya aplicado en el piloto**.
 **PARCIAL** — el resto del plan (los 2 bugs, hallazgo #1 comisión bancaria, migración
