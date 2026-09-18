@@ -17,12 +17,18 @@ import { raizDelRepo } from '../../../tools/cargar-env.ts';
 const RAIZ = raizDelRepo();
 const IGNORAR = new Set(['node_modules', '.git', '.pnpm', 'dist', '.next', 'coverage']);
 
+// `.tsx` incluido a propósito, no solo `.ts` — sin esto, R-S/R-T/R-U/R-W (PR4, `apps/web`) verían el
+// barrido vacío para `page.tsx`/`layout.tsx` (React con JSX), que es exactamente donde R-W necesita
+// mirar: pasaría en verde por ausencia de archivos que ver, el mismo patrón que este archivo ya
+// advierte para `apps/` en general.
+const EXTENSIONES_BARRIDAS = new Set(['.ts', '.tsx']);
+
 function archivosTs(dir: string, acumulado: string[] = []): string[] {
   for (const entrada of readdirSync(dir)) {
     if (IGNORAR.has(entrada)) continue;
     const ruta = join(dir, entrada);
     if (statSync(ruta).isDirectory()) archivosTs(ruta, acumulado);
-    else if (extname(ruta) === '.ts') acumulado.push(ruta);
+    else if (EXTENSIONES_BARRIDAS.has(extname(ruta))) acumulado.push(ruta);
   }
   return acumulado;
 }
@@ -176,6 +182,11 @@ describe('cobertura del barrido', () => {
     // `packages/auth` (ADR-0006, identidad opaca): mismo motivo — si el paquete quedara fuera del
     // glob, R-R/R-V/R-X de más abajo pasarían por vacío sin avisar.
     expect(FUENTES.map(rel)).toContain('packages/auth/src/index.ts');
+    // `apps/web` (PR4, ADR-0006 §4): mismo motivo — si quedara fuera del glob (o si `.tsx` dejara de
+    // barrerse), R-S/R-T/R-U/R-W pasarían por vacío sin avisar. `sesion.ts` todavía no existe en este
+    // paso (llega en la pieza siguiente del scaffold) — se agrega esta aserción a esta lista el día
+    // que exista, mismo criterio que el resto de este bloque.
+    expect(FUENTES.map(rel)).toContain('apps/web/src/app/page.tsx');
   });
 });
 // -----------------------------------------------------------------------------
@@ -1518,10 +1529,10 @@ describe('R-X — packages/auth y packages/data no importan next/* (ADR-0006 §1
    * dos. Un `import ... from 'next/headers'` en cualquiera de los dos ataría identidad o datos al
    * framework de la web, exactamente lo que R-X existe para evitar.
    *
-   * El ADR nombra los DOS paquetes (§4: "packages/auth y packages/data no importan next/"), y
-   * `packages/data` ya existe hoy (a diferencia de `apps/web`, que todavía no — por eso R-S/R-T/R-U/
-   * R-W quedan para cuando exista). Acotar el barrido a un solo paquete dejaría pasar por vacío la
-   * mitad de lo que la propia regla declara proteger.
+   * El ADR nombra los DOS paquetes (§4: "packages/auth y packages/data no importan next/"). Acotar el
+   * barrido a un solo paquete dejaría pasar por vacío la mitad de lo que la propia regla declara
+   * proteger. (R-S/R-T/R-U/R-W, la otra mitad de este bloque de reglas, ya están escritas más abajo —
+   * `apps/web` existe desde PR4.)
    */
   const PATRON_IMPORTA_NEXT = /(?:from|require\()\s*['"]next(?:\/[^'"]*)?['"]/;
   const PREFIJOS_VIGILADOS = ['packages/auth/', 'packages/data/'] as const;
@@ -1583,6 +1594,155 @@ describe('R-X bis — el catálogo de entornos de packages/auth no diverge del d
     const deData = arrayLiteralDe(join(RAIZ, 'packages/data/src/db/entorno.ts'), 'ENTORNOS');
     expect(deAuth.length, 'la lectura del catálogo de auth no está vacía').toBeGreaterThan(0);
     expect(deAuth.sort()).toEqual(deData.sort());
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-S — SERVICE_ROLE/auth.admin. solo en el adapter de Supabase (ADR-0006 §4)', () => {
+  /**
+   * `SUPABASE_SERVICE_ROLE_KEY`/`auth.admin.*` saltea RLS y las políticas de Supabase Auth — mismo
+   * riesgo que la credencial de `app_job` en Postgres (R19/R18), del lado de identidad. El único lugar
+   * previsto por el ADR para usarla es el adapter (`packages/auth/src/adapters/supabase.ts`) y, el día
+   * que exista, `apps/cli/src/invitar-usuario.ts` (alta de usuarios vía consola, fuera de `apps/web`).
+   * Ese CLI todavía no existe — mismo caso que R-R con el propio adapter antes de PR3: la lista de
+   * permitidos lo declara de antemano para no tener que volver a tocar esta regla cuando se cree.
+   */
+  const PATRON_SERVICE_ROLE = /SUPABASE_SERVICE_ROLE_KEY|\.auth\.admin\./;
+  const PERMITIDOS_R_S = ['packages/auth/src/adapters/supabase.ts', 'apps/cli/src/invitar-usuario.ts'];
+
+  it('SUPABASE_SERVICE_ROLE_KEY / auth.admin.* no aparecen fuera del adapter (ni de apps/web)', () => {
+    expect(
+      infractores(PATRON_SERVICE_ROLE, PERMITIDOS_R_S),
+      'la credencial que saltea RLS/políticas de Supabase Auth solo puede vivir en el adapter — un ' +
+        'uso en `apps/web` (o cualquier otro paquete) es la misma escalada que R18/R19 ya cierran del ' +
+        'lado de Postgres',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta la infracción plantada y no confunde una mención en prosa sin uso real', () => {
+    expect(PATRON_SERVICE_ROLE.test("const k = process.env.SUPABASE_SERVICE_ROLE_KEY;")).toBe(true);
+    expect(PATRON_SERVICE_ROLE.test('await supabase.auth.admin.deleteUser(id);')).toBe(true);
+    expect(PATRON_SERVICE_ROLE.test('// nunca usar SUPABASE_SERVICE_ROLE_KEY fuera del adapter')).toBe(true);
+    expect(PATRON_SERVICE_ROLE.test('await supabase.auth.signInWithPassword(cred);')).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-T — en apps/web, conUsuario/conJob SOLO se llaman desde sesion.ts (ADR-0006 §4)', () => {
+  /**
+   * `conSesion()` (`apps/web/src/servidor/sesion.ts`) es el ÚNICO punto de `apps/web` autorizado a
+   * abrir una transacción con identidad — mismo principio que CLAUDE.md §2.1 ya exige para el resto
+   * del repo (`conUsuario`/`conJob` solo desde `packages/data/src/db/conexion.ts`), extendido acá al
+   * lado de la aplicación web: si cualquier `route.ts`/`page.tsx`/`actions.ts` pudiera llamar
+   * `conUsuario` directo, R-W (que exige importar `conSesion`) se podría sortear sin que el barrido lo
+   * note.
+   */
+  const PATRON_CON_USUARIO_O_JOB = /\bcon(?:Usuario|Job)\(/;
+  const PERMITIDOS_R_T = ['apps/web/src/servidor/sesion.ts'];
+
+  it('ningún archivo de apps/web llama conUsuario/conJob fuera de sesion.ts', () => {
+    const archivosDeWeb = FUENTES.filter((r) => rel(r).startsWith('apps/web/'));
+    expect(archivosDeWeb.length, 'no se está barriendo apps/web').toBeGreaterThan(0);
+
+    const infractoresWeb = infractores(PATRON_CON_USUARIO_O_JOB, PERMITIDOS_R_T).filter((r) =>
+      r.startsWith('apps/web/'),
+    );
+    expect(
+      infractoresWeb,
+      'conUsuario/conJob en apps/web solo pueden llamarse desde sesion.ts (conSesion) — cualquier otro ' +
+        'archivo que los llame directo sortea el guard de sesión sin que R-W lo detecte',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta la infracción plantada y no confunde un nombre parecido', () => {
+    expect(PATRON_CON_USUARIO_O_JOB.test("await conUsuario(usuarioId, (tx) => algo(tx));")).toBe(true);
+    expect(PATRON_CON_USUARIO_O_JOB.test("await conJob('migracion', (tx) => algo(tx));")).toBe(true);
+    expect(PATRON_CON_USUARIO_O_JOB.test('await conSesion((sesion, tx) => algo(tx));')).toBe(false);
+    expect(PATRON_CON_USUARIO_O_JOB.test('function conUsuarioDeAlgo() {}')).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-U — apps/web/src no contiene SQL crudo ni llama tx.consultar( (ADR-0006 §4)', () => {
+  /**
+   * Toda lectura/escritura de `apps/web` pasa por las funciones de dominio de `packages/data`
+   * (`leer*`/`escribir*`), nunca por una consulta armada a mano en la capa web — mismo principio que
+   * R-G ya exige para `packages/contabilidad` (código puro, sin SQL), espejado acá para el otro
+   * extremo del sistema: la superficie más expuesta (código de UI, corrido por el navegador de
+   * cualquiera con sesión) es la que menos margen tiene para un SQL armado con datos del usuario.
+   */
+  const PATRON_SQL_O_CONSULTAR = /\.consultar\(|\b(select|insert into|update|delete from)\s/i;
+
+  it('ningún archivo de apps/web/src contiene una sentencia SQL ni llama tx.consultar(', () => {
+    const archivosDeWebSrc = FUENTES.filter((r) => rel(r).startsWith('apps/web/src/'));
+    expect(archivosDeWebSrc.length, 'no se está barriendo apps/web/src').toBeGreaterThan(0);
+
+    const infractoresWeb = infractores(PATRON_SQL_O_CONSULTAR).filter((r) => r.startsWith('apps/web/src/'));
+    expect(
+      infractoresWeb,
+      'apps/web nunca arma SQL ni llama tx.consultar( directo — toda lectura/escritura pasa por las ' +
+        'funciones de dominio de packages/data',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta la infracción plantada y no confunde un nombre de variable parecido', () => {
+    expect(PATRON_SQL_O_CONSULTAR.test('await tx.consultar(`select 1`);')).toBe(true);
+    expect(PATRON_SQL_O_CONSULTAR.test('const sql = "select * from cliente";')).toBe(true);
+    expect(PATRON_SQL_O_CONSULTAR.test('const consultaDeUsuario = leerCliente(tx, id);')).toBe(false);
+  });
+});
+
+// -----------------------------------------------------------------------------
+describe('R-W — todo route.ts/actions.ts/page.tsx CON DATOS bajo apps/web/src/app/** importa conSesion (ADR-0006 §4)', () => {
+  /**
+   * "Con datos" se aproxima por el proxy más estricto disponible desde un barrido de texto: importa
+   * algo de `@sistema-contable/data` o `@sistema-contable/auth`. Un archivo que no importa ninguno de
+   * los dos no puede estructuralmente tocar la base ni la identidad, así que no necesita `conSesion`
+   * (caso real hoy: `apps/web/src/app/page.tsx`, placeholder sin datos).
+   *
+   * A propósito exige el import DIRECTO de `conSesion` en el propio archivo — no alcanza con que un
+   * helper intermedio lo use por dentro (mutación de refutación real, `security-engineer`: "moverla a
+   * un helper intermedio... sigue rojo"). Es más estricto que necesario para el caso legítimo simple,
+   * y es exactamente lo que evita que el guard se vuelva invisible en el call site de cada ruta.
+   */
+  const ARCHIVOS_DE_RUTA = /(?:^|\/)(?:page|layout)\.tsx$|(?:^|\/)route\.ts$|(?:^|\/)actions\.ts$/;
+  const PATRON_TOCA_DATOS_O_AUTH = /from\s+['"]@sistema-contable\/(?:data|auth)['"]/;
+  const PATRON_IMPORTA_CON_SESION = /\bconSesion\b/;
+  const SESION_TS = 'apps/web/src/servidor/sesion.ts';
+
+  it('todo archivo de ruta bajo apps/web/src/app que toca @sistema-contable/data o /auth también importa conSesion', () => {
+    const archivosDeRuta = FUENTES.filter(
+      (r) => rel(r).startsWith('apps/web/src/app/') && ARCHIVOS_DE_RUTA.test(rel(r)),
+    );
+
+    const sinConSesion = archivosDeRuta
+      .map(rel)
+      .filter((r) => r !== SESION_TS)
+      .filter((r) => {
+        const contenido = readFileSync(join(RAIZ, r), 'utf8');
+        return PATRON_TOCA_DATOS_O_AUTH.test(contenido) && !PATRON_IMPORTA_CON_SESION.test(contenido);
+      });
+
+    expect(
+      sinConSesion,
+      'todo route.ts/actions.ts/page.tsx/layout.tsx bajo apps/web/src/app que toca datos o identidad ' +
+        'tiene que importar conSesion DIRECTO — un helper intermedio que lo use por dentro no alcanza ' +
+        '(ADR-0006 §4)',
+    ).toEqual([]);
+  });
+
+  it('el patrón detecta la infracción plantada y no confunde un archivo sin datos', () => {
+    const archivoConDatosSinSesion = "import { leerCliente } from '@sistema-contable/data';\nexport default function Page() {}";
+    const archivoConDatosConSesion = "import { leerCliente } from '@sistema-contable/data';\nimport { conSesion } from '../../servidor/sesion.ts';";
+    const archivoSinDatos = "export default function Page() { return null; }";
+
+    expect(PATRON_TOCA_DATOS_O_AUTH.test(archivoConDatosSinSesion) && !PATRON_IMPORTA_CON_SESION.test(archivoConDatosSinSesion)).toBe(true);
+    expect(PATRON_TOCA_DATOS_O_AUTH.test(archivoConDatosConSesion) && !PATRON_IMPORTA_CON_SESION.test(archivoConDatosConSesion)).toBe(false);
+    expect(PATRON_TOCA_DATOS_O_AUTH.test(archivoSinDatos)).toBe(false);
+
+    expect(ARCHIVOS_DE_RUTA.test('apps/web/src/app/wizard/page.tsx')).toBe(true);
+    expect(ARCHIVOS_DE_RUTA.test('apps/web/src/app/login/actions.ts')).toBe(true);
+    expect(ARCHIVOS_DE_RUTA.test('apps/web/src/servidor/sesion.ts')).toBe(false);
   });
 });
 

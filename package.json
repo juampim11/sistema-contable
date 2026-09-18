@@ -16,7 +16,7 @@
     "db:setup": "node packages/data/scripts/setup-roles.ts",
     "db:seed": "node packages/data/scripts/sembrar.ts",
     "respaldar:piloto": "node packages/data/scripts/respaldar-piloto.ts",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && pnpm --filter ./apps/web run typecheck",
     "test": "vitest run",
     "verificar": "pnpm typecheck && pnpm barrido && pnpm fixtures:verificar && pnpm test",
     "barrido": "node tools/barrido-fuga.ts",
