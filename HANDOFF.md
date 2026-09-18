@@ -77,7 +77,62 @@ sobre el "grupo" completo (pensando que representa el ejemplo mostrado) se aplic
 movimientos de 8+ naturalezas económicas distintas — incluyendo un pago a AFIP de -$5,87M.
 
 **Convocatoria de diseño** (`backend-dev` + `arquitecto-software` + `ux-designer`, en paralelo, SOLO
-especificación — nada se implementa esta noche): en curso, resultado se documenta abajo.
+especificación — nada se implementó esta noche). Los tres, independientemente, llegaron al MISMO
+mecanismo exacto y a la MISMA recomendación de alcance — buena señal de que el diseño converge:
+
+**Mecanismo del bug, confirmado por los tres**: `identificacionDe()` (`agrupar-decisiones-
+pendientes.ts:197-199`) devuelve la constante fija `TEXTO_SIN_TIPO` para cualquier `sin_reconocer` —
+`Set.size` no distingue "todos matchearon lo mismo" de "ninguno matcheó nada", así que `homogeneo` da
+`true` por AUSENCIA total de señal, no por coincidencia real.
+
+**Hallazgo cruzado no pedido, confirmado por los tres de forma independiente**: el mismo bug afecta
+Pantalla 5 del wizard (doc 34), no solo el Excel de Bracci/ROKA — `agrupar-decisiones-pendientes.ts`
+importa y reusa literalmente `agruparFilas`/`claveDeAgrupacion` de `armar-libro.ts` (líneas 27-33, 503,
+523). Es el mismo mecanismo, no un problema exclusivo de un camino. **No se toca el wizard esta
+noche** (cambiaría un contrato de un boceto ya aprobado) — queda como hallazgo para convocatoria futura.
+
+**Solución recomendada, barata, SIN migración** (`arquitecto-software` la costeó en detalle): el campo
+`pendiente` de `FilaPlanilla` YA EXISTE y ya varía por fila incluso dentro de `sin_reconocer`
+(`texto-humano.ts:163-189`, 7 textos distintos según `motivo_codigo`) — pero HOY nadie lo mira al
+calcular `homogeneo`. Para el pipeline que generó el caso real de ROKA (`agrupar-decisiones-
+pendientes.ts`), ese campo se fija en `null` a propósito (línea 228, "un campo de menos que traer es
+una superficie de menos") — hay que empezar a poblarlo con `motivo_codigo` (columna que YA EXISTE y YA
+está clasificada N2 en `reconocimiento_movimiento`, sin migración nueva). **Paso más chico
+identificado**: Pieza A (`armar-libro.ts::construirGrupo`, puro, sin tocar base) es aislada y
+mergeable sola; Pieza B (`agrupar-decisiones-pendientes.ts`, agregar `motivo_codigo` al SELECT) es
+lectura nueva de una columna ya clasificada, sin convocatoria de esquema.
+
+**Riesgo real si se generaliza sin criterio** (`arquitecto-software`, `backend-dev` coinciden): sumar
+la nueva señal a TODAS las clases (no solo `sin_reconocer`) fragmentaría grupos de `decision_humana`
+que hoy Laura ve como homogéneos y confía — un cambio de comportamiento real, no un bugfix. Los tres
+agentes recomiendan acotar el fix a `sin_reconocer` únicamente.
+
+**Detección de heterogeneidad propuesta** (`ux-designer`, la más concreta): dos señales sobre datos ya
+disponibles en los dos pipelines — dispersión de signos (débito/crédito mezclados) y bandas de
+magnitud del importe (dígitos de la parte entera, bigint-safe) — SIN inventar un sub-clasificador
+nuevo. Rango de importe del grupo (mínimo/máximo) es la señal de mayor impacto por menor costo
+(`ux-designer`): "$120 a $5.988.400" al lado de un ejemplo de $58.498 delata la mezcla sin abrir nada.
+
+**Comunicación en la Hoja Grupos** (`ux-designer`): NO reemplazar "Ejemplo — Descripción" (sigue
+siendo dato real y útil) — agregar una columna "Alerta" (vocabulario cerrado) + un segundo ejemplo
+determinístico por MAYOR importe (no solo el más antiguo, que ya existe) + resaltado de fila con un
+color nuevo, distinto de los 4 ya usados. El dropdown de decisión NO se puede bloquear estructuralmente
+sin macros VBA (límite real de la plataforma, no elección) — sí se puede cambiar el texto del
+`prompt`/`showInputMessage` que Excel ya muestra al hacer clic.
+
+**3 preguntas abiertas, ninguna resuelta esta noche a criterio propio** (los tres agentes coinciden en
+dejarlas para el titular / convocatoria en horario normal):
+1. **Umbral de severidad** (¿cuántos miembros o qué dispersión amerita advertencia leve vs. bloqueo
+   real?) — necesita medirse contra los archivos reales ya cerrados del piloto, no un número inventado.
+2. **Vale la pena un sub-clasificador** que separe "326 liquidaciones de tarjeta" de "2 pagos AFIP"
+   dentro del bucket (sería una heurística nueva de `motor-conciliacion-contable`, no un dato que ya
+   exista) — o alcanza con los proxies baratos (rango de importe, mezcla débito/crédito).
+3. **Si vale la pena traer `descripcion` real** (columna N2, ya clasificada, hoy excluida a propósito
+   de `agrupar-decisiones-pendientes.ts`) para reforzar la señal — ampliar superficie de un dato N2 en
+   un job entra en la matriz de convocatoria de CLAUDE.md §3.1 si se decide que sí.
+
+**No implementado esta noche** — especificación completa, lista para que el titular la revise y
+convoque la implementación en horario normal.
 
 ### 🔴 Hallazgo no anticipado, transversal a toda la noche — el piloto está en `0042`, no en `0048/0049`
 
@@ -100,8 +155,43 @@ reales con los 3 conceptos (`transferencia_mo_ccdo_distinto_titular`=19,
 `transferencia_con_token`=515, `transferencia_electronica_datanet`=17), **ninguno** tiene un
 `asiento_propuesto_renglon` (confirmado o propuesto) ni un `pendiente_cierre` asociado — los 551 siguen
 sin ninguna etapa de procesamiento posterior, consistente con `resuelve: 'decide_una_persona'` (nunca
-llegaron a `resuelve: 'propone'`). **Conteo de asientos confirmados con el tipo viejo: 0.**
-Reclasificación aplicada, sin riesgo retroactivo — ver rama y commit abajo.
+llegaron a `resuelve: 'propone'`). **Conteo de asientos confirmados con el tipo viejo: 0** — el criterio
+de "conteo 0 → aplicar" del titular se cumple.
+
+**🔴 PERO la reclasificación se intentó, rompió tests reales, y se revirtió — no quedó aplicada.**
+Cambié `tipo: 'pago_a_proveedor_transferencia'` → `'cobranza_de_cliente'`, quité `pendienteDeLaura`
+(mismo patrón que `echeq_recibido_debito`, el único precedente real de un pendienteDeLaura cerrado en
+este catálogo), y copié `queDecide: 'distinguir_tercero_de_socio'` de la entrada hermana
+`credito_transferencia_online_banking` (mismo `tipo`). **Corrección sobre mi propia lectura de esta
+misma noche**: dije antes que `acreditacion_credin` era "el precedente ya resuelto" — releyendo el
+código de nuevo, NO lo es: sigue con `resuelve: 'decide_una_persona'` y `pendienteDeLaura` abierto,
+solo tiene un `tipo` provisorio distinto. El único cierre real de un `pendienteDeLaura` en todo el
+catálogo es `echeq_recibido_debito` (línea 820).
+
+**Qué rompió, con evidencia real**: `queDecide` no es una etiqueta descriptiva — el motor
+(`nucleo/motor.ts`) lo usa para invocar un mecanismo de resolución DISTINTO por valor.
+`'distinguir_tercero_de_socio'` dispara un chequeo de coherencia de reversa/contraparte
+(`packages/contabilidad/tests/corpus-macro.test.ts`) que el corpus de prueba de estos 3 literales no
+satisface — el motor devolvió `clase: 'sin_reconocer', motivo: 'reversa_incoherente'` en vez de
+`'decision_humana'` para los 3 literales tocados, y rompió 4 tests reales (3 del corpus + 1 de
+`reglas-de-codigo.test.ts` R-F, que cambió su lista de infractores). **No hice un segundo intento**
+(cambiar solo `tipo`/`ladoEsperado` sin tocar `queDecide`, por ejemplo) — la regla de esta noche es
+parar ante lo inesperado, no iterar hasta que algo pase el test.
+
+**Revertido completo** (`git checkout -- packages/contabilidad/src/nucleo/catalogo.ts`), confirmado
+contra el mismo baseline preexistente de siempre (2 rojos: `reglas-de-codigo.test.ts` R-F +
+`corpus-macro.test.ts` "RETENCION IIBB CORDOBA", este último no relacionado con mi cambio — ya estaba
+así antes de tocar nada). La rama `fix/reclasificar-transferencias-cobranza-cliente` se creó, no llegó
+a tener ningún commit, y se borró (idéntica a `main`, nada que preservar).
+
+**Para la mañana**: la reclasificación de los 3 conceptos SIGUE PENDIENTE, con conteo de riesgo
+retroactivo confirmado en 0 (segura de aplicar en cuanto a datos). Lo que falta resolver antes de
+reintentarla: entender qué necesita `distinguir_tercero_de_socio` para no romper el corpus (¿falta
+poblar `movimiento_contraparte_identificador` en el fixture de test?, ¿es el `queDecide` equivocado
+para estos 3 literales específicamente, a diferencia de sus hermanos?), o si corresponde dejar
+`queDecide: 'confirmar_hipotesis_del_lexico'` tal cual estaba (la pregunta de LADO ya se contestó, pero
+tal vez ese campo no necesita cambiar) — **decisión que le corresponde al titular o a una convocatoria
+de `contador-dominio`/`backend-dev` en horario normal, no a un segundo intento nocturno.**
 
 *(Tareas 3-4 se documentan abajo a medida que cada una cierra.)*
 
