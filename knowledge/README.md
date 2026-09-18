@@ -29,10 +29,11 @@ knowledge/
 ├── README.md                       ← este archivo (índice + convenciones). Leer primero.
 ├── JURISDICCIONES-ACTIVAS.md       ← el modelo multi-jurisdicción y cómo se resuelve por cliente
 ├── _FUENTES.md                     ← manifiesto de descargas + registro de huecos pendientes
-├── nacional/                       ← AFIP/ARCA: IVA, Ganancias, SIRE
+├── nacional/                       ← AFIP/ARCA: IVA, Ganancias, SIRE, MiPyME
 │   ├── iva/
 │   ├── ganancias/
-│   └── sire/
+│   ├── sire/
+│   └── mipyme/                     ← categorización MiPyME (cruza con beneficios de otros impuestos)
 ├── interjurisdiccional/
 │   └── convenio-multilateral/      ← régimen general, regímenes especiales, SIFERE
 │       ├── regimen-general/

@@ -6,6 +6,116 @@
 
 ---
 
+## 2026-09-18 (232) — Feedback real de Laura/Ana sobre cierre Bracci/ROKA (may-ago 2026):
+investigación + diseño de dominio completos, **fix urgente de Ley 25413 ya aplicado en el piloto**.
+**PARCIAL** — el resto del plan (los 2 bugs, hallazgo #1 comisión bancaria, migración
+`0049_categorizacion_mipyme`) queda para aprobación del titular, sin implementar todavía.
+
+**Herramienta:** Claude Code, sesión interactiva. Modo plan obligatorio (CLAUDE.md §3.2: diseño de
+esquema nuevo + material nuevo del estudio). Convocatoria real vía `Agent()`, dos rondas: Ronda 1
+(`contador-dominio`, `fiscal-nacional-iva-ganancias`, `analista-funcional`, `plan-cuentas-
+multicliente`, en paralelo) + Ronda 2 (`dba-data`, `security-engineer`, `seguridad-datos-
+financieros`, `tech-lead`, en paralelo, sobre el DDL de `categorizacion_mipyme`) + una tercera
+convocatoria puntual de `contador-dominio` para la cuenta puente real del fix urgente. Plan completo
+en `C:\Users\Juan Pàblo Marchini\.claude-personal\plans\melodic-prancing-creek.md`.
+
+### 1. Paso 1 — los dos posibles bugs, con evidencia de código (sin implementar, quedan para aprobar)
+
+- **Bug (a)** — ROKA, "374 movimientos de un concepto puntual": NO es un bug de parsing. Es que
+  `claveDeAgrupacion()` (`armar-libro.ts:220-223`) colapsa TODO movimiento sin concepto reconocido en
+  una sola clave `(sin concepto)`, y `identificacionDe()` (`agrupar-decisiones-pendientes.ts:197-199`)
+  devuelve la MISMA constante para cualquier `sin_reconocer` — el flag `homogeneo` no puede detectar
+  heterogeneidad dentro de ese bucket. Corroborado por HANDOFF 168 (backlog `sin_reconocer` de
+  100-111/mes, consistente en orden de magnitud). Riesgo real: una decisión tomada mirando el
+  "ejemplo" se aplicaría a ~374 movimientos no relacionados.
+- **Bug (b)** — "Pago a proveedor" con crédito>0: son 3 `pendienteDeLaura` YA declaradas desde
+  2026-08-13 en `catalogo.ts` (`transferencia_mo_ccdo_distinto_titular`, `transferencia_con_token`,
+  `transferencia_electronica_datanet`), nunca confirmadas. La evidencia de Laura las responde:
+  dirección real "recibida", no "pago a proveedor" — mismo patrón que la hermana ya resuelta
+  `acreditacion_credin` (`tipo: 'cobranza_de_cliente'`).
+
+### 2. Paso 2 — convocatoria de dominio (completa) + diseño de `categorizacion_mipyme` (completo, sin aplicar)
+
+Hallazgo #1 (comisión bancaria → Proveedores) confirmado por `contador-dominio` con matiz (depende de
+que el cliente cargue la liquidación del banco en Compras — no es default universal). Hallazgo #2
+(Ley 25413): el cálculo del % NO va por movimiento — va por cuenta puente + ajuste de cierre de
+ejercicio (`contador-dominio`). Diseño completo de `categorizacion_mipyme` (atributo de cliente con
+vigencia, mismo patrón que `regla_imputacion`/`cuenta_atributo`/`confirmacion_grupo`) — DDL final con
+5 correcciones acumuladas de la Ronda 2 (renombrar `decidido_por`→`categorizado_por`, `CHECK` de
+vocabulario diferido, restringir lectura de columnas sensibles a socio/contador, `WITH CHECK` de
+autoría, `btrim` en el `CHECK` de certificado). **Bloqueado, no resoluble hoy**: el vocabulario real de
+categoría MiPyME y el % exacto — dependían de cargar conocimiento real (ver punto 4).
+
+### 3. 🔴 Fix urgente aplicado — regla de Ley 25413 en producción, corregida
+
+Hallazgo de `contador-dominio` en la Ronda 1: la regla `regla_imputacion` de `impuesto_debitos_
+creditos` aplicada el **2026-09-04** para Bracci y ROKA mandaba el **100% de CADA movimiento nuevo**
+(créditos Y débitos, sin distinguir) directo a `1.2.3.230 Pago a Cuenta Ganancias` — corriendo en vivo
+mientras se armaba este plan, sin conocer la categorización MiPyME real de ninguno de los dos
+clientes. El titular la marcó como prioridad absoluta, aislada del resto del plan.
+
+**Tres bloqueos reales encontrados al ir a aplicarlo** (no estaban anticipados por el pedido original),
+resueltos con el titular antes de tocar nada:
+1. No existía ninguna cuenta puente en el plan de cuentas real de ninguno de los dos clientes —
+   convocatoria puntual a `contador-dominio` para diseñarla (código, denominación, `rol_funcional`).
+   Corrección real de vocabulario en el camino: `cuenta_atributo.rol_funcional` NO es
+   activo/pasivo/generica como se asumía — es `['generica', 'cuenta_particular_socio',
+   'aporte_de_socio', 'retiro_de_socio']` (`0027`), verificado contra el código real.
+2. `apps/cli/src/alta-regla-imputacion.ts` no acepta `--concepto` (dictaminado a propósito, doc 31
+   §B) — se escribió un script puntual, `packages/data/scripts/fix-ley-25413-bracci-roka-2026-09-18.ts`,
+   fuera de `apps/cli/src`, que llama a `altaReglaImputacion`/`leerPlanDeCuentasCompleto` directo, sin
+   tocar el alcance ya dictaminado del CLI.
+3. El lado débitos quedaba sin regla si solo se cerraba la vieja y se daba de alta la de créditos —
+   el titular confirmó: regla propia restaurando la cuenta ORIGINAL de cada cliente (nunca a la cola
+   de pendientes), porque los débitos nunca fueron el error de Laura — el error fue generalizarlos
+   junto con los créditos.
+
+**Aplicado contra el piloto real** (`ENV_FILE=.env.piloto`, vía `app_request` real, con
+`escribirConAuditoria` en cada escritura — nunca el dueño del esquema):
+
+| Cliente | Créditos (`impuesto_25413_sobre_creditos`) | Débitos (`impuesto_25413_sobre_debitos`) |
+|---|---|---|
+| Bracci (`f84d9ecc-…`) | `1.2.3.240` "Ley 25413 Deb.Cred.Bancario a Recuperar" — **cuenta nueva** | `1.2.3.130` "Ley Deb Cred. Bancario" (original, restaurada) |
+| ROKA (`69479b8f-…`) | `1.2.3.600` "Ley 25413 DB CR Bancario a Recuperar" — **cuenta renombrada** (verificado 0 movimientos históricos antes de reasignarla) | `4.2.3.310` "Impuesto al Débito Bancario" (original, restaurada) |
+
+La regla vieja (`concepto = null`, 100% a Ganancias) queda **cerrada** (`vigente_hasta = 2026-09-18`)
+para los dos clientes — ningún asiento ya generado con ella fue tocado (cambio hacia adelante
+únicamente, confirmado por diseño del script). Verificado "en vivo" trazando la lógica real de
+`reglaGanadora()` (`packages/motor-conciliacion/src/resolver.ts:238-265`) contra las filas reales que
+quedaron en la base: un movimiento nuevo de cada concepto resuelve por `concepto_exacto` contra la
+cuenta correcta, sin regla general que compita (cerrada) y sin caer en `tipo_sin_regla_imputacion`.
+
+**Hallazgo lateral, importante para cualquier trabajo futuro sobre este entorno**: el docker de piloto
+local (`sistema-contable-postgres-piloto`) tiene a Bracci y ROKA bajo **nombres genéricos sin
+actualizar** en `tenant_node.nombre` (`CLIENTE PILOTO 01` = Bracci, Galicia; `CLIENTE PILOTO 03` =
+ROKA, Macro) — confirmado por coincidencia de texto exacta contra contrapartes reales conocidas
+(`TRF INMED PROVEED ROVELLA CLAUDIO MARC` para Bracci, `ING TRANSF:LUCAS DANIEL VELAZQUEZ` para ROKA),
+no por el nombre del contenedor ni de la fila. **`tenant_node.nombre` de los dos sigue sin actualizar**
+— quedó pendiente, no se tocó en esta tarea (el titular no lo pidió explícito para esta ronda).
+
+### 4. Conocimiento normativo cargado en `knowledge/` (tarea en paralelo, ver commit/archivos aparte)
+
+Verificado por el titular vía búsqueda web real (no una cita aceptada sin chequear): Ley 25413 +
+Decreto 409/2018 art. 13 (33% general, 100% micro/pequeña, 60% mediana tramo 1, remanente
+trasladable sin límite temporal explícito pero nunca libre disponibilidad — con una discrepancia real
+entre fuentes dejada señalada, no resuelta a criterio propio) y Resolución 1/2026 SICyPyME
+(categorización MiPyME, tabla completa de topes por sector, vigente desde 01/04/2026) — cruzados
+contra múltiples fuentes independientes cada uno. Marcados explícitamente como "verificado por
+búsqueda web, no contra el Boletín Oficial directo ni por profesional matriculado" en los propios
+archivos. Detalle de archivos y fuentes: ver la entrada de commit correspondiente.
+
+### Estado final
+
+- **Fix urgente de Ley 25413: CERRADO**, aplicado y verificado contra el piloto real.
+- **Resto del plan (Paso 1 bugs, hallazgo #1, migración `0049`): PARCIAL**, diseño completo, esperando
+  aprobación del titular antes de implementar — nada más se tocó.
+- **Sin mergear/commitear código de producción todavía** — el script del fix urgente y la carga de
+  `knowledge/` quedan para commitear en la tarea que cierre el plan completo, o antes si el titular lo
+  pide explícito.
+- PR4 y cualquier pantalla siguen en pausa, tal como pidió el titular al abrir esta tarea.
+
+---
+
 ## 2026-09-17 (231) — ADR-0007, Frente 1 Paso 2: `escrituras.ts`/`lecturas.ts` y todos los
 lectores de producción migran a `movimiento_bancario_id`. **Frente 1 (datos/backend) CERRADO
 COMPLETO** — el ADR como un todo sigue parcial solo por el ajuste de boceto de Pantalla 5/6 (fuera de
