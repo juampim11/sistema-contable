@@ -41,7 +41,69 @@ Typecheck limpio post-merge. Push a `origin/main` confirmado: **hash local == or
   activa en `/login`" (redirect directo) **nunca fue aprobada como decisión final**, solo anotada.
 - No tocar: migración `0049` (`categorizacion_mipyme`) — sigue sin apuro.
 
-*(Tareas 1-4 se documentan abajo a medida que cada una cierra.)*
+### Tarea 1 — Bug (a), consulta real + convocatoria de diseño (en curso)
+
+**Consulta real contra el piloto** (ROKA, cuenta Macro, `concepto_banco is null`):
+
+```
+movimientos: 374 | suma: $146.673.389,05 | min: -$2.935.672,13 | max: $1.937.128,13 | mayo-agosto 2026
+```
+
+**374 exacto** — coincide con el número que citó Laura. Pero el desglose por descripción real
+confirma DEFINITIVAMENTE que el bucket es heterogéneo, no una transacción repetida:
+
+| Descripción (muestra) | Cantidad | Suma |
+|---|---|---|
+| `PAGO27728837-LIQ COMER FISERV [DOC]` | **326** | $148.101.267,97 |
+| `N/D DGR SELLOS CORDOBA 0` | 7 | -$1.704,63 |
+| **`N/D INTER.ADEL.CC C/ACUERD 0`** | **4** | **-$58.498,85** |
+| `N/D AJ.INT.SALDO DEUDOR CC/AC. 0` | 3 | -$37,26 |
+| `N/C DBCR 25413 S/DB TASA GRAL 0` | 3 | $15.907,28 |
+| `AFIP 0` | 2 | -$5.871.344,26 |
+| `N/C RECHAZO CHEQUE FALLA TECNICA [DOC]` | 2 | $2.591.213,00 |
+| 8 liquidaciones CABAL distintas | 1 c/u | variable |
+
+**Confirmación cruzada, precisa**: "N/D INTER.ADEL.CC C/ACUERD 0" — la transacción que Laura describió
+como "~1/mes, ninguno mayor a $30.000" — son **4 movimientos reales** en 4 meses (mayo-agosto),
+promedio $14.624 cada uno. **Laura tenía razón sobre ESA transacción puntual.** El "374" que aparece
+en el material es el bucket completo `(sin concepto)`, del cual esos 4 movimientos son una porción
+mínima (1%) — el resto (99%) son 326 liquidaciones de tarjeta FISERV (un hueco YA DECLARADO del propio
+adaptador de Macro, `macro.ts:480-485`: "`PAGO<########>-LIQ COMER <procesadora>`... ninguna etiqueta
+estática puede ser prefijo de la glosa depurada... queda como hueco declarado, no como bug silencioso"
+— los 8 dígitos del medio están enmascarados por INV-13, no hay forma de anclar un prefijo fijo), más
+AFIP, cheques rechazados, sellos de IIBB Córdoba, y ajustes varios. **Confirma con evidencia dura la
+conclusión de Paso 1**: el riesgo real no es la transacción de Laura, es que CUALQUIER decisión tomada
+sobre el "grupo" completo (pensando que representa el ejemplo mostrado) se aplicaría a estos 374
+movimientos de 8+ naturalezas económicas distintas — incluyendo un pago a AFIP de -$5,87M.
+
+**Convocatoria de diseño** (`backend-dev` + `arquitecto-software` + `ux-designer`, en paralelo, SOLO
+especificación — nada se implementa esta noche): en curso, resultado se documenta abajo.
+
+### 🔴 Hallazgo no anticipado, transversal a toda la noche — el piloto está en `0042`, no en `0048/0049`
+
+Al armar la consulta de la Tarea 2 (`movimiento_bancario_id`), la columna **no existe** en el piloto —
+`_migraciones` confirma que la última aplicada ahí es `0042_revocacion_padron_manifestacion_unica.sql`
+(2026-09-08). Las migraciones `0043` (`confirmacion_grupo`) a `0049` (si se llegara a aplicar) **no
+están en el piloto**. Consecuencia real: el código actual de `main` (Frente 1 de ADR-0007, entrada 231)
+escribe/lee EXCLUSIVAMENTE `movimiento_bancario_id` — si la aplicación apuntara al piloto hoy tal como
+está, esas escrituras/lecturas fallarían contra una columna inexistente. **No toqué ninguna migración
+esta noche** (fuera de alcance, regla dura CLAUDE.md §1.9 "listar, confirmar, frenar" — aplicar 0043-
+0048 al piloto es una decisión del titular, migración por migración, no un lote). Las consultas de
+Tarea 2 se adaptaron a `referencia_origen` (lo que el piloto realmente tiene). **Para la mañana**: antes
+de que cualquier trabajo futuro dé por sentado que el piloto tiene el esquema de `main`, verificar
+`_migraciones` primero — no asumir.
+
+### Tarea 2 — Bug (b), consulta real + reclasificación aplicada (rama propia, sin mergear)
+
+**Consulta real** (piloto, `referencia_origen`, dado el hallazgo de arriba): de los 551 movimientos
+reales con los 3 conceptos (`transferencia_mo_ccdo_distinto_titular`=19,
+`transferencia_con_token`=515, `transferencia_electronica_datanet`=17), **ninguno** tiene un
+`asiento_propuesto_renglon` (confirmado o propuesto) ni un `pendiente_cierre` asociado — los 551 siguen
+sin ninguna etapa de procesamiento posterior, consistente con `resuelve: 'decide_una_persona'` (nunca
+llegaron a `resuelve: 'propone'`). **Conteo de asientos confirmados con el tipo viejo: 0.**
+Reclasificación aplicada, sin riesgo retroactivo — ver rama y commit abajo.
+
+*(Tareas 3-4 se documentan abajo a medida que cada una cierra.)*
 
 ---
 
