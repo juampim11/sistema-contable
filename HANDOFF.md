@@ -237,7 +237,57 @@ candidata en cada plan, el cambio técnico (cerrar la regla actual + alta de una
 dos clientes efectivamente carga la liquidación del banco — lo cual no puedo confirmar yo mismo. **No
 di de alta nada** — queda para revisión en persona, tal como pidió la consigna de esta tarea.
 
-*(Tarea 4 se documenta abajo a medida que cierra.)*
+### Tarea 4 — Login estático en `apps/web`: PARADA, no coincide con lo esperado
+
+**`apps/web` NO EXISTE todavía** — confirmado, no asumido: `ls apps/` da solo `cli/`. ADR-0000 §2.2 lo
+declara explícito ("`apps/web` sigue sin existir... el Módulo 1 arranca sin app web") y la entrada 229
+ya lo tenía anotado ("Sigue PR4: el esqueleto real de `apps/web` en código — sin fecha ni convocatoria
+todavía"). La consigna de esta tarea asumía que había ALGO en `apps/web` para portar el login ADENTRO
+— no lo hay.
+
+**Por qué no lo resuelvo improvisando un scaffold**: `ADR-0006-autenticacion.md` (líneas 100-265) ya
+diseñó una arquitectura estricta para `apps/web` — Next.js App Router, `conSesion` obligatorio en todo
+`route.ts`/`page.tsx` con datos, y 7 reglas verificables propias (R-S a R-W, ej. "todo archivo con
+datos bajo `apps/web/src/app/**` importa `conSesion`, sin eso no arranca"). Crear el directorio esta
+noche, aunque sea "solo para un componente estático", implica decisiones reales de la Tarea 0/1 de PR4
+(versión de Next.js, config de build, cómo conviven las reglas R-S…R-W desde el primer archivo) que
+**es exactamente PR4 completo**, no una "traducción mecánica pura" — no es la tarea que se pidió, y
+tocar la primera piedra de esa arquitectura sin convocatoria propia (`arquitecto-software` +
+`security-engineer`, matriz CLAUDE.md §3.1, dado que toca autenticación) no es algo para decidir solo
+a la 1 de la mañana.
+
+**No implementado — 3 opciones para la mañana, ninguna aplicada**:
+1. **Arrancar PR4 completo** (scaffold real de `apps/web`, con su propia convocatoria) y portar el
+   login como primera pantalla — la vía "correcta" de largo plazo, pero no es "traducción mecánica".
+2. **Portar el HTML/CSS de los 2 Artifacts a un archivo aislado** (fuera de `apps/web`, ej.
+   `docs/diseno/34-anexo-login-html-css/` o similar), sin decidir NADA de framework — deja la
+   traducción literal lista para el día que arranque PR4, sin comprometerse a ningún andamiaje.
+   Interpretación razonable de "traducción mecánica pura" que no pisa ninguna decisión de PR4 — **no
+   lo hice sin confirmar primero, porque igual es una interpretación mía de qué quiso decir el titular
+   con "en apps/web"**, y la consigna de esta noche es no asumir.
+3. **No tocar nada, esperar instrucción explícita** — la más conservadora.
+
+Recomiendo la opción 2 si el titular la confirma a la mañana, pero **no la ejecuté** — queda
+parada, documentada, tal como pide la regla general de esta noche.
+
+### Resumen ejecutivo de la noche (para una revisión rápida)
+
+| Tarea | Estado | Acción pendiente del titular |
+|---|---|---|
+| Paso 0 (merge Ley 25413) | ✅ Cerrado, en `main`, pusheado | Ninguna |
+| Tarea 1 (bug a, diseño) | ✅ Consulta + diseño completos, nada implementado | Revisar especificación, decidir umbral y alcance (¿solo `sin_reconocer` o generalizar?) |
+| Tarea 2 (bug b, reclasificación) | 🔴 Intentada, rompió tests, revertida | Decidir si `queDecide` corresponde cambiar o no antes de reintentar (ver detalle arriba) |
+| Tarea 3 (hallazgo #1, comisión bancaria) | ✅ Investigado — **regla ya activa contra Gastos, hoy, en los dos clientes** | Confirmar si el circuito de Compras real carga la factura del banco antes de mover la regla a `2.1.1.100 Proveedores` |
+| Tarea 4 (login en apps/web) | 🔴 Parada — `apps/web` no existe | Elegir una de las 3 opciones de arriba |
+| Hallazgo transversal | 🔴 **Piloto en migración `0042`, no `0048/0049`** | Decidir cuándo/si aplicar las migraciones faltantes — nunca en lote, migración por migración (regla dura §1.9) |
+
+**Ramas de esta noche, ninguna mergeada a `main`** (por instrucción explícita): `docs/overnight-
+2026-09-18-19` (esta entrada de HANDOFF, con 4 commits incrementales). No se creó ninguna otra rama con
+código — la Tarea 2 se revirtió antes de commitear, la Tarea 4 no llegó a escribir código.
+
+**Todo lo demás del plan original** (migración `0049_categorizacion_mipyme`, el resto de hallazgo #1
+una vez confirmado el circuito de Compras) sigue exactamente donde quedó anoche — sin tocar, tal como
+pidió la consigna.
 
 ---
 
