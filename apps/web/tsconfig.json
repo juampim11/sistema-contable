@@ -8,6 +8,11 @@
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
     "esModuleInterop": true,
+    // Los paquetes del monorepo (@sistema-contable/*) se publican como TS FUENTE, con extensión `.ts`
+    // explícita en sus imports internos (ADR-0000 §2) — sin esto, tsc rechaza el árbol entero de
+    // `packages/data`/`packages/auth` al resolverlo desde `apps/web`, aunque el código de este
+    // paquete no use la extensión explícita en ninguna importación propia.
+    "allowImportingTsExtensions": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "resolveJsonModule": true,
