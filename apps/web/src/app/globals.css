@@ -1,0 +1,33 @@
+/**
+ * Tokens v7 compartidos con el wizard (dictamen de ux-designer, PR4 -- verificados por grep contra el
+ * :root real embebido de Pantalla 1, sin drift). Se importa UNA sola vez, en layout.tsx -- cuando se
+ * codee Pantalla 1, importa este mismo archivo en vez de crear el suyo (mismo error que ya costó
+ * rehacer Pantalla 2 en el boceto, doc 34 §6).
+ */
+:root {
+  color-scheme: light;
+  --marco: #EAE1CD;
+  --lienzo: #F2ECE0;
+  --papel: #FBF8F1;
+  --tinta: #201C16;
+  --tinta-suave: #857A6C;
+  --tinta-mudo: rgba(32, 28, 22, 0.38);
+  --linea: rgba(32, 28, 22, 0.12);
+  --acento: #8C2F39;
+  --acento-hover: #A83C47;
+  --acento-tinta: #F8ECE9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--marco);
+  color: var(--tinta);
+  font-family: var(--font-inter, 'Inter', system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+}

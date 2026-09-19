@@ -8,12 +8,13 @@
  * equivocaste"). Layout de dos paneles (marca + formulario), patrón de composición copiado de
  * `trazabilidad-obra-gas` — sin su paleta.
  *
- * Fidelidad visual NO verificada contra los dos Artifacts aprobados (viven fuera del repo, en
- * claude.ai) — esta es una traducción de la especificación ESCRITA (HANDOFF 230, doc 34 §7.2), lista
- * para que `ux-designer`/`frontend-dev` la ajusten contra el diseño real.
+ * CSS real (`login.css`) y tokens (dictamen de `ux-designer`, PR4): verificados por grep contra el
+ * `:root` real embebido de Pantalla 1 (ya aprobada), sin drift entre lo que el login usa y lo que el
+ * wizard ya corre.
  */
 import { useActionState, useState } from 'react';
 import { iniciarSesionAction, type EstadoLogin } from './actions.ts';
+import './login.css';
 
 const ESTADO_INICIAL: EstadoLogin = { tipo: 'inicial' };
 
@@ -35,31 +36,35 @@ export default function LoginPage() {
         <form action={accion}>
           <h1>Ingresar</h1>
 
-          <label htmlFor="email">Email</label>
-          <input
-            id="email"
-            name="email"
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            disabled={pendiente}
-            required
-          />
+          <div className="login-campo">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={pendiente}
+              required
+            />
+          </div>
 
-          <label htmlFor="password">Contraseña</label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={pendiente}
-            required
-          />
+          <div className="login-campo">
+            <label htmlFor="password">Contraseña</label>
+            <input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={pendiente}
+              required
+            />
+          </div>
 
-          <button type="submit" disabled={pendiente || !ambosCompletos}>
+          <button type="submit" disabled={pendiente || !ambosCompletos} aria-busy={pendiente}>
             {pendiente ? 'Ingresando…' : 'Ingresar'}
           </button>
 
