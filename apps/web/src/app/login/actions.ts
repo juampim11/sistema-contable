@@ -46,7 +46,5 @@ export async function iniciarSesionAction(
     throw error;
   }
 
-  // Destino provisorio — Pantalla 1 (elegir cliente) todavía no existe (llega en la pieza siguiente
-  // del scaffold). Cuando exista, este redirect apunta ahí en vez de a la raíz.
-  redirect('/');
+  redirect('/wizard');
 }
