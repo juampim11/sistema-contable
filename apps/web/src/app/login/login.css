@@ -1,0 +1,237 @@
+/**
+ * Login -- CSS plano (no CSS Modules, no styled-jsx), dictamen de ux-designer (PR4). page.tsx ya usa
+ * className string literal con prefijo `login-`, que ya resuelve el único riesgo real de colisión de
+ * nombres; pasar a Modules ahora obligaría a tocar un archivo ya probado end-to-end sin beneficio a
+ * esta escala. Tokens propios de esta pantalla (error ocre/azul-gris, marca) -- no van a globals.css
+ * porque ninguna otra pantalla del wizard los usa hoy; se promueven ahí el día que alguna lo necesite.
+ */
+:root {
+  --error-datos: #8A5A2B;
+  --error-datos-tinta: color-mix(in srgb, var(--error-datos) 10%, var(--papel));
+  --error-conexion: #3F5A72;
+  --error-conexion-tinta: color-mix(in srgb, var(--error-conexion) 10%, var(--papel));
+  --marca-borde: color-mix(in srgb, var(--papel) 32%, transparent);
+  --marca-muda: color-mix(in srgb, var(--papel) 62%, transparent);
+}
+
+.login-layout {
+  display: flex;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.login-panel-marca {
+  flex: 1 1 38%;
+  min-width: 0;
+  background: var(--tinta);
+  color: var(--papel);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 40px 32px;
+  text-align: center;
+}
+
+.login-monograma {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px dashed var(--marca-borde);
+  border-radius: 9px;
+  font-family: var(--font-fraunces, 'Fraunces', Georgia, serif);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.login-nombre {
+  font-family: var(--font-fraunces, 'Fraunces', Georgia, serif);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  margin: 0;
+}
+
+.login-nota-marca {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--marca-muda);
+  border: 1px dashed var(--marca-borde);
+  border-radius: 5px;
+  padding: 3px 8px;
+  margin: 0;
+}
+
+.login-panel-formulario {
+  flex: 1 1 62%;
+  min-width: 0;
+  background: var(--lienzo);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+}
+
+/* El <form> ES la tarjeta -- mismo criterio visual que .login-card del Artifact aprobado. */
+.login-panel-formulario form {
+  width: 100%;
+  max-width: 340px;
+  background: var(--papel);
+  border: 1px solid var(--linea);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(32, 28, 22, 0.05), 0 8px 20px rgba(32, 28, 22, 0.06);
+  padding: 26px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.login-panel-formulario h1 {
+  font-family: var(--font-fraunces, 'Fraunces', Georgia, serif);
+  font-size: 19px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.login-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.login-panel-formulario label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--tinta-suave);
+}
+
+.login-panel-formulario input {
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--tinta);
+  background: var(--lienzo);
+  border: 1px solid var(--linea);
+  border-radius: 7px;
+  padding: 9px 11px;
+  width: 100%;
+}
+
+.login-panel-formulario input:disabled {
+  background: rgba(32, 28, 22, 0.04);
+  color: var(--tinta-mudo);
+  cursor: not-allowed;
+}
+
+.login-panel-formulario input:focus-visible {
+  outline: 2px solid var(--tinta-suave);
+  outline-offset: 1px;
+}
+
+.login-panel-formulario button[type='submit'] {
+  border: none;
+  border-radius: 7px;
+  background: var(--acento);
+  color: var(--acento-tinta);
+  font-family: var(--font-inter, 'Inter', system-ui, sans-serif);
+  font-size: 14px;
+  font-weight: 500;
+  min-height: 44px;
+  padding: 11px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.login-panel-formulario button[type='submit']:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.login-panel-formulario button[type='submit']:not(:disabled):hover {
+  background: var(--acento-hover);
+  cursor: pointer;
+}
+
+.login-panel-formulario button[type='submit']:focus-visible {
+  outline: 2px solid var(--tinta);
+  outline-offset: 2px;
+}
+
+.login-panel-formulario button[aria-busy='true']::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  animation: login-girar 0.8s linear infinite;
+}
+
+@keyframes login-girar {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.login-error {
+  margin: 0;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  border: 1px solid transparent;
+}
+
+.login-error::before {
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+.login-error-credenciales {
+  background: var(--error-datos-tinta);
+  border-color: color-mix(in srgb, var(--error-datos) 35%, transparent);
+  color: var(--error-datos);
+}
+
+.login-error-credenciales::before {
+  content: '!';
+}
+
+.login-error-infraestructura {
+  background: var(--error-conexion-tinta);
+  border-color: color-mix(in srgb, var(--error-conexion) 35%, transparent);
+  color: var(--error-conexion);
+}
+
+.login-error-infraestructura::before {
+  content: '⟳';
+}
+
+@media (max-width: 640px) {
+  .login-layout {
+    flex-direction: column;
+    min-height: auto;
+  }
+
+  .login-panel-marca,
+  .login-panel-formulario {
+    flex: none;
+  }
+
+  .login-panel-marca {
+    padding: 32px 24px;
+  }
+
+  .login-panel-formulario {
+    padding: 32px 24px 40px;
+  }
+}
