@@ -1,0 +1,76 @@
+/**
+ * Pantalla 1 — "elegir cliente". Dictamen de ux-designer (PR4): la tarjeta completa es un <a> (Next
+ * <Link>), no un <button> adentro de una tarjeta -- es navegación, no una mutación de estado.
+ */
+.elegir-cliente-grilla {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.elegir-cliente-tarjeta {
+  display: block;
+  background: var(--papel);
+  border: 1px solid var(--linea);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(32, 28, 22, 0.05), 0 8px 20px rgba(32, 28, 22, 0.06);
+  padding: 20px;
+  text-decoration: none;
+  color: inherit;
+}
+.elegir-cliente-tarjeta:hover {
+  border-color: var(--tinta-suave);
+}
+.elegir-cliente-tarjeta:focus-visible {
+  outline: 2px solid var(--tinta);
+  outline-offset: 2px;
+}
+
+.elegir-cliente-nombre {
+  display: block;
+  font-family: var(--font-fraunces, 'Fraunces', Georgia, serif);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--tinta);
+  margin-bottom: 16px;
+}
+
+.elegir-cliente-boton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  border-radius: 6px;
+  background: var(--acento);
+  color: var(--acento-tinta);
+  font-size: 14px;
+  font-weight: 500;
+}
+.elegir-cliente-tarjeta:hover .elegir-cliente-boton {
+  background: var(--acento-hover);
+}
+
+/* Estado vacío -- no estaba en el boceto (asumía siempre 6 tarjetas). Tono neutro, sin ícono de
+   alerta: no es un error del sistema, es una membresía sin asignar todavía. */
+.elegir-cliente-vacio {
+  background: var(--papel);
+  border: 1px solid var(--linea);
+  border-radius: 8px;
+  padding: 32px;
+  max-width: 420px;
+}
+.elegir-cliente-vacio p {
+  margin: 0;
+  color: var(--tinta);
+}
+.elegir-cliente-vacio-nota {
+  margin-top: 8px !important;
+  font-size: 13px;
+  color: var(--tinta-suave) !important;
+}
+
+@media (max-width: 900px) {
+  .elegir-cliente-grilla {
+    grid-template-columns: 1fr;
+  }
+}

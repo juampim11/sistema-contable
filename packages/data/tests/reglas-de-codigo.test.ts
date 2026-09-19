@@ -1719,11 +1719,12 @@ describe('R-W — todo route.ts/actions.ts/page.tsx CON DATOS bajo apps/web/src/
   const PATRON_TOCA_DATOS_O_AUTH = /from\s+['"]@sistema-contable\/(?:data|auth)['"]/;
   const PATRON_IMPORTA_CON_SESION = /\bconSesion\b/;
   const SESION_TS = 'apps/web/src/servidor/sesion.ts';
-  // Excepción real y única, no un patrón a copiar: establecer una sesión no puede requerir una que
-  // todavía no existe. El login es el único punto de `apps/web` que legítimamente toca `@sistema-
-  // contable/auth` (arma su propio AuthProvider) sin pasar por `conSesion()` — mismo criterio de
-  // excepción nombrada y justificada que ya usan R-R (el adapter) y R-S (el CLI de invitación).
-  const PERMITIDOS_R_W = ['apps/web/src/app/login/actions.ts'];
+  // Excepciones reales y nombradas, no un patrón a copiar: login (establecer una sesión no puede
+  // requerir una que todavía no existe) y logout (cerrarla es la misma clase de operación de
+  // IDENTIDAD, no de datos de dominio) son los únicos puntos de `apps/web` que legítimamente tocan
+  // `@sistema-contable/auth` sin pasar por `conSesion()` — mismo criterio de excepción nombrada y
+  // justificada que ya usan R-R (el adapter) y R-S (el CLI de invitación).
+  const PERMITIDOS_R_W = ['apps/web/src/app/login/actions.ts', 'apps/web/src/app/wizard/actions.ts'];
 
   it('todo archivo de ruta bajo apps/web/src/app que toca @sistema-contable/data o /auth también importa conSesion', () => {
     const archivosDeRuta = FUENTES.filter(

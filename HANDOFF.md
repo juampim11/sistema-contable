@@ -6,6 +6,75 @@
 
 ---
 
+## 2026-09-19 (237) — PR4: login (con CSS real) + Pantalla 1 (elegir cliente) + marco del wizard
+
+**Nota de numeración**: entradas (235) y (236) existen en ramas propias todavía sin mergear
+(`docs/auditoria-235-...`, `docs/handoff-236-...`) al momento de escribir ésta — mismo caso ya resuelto
+antes en esta bitácora (numeración cruzada entre ramas): se reconcilia cronológicamente al mergear,
+no ahora.
+
+**Herramienta:** Claude Code, sesión interactiva. Continúa Frente 1 (PR4) del plan de dos frentes en
+paralelo aprobado por el titular.
+
+### Commit 3 (login) — cerrado con una corrección real de proceso
+
+El login (`page.tsx`/`actions.ts`, 4 estados, verificado end-to-end contra `dev-identidad-fija`) se
+escribió y mergeó **sin convocar a `ux-designer`** — hallazgo del titular, no propio. Corregido antes
+de dar la pieza por cerrada: convocatoria real, dictamen con tokens v7 cruzados contra el `:root` real
+de Pantalla 1 (cero drift), CSS aplicado (`globals.css` + `login.css`), verificado de nuevo en
+navegador con el estilo real. Decisión explícita: el CSS se cierra en el mismo commit, no se posterga
+— mismo motivo que ya costó rehacer Pantalla 2 en el boceto (doc 34 §6).
+
+### Commit 4 (Pantalla 1 + marco del wizard) — dos convocatorias reales, esta vez antes de escribir código
+
+Aprendizaje aplicado del punto anterior: `ux-designer` + `seguridad-datos-financieros` convocados
+**antes** de tocar un archivo.
+
+**Alcance ampliado por decisión explícita del titular**: el marco completo (header-global + sidebar +
+stepper de 6 pasos) se construye en este mismo commit, no solo la grilla de "elegir cliente" — doc 36
+§7.3 ya documentó el costo de no hacerlo así (Pantalla 2 rehecha). CSS extraído literal del Artifact
+aprobado (`2i58PAMpUiWay4UDxLkG6Q`), prefijo `wizard-` en toda clase estructural.
+
+**Tres datos del boceto NO se muestran — nunca fabricados, honestidad visual explícita** (pedido del
+titular): "N cuentas bancarias"/"último extracto" por tarjeta de cliente (sin grant de `app_web` sobre
+esas tablas — migración nueva, fuera de esta pieza) y "Estudio Cardozo & Asociados"/"Laura" en el
+header (`conSesion()` solo trae `usuarioId`, sin lectura de `usuario_identidad` ni de nombre de
+estudio). El header muestra "Sistema Contable" + "Sesión iniciada" — afirmaciones verdaderas, no
+interpolaciones.
+
+**Hallazgo real de `seguridad-datos-financieros`, corregido antes de mergear**: `leerClientesAccesibles`
+(`packages/data/src/tenancy/lecturas.ts`, primera lectura de ese paquete) no repetía el predicado de
+aislamiento asumiendo que la RLS ya alcanzaba — cierto bajo `conUsuario`, **falso bajo `conJob`**
+(BYPASSRLS): un job futuro que reusara la función expondría todos los clientes de todos los estudios.
+Corregido (`and id in (select app.accessible_tenant_ids())`) y verificado por mutación real: sin el
+predicado, el test de `conJob` devolvía las 3 filas de 2 estudios distintos; con el predicado, `[]`.
+
+**Dos hallazgos del mismo agente, NO resueltos acá — quedan declarados, no perdidos**:
+1. `admin_plataforma` todavía no está decidido como membresía-de-árbol vs. rol-de-base (ADR-0001 §11).
+   Si algún día se da de alta con membresía en más de una raíz `estudio`, Pantalla 1 sería el primer
+   lugar donde se vería la cartera de más de un estudio a la vez cruzada. Severidad media, no
+   bloqueante — no hay membresías `admin_plataforma` reales hoy.
+2. ADR-0006 §6/§6.bis acepta el riesgo de mostrar datos N2 apoyándose en "el rastro grueso de apertura
+   de cliente por sesión de §9" — pero ese mecanismo **no existe en el código todavía**, y Pantalla 1
+   es literalmente donde "se abre un cliente". Recomendación del agente: un `logger.info` de aplicación
+   (uuid del cliente, nunca el nombre) al elegir un cliente — barato, cierra la brecha entre lo que el
+   ADR asume y lo que el código hace. Pendiente de decisión del titular/`product-owner`, no implementado.
+
+**Verificado end-to-end en navegador real**, con datos reales de LOCAL (no solo el gate): login →
+redirect a `/wizard` (actualizado desde el placeholder `/`) → aislamiento RLS confirmado en vivo (el
+socio de un estudio ve exactamente sus 2 clientes reales, nunca el cliente de otro estudio, con la
+base local real de 3 clientes en 2 estudios) → logout → vuelta a `/login`.
+
+Suite completa de `packages/data` + `apps/web`: 589 passed (+3 nuevos), 8 rojos preexistentes (7
+`mutaciones-0038.test.ts` + 1 `R-F`, ya documentados), cero regresión. `next build` limpio, `/wizard`
+correctamente dinámica (no prerenderizada estática).
+
+**Frenado, tal como exige el plan**: no se toca la construcción de Pantalla 5 hasta que el titular
+confirme Frente 2 cerrado del todo (ya lo está, entrada 236) Y dé la autorización explícita — la
+confirmación de Frente 2 no autoriza Pantalla 5 por sí sola.
+
+---
+
 ## 2026-09-19 (234) — Piloto puesto al día (0043→0048, uno por uno, CLAUDE.md §1.9) + Hallazgo #1
 (comisión bancaria → Proveedores) resuelto con confirmación real de Laura.
 
