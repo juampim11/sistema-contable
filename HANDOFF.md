@@ -6,6 +6,35 @@
 
 ---
 
+## 2026-09-19 (238) — Commit 4 mergeado a main + 4 hallazgos de arquitectura de sidebar documentados (doc 36 §8)
+
+**Herramienta:** Claude Code, sesión interactiva.
+
+**PARTE A**: `feat/pr4-pantalla1-elegir-cliente` (Commit 4, entrada 237) mergeado a `main` en `909ed08`.
+Los dos hallazgos declarados de `seguridad-datos-financieros` en esa pieza (riesgo `admin_plataforma`
+cross-estudio; brecha entre ADR-0006 §6.bis y la ausencia real de un log de "cliente abierto") **no se
+resuelven acá** — quedan como deuda declarada en la entrada 237, sin cambio de estado.
+
+**PARTE B — documentación, sin implementación**: agregado `docs/diseno/36-marco-navegacion-mas-amplio.md`
+§8, cuatro hallazgos de arquitectura de sidebar surgidos de construir Pantalla 1 real, cada uno con su
+propio criterio de "cuándo retomarlo" — ninguno se construye en esta tarea:
+1. "Clientes" es el único ítem realmente GLOBAL del sidebar; "Plan de cuentas" y "Socios" son vistas de
+   un cliente ya elegido y necesitan ese cliente en la URL (mismo patrón `/wizard/[clienteId]/...`).
+2. Futuro ítem "Usuarios" (gestión de usuarios del estudio, no de clientes) — GLOBAL, mismo nivel que
+   "Clientes", conecta con un `apps/cli/src/invitar-usuario.ts` todavía no escrito.
+3. Con "Usuarios" agregado, el sidebar mezclaría ítems GLOBALES y CLIENTE-EN-CONTEXTO sin señal visual
+   — propuesta a validar con `ux-designer` de separación visual (divisor/encabezado de sección).
+4. Backlog explícito: convocar `analista-funcional` + `arquitecto-software` + `ux-designer` para un
+   análisis completo de arquitectura de información del sidebar, antes de seguir agregando ítems
+   ad hoc — fuera de alcance de la demo actual.
+
+**Sigue frenado, sin cambio**: no se toca Pantalla 5 hasta autorización explícita y separada del
+titular, sin importar el estado de Frente 2.
+
+**Próximo paso**: Commit 5 (Pantalla 2, subir extracto) — PARTE C del mismo pedido, en curso.
+
+---
+
 ## 2026-09-19 (237) — PR4: login (con CSS real) + Pantalla 1 (elegir cliente) + marco del wizard
 
 **Nota de numeración**: entradas (235) y (236) existen en ramas propias todavía sin mergear

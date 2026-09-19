@@ -388,3 +388,70 @@ stepper.
 3. Cuando arranque PR4 (`frontend-dev` + `ux-designer` + `seguridad-datos-financieros`, por matriz de
    `agents/README.md`), el layout nace con header global + sidebar + panel de contenido desde el primer
    componente — no se construye el wizard primero y se envuelve después.
+
+## 8. Hallazgos pendientes de PR4 Commit 4 (2026-09-19) — solo documentación, nada de esto se construye acá
+
+> Surgen de construir Pantalla 1 real (`apps/web/src/app/wizard/{layout,page}.tsx`) contra el marco que
+> este documento diseñó. Los cuatro son decisiones a validar, no trabajo en curso — cada uno con su
+> propio criterio de "cuándo retomarlo", para que no se mezclen con Commit 5 en adelante ni se
+> confundan con una tarea ya aceptada.
+
+### 8.1. "Clientes" es el único ítem realmente GLOBAL del sidebar — "Plan de cuentas" y "Socios" no
+
+El sidebar construido en Commit 4 (`apps/web/src/app/wizard/layout.tsx`) trata los 4 ítems como si
+fueran de la misma naturaleza. No lo son: "Clientes" (§1 de este doc) es alta/listado del `estudio`,
+sin cliente elegido de por medio — pero "Plan de cuentas" y "Socios" son vistas **de un cliente ya
+elegido** (`cuenta`/`padron_socio` cuelgan de un `tenant_node` tipo `cliente` puntual, nunca del
+estudio). Hoy el diseño de sidebar no distingue esto: las 4 entradas conviven en la misma lista sin
+indicar que dos de ellas necesitan un cliente en contexto para tener sentido.
+
+**Decisión pendiente**: cuando se construyan "Plan de cuentas" y "Socios", el cliente elegido debe
+vivir en la URL (mismo patrón que `/wizard/[clienteId]/subir` que ya usan las Pantallas 2-4 — ver §1 de
+este mismo commit) y permanecer visible en header/breadcrumb en todo momento en que haya un cliente
+elegido, no solo dentro del flujo del wizard. Entrar a una sección cliente-scoped sin cliente elegido
+debe redirigir a elegir uno primero, no mostrar una pantalla vacía o un error.
+
+**Cuándo retomarlo**: al construir la primera de las dos ("Plan de cuentas" o "Socios"), antes de
+escribir su `page.tsx` — es una decisión de ruteo/arquitectura de información, convoca
+`arquitecto-software` + `ux-designer` igual que cualquier ABM nueva (§2.bis, §7 punto 2 de este doc).
+
+### 8.2. Futuro ítem de sidebar "Usuarios" — gestión de usuarios del ESTUDIO, no por cliente
+
+No existe hoy ni en el sidebar ni en el backend. Es distinto de las 3 ABMs ya identificadas en §1: no
+gestiona clientes ni datos de un cliente, gestiona los USUARIOS del estudio mismo (Laura, Ana, y
+futuro equipo) — mismo nivel que "Clientes": GLOBAL, sin cliente en contexto. Se conecta con un CLI
+todavía no escrito, `apps/cli/src/invitar-usuario.ts` (no existe — nombre propuesto, no confirmado).
+
+**Cuándo retomarlo**: cuando el estudio necesite dar de alta un tercer usuario real (hoy son Laura y
+Ana, altas manuales por JP) — no antes. Convoca la misma matriz que cualquier alta/gestión de
+identidad: `seguridad-datos-financieros` (es dato de acceso, no de negocio del cliente, pero sigue
+siendo N2 sobre personas) + `security-engineer` + `arquitecto-software`.
+
+### 8.3. Una vez que exista "Usuarios", el sidebar mezcla dos familias sin señal visual
+
+Con "Usuarios" agregado, el sidebar tendría 2 ítems GLOBALES (Clientes, Usuarios) y 3 ítems
+CLIENTE-EN-CONTEXTO (Cierre mensual, Plan de cuentas, Socios) conviviendo en la misma lista plana, sin
+ninguna separación. Esto ya era ambiguo con solo "Socios" (§8.1) — con 5 ítems la ambigüedad se
+duplica.
+
+**Propuesta a validar** (no implementada, no aprobada): separar visualmente las dos familias en el
+sidebar (divisor o encabezado de sección), para que la distinción GLOBAL vs. CLIENTE-EN-CONTEXTO sea
+estructural del layout, no algo que haya que inferir del nombre de cada ítem.
+
+**Cuándo retomarlo**: junto con 8.2 (no tiene sentido diseñar la separación con un solo ítem global
+real hoy — "Clientes" solo, sin "Usuarios", no muestra el problema) — convoca `ux-designer`.
+
+### 8.4. Backlog explícito: análisis completo de arquitectura de información del sidebar
+
+Fuera de alcance de la demo actual, a propósito. Los tres puntos anteriores son parches puntuales
+sobre un sidebar que se fue armando ítem por ítem según lo que cada commit necesitó — no hubo, en
+ningún momento de PR4, un diseño completo de la navegación pensado de punta a punta. Eso es
+exactamente el riesgo que este mismo documento (§0) señaló para el wizard-como-app-completa: decisión
+implícita en vez de explícita.
+
+**Tarea futura, no programada**: convocar `analista-funcional` + `arquitecto-software` + `ux-designer`
+para un análisis completo de arquitectura de información del sidebar (agrupación, jerarquía,
+escalabilidad a más ítems futuros) antes de seguir agregando secciones una por una sin ese marco.
+
+**Cuándo retomarlo**: antes de agregar un sexto ítem de sidebar, o antes de que "Usuarios" (§8.2) pase
+de propuesta a implementación — lo que ocurra primero.
